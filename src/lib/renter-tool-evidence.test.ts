@@ -1,3 +1,4 @@
+import listNative from "./fixtures/renter-sales-list-native.json";
 import breakdownNative from "./fixtures/renter-sales-breakdown-native.json";
 import pairedNative from "./fixtures/renter-sales-paired-native.json";
 import {unsupportedPriceClaims,type PriceEvidence} from "../../convex/lib/price_claims";
@@ -179,5 +180,33 @@ describe("captured total-before-breakdown sales reply",()=>{
  });
  it("keeps camera category captions separate from lens and model identity",()=>{
   for(const text of [breakdownNative.candidate.replace("our full-frame 4K Sony FX3","our full-frame 4K Sony FX3 autofocus lens"),breakdownNative.candidate.replace("our full-frame 4K Sony FX3","our full-frame 4K Sony FX30"),breakdownNative.candidate.replace("Sony FE 16–35mm f/2.8 GM autofocus wide-angle zoom lens","Sony FE 16–35mm f/2.8 GM II autofocus wide-angle zoom lens")])expect(stockCheck(text),text).not.toEqual([]);
+ });
+});
+
+
+describe("captured priced-list sales reply",()=>{
+ const prices=listNative.prices as PriceEvidence[];
+ const priceCheck=(text=listNative.candidate,evidence=prices)=>unsupportedPriceClaims(text,evidence,listNative.stock_request,listNative.renter_message);
+ const stockCheck=(text=listNative.candidate,evidence=listNative.stock)=>unsupportedStockClaims(text,evidence,listNative.stock_request,["Canon R5"],listNative.renter_message);
+ it("keeps the explicit total and following plural stock claim attached to the immediate rows",()=>{
+  expect(priceCheck()).toEqual([]);expect(stockCheck()).toEqual([]);
+ });
+ it("requires the Native complete basket instead of independent standalone availability",()=>{
+  expect(priceCheck(listNative.candidate,prices.filter(e=>e.kind!=="basket"))).not.toEqual([]);
+  expect(stockCheck(listNative.candidate,listNative.stock.map(e=>({...e,basket:undefined})) as unknown as typeof listNative.stock)).not.toEqual([]);
+  expect(stockCheck(listNative.candidate,listNative.stock.map(e=>e.basket?{...e,basket:{...e.basket,available:false}}:e))).not.toEqual([]);
+ });
+ it("rejects wrong totals, row prices, rates, models, quantities and dates",()=>{
+  for(const text of [listNative.candidate.replace("£138","£139"),listNative.candidate.replace("£98","£97"),listNative.candidate.replace("£49/day","£50/day"),listNative.candidate.replace("- Sony FX3:","- Sony FX30:"),listNative.candidate.replace("- Sony FX3:","- two Sony FX3:"),listNative.candidate.replace("- Sony GM 16-35mm f/2.8:","- Sony GM 16-35mm f/4:"),listNative.candidate.replaceAll("20–21 October","22–23 October")])expect(priceCheck(text),text).not.toEqual([]);
+ });
+ it("checks the list heading's date span and duration for both prices and plural stock",()=>{
+  const changed=listNative.candidate.replace("For the 2 days (20–21 October):","For the 2 days (22–23 October):");
+  expect(priceCheck(changed)).not.toEqual([]);expect(stockCheck(changed)).not.toEqual([]);
+  expect(priceCheck(listNative.candidate.replace("For the 2 days (20–21 October):","For the 3 days (20–21 October):"))).not.toEqual([]);
+  expect(priceCheck(listNative.candidate.replace("- Sony FX3: £98","- Sony FX3: £98 for 22–23 October"))).not.toEqual([]);
+  expect(priceCheck(listNative.candidate.replace("- Sony FX3: £98","- Sony FX3: £98 for 20–21 October"))).toEqual([]);
+ });
+ it("does not carry a list through unrelated text or an unknown extra row",()=>{
+  for(const text of [listNative.candidate.replace("Total:","Some unrelated note.\nTotal:"),listNative.candidate.replace("Total:","- Unknown microphone: £0\nTotal:"),listNative.candidate.replace("Total:","- Sony GM 16-35mm f/2.8: £40\nTotal:")]){expect(priceCheck(text),text).not.toEqual([]);expect(stockCheck(text),text).not.toEqual([]);}
  });
 });

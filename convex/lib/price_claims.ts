@@ -7,7 +7,7 @@ import type { StockRequest } from "./stock_claims";
 import { lensClaimReferences, declaredLensReferences } from "./lens_claim_references";
 import { claimedRentalDays, withoutDurationReference } from "./claim_duration";
 import { amendmentMoneyClaims } from "./renter_amendment_money";
-import { itemReferenceLabel, parenthesizedPriceBreakdowns } from "./renter_claim_structure";
+import { itemReferenceLabel, itemQuoteRow, itemQuoteTotalPrefix, itemQuoteGroups, itemQuoteDateScope, parenthesizedPriceBreakdowns } from "./renter_claim_structure";
 
 /** Server-returned quotes. A number alone is never a receipt. */
 export type PriceEvidence = {
@@ -93,6 +93,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
   const names = [...new Set([...known.flatMap(k => aliases(k.names)), ...focalSubjects.keys()])].filter(Boolean).sort((a,b) => b.length-a.length);
   const duration = inclusiveRentalDays(request.start_date, request.end_date);
   const breakdowns=parenthesizedPriceBreakdowns(text);
+  const quoteGroups=itemQuoteGroups(text);
   const distinctKnown=known.filter((item,index)=>!known.slice(0,index).some(previous=>same(previous.names,item.names)));
   let subject: string[] = request.items.length === 1 ? [request.items[0].name, ...(request.items[0].aliases ?? [])] : [];
   let subjectQuantity: number | undefined;
@@ -102,11 +103,11 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     while(rows.length&&!rows.at(-1)!.trim())rows.pop();
     const group:Array<{names:string[];quantity:number}>=[];
     while(rows.length) {
-      const bullet=/^\s*[-*•]\s+([^:]+):/.exec(rows.at(-1)!);
+      const bullet=itemQuoteRow(rows.at(-1)!);
       if(!bullet)break;
       rows.pop();
-      const count=/^(\d+|one|two|three|four)(?:\s+[x×]?\s*|[x×]\s*)/i.exec(bullet[1]);
-      const label=bullet[1].slice(count?.[0].length??0).trim();
+      const count=/^(\d+|one|two|three|four)(?:\s+[x×]?\s*|[x×]\s*)/i.exec(bullet);
+      const label=bullet.slice(count?.[0].length??0).trim();
       const distinct=known.filter((item,index)=>!known.slice(0,index).some(previous=>same(previous.names,item.names)));
       const match=priceReference(label,distinct);
       const named=match.confident ? match.match : null;
@@ -148,9 +149,11 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     if(/\(\s*$/.test(segment) && claimedRentalDays(segment)===null && !/^\s*(?:\/\s*day|per\s+day|a\s+day)\s*\(/i.test(segment)) {
       const label=segment.replace(/\(\s*$/,"").split(/\b(?:the|your|our|my|an?)\s+/i).at(-1)?.trim()??"";
       const distinct=known.filter((item,index)=>!known.slice(0,index).some(previous=>same(previous.names,item.names)));
+      const calendar=claimDateScope(label,request.start_date);
+      const calendarOnly=calendar.matched_text && /^(?:for|on|from)?$/i.test(label.replace(calendar.matched_text,"").trim());
       const match=priceReference(label,distinct);
-      if(label && match.confident && match.match)subject=match.match.names;
-      else if(label && !isGenericItemQuery(label))subject=[norm(label)];
+      if(!calendarOnly && label && match.confident && match.match)subject=match.match.names;
+      else if(!calendarOnly && label && !isGenericItemQuery(label))subject=[norm(label)];
     }
     const segmentDates = claimDateScope(segment, request.start_date);
     // An unchanged booking amount belongs to the current order, even when a
@@ -233,8 +236,10 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
       : /\b(?:deposit|security\s+hold)\b/i.test(local) ? "deposit"
       : /\b(?:replacement\s+(?:cost|value)|insured\s+value)\b/i.test(local) ? "replacement"
       : /\b(?:delivery|courier|postage)\b/i.test(local) ? "delivery" : "rental";
-    const dateScope = claimDateScope(segment + m[0] + after, request.start_date);
-    const explicitDays = claimedRentalDays(local);
+    const quoteHeader=quoteGroups.find(group=>pos>=group.start&&pos<=group.end)?.header??"";
+    const dateScope = itemQuoteDateScope(segment + m[0] + after, quoteHeader, request.start_date);
+    const localDays=claimedRentalDays(local),headerDays=claimedRentalDays(quoteHeader);
+    const explicitDays = localDays!==null && headerDays!==null && localDays!==headerDays ? NaN : localDays??headerDays;
     const scopedDuration = dateScope.explicit && dateScope.valid ? inclusiveRentalDays(dateScope.start_date, dateScope.end_date) : null;
     const days = explicitDays !== null ? explicitDays : scopedDuration ?? duration;
     const requested = request.items.find(i => same(subject, [i.name, ...(i.aliases ?? [])]));
@@ -291,8 +296,9 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
       }
     }
     const groupAddition=componentAddition || !baselineTotal && !proposalTotal && group.length>1 && /\b(?:add|adding)\b[^£.!?]{0,80}\b(?:both|them|these|those|all)\b/i.test(segment);
+    const listedBasket=group.length>1 && itemQuoteTotalPrefix(segment);
     const inlineBasket=inlineGroup.length>1 && /^\s*total\b/i.test(following);
-    const basket = !!breakdown || inlineBasket || replacementAdjustment || groupAddition || proposalTotal || explicitBookingTotal || !!pairedItems || bookingSubject && request.items.length > 1 || /\b(?:combined|altogether|all\s+(?:of\s+)?(?:them|items)|grand\s+total|whole\s+(?:order|booking))\b/i.test(local) || (request.items.length > 1 && /\b(?:the|booking|order)\s+(?:(?:new|updated|revised)\s+)?total\b/i.test(segment));
+    const basket = !!breakdown || listedBasket || inlineBasket || replacementAdjustment || groupAddition || proposalTotal || explicitBookingTotal || !!pairedItems || bookingSubject && request.items.length > 1 || /\b(?:combined|altogether|all\s+(?:of\s+)?(?:them|items)|grand\s+total|whole\s+(?:order|booking))\b/i.test(local) || (request.items.length > 1 && /\b(?:the|booking|order)\s+(?:(?:new|updated|revised)\s+)?total\b/i.test(segment));
     const currentBookedPrice = /\b(?:current|existing|confirmed|booked|already|remains|stays)\b/i.test(segment) &&
       !/\b(?:would|could|add|adding)\b/i.test(segment);
     const additionPrice = !bookingSubject && !currentBookedPrice && /\b(?:extra|additional|another|second|third|fourth|2nd|3rd|4th)\b/i.test(segment);

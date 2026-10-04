@@ -3,7 +3,7 @@ import { shortItemName } from "./item_display_name";
 import { catalogueReadinessSubject } from "./catalogue_readiness";
 import { claimDateScope } from "./claim_date_scope";
 import { lensClaimReferences } from "./lens_claim_references";
-import { itemReferenceLabel } from "./renter_claim_structure";
+import { itemReferenceLabel, itemQuoteRow, itemQuoteTotalLine, itemQuoteGroups, itemQuoteDateScope } from "./renter_claim_structure";
 import { requestedLensSets, resolveLensSet, lensSetSubjectFamily, lensSetFocalPattern, lensSetSuffixPattern } from "./lens_set_resolution";
 export type StockReceipt = {
   item: string; start_date: string; end_date: string; quantity: number;
@@ -115,21 +115,26 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
   const requestedSets=requestedLensSets(latestRenterMessage,lenses);
   const setSafeText=text.replace(new RegExp(`\\b${lensSetFocalPattern}${lensSetSuffixPattern}\\b`,"gi"),
     list=>list.replace(/,\s*(?:and|&)\s*/gi,"/").replace(/,/g,"/"));
-  const clauses=setSafeText.replace(/’/g, "'").split(/(?<=[.!?])\s+|\n+|;\s*|,\s+|\s+(?:but|however|whereas|while)\s+/i);
+  const scopedText=setSafeText.replace(/’/g, "'");
+  const quoteGroups=itemQuoteGroups(scopedText);
+  let clauseEnd=0;
+  const clauses=scopedText.split(/(?<=[.!?])\s+|\n+|;\s*|,\s+|\s+(?:but|however|whereas|while)\s+/i);
   for (const [clauseIndex,rawClause] of clauses.entries()) {
+    const clauseStart=scopedText.indexOf(rawClause,clauseEnd);
+    clauseEnd=clauseStart+rawClause.length;
     const relativeSubjects=precedingNamedSubjects;
     precedingNamedSubjects=[];
-    const bullet=/^\s*[-*•]\s+([^:]+):/.exec(rawClause);
+    const bullet=itemQuoteRow(rawClause);
     const precedingBullets=bulletSubjects;
     const precedingInvalid=invalidBullet;
     if (bullet) {
-      const parsed=subjectOf(bullet[1]);
+      const parsed=subjectOf(bullet);
       const exact=knownSubjects.filter(i=>[i.name,...(i.aliases??[])].some(n=>sameItem(parsed.name,n)));
       const focal=references.get(identity(parsed.name.replace(/\s+lens(?:es)?$/i,"")));
       const resolved=exact.length===1 ? exact[0] : exact.length===0 ? focal?.item ?? lensSubject(parsed.name) : undefined;
       if (!resolved) invalidBullet=true;
       else bulletSubjects=[...bulletSubjects,withQuantity(resolved,parsed.quantity??resolved.quantity)];
-    } else {bulletSubjects=[];invalidBullet=false;}
+    } else if(!itemQuoteTotalLine(rawClause) || bulletSubjects.length<2) {bulletSubjects=[];invalidBullet=false;}
     // An unconditional equipment offer is an availability promise. Keep the
     // object, counts and dates intact; service offers and conditional checks
     // do not assert that physical equipment is currently free.
@@ -192,7 +197,8 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     // Recording capabilities and handoff slots aren't equipment-stock claims.
     if (/\b(?:4k(?:\s+recording)?|raw(?:\s+recording)?|autofocus|recording\s+mode|discounts?|payments?|verification)\s*$/i.test(prefix) || /\b(?:pickup|collection|delivery)(?:\s+(?:slot|time|window))?\b[^,;.!?]{0,40}$/i.test(prefix)) continue;
     const negative = !!match[1] || /^(?:unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|booked|none (?:left|available))$/i.test(match[0]);
-    const dateScope = claimDateScope(clause, request.start_date);
+    const quoteHeader=quoteGroups.find(group=>clauseStart>=group.start&&clauseStart<=group.end || precedingBullets.length>0 && /^\s*(?:both|they|these|those|all)\b/i.test(prefix) && clauseStart>group.end && !scopedText.slice(group.end,clauseStart).trim())?.header??"";
+    const dateScope = itemQuoteDateScope(clause, quoteHeader, request.start_date);
     const datedPrefix = dateScope.matched_text ? prefix.replace(dateScope.matched_text, "__stock_date__") : prefix;
     const extensionSubject = /^I\s+(?:can't|cannot|can not|am not able to)\s+extend\s+(.+?)\s+(?:through|until|to)\s+__stock_date__\s+(?:as|because)\s+(?:it's|it is)\s*$/i.exec(datedPrefix.trim());
     const subject = subjectOf(extensionSubject?.[1] ?? prefix.replace(/\s+(?:is|are)\s*$/i, ""));
