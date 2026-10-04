@@ -7,7 +7,7 @@ import { validateRenterBotOutput } from "../src/lib/renter-bot-output";
 import { describe, expect, it, vi } from "vitest";
 import { setDraftReview, setDraft, threadsNeedingDraft, claimDraftGeneration, releaseDraftGeneration, getDraftApprovalContext, recheckCopiedDraftStock } from "./replyInbox";
 import { generateDraft, sendRenterReply } from "./replyInbox_actions";
-import {performJointStockCheck} from './renter_bot_tools';
+import {performJointStockCheck,check_availability} from './renter_bot_tools';
 import { draftContextKey } from "./lib/draft_review";
 import { canonicalGenerationError, generationFailure } from "./lib/canonical_generation_error";
 
@@ -68,6 +68,10 @@ describe("copied bot replies use current Native stock before send",()=>{
   expect(overlap.components[0]).toMatchObject({free_units:0,new_inquiry:true});
   const future=await performJointStockCheck(f.ctx as any,{...input,booking_use:'separate',start_date:'2026-10-22',end_date:'2026-10-24'});
   expect(future).toMatchObject({available:true,new_inquiry:true,quote:{total_gbp:90},components:[{new_inquiry:true}]});
+  const individual={account_slug:'leo',thread_id:f.args.thread_id,item_name:'Sony FX3',product_id:123,quantity:1,start_date:input.start_date,end_date:input.end_date};
+  expect(await invoke(check_availability,f.ctx,{...individual,booking_use:'separate'})).toMatchObject({available:false,new_inquiry:true,components:[{free_units:0,new_inquiry:true}]});
+  expect(await invoke(check_availability,f.ctx,{...individual,booking_use:'separate',start_date:'2026-10-22',end_date:'2026-10-24'})).toMatchObject({available:true,new_inquiry:true,components:[{new_inquiry:true}]});
+  expect(await invoke(check_availability,f.ctx,{...individual,booking_use:'current'})).toMatchObject({available:true,booking_use:'current'});
   // Availability-only saved evidence must keep the same reservation exclusion.
   f.args.context_key=draftContextKey(f.rows.get(f.bookingId));
   const text='Sony FX3 is available for 2 to 4 October.';

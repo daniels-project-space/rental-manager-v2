@@ -15,7 +15,7 @@ import { verifiedLensCapabilities, assessLensRequirements, hasLensRequirements, 
 import { listingMediaConflict, withoutUnverifiedMediaCapacity } from "./lib/listing_media_conflict";
 import { resolveLensSet } from "./lib/lens_set_resolution";
 import { availabilityBasket } from "./lib/availability_basket";
-import { explicitRecommendationUse, recommendationBasket, type RecommendationLine } from "./lib/recommendation_basket";
+import { explicitRecommendationUse, recommendationBasket, type RecommendationLine, type RecommendationUse } from "./lib/recommendation_basket";
 import { checkOrderRentalStock } from "./lib/renter_order_stock";
 import { renterItemNames } from "./lib/renter_item_names";
 import { summarise } from "./lib/renter_order_quote";
@@ -740,7 +740,7 @@ export const lookup_pricing = query({
 
 type JointStockArgs={account_slug:string;thread_id?:string;start_date:string;end_date:string;
   items:Array<{item_name:string;quantity:number;product_id?:number}>;
-  booking_use?:"standalone"|"additional"|"replacement"|"separate";replace_product_id?:number;replace_quantity?:number;
+  booking_use?:RecommendationUse;replace_product_id?:number;replace_quantity?:number;
   pickup_time?:string;return_time?:string;recommendation_requirements?:RecommendationRequirement[]};
 export async function performJointStockCheck(ctx:QueryCtx,a:JointStockArgs,preloadedSources?:Awaited<ReturnType<typeof loadStockSources>>,recheck?:{standalone_offer:true;new_inquiry?:true}) {
     if (!a.items.length || a.items.length>8) return {available:null,reason:"use_one_to_eight_exact_items",components:[]};
@@ -755,7 +755,7 @@ export async function performJointStockCheck(ctx:QueryCtx,a:JointStockArgs,prelo
     const requiresContext=["CONFIRMED_UPCOMING","COLLECTION_DUE","IN_USE","RETURN_OVERDUE"].includes(stage);
     const existing:RecommendationLine[]=labOrder ? labOrder.items.map(l=>({name:l.name,qty:l.qty,product_id:l.product_id,item_id:l.item_id ? String(l.item_id) : undefined}))
       : booking?.hygglo_items?.length ? booking.hygglo_items.map(l=>({name:l.name,qty:l.qty ?? 1,product_id:l.product_id})) : booking?.items?.map(l=>({name:l.item_name,qty:l.qty ?? 1})) ?? [];
-    const recent=!recheck && a.thread_id && !closed && existing.length ? await recentThreadMessages(ctx,a.thread_id,12) : [];
+    const recent=!separate && !recheck && a.thread_id && !closed && existing.length ? await recentThreadMessages(ctx,a.thread_id,12) : [];
     const expected=explicitRecommendationUse(recent.filter(m=>m.sender!=="owner").at(-1)?.body_text ?? "");
     const sources=preloadedSources ?? await loadStockSources(ctx);
     const candidates:RecommendationLine[]=[];
@@ -783,8 +783,8 @@ export async function performJointStockCheck(ctx:QueryCtx,a:JointStockArgs,prelo
         start_date:a.start_date,end_date:a.end_date,basket,components:receipts.map(r=>({...r,basket,...(separate?{new_inquiry:true as const}:{})})),
         guidance:"At least one exact requested member is not rentable in the Native catalogue. This is not a calendar conflict and does not imply every member is missing. No booking or price changes were made."};
     }
-    const plan=recommendationBasket(existing,candidates[0],{requires_booking_context:!separate&&requiresContext,open_basket:!separate&&!closed && existing.length>0,
-      can_replace:!["IN_USE","RETURN_OVERDUE"].includes(stage),booking_use:separate?"standalone":a.booking_use as "standalone"|"additional"|"replacement"|undefined,expected_use:separate?undefined:expected,replace_product_id:a.replace_product_id,replace_quantity:a.replace_quantity});
+    const plan=recommendationBasket(existing,candidates[0],{requires_booking_context:requiresContext,open_basket:!closed && existing.length>0,
+      can_replace:!["IN_USE","RETURN_OVERDUE"].includes(stage),booking_use:separate?"separate":a.booking_use,expected_use:separate?undefined:expected,replace_product_id:a.replace_product_id,replace_quantity:a.replace_quantity});
     if (!plan.ok) return {available:null,reason:plan.reason,components:[]};
     const check=await checkOrderRentalStock(ctx,a.account_slug,[...plan.lines,...candidates.slice(1)],a.start_date,a.end_date,stockThread,sources,{pickup_time:a.pickup_time,return_time:a.return_time});
     const basket={available:check.available,items:check.receipts.map(r=>({name:r.item_name,quantity:r.requested_units}))};
@@ -796,7 +796,7 @@ export async function performJointStockCheck(ctx:QueryCtx,a:JointStockArgs,prelo
     const quotedLines=check.offerings?.map(l=>({...l,name:listingDisplayName(l.name,
       {components:sources.overrides.get(`${a.account_slug}#${l.product_id}`) ?? []},
       itemMap),verified_price_names:[l.name]}));
-    const preview=check.available===true && (plan.use==="standalone" || stage==="INQUIRY") && inclusiveRentalDays(a.start_date,a.end_date)!=null &&
+    const preview=check.available===true && (plan.use==="standalone" || plan.use==="separate" || stage==="INQUIRY") && inclusiveRentalDays(a.start_date,a.end_date)!=null &&
       quotedLines?.length===[...plan.lines,...candidates.slice(1)].length ? summarise(quotedLines,a.start_date,a.end_date) : null;
     const paired=check.receipts.some(r=>["camera","camera_body"].includes(r.kind??""))&&check.receipts.some(r=>r.kind==="lens");
     const technicalItems=await Promise.all((a.recommendation_requirements?.length||paired?check.receipts:[]).map(async r=>{
@@ -823,7 +823,7 @@ export const check_availability = query({
     pickup_time: v.optional(v.string()),
     return_time: v.optional(v.string()),
     thread_id: v.optional(v.string()),
-    booking_use: v.optional(v.union(v.literal("current"),v.literal("standalone"),v.literal("additional"),v.literal("replacement"))),
+    booking_use: v.optional(v.union(v.literal("current"),v.literal("standalone"),v.literal("additional"),v.literal("replacement"),v.literal("separate"))),
     prefetch_current: v.optional(v.boolean()),
     replace_product_id: v.optional(v.number()),
     replace_quantity: v.optional(v.number()),
@@ -841,7 +841,7 @@ export const check_availability = query({
         const resolved_items=set.items.map(item=>({item_name:item.name_canonical,quantity:quantity ?? 1}));
         const result=await performJointStockCheck(ctx,{account_slug,thread_id,start_date,end_date,items:resolved_items,booking_use,
           replace_product_id,replace_quantity,pickup_time,return_time},sources);
-        return {...result,resolved_items};
+        return {...result,resolved_items,free_units:null};
       }
     }
     if (thread_id) {
@@ -854,7 +854,7 @@ export const check_availability = query({
       const existing:RecommendationLine[]=labOrder ? labOrder.items.map(l=>({name:l.name,qty:l.qty,product_id:l.product_id,item_id:l.item_id ? String(l.item_id) : undefined}))
         : booking?.hygglo_items?.length ? booking.hygglo_items.map(l=>({name:l.name,qty:l.qty ?? 1,product_id:l.product_id}))
         : booking?.items?.map(l=>({name:l.item_name,qty:l.qty ?? 1})) ?? [];
-      const recent=existing.length && !closed ? await recentThreadMessages(ctx,thread_id,12) : [];
+      const recent=booking_use!=="separate" && existing.length && !closed ? await recentThreadMessages(ctx,thread_id,12) : [];
       const expected=explicitRecommendationUse(recent.filter(m=>m.sender!=="owner").at(-1)?.body_text ?? "");
       if (requiresContext || booking_use || expected) {
         const sources=await loadStockSources(ctx);
@@ -869,13 +869,13 @@ export const check_availability = query({
         const basket=availabilityBasket(existing,candidate,{requires_booking_context:requiresContext,open_basket:!closed && existing.length>0,
           can_replace:!["IN_USE","RETURN_OVERDUE"].includes(stage),booking_use,expected_use:expected,replace_product_id,replace_quantity,
           current_context:prefetch_current===true});
-        const check=basket.ok && account_slug ? await checkOrderRentalStock(ctx,account_slug,basket.lines,start_date,end_date,thread_id,sources,{pickup_time,return_time}) : null;
+        const check=basket.ok && account_slug ? await checkOrderRentalStock(ctx,account_slug,basket.lines,start_date,end_date,basket.use==="separate"?"":thread_id,sources,{pickup_time,return_time}) : null;
         return {available:check?.available ?? null,owned:check?.available===true ? true : null,item_name:candidate.name,
           product_id,requested_units:candidate.qty,free_units:null,start_date,end_date,checked_at:Date.now(),
-          booking_use:basket.use,rental_stage:stage,reason:basket.ok ? check?.reason ?? "missing_account" : basket.reason,
+          booking_use:basket.use,...(basket.use==="separate"?{new_inquiry:true as const}:{}),rental_stage:stage,reason:basket.ok ? check?.reason ?? "missing_account" : basket.reason,
           stock_scope:basket.use==="current" ? "current_booking" : "proposed_basket",
           basket:check ? {available:check.available,items:check.receipts.map(r=>({name:r.item_name,quantity:r.requested_units}))} : undefined,
-          components:(check?.receipts ?? []).map(r=>({...r,basket:{available:check!.available,items:check!.receipts.map(c=>({name:c.item_name,quantity:c.requested_units}))}})),replacement_removed_listings:basket.removed,
+          components:(check?.receipts ?? []).map(r=>({...r,...(basket.use==="separate"?{new_inquiry:true as const}:{}),basket:{available:check!.available,items:check!.receipts.map(c=>({name:c.item_name,quantity:c.requested_units}))}})),replacement_removed_listings:basket.removed,
           conflict_count:check?.receipts.filter(r=>r.available===false).length ?? 0,buffer_violation:false,
           guidance:"This verdict checks the complete basket. Current-booking checks do not prove an extra item. A rejected proposal can be caused by shared components; explain their counts rather than claiming the added item is independently out of stock. Replacement is a read-only scenario, never a booking edit."};
       }
@@ -1021,7 +1021,7 @@ export const find_owned_alternatives = query({
     end_date: v.optional(v.string()),
     quantity: v.optional(v.number()),
     thread_id: v.optional(v.string()),
-    booking_use: v.optional(v.union(v.literal("standalone"),v.literal("additional"),v.literal("replacement"))),
+    booking_use: v.optional(v.union(v.literal("standalone"),v.literal("additional"),v.literal("replacement"),v.literal("separate"))),
     replace_product_id: v.optional(v.number()),
     replace_quantity: v.optional(v.number()),
   },
@@ -1166,7 +1166,7 @@ export const find_owned_alternatives = query({
     const existingLines: RecommendationLine[] = labOrder ? labOrder.items.map(l=>({name:l.name,qty:l.qty,product_id:l.product_id,item_id:l.item_id ? String(l.item_id) : undefined}))
       : booking?.hygglo_items?.length ? booking.hygglo_items.map(l=>({name:l.name,qty:l.qty ?? 1,product_id:l.product_id}))
       : booking?.items?.map(l=>({name:l.item_name,qty:l.qty ?? 1})) ?? [];
-    const recent = thread_id ? await recentThreadMessages(ctx,thread_id,12) : [];
+    const recent = booking_use!=="separate" && thread_id ? await recentThreadMessages(ctx,thread_id,12) : [];
     const latestRenter = recent.filter(m=>m.sender!=="owner").at(-1)?.body_text ?? "";
     const expectedUse = requiresBookingContext ? explicitRecommendationUse(latestRenter) : undefined;
     const lensQuery = lens_requirements !== undefined || normKind(kind) === "lens" || normKind(target?.kind) === "lens";
@@ -1230,15 +1230,15 @@ export const find_owned_alternatives = query({
       const altPid = altListing?.product_id;
       const basket = recommendationBasket(existingLines,{name:it.name_canonical,qty:quantity ?? 1,item_id:String(it._id),product_id:altPid},basketContext);
       const check = stockSources && start_date && end_date && basket.ok
-        ? await checkOrderRentalStock(ctx,account_slug,basket.lines,start_date,end_date,thread_id ?? "",stockSources) : null;
+        ? await checkOrderRentalStock(ctx,account_slug,basket.lines,start_date,end_date,basket.use==="separate"?"":thread_id ?? "",stockSources) : null;
       if (check && check.available !== true) {
         rejected.stock++;
         if (rejectedStockOptions.length<8) rejectedStockOptions.push({name:it.name_canonical,kind:it.kind,booking_use:basket.use,
-          reason:check.reason,stock_receipts:check.receipts});
+          reason:check.reason,stock_receipts:check.receipts.map(r=>({...r,...(basket.use==="separate"?{new_inquiry:true as const}:{})}))});
         continue;
       }
       const stock = stockSources && start_date && end_date ? {available:check?.available ?? null,
-        start_date,end_date,quantity:quantity ?? 1,free_units:basket.use==="standalone" ? check?.receipts.find(r=>r.item_id===String(it._id))?.free_units ?? null : null,
+        start_date,end_date,quantity:quantity ?? 1,free_units:["standalone","separate"].includes(basket.use??"") ? check?.receipts.find(r=>r.item_id===String(it._id))?.free_units ?? null : null,
         checked_at:Date.now(),basis:basket.use ?? "unresolved_booking_context",reason:basket.ok ? check?.reason ?? "dates_required" : basket.reason} : null;
       let altRawTiers: PriceTier[] = [];
       let altTiers: string | null = null;
@@ -1267,7 +1267,7 @@ export const find_owned_alternatives = query({
         quote: quote ? { ...quote, start_date, end_date, product_id: altPid, matched_listing: altListing?.name } : null,
         price_tiers: altTiers,
         availability: stock,
-        stock_receipts: check?.receipts ?? [],
+        stock_receipts: (check?.receipts ?? []).map(r=>({...r,...(basket.use==="separate"?{new_inquiry:true as const}:{})})),
         booking_use: basket.use ?? null,
         stock_context_reason: basket.ok ? null : basket.reason,
         replacement_removed_listings: basket.removed,
@@ -1307,12 +1307,12 @@ export const find_owned_alternatives = query({
     void account_slug;
     return {
       rental_stage:stage,
-      booking_context_required:requiresBookingContext,
+      booking_context_required:requiresBookingContext&&booking_use!=="separate",
       current_booking_listings:existingLines,
       booking_use:booking_use ?? expectedUse ?? (requiresBookingContext ? null : "standalone"),
       message_booking_use:expectedUse ?? null,
       rejected_stock_options:rejectedStockOptions,
-      stock_guidance:"Availability applies only to the returned booking_use. For a confirmed booking, choose additional or replacement with the exact current replace_product_id. Replacement removes that entire listing's specified units, including its kit contents; explain what changes. In-use replacements require return confirmation. Unknown context or missing dates cannot prove availability. Prices are for each suggested offering, not a combined booking total. No booking was changed.",
+      stock_guidance:"Availability applies only to the returned booking_use. For a separate hire choose separate, which checks the new gear while keeping the existing reservation occupied. After selecting an option, use check_basket_availability with separate and its exact listing ID for a Native combined quote. For a confirmed-booking amendment, choose additional or replacement with the exact current replace_product_id. Replacement removes that entire listing's specified units, including its kit contents; explain what changes. In-use replacements require return confirmation. Unknown context or missing dates cannot prove availability. Prices are for each suggested offering, not a combined booking total. No booking was changed.",
       kind: kind ?? null,
       matched_by: matchedBy,
       kind_fell_back: kindFellBack,

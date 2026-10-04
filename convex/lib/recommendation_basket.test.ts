@@ -4,6 +4,12 @@ const ff={name:"Full Frame + Canon kit",qty:1,product_id:1172450};
 const pro={name:"Pro body kit",qty:1,product_id:1172895};
 const ctx={requires_booking_context:true,open_basket:true,can_replace:true};
 describe("recommendation stock uses the intended basket",()=>{
+  it('keeps an independent hire separate from an active order without removing booked units',()=>{
+    const before=structuredClone([ff,pro]);
+    expect(recommendationBasket(before,pro,{...ctx,can_replace:false,booking_use:'separate'})).toMatchObject({ok:true,use:'separate',lines:[pro],removed:[]});
+    expect(before).toEqual([ff,pro]);
+    expect(recommendationBasket(before,pro,{...ctx,booking_use:'separate',expected_use:'additional'}).ok).toBe(false);
+  });
   it("retains both existing kits for an addition",()=>{
     expect(recommendationBasket([ff,pro],pro,{...ctx,booking_use:"additional"}).lines).toEqual([ff,pro,pro]);
   });

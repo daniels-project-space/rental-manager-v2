@@ -3,6 +3,11 @@ import { availabilityBasket } from "./availability_basket";
 const existing=[{name:"Full Frame kit",qty:1,product_id:10},{name:"Pro kit",qty:1,product_id:20}];
 const context={requires_booking_context:true,open_basket:true,can_replace:true};
 describe("availability basket scope",()=>{
+  it('checks a separate hire without adding to or removing the existing basket',()=>{
+    const candidate={name:'FX3',qty:1,product_id:30};
+    expect(availabilityBasket(existing,candidate,{...context,can_replace:false,booking_use:'separate'})).toMatchObject({ok:true,use:'separate',lines:[candidate],removed:[]});
+    expect(existing).toHaveLength(2);
+  });
   it("counts the complete existing basket for current gear without adding another unit",()=>{
     const result=availabilityBasket(existing,{name:"Pro",qty:1,product_id:20},{...context,booking_use:"current",expected_use:"additional",current_context:true});
     expect(result.ok).toBe(true);expect(result.lines).toEqual(existing);expect(existing).toHaveLength(2);
