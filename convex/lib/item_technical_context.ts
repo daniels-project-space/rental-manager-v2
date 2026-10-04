@@ -22,6 +22,10 @@ export function equipmentUsageContext(items: RequestedEquipment[]) {
     supplied_camera_bodies,
     source: "native_rental_components" as const,
     renter_camera_body: null,
+    setup_advice: {
+      camera_controls: "Only identify controls verified for the renter's actual body. With an unknown body, describe focus-assist options conditionally, if supported.",
+      depth_of_field: "A numerical focusing distance or guarantee of sharpness requires the actual sensor, aperture and focus distance. Lens focal length alone does not establish those setup parameters; give general advice without guessed distances or sharpness promises.",
+    },
     guidance: "These are recorded rental contents, not proof of the renter's chosen camera. Establish the body from the renter's explicit statement before body-specific setup advice; a lens brand or mount does not identify it. Answer verified lens facts immediately. When the body is unspecified, give general manual-focus advice and ask its model only for camera-specific controls. With several supplied bodies, do not choose one implicitly.",
   };
 }
