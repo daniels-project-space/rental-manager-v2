@@ -397,12 +397,14 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
   let requestMessageId: string | undefined;
   let ownerCheckContext: unknown[] = [];
   let renterContext:unknown=null;
+  let renterCameraIdentityContext:unknown=[];
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rc: any = await convex.query(api.renter_bot_tools.get_renter_context, { thread_id });
     account_slug = rc?.account_slug ?? "";
     ownerCheckContext = Array.isArray(rc?.owner_checks) ? rc.owner_checks : [];
     renterContext={profile:rc?.renter??null,history:rc?.renter_history??null};
+    renterCameraIdentityContext=rc?.renter_camera_identities??[];
     requestMessageId = typeof rc?.last_message_id === "string" ? rc.last_message_id : undefined;
     const msgs = (rc?.last_messages ?? []) as Array<{ sender?: string; body?: string }>;
     // Skip Hygglo's own moderation banners when deciding what the renter
@@ -460,6 +462,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
   // requested listing + its real availability up front — it must not contradict
   // these). The agent can still call check_location, search_knowledge, etc.
   let groundTruth = `${sensorComparisonInstruction()}\n`;
+  groundTruth += `RENTER CAMERA SELF-DESCRIPTION: ${JSON.stringify(renterCameraIdentityContext)}. This comes from explicit renter statements, not lens mounts or supplied contents. An empty list means their body is unknown. Identity alone does not verify camera controls or specifications. Ask a neutral camera-model question when unknown.\n`;
   const marketingItems: string[] = [];
   // Defaults FALSE — this must FAIL CLOSED. It gates pickup-address disclosure
   // (below) and the false-confirmation guard, and it is only set true when a

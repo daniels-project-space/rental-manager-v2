@@ -23,6 +23,7 @@ export default defineConfig({
     globals: false,
     include: [
       "convex/lib/item_technical_context.test.ts",
+      "convex/lib/renter_camera_identity.test.ts",
       "convex/lib/owner_setup.test.ts",
       "convex/lib/owner_authorization.test.ts",
       "convex/owner_functions.test.ts",

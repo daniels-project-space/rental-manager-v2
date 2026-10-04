@@ -1,4 +1,5 @@
 import {rentalReplyPermissions} from "./rental_stage";
+import { unsupportedRenterCameraClaims } from "./renter_camera_identity";
 import {assertsOutsideConditional,claimsCurrentOwnerApproval,claimsBookingConfirmation,hasPickupDisclosure} from "./booking_reply_claims";
 import type { MinimumRentalContext } from "./minimum_rental";
 import { unsupportedCatalogueReadinessClaims, type CatalogueReadinessEvidence } from "./catalogue_readiness";
@@ -62,6 +63,8 @@ export interface GuardOpts {
   history: { role: "owner" | "renter"; content: string }[];
   /** The renter's most recent message (drives time/intent checks). */
   lastRenterMessage: string;
+  /** Native renter messages only, oldest to newest, independent of owner prose. */
+  renterCameraMessages?: string[];
   /** Account slug (leo / dbcinema / diogo / …). */
   account?: string;
   /** Lowercased rental stage (booked / confirmed / completed / …). */
@@ -197,6 +200,7 @@ const SEVERITY: Record<string, FlagSeverity> = {
   LOCATION_ASK_FOR_DISCOUNT: "high",
   UNGROUNDED_SPEC: "high",
   LENS_FOCUS_HALLUCINATION: "high",
+  RENTER_CAMERA_IDENTITY_UNVERIFIED: "high",
   AVAILABILITY_CONTRADICTION: "high",
   PHYSICAL_PRESENCE: "high",
   MISSED_ARRIVAL: "high",
@@ -1103,6 +1107,11 @@ const ASSERTS_AVAIL_RE =
   }
   if(opts.lensEvidence!==undefined)for(const claim of unsupportedLensFocusClaims(text,opts.lensEvidence,opts.stockRequest?.items.map(i=>i.name)??[],opts.cameraEvidence?.flatMap(e=>e.names)??[])) {
     push("LENS_FOCUS_HALLUCINATION",`Focus mode lacks matching reviewed lens proof: "${claim.slice(0,160)}"`,"flagged");
+  }
+  for (const claim of unsupportedRenterCameraClaims(text, opts.renterCameraMessages ?? [
+    ...opts.history.filter(message => message.role === "renter").map(message => message.content), opts.lastRenterMessage,
+  ])) {
+    push("RENTER_CAMERA_IDENTITY_UNVERIFIED", `Camera reference lacks the renter's explicit setup evidence: "${claim.slice(0,160)}"`, "flagged");
   }
 
   // 17. INCLUDED ACCESSORY CHARGED SEPARATELY — FLAG

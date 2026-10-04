@@ -9,6 +9,7 @@ import { draftContextKey } from "./lib/draft_review";
 import { inventorySpecMap } from "./lib/inventory_spec_grounding";
 import { equipmentClaimProfiles } from "./lib/equipment_claim_profiles";
 import { equipmentUsageContext } from "./lib/item_technical_context";
+import { renterCameraIdentities } from "./lib/renter_camera_identity";
 import { verifiedLensCapabilities, assessLensRequirements, hasLensRequirements, type LensCapabilities } from "./lib/lens_requirements";
 import { listingMediaConflict, withoutUnverifiedMediaCapacity } from "./lib/listing_media_conflict";
 import { resolveLensSet } from "./lib/lens_set_resolution";
@@ -80,7 +81,7 @@ export const get_renter_context = query({
     // RED Komodo isn't available for those dates" when asked about PRICE.
     // 12 covers a 5-6 turn exchange (renter + owner per turn) and is cheap —
     // chat messages are short, and the static prefix is cached separately.
-    const recentMsgs = await recentThreadMessages(ctx, thread_id, 12);
+    const recentMsgs = await recentThreadMessages(ctx, thread_id, 40);
 
     const stage = reservation
       ? rentalStage(reservation,londonToday()).stage
@@ -96,12 +97,13 @@ export const get_renter_context = query({
           : conversation?.account_slug ?? reservation?.account_slug ?? "unknown",
       hygglo_order_id: reservation?.hygglo_order_id ?? thread_id,
       renter,
+      renter_camera_identities: renterCameraIdentities(recentMsgs.filter(message=>message.sender!=="owner").map(message=>message.body_text)),
       renter_history:await renterHistory(ctx,profile,thread_id,londonToday()),
       owner_checks: ownerChecks,
       conversation_stage: stage,
       rental_stage: rentalStage(reservation, londonToday()),
       last_message_id: recentMsgs.at(-1)?.message_id ?? null,
-      last_messages: recentMsgs
+      last_messages: recentMsgs.slice(-12)
         .map((m) => ({
           sender: m.sender === "owner" ? "owner" : "renter",
           sender_name: m.sender_name ?? m.sender,

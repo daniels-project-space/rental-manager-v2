@@ -4,6 +4,7 @@ import { unsupportedPriceClaims, type PriceEvidence } from "./lib/price_claims";
 import { performJointStockCheck } from "./renter_bot_tools";
 import { qualifyRecommendationBasket } from "./lib/recommendation_qualification";
 import { equipmentClaimProfiles, equipmentClaimsNeedProfiles } from "./lib/equipment_claim_profiles";
+import { unsupportedRenterCameraClaims } from "./lib/renter_camera_identity";
 import { unsupportedLensFocusClaims } from "./lib/lens_focus_claims";
 import { unsupportedCameraModeClaims, unsupportedBuiltInNDClaims } from "./lib/camera_mode_claims";
 import { renterHistory } from "./lib/renter_history";
@@ -1697,6 +1698,7 @@ export const getThreadContext = internalQuery({
       delivery_fee_gbp: reservation?.delivery_fee_gbp ?? null,
       currency: reservation?.currency ?? "GBP",
       messages: recent,
+      renter_camera_messages: renterMsgs,
       last_message_id: latest?.message_id ?? null,
     };
   },
@@ -2137,7 +2139,8 @@ export const recheckCopiedDraftStock = internalQuery({
     draft_approval:v.object({message_id:v.string(),context_key:v.string(),epoch:v.number(),generated_at:v.number()})},
   handler: async (ctx,{thread_id,account_slug,text,draft_approval}) => {
     const conv=await ctx.db.query("conversations").withIndex("by_thread",q=>q.eq("thread_id",thread_id)).first();
-    const [latest]=await recentThreadMessages(ctx,thread_id,1);
+    const cameraMessages = await recentThreadMessages(ctx,thread_id,40);
+    const latest = cameraMessages.at(-1);
     const settings=await ctx.db.query("settings").first();
     const booking=await getBotBooking(ctx,thread_id);
     const current=currentDraftApproval(conv,{message_id:latest?.message_id,epoch:settings?.draft_epoch??0,
@@ -2145,6 +2148,8 @@ export const recheckCopiedDraftStock = internalQuery({
     if ((conv?.account_slug??booking?.account_slug)!==account_slug || !sameDraftApproval(current,draft_approval))
       return {ok:false,reason:"stale_draft"};
     const currentStage=rentalStage(booking,londonToday());
+    if(unsupportedRenterCameraClaims(text,cameraMessages.filter(message=>message.sender!=="owner").map(message=>message.body_text)).length)
+      return {ok:false,reason:"renter_camera_identity_unverified"};
     const permissions=currentStage;
     if(!permissions.can_confirm_booking && claimsBookingConfirmation(text) ||
       !permissions.can_acknowledge_owner_acceptance && claimsCurrentOwnerApproval(text))return {ok:false,reason:"booking_state_unverified"};

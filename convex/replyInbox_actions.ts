@@ -897,6 +897,7 @@ export const generateDraft = action({
       commercialContext: routeCommercialContext,
       history: c.messages as { role: "owner" | "renter"; content: string }[],
       lastRenterMessage: lastRenter,
+      renterCameraMessages: c.renter_camera_messages,
       account: c.account_slug ?? undefined,
       stage: guardStage,
       pickupWindows: c.pickup_windows ?? undefined,
@@ -1157,6 +1158,8 @@ export const sendRenterReply = action({
           ? "The quoted price no longer matches the current listing rates. Generate a fresh draft before sending this quote."
           : stock.reason === "technical_claims_unverified"
           ? "The equipment details in this reply do not match current verified specifications. Review the claimed capability before sending."
+          : stock.reason === "renter_camera_identity_unverified"
+          ? "This reply assumes a camera body the renter has not identified. Ask for their actual model before giving camera-specific advice."
           : stock.reason === "technical_requirements_unverified"
           ? "The recommended equipment no longer has verified specifications for the requirements in this draft. Generate a fresh draft, or clear the copied draft and review the equipment yourself."
           : "The quoted equipment or availability no longer matches current inventory. Generate a fresh draft, or clear the copied draft and review the gear before sending."};

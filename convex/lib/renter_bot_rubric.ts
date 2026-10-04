@@ -288,6 +288,12 @@ export function scoreDraft(input: RubricInput): RubricOutput {
   // return value) — the actual safety net, surfaced directly rather than
   // only through this file's own regex reimplementations above. ──
   const productionFlags = input.productionFlags ?? [];
+  const identityFailures = productionFlags.filter(flag => flag.type === "RENTER_CAMERA_IDENTITY_UNVERIFIED" && flag.action === "flagged");
+  add("renter_camera_identity",input.productionFlags===undefined?"n_a":identityFailures.length?"fail":"pass",
+    input.productionFlags===undefined?"Native camera-reference check was not supplied.":identityFailures.length
+      ?"The reply assumes a renter camera identity without explicit setup evidence."
+      :"No unsupported labelled renter-camera reference was detected; this does not verify camera controls or all technical advice.",
+    identityFailures.map(flag=>flag.detail).join("; ")||undefined);
   if (input.productionFlags === undefined) {
     add(
       "production_guard",

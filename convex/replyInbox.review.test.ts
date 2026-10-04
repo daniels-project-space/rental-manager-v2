@@ -53,6 +53,15 @@ describe("copied bot replies use current Native stock before send",()=>{
   return f;
  }
  const recheck=(f:any,text=f.text)=>invoke(recheckCopiedDraftStock,f.ctx,{thread_id:f.args.thread_id,account_slug:"leo",text,draft_approval:f.approval.draft_approval});
+ it("checks camera referents against renter evidence during copied-draft approval",async()=>{
+  const f=await stockDraft();
+  expect(await recheck(f,"Which Sony body are you using?")).toMatchObject({ok:false,reason:"renter_camera_identity_unverified"});
+  expect(await recheck(f,"Which camera body are you using?")).toMatchObject({ok:true});
+  const inbound=[...f.rows.values()].find(r=>r.table==="hygglo_messages");
+  await f.ctx.db.patch(inbound._id,{sender:"renter",body_text:"I'm shooting with a Sony FX3."});
+  expect(await recheck(f,"Which Sony body are you using?")).toMatchObject({ok:true});
+  expect(await recheck(f,"Your Canon camera is ready.")).toMatchObject({ok:false,reason:"renter_camera_identity_unverified"});
+ });
  it("rejects a competing confirmed booking created after a previously available draft",async()=>{
   const f=await stockDraft();expect(await recheck(f)).toMatchObject({ok:true});
   await f.ctx.db.insert("reservations",{hygglo_order_id:"competing-rental",status:"confirmed",start_date:"2026-10-02",end_date:"2026-10-04",expanded_items:[{item_id:f.itemId,qty:1}]});
