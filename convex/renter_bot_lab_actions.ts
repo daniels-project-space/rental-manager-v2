@@ -162,10 +162,10 @@ export const appendAssistantMessage = internalMutation({
     const existing = await ctx.db.query("hygglo_messages").withIndex("by_thread", (q) => q.eq("thread_id", args.thread_id)).collect();
     if (existing.some((m) => m.message_id === messageId)) return;
     const conversation = await ctx.db.query("conversations").withIndex("by_thread",q=>q.eq("thread_id",args.thread_id)).first();
-    const proposals=conversation?.account_slug === args.account_slug ? await sentBookingProposals(ctx, conversation, args.text) : {additions:[],dates:[],replacements:[]};
-    const quoted_additions=proposals.additions,quoted_dates=proposals.dates,quoted_replacements=proposals.replacements;
+    const proposals=conversation?.account_slug === args.account_slug ? await sentBookingProposals(ctx, conversation, args.text) : {additions:[],dates:[],replacements:[],inquiries:[]};
+    const quoted_inquiries=proposals.inquiries,quoted_additions=proposals.additions,quoted_dates=proposals.dates,quoted_replacements=proposals.replacements;
     const now = Date.now();
-    await ctx.db.insert("hygglo_messages", { account_slug: args.account_slug, thread_id: args.thread_id, message_id: messageId, sender: "owner", sender_name: "Lab owner", body_text: args.text, hygglo_sent_at: now, fetched_at: now, ...(quoted_additions.length ? {quoted_additions} : {}), ...(quoted_dates.length ? {quoted_dates} : {}), ...(quoted_replacements.length ? {quoted_replacements} : {}) });
+    await ctx.db.insert("hygglo_messages", { account_slug: args.account_slug, thread_id: args.thread_id, message_id: messageId, sender: "owner", sender_name: "Lab owner", body_text: args.text, hygglo_sent_at: now, fetched_at: now, ...(quoted_inquiries.length ? {quoted_inquiries} : {}), ...(quoted_additions.length ? {quoted_additions} : {}), ...(quoted_dates.length ? {quoted_dates} : {}), ...(quoted_replacements.length ? {quoted_replacements} : {}) });
   },
 });
 

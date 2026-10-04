@@ -1,3 +1,4 @@
+import {sentInquiryOffers,type SentInquiryOffer} from "./sent_inquiry_offer";
 import { recommendationRequirementValidator } from "./recommendation_qualification";
 import { REFERRAL_RESTORE_OFFER } from "./referral_offer";
 import {replacementProposalsFromEvidence,type SentReplacementProposal} from "./renter_replacement_proposal";
@@ -50,22 +51,24 @@ export function additionProposalsFromEvidence(prices: PriceEvidence[], scope: {
 }
 
 /** Called when an owner message is recorded, before its draft is cleared. */
-export async function sentBookingProposals(ctx: QueryCtx, conversation: Doc<"conversations"> | null, text: string): Promise<{additions:SentAdditionProposal[];dates:SentDateProposal[];replacements:SentReplacementProposal[]}> {
+export async function sentBookingProposals(ctx: QueryCtx, conversation: Doc<"conversations"> | null, text: string): Promise<{additions:SentAdditionProposal[];dates:SentDateProposal[];replacements:SentReplacementProposal[];inquiries:SentInquiryOffer[]}> {
   const selectedOffers=conversation?.ai_draft_evidence?.stock_quotes??[];
   // Operators can edit surrounding prose while the Native financial/action
   // block remains exact. Changing that block cannot borrow its offer proof.
   const preservedOffer=selectedOffers.length===1 && !!selectedOffers[0].referral_code &&
     !!selectedOffers[0].offer_text && text.includes(selectedOffers[0].offer_text);
   if (!conversation?.ai_draft_text || text.trim() !== conversation.ai_draft_text.trim() && !preservedOffer ||
-    !conversation.ai_draft_evidence?.prices?.length && !selectedOffers.length) return {additions:[],dates:[],replacements:[]};
+    !conversation.ai_draft_evidence?.prices?.length && !selectedOffers.length) return {additions:[],dates:[],replacements:[],inquiries:[]};
   const [latest] = await recentThreadMessages(ctx, conversation.thread_id, 1);
-  if (latest?.sender !== "renter") return {additions:[],dates:[],replacements:[]};
+  if (latest?.sender !== "renter") return {additions:[],dates:[],replacements:[],inquiries:[]};
   const settings = await ctx.db.query("settings").first();
   const order = await getLabOrder(ctx, conversation.thread_id);
-  if (!order) return {additions:[],dates:[],replacements:[]};
   const context_key = draftContextKey(await getBotBooking(ctx, conversation.thread_id), conversation.inquiry_items, order);
   const epoch = settings?.draft_epoch ?? 0;
   const approval = currentDraftApproval(conversation, {message_id:latest.message_id, context_key, epoch});
+  if(!approval)return {additions:[],dates:[],replacements:[],inquiries:[]};
+  const inquiries=sentInquiryOffers(conversation.ai_draft_evidence!,{context_key,epoch,message_id:approval.message_id});
+  if(!order)return {additions:[],dates:[],replacements:[],inquiries};
   const members = (rows:Array<{name:string;quantity:number}>) => {
     const totals=new Map<string,number>();
     for(const row of rows)totals.set(row.name,(totals.get(row.name)??0)+row.quantity);
@@ -73,7 +76,6 @@ export async function sentBookingProposals(ctx: QueryCtx, conversation: Doc<"con
   };
   const currentMembers=members(order.items.map(i=>({name:i.name,quantity:i.qty})));
   const pendingPrices=(conversation.ai_draft_evidence!.prices??[]).filter(p=>p.proposal && members(p.proposal.base_items)===currentMembers);
-  if(!approval)return {additions:[],dates:[],replacements:[]};
   const total=summarise(order.items,order.start_date,order.end_date).total_gbp;
   const dates:SentDateProposal[]=[];
   for(const price of conversation.ai_draft_evidence!.prices??[]){const p=price.date_proposal;
@@ -95,7 +97,7 @@ export async function sentBookingProposals(ctx: QueryCtx, conversation: Doc<"con
       quoted_lines:priced.lines.map(l=>({product_id:l.product_id,name:l.name,qty:l.quantity,line_total_gbp:l.total_gbp})),
       start_date:offer.start_date,end_date:offer.end_date,total_gbp:priced.total_gbp,additional_cost_gbp:priced.total_gbp});
   }
-  return {additions,dates,replacements:replacementProposalsFromEvidence(pendingPrices,{message_id:approval.message_id,context_key,epoch})};
+  return {additions,dates,inquiries,replacements:replacementProposalsFromEvidence(pendingPrices,{message_id:approval.message_id,context_key,epoch})};
 }
 
 export async function sentAdditionProposals(ctx:QueryCtx,conversation:Doc<"conversations">|null,text:string){return (await sentBookingProposals(ctx,conversation,text)).additions;}

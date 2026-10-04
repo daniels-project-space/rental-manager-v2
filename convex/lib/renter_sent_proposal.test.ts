@@ -1,3 +1,4 @@
+import {sentBookingProposals} from "./renter_sent_proposal";
 import { REFERRAL_RESTORE_OFFER } from "./referral_offer";
 import { describe, expect, it } from "vitest";
 import { additionProposalsFromEvidence, sentAdditionProposals } from "./renter_sent_proposal";
@@ -109,4 +110,27 @@ describe("sent date offer archive",()=>{
    expect(f.tables.hygglo_messages.at(-1)).toMatchObject({quoted_dates:[expect.objectContaining({context_key:f.conversation.ai_draft_context_key,from_end_date:"2026-10-21",end_date:"2026-10-22",total_gbp:170,base_total_gbp:124,physical_identity_key:"native-date-key",quoted_for_message_id:"renter-current"})]});
   });
  }
+});
+
+
+describe("ordinary Native inquiry offer history",()=>{
+ function quoted(){const f=fixture();f.conversation.ai_draft_text="For 3 days: 1 × Sony 16-35mm: £50. Total: £50.";
+  f.conversation.ai_draft_evidence={model_id:"native-test",stage:"CONFIRMED_UPCOMING",prices:[],stock:[],stock_quotes:[{quote_key:"separate-native",new_inquiry:true,start_date:"2026-10-22",end_date:"2026-10-24",items:[{item_id:"sony16",name:"Sony 16-35mm",quantity:1}],listing_quote:{total_gbp:50,lines:[{product_id:123,name:"Sony 16-35mm",quantity:1,total_gbp:50}]}}]};return f;}
+ for(const path of ["lab","owner"])it(`${path} retains the reviewed independent offer with its original request and context`,async()=>{
+  const f=quoted(),text=f.conversation.ai_draft_text;
+  if(path==="lab")await (appendAssistantMessage as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,run_id:"quote-history"});
+  else await (recordSentReply as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,message_id:"owner-sent"});
+  expect(f.tables.hygglo_messages.at(-1).quoted_inquiries).toEqual([{context_key:f.conversation.ai_draft_context_key,epoch:5,quoted_for_message_id:"renter-current",quote:f.conversation.ai_draft_evidence.stock_quotes[0]}]);
+ });
+ it("cannot archive edited, stale, unscoped, ambiguous or inconsistent offers",async()=>{
+  for(const variant of ["edit","stale","unscoped","ambiguous","total"]){
+   const f=quoted();let text=f.conversation.ai_draft_text;
+   if(variant==="edit")text=text.replaceAll("£50","£40");
+   if(variant==="stale")f.conversation.ai_draft_epoch=4;
+   if(variant==="unscoped")delete f.conversation.ai_draft_evidence.stock_quotes[0].new_inquiry;
+   if(variant==="ambiguous")f.conversation.ai_draft_evidence.stock_quotes.push(f.conversation.ai_draft_evidence.stock_quotes[0]);
+   if(variant==="total")f.conversation.ai_draft_evidence.stock_quotes[0].listing_quote.total_gbp=60;
+   expect((await sentBookingProposals(f.ctx,f.conversation,text)).inquiries).toEqual([]);
+  }
+ });
 });

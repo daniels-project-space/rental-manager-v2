@@ -1,3 +1,4 @@
+import {sentInquiryOfferValidator} from "./lib/sent_inquiry_offer";
 import { RECORDING_MODE_RESOLUTIONS } from "./lib/camera_requirements";
 import {sentReplacementProposalValidator} from "./lib/renter_replacement_proposal";
 import { lensFactFields, lensVariantReviewValidator } from "./lib/lens_variant_review";
@@ -958,6 +959,7 @@ const operationalSchema = defineSchema({
     hygglo_sent_at: v.optional(v.number()),
     fetched_at: v.number(),
     raw: v.optional(v.string()),
+    quoted_inquiries:v.optional(v.array(sentInquiryOfferValidator)),
     quoted_additions: v.optional(v.array(sentAdditionProposalValidator)),
     quoted_replacements:v.optional(v.array(sentReplacementProposalValidator)),
     quoted_dates: v.optional(v.array(sentDateProposalValidator)),

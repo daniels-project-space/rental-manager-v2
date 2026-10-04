@@ -1,4 +1,4 @@
-import {computeNegotiationStance} from "./lib/renter_bot_negotiation";
+import {computeNegotiationStance,negotiationFromMessages} from "./lib/renter_bot_negotiation";
 import type {Id} from "./_generated/dataModel";
 import {handle as handleOwnerCheck, ownerChecksForBot } from "./renter_bot_owner_checks";
 import {ownerCheckScopeKey, nativeOwnerChecks } from "./lib/owner_checks";
@@ -594,5 +594,16 @@ describe('negotiation applies to the current price turn',()=>{
  });
  it('can resume a genuine price discussion without forgetting real earlier objections',()=>{
   expect(computeNegotiationStance({priorRenterMessages:history,latestMessage:'Can you do the lens for £40?'})).toMatchObject({stance:'SOFT_YIELD',objectionCount:4,discountAuthority:'may_escalate'});
+ });
+});
+
+
+describe("Native offered price provenance",()=>{
+ it("reads only recorded owner offers and carries their request and date scope",()=>{
+  const offer={context_key:"primary-context",epoch:5,quoted_for_message_id:"separate-request",quote:{quote_key:"native-separate",new_inquiry:true as const,start_date:"2026-10-22",end_date:"2026-10-24",items:[{item_id:"sony",name:"Sony lens",quantity:1}],listing_quote:{total_gbp:50,lines:[{product_id:123,name:"Sony lens",quantity:1,total_gbp:50}]}}};
+  const text={sender:"renter",body_text:"Any discount?"};
+  expect(negotiationFromMessages([{sender:"owner",body_text:"Total: £50",quoted_inquiries:[offer]},text])).toMatchObject({lastPriceOfferedGbp:50,lastInquiryOffer:offer});
+  expect(negotiationFromMessages([{...text,quoted_inquiries:[offer]}])).toMatchObject({lastPriceOfferedGbp:null,lastInquiryOffer:null});
+  expect(negotiationFromMessages([{sender:"owner",body_text:"Total: £500"},text])).toMatchObject({lastPriceOfferedGbp:null,lastInquiryOffer:null});
  });
 });

@@ -14,6 +14,7 @@
  * regardless of objection count.
  */
 
+import type {SentInquiryOffer} from './sent_inquiry_offer';
 export type NegotiationStance =
   | "NONE"
   | "HOLD_FIRM"
@@ -43,9 +44,14 @@ export interface NegotiationOutput {
 
 /** Same bounded Native history for drafting and the Mastra tool. */
 export const NEGOTIATION_HISTORY_LIMIT=50;
-export function negotiationFromMessages(messages:Array<{sender:string;body_text:string}>) {
+export function negotiationFromMessages(messages:Array<{sender:string;body_text:string;quoted_inquiries?:SentInquiryOffer[]}>) {
   const renterMessages=messages.filter(message=>message.sender==="renter").map(message=>message.body_text);
-  return computeNegotiationStance({latestMessage:renterMessages.at(-1)??"",priorRenterMessages:renterMessages.slice(0,-1)});
+  // Native owner-message evidence describes the historical offered amount;
+  // its dates and request context remain attached. It never grants current
+  // price/stock authority or approval to create a booking.
+  const latestOffer=messages.filter(message=>message.sender==="owner").flatMap(message=>message.quoted_inquiries??[]).at(-1)??null;
+  return {...computeNegotiationStance({latestMessage:renterMessages.at(-1)??"",priorRenterMessages:renterMessages.slice(0,-1),
+    lastPriceOfferedGbp:latestOffer?.quote.listing_quote?.total_gbp??null}),lastInquiryOffer:latestOffer};
 }
 
 // Price objections require price language; another hire or a delivery request
