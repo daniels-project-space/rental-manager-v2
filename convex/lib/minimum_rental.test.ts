@@ -21,6 +21,10 @@ describe("prospective minimum-value context",()=>{
   expect(minimumRentalContext("CONFIRMED_UPCOMING",40,[old],request,[offer]).status).toBe("not_applicable");
   for(const bad of [{...offer,source:"lab_order_quote"},{...offer,end_date:undefined},{...offer,call_id:""},{...offer,items:[]}])expect(minimumRentalContext("INQUIRY",40,[old],request,[bad]).status).toBe("unknown");
  });
+ it("keeps prospective instructions scoped to the evaluated quote",()=>{
+  for(const assessed of [context(),context([{...price,total_gbp:30}]),context([])])expect(minimumRentalPrompt(assessed)).toContain("supersedes the earlier request's assessment");
+  expect(minimumRentalPrompt(context([price],request,"CONFIRMED_UPCOMING"))).not.toContain("supersedes");
+ });
  it("does not classify partial baskets, unknown dates or mismatched scope",()=>{
   const mixed={...request,items:[...request.items,{name:"Sony A7 V",quantity:1}]};
   for(const [p,r] of [[[price],mixed],[[price],{...request,end_date:undefined}],[[{...price,quantity:1}],request],[[{...price,start_date:"2026-10-04"}],request]] as Array<[PriceEvidence[],StockRequest]>)expect(context(p,r).status).toBe("unknown");
