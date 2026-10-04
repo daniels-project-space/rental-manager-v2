@@ -156,3 +156,27 @@ describe("renter_bot_rubric.scoreDraft", () => {
     expect(r.overall_status).toBe("pass");
   });
 });
+
+
+describe("Native price grading",()=>{
+ const request={start_date:"2026-10-22",end_date:"2026-10-23",items:[{name:"TTArtisan 11mm f2.8 Fisheye (Sony E)",quantity:1}]};
+ const prices:import("./price_claims").PriceEvidence[]=[{names:[],items:request.items,start_date:request.start_date,end_date:request.end_date,kind:"basket",days:2,total_gbp:42,source:"native_inquiry_basket",quote_role:"inquiry",call_id:"native-quote"},
+  {names:[request.items[0].name,"TTArtisan 11mm f/2.8 fisheye (E)"],kind:"rental",days:2,quantity:1,start_date:request.start_date,end_date:request.end_date,total_gbp:42,source:"native_inquiry_basket",call_id:"native-quote:line"}];
+ const text="For 2 days (22 October 2026 to 23 October 2026):\n- 1 × TTArtisan 11mm f/2.8 fisheye (E): £42\nTotal: £42\n\nThis new hire is not yet confirmed. I can send the exact address once the new booking is confirmed.";
+ const score=(draftText=text,priceEvidence=prices)=>scoreDraft({accountSlug:"leo",draftText,priceEvidence,priceRequest:request,factsClaimed:[],productionFlags:[]});
+ it("grades a real Native quote despite an empty model claim list",()=>{
+  expect(score().results.find(r=>r.category==="pricing_quoting")?.status).toBe("pass");
+  expect(score().filter_violation_categories).not.toContain("UNVERIFIABLE_PRICE");
+ });
+ it("does not let matching whole totals hide an edited line price",()=>{
+  expect(score(text.replace("(E): £42","(E): £43")).results.find(r=>r.category==="pricing_quoting")?.status).toBe("fail");
+ });
+ it("rejects missing or mismatched Native proof despite a model's verified assertion",()=>{
+  for(const priceEvidence of [[],prices.map(p=>({...p,start_date:"2026-10-24",end_date:"2026-10-25"})),prices.map(p=>({...p,call_id:""}))])expect(score(text,priceEvidence).results.find(r=>r.category==="pricing_quoting")?.status).toBe("fail");
+  expect(scoreDraft({accountSlug:"leo",draftText:"The total is £99.",priceEvidence:prices,priceRequest:request,factsClaimed:[{kind:"price",value:"£99",verified:true}]}).results.find(r=>r.category==="pricing_quoting")?.status).toBe("fail");
+ });
+ it("distinguishes a supplied empty production guard result from a missing result",()=>{
+  expect(score().results.find(r=>r.category==="production_guard")?.status).toBe("pass");
+  expect(scoreDraft({accountSlug:"leo",draftText:"Thanks!"}).results.find(r=>r.category==="production_guard")?.status).toBe("n_a");
+ });
+});

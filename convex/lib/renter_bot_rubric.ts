@@ -1,3 +1,5 @@
+import {unsupportedPriceClaims,type PriceEvidence} from "./price_claims";
+import type {StockRequest} from "./stock_claims";
 /**
  * renter_bot_rubric — scores one renter-bot draft against Daniel's policy
  * categories, for the test harness only (never imported by production
@@ -43,6 +45,10 @@ export interface RubricInput {
   // UPSELL_PATTERNS are stage-gated and narrower than this file's
   // UPSELL_LANGUAGE list).
   productionFlags?: ProductionFlag[];
+  /** Native generation evidence, separate from the model's self-report. */
+  priceEvidence?: PriceEvidence[];
+  priceRequest?: StockRequest;
+  lastRenterMessage?: string;
 }
 
 export type RubricStatus = "pass" | "fail" | "flag" | "n_a";
@@ -96,8 +102,11 @@ export function scoreDraft(input: RubricInput): RubricOutput {
     accountSlug,
     factsClaimed,
   );
-  const allViolations = [...real.violations, ...supplemental];
+  const nativePricing=input.priceEvidence!==undefined&&input.priceRequest!==undefined;
+  const nativePriceFailures=nativePricing?unsupportedPriceClaims(draftText,input.priceEvidence!,input.priceRequest!,input.lastRenterMessage??""):[];
+  const allViolations = [...real.violations, ...supplemental.filter(v=>!nativePricing||!["MADE_UP_PRICE","UNVERIFIABLE_PRICE"].includes(v.category))];
   const cats = new Set(allViolations.map((v) => v.category));
+  if(nativePriceFailures.length)cats.add("NATIVE_PRICE_UNSUPPORTED");
 
   const results: RubricCategoryResult[] = [];
   const add = (
@@ -155,7 +164,11 @@ export function scoreDraft(input: RubricInput): RubricOutput {
   );
 
   // ── Pricing / quoting ──
-  if (has(cats, "MADE_UP_PRICE", "FABRICATED_QUOTE")) {
+  if(nativePricing&&!has(cats,"FABRICATED_QUOTE")) {
+    add("pricing_quoting",nativePriceFailures.length?"fail":"pass",nativePriceFailures.length
+      ? "The quoted amounts do not have matching Native item, quantity and date proof."
+      : "No monetary claim lacks matching Native price proof.",nativePriceFailures.join("; ")||undefined);
+  } else if (has(cats, "MADE_UP_PRICE", "FABRICATED_QUOTE")) {
     add(
       "pricing_quoting",
       "fail",
@@ -275,12 +288,14 @@ export function scoreDraft(input: RubricInput): RubricOutput {
   // return value) — the actual safety net, surfaced directly rather than
   // only through this file's own regex reimplementations above. ──
   const productionFlags = input.productionFlags ?? [];
-  if (productionFlags.length === 0) {
+  if (input.productionFlags === undefined) {
     add(
       "production_guard",
       "n_a",
       "No productionFlags passed in for this run — caller didn't forward generateDraft's real guard output.",
     );
+  } else if(productionFlags.length===0) {
+    add("production_guard","pass","Production guard output was supplied and contains no flags.");
   } else {
     for (const f of productionFlags) {
       // action="flagged" means guardDraft detected the issue but left the text

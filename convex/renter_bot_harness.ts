@@ -163,6 +163,9 @@ export const runFixture = action({
         draftText,
         factsClaimed,
         productionFlags: draftResult.flags,
+        priceEvidence:draftResult.evidence?.prices,
+        priceRequest:draftResult.evidence?.stock_request,
+        lastRenterMessage:fixture.messages.filter(m=>m.role==="renter").at(-1)?.text,
       });
       overallStatus = rubric.overall_status;
 
@@ -366,6 +369,9 @@ export const runMultiTurnScenario = action({
         draftText,
         factsClaimed,
         productionFlags: draftResult.flags,
+        priceEvidence:draftResult.evidence?.prices,
+        priceRequest:draftResult.evidence?.stock_request,
+        lastRenterMessage:text,
       });
 
       const runId = await ctx.runMutation(internal.renter_bot_harness.insertRun, {

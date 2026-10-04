@@ -324,6 +324,9 @@ export const sendTestMessage = action({
       draftText,
       factsClaimed,
       productionFlags: draftResult.flags,
+      priceEvidence:draftResult.evidence?.prices,
+      priceRequest:draftResult.evidence?.stock_request,
+      lastRenterMessage:args.text,
     });
 
     const runId: string = await ctx.runMutation(
