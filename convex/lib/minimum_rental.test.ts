@@ -25,6 +25,19 @@ describe("prospective minimum-value context",()=>{
   for(const assessed of [context(),context([{...price,total_gbp:30}]),context([])])expect(minimumRentalPrompt(assessed)).toContain("supersedes the earlier request's assessment");
   expect(minimumRentalPrompt(context([price],request,"CONFIRMED_UPCOMING"))).not.toContain("supersedes");
  });
+ it("assesses the new selected inquiry rather than reopening a closed rental's price",()=>{
+  const quote:PriceEvidence={names:[],items:[{name:"TTArtisan 11mm",quantity:1}],kind:"basket",days:1,start_date:"2026-10-22",end_date:"2026-10-22",total_gbp:21,source:"native_inquiry_basket",quote_role:"inquiry",call_id:"selected-new-inquiry"};
+  for(const stage of ["COMPLETED","CANCELLED","VERIFICATION_FAILED"]) {
+   expect(minimumRentalContext(stage,40,[price],request)).toMatchObject({stage,status:"not_applicable",basis:"none"});
+   const assessed=minimumRentalContext(stage,40,[price],request,[quote]);
+   expect(assessed).toMatchObject({stage:"INQUIRY",status:"below",total_gbp:21,basis:"lowest_selected_inquiry_quote"});
+   expect(minimumRentalPrompt(assessed)).toContain("optional");expect(minimumRentalPrompt(assessed)).not.toContain("£40");
+   expect(minimumRentalContext(stage,40,[price],request,[{...quote,total_gbp:60}])).toMatchObject({stage:"INQUIRY",status:"meets",total_gbp:60});
+   expect(minimumRentalContext(stage,40,[price],request,[{...quote,end_date:undefined}])).toMatchObject({status:"unknown",total_gbp:null});
+  }
+  expect(minimumRentalContext("IN_USE",40,[price],request,[quote]).status).toBe("not_applicable");
+  expect(guardDraft("It is available for your new dates.",{history:[],lastRenterMessage:"Can I rent it again?",commercialContext:minimumRentalContext("COMPLETED",40,[price],request,[quote])}).flags.some(f=>f.type==="LOW_VALUE_BLOCK")).toBe(true);
+ });
  it("does not classify partial baskets, unknown dates or mismatched scope",()=>{
   const mixed={...request,items:[...request.items,{name:"Sony A7 V",quantity:1}]};
   for(const [p,r] of [[[price],mixed],[[price],{...request,end_date:undefined}],[[{...price,quantity:1}],request],[[{...price,start_date:"2026-10-04"}],request]] as Array<[PriceEvidence[],StockRequest]>)expect(context(p,r).status).toBe("unknown");

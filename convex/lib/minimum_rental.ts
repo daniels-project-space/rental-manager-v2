@@ -1,6 +1,7 @@
 import { inclusiveRentalDays } from "./hygglo_pricing";
 import { samePriceNames, type PriceEvidence } from "./price_claims";
 import type { StockRequest } from "./stock_claims";
+import {isClosedRentalStage} from "./rental_stage";
 export type MinimumRentalContext = {
   stage: string; threshold_gbp: number; total_gbp: number | null;
   status: "below" | "meets" | "unknown" | "not_applicable" | "disabled";
@@ -32,6 +33,9 @@ export function requestedBasketEvidence(prices:PriceEvidence[],request:StockRequ
 }
 /** Commercial policy applies before owner acceptance, never retroactively. */
 export function minimumRentalContext(stage: string, threshold: number, prices: PriceEvidence[], request: StockRequest, selectedInquiryQuotes: PriceEvidence[] = []): MinimumRentalContext {
+  // A closed rental remains history. A selected Native standalone quote in
+  // that chat is a separate prospective enquiry with its own commercial scope.
+  if(isClosedRentalStage(stage) && selectedInquiryQuotes.length)stage="INQUIRY";
   const min = Number.isFinite(threshold) && threshold >= 0 ? threshold : 40;
   const context: MinimumRentalContext={stage,threshold_gbp:min,total_gbp:null,status:"unknown",basis:"none"};
   if(min===0)return {...context,status:"disabled"};
