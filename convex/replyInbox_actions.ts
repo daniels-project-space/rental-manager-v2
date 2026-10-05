@@ -1158,6 +1158,8 @@ export const sendRenterReply = action({
           ? "The historical rental record in this reply no longer matches the original order. Generate a fresh draft before quoting its recorded total."
           : stock.reason === "price_unverified"
           ? "The quoted price no longer matches the current listing rates. Generate a fresh draft before sending this quote."
+          : stock.reason === "kit_contents_unverified"
+          ? "The supplied kit contents in this reply do not match current inventory records. Review the batteries, storage and accessories before sending."
           : stock.reason === "technical_claims_unverified"
           ? "The equipment details in this reply do not match current verified specifications. Review the claimed capability before sending."
           : stock.reason === "renter_camera_identity_unverified"

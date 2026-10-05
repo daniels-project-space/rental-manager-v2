@@ -212,6 +212,11 @@ describe("updated setup refers to the current booking",()=>{
 });
 
 describe("verification questions do not assert supplied contents", () => {
+ it("treats a direct question separately from following affirmative contents",()=>{
+  const evidence=[{names:["Sony FX3"],contents:[]}];
+  expect(unsupportedKitClaims("Does the Sony FX3 include a 1TB CFexpress Type B card?",evidence)).toEqual([]);
+  expect(unsupportedKitClaims("Does the Sony FX3 include a card? Sony FX3 includes a 1TB CFexpress Type B card.",evidence)).toHaveLength(1);
+ });
  const evidence=[{names:["BMPCC 6K Pro"],contents:["5x NP-F570 batteries"]}];
  const check=(text:string)=>unsupportedKitClaims(text,evidence,["BMPCC 6K Pro"]);
  it("permits the captured uncertainty about card/SSD contents",()=>{

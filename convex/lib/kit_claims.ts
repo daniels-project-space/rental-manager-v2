@@ -8,6 +8,11 @@ const categories = [
   ["case", /\b(?:cases?|bags?)\b/i], ["filter", /\bfilters?\b/i], ["monitor", /\bmonitors?\b/i],
   ["gimbal", /\bgimbals?\b/i], ["adapter", /\badapters?\b/i], ["ssd", /\bssd\b/i],
 ] as const;
+/** Avoid catalogue reads for unrelated uses such as “the price includes VAT”. */
+export function kitClaimsNeedEvidence(text:string) {
+  return /\b(?:comes with|ships with|bundled with|includes?|included)\b/i.test(text)
+    && categories.some(([,pattern])=>pattern.test(text));
+}
 const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 function namesItem(text: string, name: string) {
   const tokens = normalize(name).split(" ").filter(Boolean);

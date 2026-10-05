@@ -1,3 +1,5 @@
+import {currentKitEvidence} from "./lib/current_kit_evidence";
+import {unsupportedKitClaims,kitClaimsNeedEvidence} from "./lib/kit_claims";
 import {inquiryOffersForText} from "./lib/native_inquiry_offer";
 import {sameRentalRequest} from "./lib/rental_request";
 import {negotiationFromMessages} from "./lib/renter_bot_negotiation";
@@ -22,7 +24,7 @@ import { sentBookingProposals } from "./lib/renter_sent_proposal";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 import { shortListingTitle, shortItemName } from "./lib/item_display_name";
 import { verifiedItemSpec } from "./lib/verified_item_spec";
-import { getBotBooking, getLabOrder, type BotBooking } from "./lib/renter_booking";
+import { getBotBooking, getLabOrder, requestedListingContext, type BotBooking } from "./lib/renter_booking";
 import { rentalStage } from "./lib/rental_stage";
 import { londonToday } from "./lib/effectiveDates";
 /**
@@ -2187,6 +2189,15 @@ export const recheckCopiedDraftStock = internalQuery({
         return {ok:false,reason:"booking_record_unverified"};
     }
     const request=stockRequestForInquiryQuote(stockRequestForSeparateCheck(evidence?.stock_request??{items:[]},evidence?.stock??[]),evidence?.stock_quotes??[],rentalStage(booking,londonToday()).stage);
+    if(kitClaimsNeedEvidence(text)) {
+      const currentLines=requestedListingContext(booking,labOrder,conv?.inquiry_items).lines.map(l=>({...l,name:l.name??""}));
+      const selectedLines=(evidence?.stock_quotes??[]).flatMap(q=>q.listing_quote?.lines??[]);
+      const kit=await currentKitEvidence(ctx,account_slug,text,[
+        ...currentLines.map(l=>({...l,booked:true})),...selectedLines,
+      ]);
+      if(unsupportedKitClaims(text,kit,request.items.map(i=>i.name),currentLines.map(l=>l.name)).length)
+        return {ok:false,reason:"kit_contents_unverified"};
+    }
     // Human wording edits cannot borrow technical facts from a previous draft.
     // Reuse the generation validators with current exact catalogue reviews.
     if(equipmentClaimsNeedProfiles(text)) {

@@ -84,6 +84,41 @@ describe("copied bot replies use current Native stock before send",()=>{
   return f;
  }
  const recheck=(f:any,text=f.text)=>invoke(recheckCopiedDraftStock,f.ctx,{thread_id:f.args.thread_id,account_slug:"leo",text,draft_approval:f.approval.draft_approval});
+ it("revalidates supplied contents after inventory records change",async()=>{
+  const f=await stockDraft();await f.ctx.db.patch(f.itemId,{kind:"camera",compatibility:{included_with_rental:["2 x NP-FZ100 batteries","1 x 128GB SD card"]}});
+  expect(await recheck(f,"Sony FX3 includes two NP-FZ100 batteries and a 128GB SD card.")).toMatchObject({ok:true});
+  await f.ctx.db.patch(f.itemId,{compatibility:{included_with_rental:["1 x NP-FZ100 battery","1 x 64GB SD card"]}});
+  expect(await recheck(f,"Sony FX3 includes two NP-FZ100 batteries and a 128GB SD card.")).toEqual({ok:false,reason:"kit_contents_unverified"});
+  expect(await recheck(f,"Sony FX3 includes one NP-FZ100 battery and a 64GB SD card.")).toMatchObject({ok:true});
+ });
+ it("rebuilds exact listing components rather than borrowing advertising or old mapping names",async()=>{
+  const f=await stockDraft();await f.ctx.db.patch(f.itemId,{kind:"camera"});
+  const card=await f.ctx.db.insert("items",{name_canonical:"128GB SD card",kind:"storage",status:"active",qty:1});
+  await f.ctx.db.insert("hygglo_products",{accountSlug:"leo",productId:123,name:"Sony FX3 Kit",masterItemId:f.itemId});
+  await f.ctx.db.insert("online_listings",{account_slug:"leo",product_id:123,name:"Sony FX3 Kit + 1TB SSD",description:"",daily_price:30});
+  await f.ctx.db.insert("listing_resolution_override",{account_slug:"leo",product_id:123,components:[{item_id:f.itemId,qty:1},{item_id:card,qty:1}]});
+  await f.ctx.db.patch(f.bookingId,{hygglo_items:[{name:"Sony FX3 Kit",qty:1,product_id:123}]});
+  f.args.context_key=draftContextKey(f.rows.get(f.bookingId));
+  await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:f.args.context_key,draft_text:f.text,evidence:f.evidence});
+  f.approval=await invoke(getDraftApprovalContext,f.ctx,{thread_id:f.args.thread_id});
+  expect(await recheck(f,"Sony FX3 Kit includes a 128GB SD card.")).toMatchObject({ok:true});
+  expect(await recheck(f,"Sony FX3 Kit includes a 1TB SSD.")).toEqual({ok:false,reason:"kit_contents_unverified"});
+  await f.ctx.db.patch(card,{name_canonical:"64GB SD card"});
+  expect(await recheck(f,"Sony FX3 Kit includes a 128GB SD card.")).toEqual({ok:false,reason:"kit_contents_unverified"});
+  expect(await recheck(f,"Sony FX3 Kit includes a 64GB SD card.")).toMatchObject({ok:true});
+ });
+ it("rejects invented supplied storage but permits a verification question",async()=>{
+  const f=await stockDraft();
+  expect(await recheck(f,"Sony FX3 comes with a 1TB CFexpress Type B card.")).toEqual({ok:false,reason:"kit_contents_unverified"});
+  expect(await recheck(f,"Does the Sony FX3 include a 1TB CFexpress Type B card?")).toMatchObject({ok:true});
+  expect(await recheck(f,"Unidentified camera comes with a 1TB SD card.")).toEqual({ok:false,reason:"kit_contents_unverified"});
+ });
+ it("does not borrow another item's contents or marketing-only records",async()=>{
+  const f=await stockDraft();await f.ctx.db.patch(f.itemId,{kind:"camera"});
+  await f.ctx.db.insert("items",{name_canonical:"BMPCC 6K Full Frame",kind:"camera",status:"active",qty:1,is_marketing_only:true,compatibility:{included_with_rental:["1 x 1TB CFexpress Type B card"]}});
+  expect(await recheck(f,"BMPCC 6K Full Frame includes a 1TB CFexpress Type B card.")).toEqual({ok:false,reason:"kit_contents_unverified"});
+  expect(await recheck(f,"Sony FX3 includes the BMPCC 6K Full Frame's 1TB CFexpress Type B card.")).toEqual({ok:false,reason:"kit_contents_unverified"});
+ });
  it("quotes an independent hire without releasing the current rental, and preserves that purpose at approval",async()=>{
   const f=await stockDraft();await f.ctx.db.patch(f.itemId,{kind:'camera'});
   await f.ctx.db.insert('hygglo_products',{accountSlug:'leo',productId:123,name:'Sony FX3',masterItemId:f.itemId,prices:[]});

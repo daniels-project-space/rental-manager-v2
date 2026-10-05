@@ -1,6 +1,8 @@
 /** Mask verification questions, preserving offsets and separate assertions. */
 export function withoutVerificationQuestions(text: string): string {
-  return text.replace(/\b(?:(?:check|verify|confirm|find\s+out)\s+(?:whether|if)|(?:don't|do\s+not|doesn't|does\s+not|cannot|can't)\s+(?:currently\s+|yet\s+)?(?:confirm|verify))\b[^,;.!?\n]*?(?=\s+\b(?:but|however|whereas|while|and\s+(?:(?:your|the|this|that|our)\s+)?(?:kit|set|camera|body)\s+(?:includes?|comes|is|has))\b|[,;.!?\n]|$)/gi,
+  const assertions = text.replace(/(^|[.!?\n])\s*(?:does|do|is|are|can|could|would|will|has|have)\b[^,;.!?\n]*\?/gi,
+    part => " ".repeat(part.length));
+  return assertions.replace(/\b(?:(?:check|verify|confirm|find\s+out)\s+(?:whether|if)|(?:don't|do\s+not|doesn't|does\s+not|cannot|can't)\s+(?:currently\s+|yet\s+)?(?:confirm|verify))\b[^,;.!?\n]*?(?=\s+\b(?:but|however|whereas|while|and\s+(?:(?:your|the|this|that|our)\s+)?(?:kit|set|camera|body)\s+(?:includes?|comes|is|has))\b|[,;.!?\n]|$)/gi,
     part => " ".repeat(part.length));
 }
 
