@@ -2,7 +2,7 @@ import { recommendationRequirementsKey, type RecommendationRequirement } from ".
 import {sameRentalRequest,type RentalRequest} from "../../convex/lib/rental_request";
 import { AsyncLocalStorage } from "node:async_hooks";
 
-export type RenterScope = { threadId: string; accountSlug: string; requestMessageId?: string; rentalRequest?:RentalRequest; bookingWritesAllowed?: boolean; rentalStage?: string; minimumRentalThreshold?:number; queryRevision?:()=>number; recommendationRequirements?:RecommendationRequirement[] };
+export type RenterScope = { threadId: string; accountSlug: string; requestMessageId?: string; rentalRequest?:RentalRequest; bookingWritesAllowed?: boolean; rentalStage?: string; minimumRentalThreshold?:number; queryRevision?:()=>number; queryReadRevision?:(value:unknown)=>number|undefined; recommendationRequirements?:RecommendationRequirement[] };
 const storage = new AsyncLocalStorage<RenterScope>();
 export const withRenterToolScope = <T>(scope: RenterScope, run: () => T): T => storage.run(scope, run);
 export const currentRenterToolScope = () => storage.getStore();

@@ -301,3 +301,11 @@ describe("human review of Native inquiry blocks",()=>{
   const f=offer();expect(inquiryOffersForText(f.evidence,f.saved,"I can check other suitable options.")).toMatchObject({supported:true,ok:true,quotes:[]});
  });
 });
+
+
+it("does not relabel a stale closed booking record as a current snapshot",()=>{
+ const record:BookingRecord={thread_id:scope.threadId,account_slug:"leo",stage:"COMPLETED",start_date:"2026-10-08",end_date:"2026-10-09",total_gbp:42,amount_basis:"lab_quote"};
+ const context={...scope,rentalStage:"COMPLETED",queryRevision:()=>2};
+ expect(nativeBookingRecord(record,context,0)).toBeNull();
+ expect(nativeBookingRecord(record,context,2)).toMatchObject({request_revision:2,record});
+});

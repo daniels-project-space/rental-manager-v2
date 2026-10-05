@@ -13,10 +13,11 @@ import type { ToolReceipt } from "./renter-tool-evidence";
 import type { RenterBotOutput } from "./renter-bot-output";
 import { renterItemNames } from "../../convex/lib/renter_item_names";
 
-export type NativeQuoteScope={bookingRecord?:NativeBookingRecord;referralContext?:{ok?:boolean;code?:string;already_linked?:boolean;items?:Array<{product_id:number}>};referralContextRevision?:number;threadId:string;accountSlug:string;requestMessageId?:string;rentalRequest?:RentalRequest;rentalStage?:string;minimumRentalThreshold?:number;queryRevision?:()=>number;recommendationRequirements?:RecommendationRequirement[]};
+export type NativeQuoteScope={bookingRecord?:NativeBookingRecord;referralContext?:{ok?:boolean;code?:string;already_linked?:boolean;items?:Array<{product_id:number}>};referralContextRevision?:number;threadId:string;accountSlug:string;requestMessageId?:string;rentalRequest?:RentalRequest;rentalStage?:string;minimumRentalThreshold?:number;queryRevision?:()=>number;queryReadRevision?:(value:unknown)=>number|undefined;recommendationRequirements?:RecommendationRequirement[]};
 export type NativeBookingRecord={record_key:string;display_text:string;request_revision:number;record:BookingRecord};
-export function nativeBookingRecord(record:BookingRecord|null|undefined,scope:NativeQuoteScope):NativeBookingRecord|null {
+export function nativeBookingRecord(record:BookingRecord|null|undefined,scope:NativeQuoteScope,readRevision=scope.queryRevision?.()):NativeBookingRecord|null {
  const revision=scope.queryRevision?.();
+ if(readRevision===undefined||readRevision!==revision)return null;
  if(!record||!isClosedRentalStage(scope.rentalStage)||record.stage!==scope.rentalStage||record.thread_id!==scope.threadId||record.account_slug!==scope.accountSlug||revision===undefined||!Number.isInteger(revision))return null;
  const record_key=`record_${createHash("sha256").update(JSON.stringify([record,scope.requestMessageId??"",revision])).digest("hex").slice(0,32)}`;
  return {record_key,request_revision:revision,display_text:bookingRecordText(record),record};

@@ -102,9 +102,9 @@ export const getListingContextTool = createTool({
   }),
   outputSchema: z.unknown(),
   execute: async ({ thread_id }) => {
+    const scope=currentRenterToolScope(),revision=scope?.queryRevision?.();
     const result=await convex().query(anyApi.renter_bot_tools.get_listing_context, {thread_id});
-    const scope=currentRenterToolScope();
-    return {...result,booking_record:scope?nativeBookingRecord(result.booking_record,scope):null};
+    return {...result,booking_record:scope?nativeBookingRecord(result.booking_record,scope,scope.queryReadRevision?.(result)??revision):null};
   },
 });
 
@@ -200,7 +200,7 @@ export const checkBasketAvailabilityTool = createTool({
   execute:async(input)=>{
     const scope=currentRenterToolScope(),revision=scope?.queryRevision?.();
     const result=await convex().query(anyApi.renter_bot_tools.check_basket_availability,{...input,recommendation_requirements:structuredClone(scope?.recommendationRequirements??[])});
-    const renter_quote=scope?nativeInquiryQuote(result,scope,revision):null;
+    const renter_quote=scope?nativeInquiryQuote(result,scope,scope.queryReadRevision?.(result)??revision):null;
     return {...result,renter_quote,renter_quote_reason:renter_quote?null:result.technical_qualification?.verified===false?"technical_requirements_unverified":"quote_unverified_or_stale"};
   },
 });

@@ -361,7 +361,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
   const querySession = createConvexQuerySession(rawConvex, (functionName, value) => {
     if(functionName==="renter_bot_tools:get_listing_context" && value && typeof value==="object") {
       nativeReferralContext=(value as {referral_context?:NativeQuoteScope["referralContext"]}).referral_context;
-      nativeReferralContextRevision=querySession.getRevision();
+      nativeReferralContextRevision=querySession.getReadRevision(value);
       const lc=value as {booking_record?:Parameters<typeof nativeBookingRecord>[0];account_slug?:string;rental_stage?:{stage:string}};
       nativeBookingRecordContext=nativeBookingRecord(lc.booking_record,{threadId:thread_id,accountSlug:lc.account_slug??"",requestMessageId,rentalStage:lc.rental_stage?.stage,queryRevision:querySession.getRevision})??undefined;
     }
@@ -603,7 +603,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       groundTruth += `RENTAL STAGE (authoritative current order): ${lc.rental_stage.stage}. ${lc.rental_stage.guidance}\n`;
     }
     nativeReferralContext=lc?.referral_context;
-    nativeReferralContextRevision=querySession.getRevision();
+    nativeReferralContextRevision=querySession.getReadRevision(lc);
     if(lc?.referral_context)groundTruth += `FRIEND BASKET REFERENCE (Native listing context already gathered, not an applied booking): ${JSON.stringify(lc.referral_context)}\n`;
     if(!lc?.found && (lc?.start_date || lc?.end_date))groundTruth += `CURRENT REQUEST DATE FIELDS (this renter's own request): ${JSON.stringify({start_date:lc.start_date,end_date:lc.end_date})}. Use these for the same terms unless the current renter asks to change them; do not overwrite them with referral defaults. An incomplete period needs confirmation.\n`;
     if (lc?.found) {
@@ -1215,7 +1215,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
     // above is empty (no linked reservation yet — the common case for a
     // renter's very first "is X available" message, before any order exists)
     // this tool-call signal is the ONLY grounding check available.
-    const renterToolScope={threadId:thread_id,accountSlug:account_slug,requestMessageId,rentalRequest,rentalStage:authoritativeStage,minimumRentalThreshold:commercialContext?.threshold_gbp,queryRevision:querySession.getRevision,recommendationRequirements};
+    const renterToolScope={threadId:thread_id,accountSlug:account_slug,requestMessageId,rentalRequest,rentalStage:authoritativeStage,minimumRentalThreshold:commercialContext?.threshold_gbp,queryRevision:querySession.getRevision,queryReadRevision:querySession.getReadRevision,recommendationRequirements};
     let usedTools = false;
     let text = "";
     // Quick Reply is an explicit, on-demand OpenRouter/Haiku call with no

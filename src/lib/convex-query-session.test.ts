@@ -57,16 +57,18 @@ describe("shared Native query session", () => {
     expect(f.getRevision()).toBe(2);
     expect(f.raw.query).toHaveBeenCalledTimes(2);
   });
-  it("never memoizes a read while a write is outstanding", async () => {
+  it("waits for an outstanding write and shares the resulting Native read", async () => {
     const f = fixture(), pending = deferred();
     f.raw.mutation.mockImplementationOnce(() => pending.promise as never);
     const writing = f.client.mutation(edit, {});
-    await f.client.query(stock, {});
-    await f.client.query(stock, {});
+    const one=f.client.query(stock, {}),two=f.client.query(stock, {});
+    expect(f.raw.query).not.toHaveBeenCalled();
     pending.resolve({ revision: 1 });
     await writing;
+    expect(await one).toEqual(await two);
     await f.client.query(stock, {});
-    expect(f.raw.query).toHaveBeenCalledTimes(3);
+    expect(f.raw.query).toHaveBeenCalledTimes(1);
+    expect(f.raw.mutation).toHaveBeenCalledTimes(1);
   });
   it("does not let an older in-flight read repopulate the post-write cache", async () => {
     const f = fixture(), pending = deferred();
@@ -75,7 +77,7 @@ describe("shared Native query session", () => {
     await f.client.mutation(edit, {});
     expect(await f.client.query(stock, {})).toEqual({ revision: 1 });
     pending.resolve({ revision: 0 });
-    await old;
+    expect(await old).toEqual({ revision: 1 });
     expect(await f.client.query(stock, {})).toEqual({ revision: 1 });
     expect(f.raw.query).toHaveBeenCalledTimes(2);
     expect(f.observe.mock.calls.map(([, result]) => result)).toEqual([{ revision: 1 }]);
@@ -102,4 +104,36 @@ describe("shared Native query session", () => {
     expect(f.raw.query).toHaveBeenCalledTimes(2);
     expect(f.stats).toEqual({ queries: 2, dedupedRoundTrips: 0 });
   });
+});
+
+
+it("refreshes a cached response if a write starts before its caller receives it",async()=>{
+ const f=fixture();await f.client.query(stock,{});
+ const cached=f.client.query(stock,{});
+ await f.client.mutation(edit,{});
+ expect(await cached).toEqual({revision:1});
+ expect(f.raw.query).toHaveBeenCalledTimes(2);expect(f.raw.mutation).toHaveBeenCalledTimes(1);
+});
+
+it("refreshes an old failed read after a write without replaying the write",async()=>{
+ const f=fixture();let reject!:(reason:unknown)=>void;
+ f.raw.query.mockImplementationOnce(()=>new Promise((_,r)=>{reject=r;}) as never);
+ const old=f.client.query(stock,{});await f.client.mutation(edit,{});
+ reject(new Error("old snapshot failed"));
+ expect(await old).toEqual({revision:1});expect(f.raw.query).toHaveBeenCalledTimes(2);expect(f.raw.mutation).toHaveBeenCalledTimes(1);
+});
+
+it("releases waiting readers even when a write partially fails",async()=>{
+ const f=fixture();let reject!:(reason:unknown)=>void;
+ f.raw.mutation.mockImplementationOnce(()=>new Promise((_,r)=>{reject=r;}) as never);
+ const writing=f.client.mutation(edit,{}),handled=expect(writing).rejects.toThrow("partial failure");
+ const reading=f.client.query(stock,{});expect(f.raw.query).not.toHaveBeenCalled();
+ reject(new Error("partial failure"));await handled;await reading;
+ expect(f.raw.mutation).toHaveBeenCalledTimes(1);expect(f.raw.query).toHaveBeenCalledTimes(1);
+});
+
+it("tags the delivered Native snapshot instead of assigning it the caller's later revision",async()=>{
+ const f=fixture();const before=await f.client.query(stock,{});expect(f.getReadRevision(before)).toBe(0);
+ await f.client.mutation(edit,{});const after=await f.client.query(stock,{});
+ expect(f.getReadRevision(before)).toBe(0);expect(f.getReadRevision(after)).toBe(2);expect(f.getReadRevision({...after})).toBeUndefined();
 });
