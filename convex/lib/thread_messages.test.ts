@@ -1,6 +1,15 @@
-import { describe, expect, it } from "vitest";
-import { recentChronological } from "./thread_messages";
+import { describe, expect, it, vi } from "vitest";
+import { chronologicalThreadMessages, recentChronological, recentThreadMessages } from "./thread_messages";
 describe("conversation history", () => {
+  it("keeps Native history complete with one indexed read while the transcript stays bounded",async()=>{
+    const history=Array.from({length:100},(_,n)=>({id:n,fetched_at:n,hygglo_sent_at:n,_creationTime:100-n})).reverse();
+    const collect=vi.fn(async()=>history),withIndex=vi.fn(()=>({collect}));
+    const ctx={db:{query:vi.fn(()=>({withIndex}))}} as any;
+    expect((await chronologicalThreadMessages(ctx,"thread")).map(m=>(m as any).id)).toEqual(Array.from({length:100},(_,n)=>n));
+    expect(collect).toHaveBeenCalledTimes(1);expect(withIndex).toHaveBeenCalledWith("by_thread",expect.any(Function));
+    expect((await recentThreadMessages(ctx,"thread",40)).map(m=>(m as any).id)).toEqual(Array.from({length:40},(_,n)=>n+60));
+    expect(collect).toHaveBeenCalledTimes(2);
+  });
   it("keeps the latest forty messages in long threads", () => {
     const history = Array.from({ length: 100 }, (_, n) => ({ id: n, fetched_at: n, hygglo_sent_at: n, _creationTime: n }));
     expect(recentChronological(history, 40).map((m) => m.id)).toEqual(Array.from({ length: 40 }, (_, n) => n + 60));

@@ -552,6 +552,31 @@ describe("camera owner checks use Native facts and preserve human workflow",()=>
 
 
 describe("Native negotiation history",()=>{
+ it("retains objections, competitor evidence and exact alternative offers beyond the chat window",async()=>{
+  const f=await setup();const first=[...f.rows.values()].find(r=>r.table==="hygglo_messages");
+  await f.ctx.db.patch(first._id,{sender:"renter",body_text:"Too expensive."});
+  const offer=(total:number)=>({context_key:"native-context",epoch:2,quoted_for_message_id:first.message_id,
+   quote:{quote_key:`native-${total}`,start_date:"2099-10-22",end_date:"2099-10-24",items:[],listing_quote:{total_gbp:total,lines:[]}}});
+  const options=[offer(50),offer(100)];
+  await f.ctx.db.insert("hygglo_messages",{thread_id:f.args.thread_id,message_id:"competitor",sender:"renter",body_text:"I found it cheaper elsewhere.",hygglo_sent_at:f.now+1,fetched_at:f.now+1});
+  await f.ctx.db.insert("hygglo_messages",{thread_id:f.args.thread_id,message_id:"options",sender:"owner",body_text:"Here are two options.",quoted_inquiries:options,hygglo_sent_at:f.now+2,fetched_at:f.now+2});
+  for(let i=0;i<56;i++)await f.ctx.db.insert("hygglo_messages",{thread_id:f.args.thread_id,message_id:`logistics-${i}`,sender:i%2?"owner":"renter",body_text:"Collection details can wait for confirmation.",hygglo_sent_at:f.now+3+i,fetched_at:f.now+3+i});
+  await f.ctx.db.insert("hygglo_messages",{thread_id:f.args.thread_id,message_id:"latest",sender:"renter",body_text:"Any discount?",hygglo_sent_at:f.now+60,fetched_at:f.now+60});
+  expect(await invoke(get_negotiation_stance,f.ctx,{thread_id:f.args.thread_id})).toMatchObject({objectionCount:3,threadObjectionCount:3,stance:"SOFT_YIELD",competitorMentioned:true,lastPriceOfferedGbp:null,lastInquiryOptions:options});
+ });
+ it("keeps older independent hire identity through long logistics and a genuine new request",async()=>{
+  const f=await setup();const first=[...f.rows.values()].find(r=>r.table==="hygglo_messages");
+  await f.ctx.db.patch(first._id,{sender:"renter",body_text:"Too expensive."});
+  const request={kind:"inquiry",origin_message_id:"independent-hire"};
+  await f.ctx.db.insert("hygglo_messages",{thread_id:f.args.thread_id,message_id:request.origin_message_id,sender:"renter",rental_request:request,body_text:"Any discount?",hygglo_sent_at:f.now+1,fetched_at:f.now+1});
+  await f.ctx.db.insert("hygglo_messages",{thread_id:f.args.thread_id,message_id:"served",sender:"owner",rental_request:request,body_text:"I can check suitable alternatives.",hygglo_sent_at:f.now+2,fetched_at:f.now+2});
+  await f.ctx.db.patch(f.convId,{active_rental_request:request});
+  for(let i=0;i<56;i++)await f.ctx.db.insert("hygglo_messages",{thread_id:f.args.thread_id,message_id:`followup-${i}`,sender:i%2?"owner":"renter",body_text:"Collection details can wait for confirmation.",hygglo_sent_at:f.now+3+i,fetched_at:f.now+3+i});
+  await f.ctx.db.insert("hygglo_messages",{thread_id:f.args.thread_id,message_id:"latest",sender:"renter",body_text:"Any discount?",hygglo_sent_at:f.now+60,fetched_at:f.now+60});
+  expect(await invoke(get_negotiation_stance,f.ctx,{thread_id:f.args.thread_id})).toMatchObject({objectionCount:2,threadObjectionCount:3,stance:"OFFER_ALTERNATIVES",rentalRequest:request});
+  expect(await invoke(get_negotiation_stance,f.ctx,{thread_id:f.args.thread_id,rental_request:{kind:"inquiry",origin_message_id:"latest"}})).toMatchObject({objectionCount:1,threadObjectionCount:3,stance:"HOLD_FIRM"});
+ });
+
  it("counts the latest renter objection once and ignores a supplied rewrite",async()=>{
   const f=await setup();const message=[...f.rows.values()].find(r=>r.table==="hygglo_messages");
   await f.ctx.db.patch(message._id,{sender:"renter",body_text:"That is too expensive."});

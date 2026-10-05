@@ -43,8 +43,8 @@ export interface NegotiationOutput {
   discountAuthority: "none" | "may_offer_alternatives" | "may_escalate";
 }
 
-/** Same bounded Native history for drafting and the Mastra tool. */
-export const NEGOTIATION_HISTORY_LIMIT=50;
+/** Native facts use the complete chronological thread; only the model's
+ * visible transcript is windowed. Returns compact facts, not old prose. */
 export function negotiationFromMessages(messages:Array<{message_id?:string;sender:string;body_text:string;rental_request?:RentalRequest;quoted_inquiries?:SentInquiryOffer[]}>,selected?:RentalRequest) {
   const request=selected??messages.filter(m=>m.sender==="owner"&&m.rental_request).at(-1)?.rental_request??PRIMARY_RENTAL_REQUEST;
   // Tagged renter turns are authoritative. Untagged legacy history belongs to

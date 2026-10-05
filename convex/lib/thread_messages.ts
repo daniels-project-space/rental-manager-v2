@@ -7,7 +7,13 @@ export function recentChronological<T extends { hygglo_sent_at?: number; fetched
   ).slice(-limit);
 }
 
-export async function recentThreadMessages(ctx: QueryCtx, threadId: string, limit: number) {
+/** Native facts can outlive the transcript window. This is the same indexed
+ * read used for recent messages, with chronological imports kept intact. */
+export async function chronologicalThreadMessages(ctx: QueryCtx, threadId: string) {
   const messages = await ctx.db.query("hygglo_messages").withIndex("by_thread", (q) => q.eq("thread_id", threadId)).collect();
-  return recentChronological(messages, limit);
+  return recentChronological(messages, messages.length);
+}
+
+export async function recentThreadMessages(ctx: QueryCtx, threadId: string, limit: number) {
+  return (await chronologicalThreadMessages(ctx, threadId)).slice(-limit);
 }

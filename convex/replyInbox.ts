@@ -1,6 +1,6 @@
 import {inquiryOffersForText} from "./lib/native_inquiry_offer";
 import {sameRentalRequest} from "./lib/rental_request";
-import {negotiationFromMessages,NEGOTIATION_HISTORY_LIMIT} from "./lib/renter_bot_negotiation";
+import {negotiationFromMessages} from "./lib/renter_bot_negotiation";
 import { bookingRecord, hasSingleBookingRecord } from "./lib/booking_record";
 import {claimsBookingConfirmation,claimsCurrentOwnerApproval,hasPickupDisclosure,pickupPrivacySources,unsupportedBookingDateClaims} from "./lib/booking_reply_claims";
 import { renterPriceEvidence } from "../src/lib/renter-price-evidence";
@@ -49,7 +49,7 @@ import { stockRequestForSeparateCheck, stockRequestForInquiryQuote, unsupportedS
 import { reviewFlagValidator } from "./lib/draft_review_validator";
 import { inclusiveRentalDays } from "./lib/hygglo_pricing";
 import { summarise } from "./lib/renter_order_quote";
-import { recentThreadMessages } from "./lib/thread_messages";
+import { chronologicalThreadMessages, recentThreadMessages } from "./lib/thread_messages";
 import { filterImminentHandoffs, type ImminentHandoffCandidate } from "./lib/imminent_handoffs";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
@@ -1232,7 +1232,7 @@ export const getThreadContext = internalQuery({
         .slice(0, 3);
     }
 
-    const negotiationMsgs = await recentThreadMessages(ctx, thread_id, NEGOTIATION_HISTORY_LIMIT);
+    const negotiationMsgs = await chronologicalThreadMessages(ctx, thread_id);
     const msgs = negotiationMsgs.slice(-40);
     const recent = msgs.slice(-15).map((m) => ({
       role: m.sender === "owner" ? "owner" : "renter",
