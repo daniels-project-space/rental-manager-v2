@@ -15,8 +15,32 @@ import { getBotBooking, getLabOrder, requestedListingContext } from "./lib/rente
 import { loadListingInventory } from "./lib/listing_inventory";
 import { draftContextKey } from "./lib/draft_review";
 import { recentThreadMessages } from "./lib/thread_messages";
-/** Workflow state only. Handling notes and equipment facts are deliberately
- * absent: marking a task handled does not attest a specification or quote. */
+type SpecificationCheck=Extract<OwnerCheck,{kind:"camera_recommendation"|"lens_recommendation"}>;
+/** Current reviewed records, never a task's handling note, attest a property. */
+export function ownerSpecificationAssessment(check:SpecificationCheck,item:Doc<"items">|null,specs:Doc<"item_specs">[]) {
+ if(check.kind==="camera_recommendation" ? !hasCameraRequirements(check.requirements,check.lens_mount) : !hasLensRequirements(check.requirements))return null;
+ if(!item||item.status!=="active"||item.is_marketing_only||item.qty<=0)return null;
+ if(check.kind==="camera_recommendation" ? !["camera","camera_body"].includes(item.kind??"") : item.kind!=="lens"||check.lens_mount&&!sameMount(item.lens_mount??"",check.lens_mount))return null;
+ const spec=specs.length===1?specs[0]:undefined;
+ return check.kind==="camera_recommendation" ? assessCameraRequirements(verifiedCameraCapabilities(spec,item.name_canonical),check.requirements,check.lens_mount)
+  : assessLensRequirements(verifiedLensCapabilities(spec,item.name_canonical),check.requirements);
+}
+export function ownerSpecificationReader(ctx:QueryCtx,inventory?:Doc<"items">[]) {
+ const candidates=new Map<string,Promise<{item:Doc<"items">|null;specs:Doc<"item_specs">[]}>>();
+ const readCandidate=(id:Doc<"items">["_id"])=>{
+  let saved=candidates.get(id);if(!saved){saved=(async()=>{const item=inventory?inventory.find(item=>item._id===id)??null:await ctx.db.get(id);
+   const specs=item&&item.status==="active"&&!item.is_marketing_only&&item.qty>0 ? await ctx.db.query("item_specs").withIndex("by_item",q=>q.eq("item_id",id)).collect():[];
+   return {item,specs};})();candidates.set(id,saved);}return saved;
+ };
+ return async(check:OwnerCheck)=>{
+  return check.kind==="camera_recommendation"||check.kind==="lens_recommendation" ? (await Promise.all([...new Set(check.candidate_item_ids)].map(async id=>{
+   const {item,specs}=await readCandidate(id),assessment=ownerSpecificationAssessment(check,item,specs);
+   return assessment&&item?{name:item.name_canonical,...assessment}:null;
+  }))).filter((review):review is NonNullable<typeof review>=>review!==null):null;
+ };
+}
+/** Workflow and current specification state are independent. Handling notes
+ * stay private and cannot attest specifications, suitability, stock or price. */
 export async function ownerChecksForBot(ctx:QueryCtx,threadId:string,contextKey:string) {
  // Unresolved work must not disappear behind a rolling window of handled tasks.
  const [pending,handled]=await Promise.all([
@@ -24,12 +48,18 @@ export async function ownerChecksForBot(ctx:QueryCtx,threadId:string,contextKey:
   ctx.db.query("renter_bot_owner_checks").withIndex("by_status_thread",q=>q.eq("status","handled_by_owner").eq("thread_id",threadId)).order("desc").take(20),
  ]);
  const tasks=[...pending,...handled];
- return tasks.map(task=>({task_id:task._id,status:task.status,kind:task.check.kind,product_id:task.check.kind==="listing_mapping"?task.check.product_id:null,
+ const readReviews=ownerSpecificationReader(ctx);
+ return Promise.all(tasks.map(async task=>{
+  const reviews=await readReviews(task.check);
+  const verified=!!reviews?.length&&reviews.every(review=>review.unknown.length===0);
+  return {task_id:task._id,status:task.status,kind:task.check.kind,product_id:task.check.kind==="listing_mapping"?task.check.product_id:null,
   candidate_product_ids:task.check.kind==="kit_recommendation"?task.check.candidate_product_ids:null,
   requirements:"requirements" in task.check?task.check.requirements:null,lens_mount:"lens_mount" in task.check?task.check.lens_mount:null,
   start_date:task.check.start_date,end_date:task.check.end_date,quantity:task.check.quantity,candidate_names:task.candidate_names,
   context_changed:task.source_context_key!==contextKey,source_message_id:task.source_message_id,last_requested_message_id:ownerCheckRequestMessageId(task),
-  specification_result_verified:false,customer_input_required:false}));
+  specification_result_verified:verified,current_specification_reviews:reviews,
+  specification_guidance:reviews?"These current reviewed requirements are independent of task handling. A match establishes only the requested technical properties; recheck dated stock, price and kit contents before offering it. Missing proof remains unknown, never unavailable.":null,
+  customer_input_required:false};}));
 }
 /** Recompute capability absence from current Native inventory, independently
  * of model prose, tool-use booleans, stock results and prices. */
@@ -101,10 +131,8 @@ export async function persistOwnerChecks(ctx:MutationCtx,a:{thread_id:string;mes
    if(!item||item.status!=="active"||item.is_marketing_only||item.qty<=0)continue;
    if(check.kind==="camera_recommendation" ? !["camera","camera_body"].includes(item.kind??"") : item.kind!=="lens"||check.lens_mount&&!sameMount(item.lens_mount??"",check.lens_mount))continue;
    const specs=await ctx.db.query("item_specs").withIndex("by_item",q=>q.eq("item_id",id)).collect();
-   const spec=specs.length===1?specs[0]:undefined;
-   const assessment=check.kind==="camera_recommendation" ? assessCameraRequirements(verifiedCameraCapabilities(spec,item.name_canonical),check.requirements,check.lens_mount)
-    : assessLensRequirements(verifiedLensCapabilities(spec,item.name_canonical),check.requirements);
-   if(assessment.status!=="unknown")continue;
+   const assessment=ownerSpecificationAssessment(check,item,specs);
+   if(assessment?.status!=="unknown")continue;
    ids.push(id);names.push(item.name_canonical);
   }
   if(!ids.length)continue;
@@ -138,6 +166,7 @@ export const list=query({args:{account_slug:v.optional(v.string()),lab_only:v.op
   : await ctx.db.query("renter_bot_owner_checks").withIndex("by_status_thread",q=>q.eq("status","pending").gte("thread_id","__probe__").lt("thread_id","__probe__\uffff")).paginate(a.paginationOpts)) : a.account_slug ? await ctx.db.query("renter_bot_owner_checks").withIndex("by_account_status",q=>q.eq("account_slug",a.account_slug!).eq("status","pending")).paginate(a.paginationOpts)
   : await ctx.db.query("renter_bot_owner_checks").withIndex("by_status",q=>q.eq("status","pending")).paginate(a.paginationOpts);
  const inventory=result.page.some(t=>t.check.kind==="listing_mapping"||t.check.kind==="kit_recommendation")?await ctx.db.query("items").collect():undefined;
+ const readReviews=ownerSpecificationReader(ctx,inventory);
  return {...result,page:await Promise.all(result.page.map(async task=>{
   const booking=await getBotBooking(ctx,task.thread_id),order=await getLabOrder(ctx,task.thread_id);
   const conv=await ctx.db.query("conversations").withIndex("by_thread",q=>q.eq("thread_id",task.thread_id)).first();
@@ -145,7 +174,7 @@ export const list=query({args:{account_slug:v.optional(v.string()),lab_only:v.op
   const physical=task.check.kind==="listing_mapping"&&inventory?await loadListingInventory(ctx,task.account_slug,task.check.product_id,task.check.quantity,{items:inventory}):null;
   const kit=physical&&inventory?await listingKitContext(ctx,task.account_slug,listingKitItem(physical,inventory),physical.components,inventory):null;
   const recommended_kit_reviews=task.check.kind==="kit_recommendation"&&inventory?await recommendedKitReviews(ctx,task.account_slug,task.check.candidate_product_ids,task.check.quantity,inventory):null;
-  return {...task,recommended_kit_reviews,mapping_details:physical?{complete:physical.complete,contents_review:kit?.contents_review??null,missing:physical.coverage?.missing??[],unresolved:[...(physical.coverage?.unresolved??[]),...physical.unresolved_default_adapters]}:null,
+  return {...task,current_specification_reviews:await readReviews(task.check),recommended_kit_reviews,mapping_details:physical?{complete:physical.complete,contents_review:kit?.contents_review??null,missing:physical.coverage?.missing??[],unresolved:[...(physical.coverage?.unresolved??[]),...physical.unresolved_default_adapters]}:null,
    context_changed:!conv||draftContextKey(booking,conv.inquiry_items,order)!==task.source_context_key,newer_renter_message:latestRenter?.message_id!==ownerCheckRequestMessageId(task),is_lab:task.thread_id.startsWith("__probe__")};
  }))};
 }});

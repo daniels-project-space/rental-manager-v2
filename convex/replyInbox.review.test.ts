@@ -550,6 +550,40 @@ describe("camera owner checks use Native facts and preserve human workflow",()=>
   return {...f,body,marketing,wrongKind,spec,specId,check};
  }
  const tasks=(f:Awaited<ReturnType<typeof cameraReview>>)=>[...f.rows.values()].filter(r=>r.table==="renter_bot_owner_checks");
+ it("refreshes saved task evidence after the exact reviewed mode is corrected",async()=>{
+  const f=await cameraReview();await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:[f.check]});
+  expect((await ownerChecksForBot(f.ctx as any,f.args.thread_id,f.args.context_key))[0]).toMatchObject({specification_result_verified:false,current_specification_reviews:[{status:"unknown",unknown:["recording"]}]});
+  const capabilities=f.spec.camera_capabilities;
+  await f.ctx.db.patch(f.specId,{verified_at:2,camera_capabilities:{...capabilities,verified_at:2,recording_modes:[{...capabilities.recording_modes[0],resolution:"dci_4k",verified_at:2}]}});
+  const current=(await ownerChecksForBot(f.ctx as any,f.args.thread_id,f.args.context_key))[0];
+  expect(current).toMatchObject({status:"pending",specification_result_verified:true,current_specification_reviews:[{name:"Sony FX3",status:"match",unknown:[]}]});
+  expect(current.specification_guidance).toContain("recheck dated stock, price and kit contents");
+  expect(tasks(f)[0].status).toBe("pending");
+ });
+ it("distinguishes reviewed incompatibility, missing properties and task handling",async()=>{
+  const f=await cameraReview();await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:[f.check]});
+  (f.ctx as any).auth={getUserIdentity:async()=>({subject:"owner"})};
+  await invoke(handleOwnerCheck,f.ctx,{id:tasks(f)[0]._id,expected_request_message_id:f.args.message_id,note:"Private note says DCI 4K is fine"});
+  const handled=(await ownerChecksForBot(f.ctx as any,f.args.thread_id,f.args.context_key))[0];
+  expect(handled).toMatchObject({status:"handled_by_owner",specification_result_verified:false,current_specification_reviews:[{status:"unknown"}]});
+  expect(JSON.stringify(handled)).not.toContain("Private note");
+  await f.ctx.db.patch(tasks(f)[0]._id,{check:{...f.check,requirements:{role:"action"}}});
+  expect((await ownerChecksForBot(f.ctx as any,f.args.thread_id,f.args.context_key))[0]).toMatchObject({specification_result_verified:true,current_specification_reviews:[{status:"mismatch",mismatched:["role"]}]});
+ });
+ it("rejects duplicate/stale reviews and no longer eligible candidates",async()=>{
+  const f=await cameraReview();await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:[f.check]});
+  await f.ctx.db.insert("item_specs",{...f.spec,item_id:f.body});
+  expect((await ownerChecksForBot(f.ctx as any,f.args.thread_id,f.args.context_key))[0]).toMatchObject({specification_result_verified:false,current_specification_reviews:[{status:"unknown"}]});
+  await f.ctx.db.patch(f.body,{is_marketing_only:true});
+  expect((await ownerChecksForBot(f.ctx as any,f.args.thread_id,f.args.context_key))[0]).toMatchObject({specification_result_verified:false,current_specification_reviews:[]});
+ });
+ it("reads each candidate once across repeated saved tasks",async()=>{
+  const f=await cameraReview();await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:[f.check]});
+  for(let i=0;i<4;i++)await f.ctx.db.insert("renter_bot_owner_checks",{...tasks(f)[0],status:"handled_by_owner"});
+  const read=vi.spyOn(f.ctx.db,"get");
+  const checks=await ownerChecksForBot(f.ctx as any,f.args.thread_id,f.args.context_key);
+  expect(checks).toHaveLength(5);expect(read.mock.calls.filter(([id])=>id===f.body)).toHaveLength(1);
+ });
  it("saves actual camera receipts, filters marketing/wrong kinds and retains the pending task after a reply",async()=>{
   const f=await cameraReview(),{source_call_id,...native}=f.check;
   const checks=nativeOwnerChecks([{tool:"find_owned_alternatives",call_id:source_call_id,result:{owner_check:native}},{tool:"search",call_id:"untrusted",result:{owner_check:native}}]);
