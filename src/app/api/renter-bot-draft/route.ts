@@ -688,6 +688,9 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
             daily_price_gbp?: number | null;
             line_total_gbp?: number | null;
           }>;
+          if(authoritativeStage==="INQUIRY") {
+            groundTruth+=`CURRENT INQUIRY BASKET (unconfirmed request): ${lines.map(l=>`${l.qty}x ${l.name}`).join("; ")||"(empty)"}. Dates: ${ord.start_date??"not set"} to ${ord.end_date??"not set"}. This is not an accepted booking or a qualified offer. Use check_basket_availability for joint stock, technical readiness and the Native quote selection. Change the Lab basket only when the renter explicitly requests a change; asking about specifications, options or prices does not request a booking change.\n`;
+          } else {
           for (const l of lines) {
             if (typeof l.daily_price_gbp === "number") offeredPrices.push(l.daily_price_gbp);
             if (typeof l.line_total_gbp === "number") offeredPrices.push(l.line_total_gbp);
@@ -709,6 +712,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
           groundTruth += `  Before offering an uncommitted combined total, call quote_booking_addition for the exact extra item and quantity. This checks the existing kit plus the extra without changes. Say it would bring the total to the quote, never say a proposal was added. If an addition fails, quote a smaller available extra before offering its complete total. Individual item prices alone do not prove a combined booking total.\n`;
           groundTruth += `  When the renter asks you to add or remove gear or move dates, CALL modify_booking and then state what changed and the new total. Do NOT ask them to confirm a change they just asked for.\n`;
           groundTruth += `  PRICING IS TIERED: the per-day rate DROPS at 3 and 7 days, and the tiers above are what Hygglo charges. Daily displays can be approximate: quote the provided line/grand total, never recalculate from a rounded daily display. Quote the rate for the length they actually asked for, and when a longer hire is better value, say so using the tier numbers above and nothing else. Never multiply the 1-day rate across a longer booking, and never invent a rate that is not in the tiers.\n`;
+          }
           }
         }
       } catch {
