@@ -66,6 +66,12 @@ describe("Native inquiry quote rendering",()=>{
   expect(renderNativeQuoteReply({...base,draft:'I can check the price for this separate hire.'},checked,context).ok).toBe(true);
   expect(renderNativeQuoteReply({...base,draft:'Your recorded current rental total is £90.'},[],context).ok).toBe(true);
  });
+ it("keeps an unpriced current inquiry behind Native selection while allowing verified facts",()=>{
+  const checked=[{tool:"check_basket_availability",call_id:"current-inquiry",result:{available:true,quote:null,renter_quote:null,technical_qualification:{verified:false}}}];
+  expect(renderNativeQuoteReply({...base,draft:"The kit costs £124 for both days."},checked,scope)).toMatchObject({ok:false,reason:"Use the Native quote selection for inquiry prices"});
+  expect(renderNativeQuoteReply({...base,draft:"The camera records DCI 4K internally. I still need to confirm the bundled lens."},checked,scope).ok).toBe(true);
+  expect(renderNativeQuoteReply({...base,draft:"Your current rental total is £124."},checked,{...scope,rentalStage:"CONFIRMED_UPCOMING"}).ok).toBe(true);
+ });
  it('renders a separately checked hire in an active chat without making it a confirmed amendment',()=>{
   for(const stage of ['CONFIRMED_UPCOMING','IN_USE','RETURN_OVERDUE']){
    const context={...scope,rentalStage:stage},result={...clone(),rental_stage:stage,booking_use:'separate',new_inquiry:true};

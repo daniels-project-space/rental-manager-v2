@@ -526,6 +526,23 @@ describe("kit owner checks persist through the real review mutation",()=>{
   return {...f,camera,lens,override,check};
  }
  const tasks=(f:Awaited<ReturnType<typeof kit>>)=>[...f.rows.values()].filter(r=>r.table==="renter_bot_owner_checks");
+ it("turns an unqualified current basket into a durable lens review without denying stock",async()=>{
+  const f=await kit();
+  await f.ctx.db.patch(f.camera,{lens_mount:"E"});await f.ctx.db.patch(f.lens,{lens_mount:"E"});
+  await f.ctx.db.patch(f.override,{components:[{item_id:f.camera,qty:1},{item_id:f.lens,qty:1}]});
+  await f.ctx.db.insert("item_specs",{item_name_canonical:"Sony FX3",item_id:f.camera,source:"manufacturer-verified",source_url:"https://manufacturer.example/fx3",verified_model:"Sony FX3",verified_at:1,
+   camera_capabilities:{role:"interchangeable_lens",native_mount:"E",sensor_format:"full_frame",verified_model:"Sony FX3",source_url:"https://manufacturer.example/fx3",verified_at:1}});
+  const result=await performJointStockCheck(f.ctx as any,{account_slug:"leo",thread_id:f.args.thread_id,start_date:"2026-10-20",end_date:"2026-10-21",booking_use:"standalone",items:[{item_name:"FX3 lens kit",product_id:10,quantity:1}]});
+  expect(result.available).toBe(true);if(!("technical_qualification" in result))throw new Error("Missing basket qualification");expect(result.technical_qualification).toMatchObject({verified:false,setup:{status:"unknown",unknown:["lens_sensor_coverage"]}});
+  const checks=nativeOwnerChecks([{tool:"check_basket_availability",call_id:"native-basket",result}]);
+  expect(checks).toEqual([{kind:"lens_recommendation",source_call_id:"native-basket",requirements:{coverage:"full_frame"},candidate_item_ids:[f.lens],lens_mount:null,start_date:"2026-10-20",end_date:"2026-10-21",quantity:1}]);
+  await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:checks});await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:checks});
+  expect(tasks(f)).toHaveLength(1);expect(tasks(f)[0]).toMatchObject({status:"pending",candidate_names:["Sony GM 24-70mm f2.8"],check:checks[0]});
+  await f.ctx.db.insert("item_specs",{item_name_canonical:"Sony GM 24-70mm f2.8",item_id:f.lens,source:"manufacturer-verified",verified_model:"Sony GM 24-70mm f2.8",source_url:"https://manufacturer.example/lens",verified_at:1,
+   lens_capabilities:{coverage:"full_frame",verified_model:"Sony GM 24-70mm f2.8",source_url:"https://manufacturer.example/lens",verified_at:1}});
+  const qualified=await performJointStockCheck(f.ctx as any,{account_slug:"leo",thread_id:f.args.thread_id,start_date:"2026-10-20",end_date:"2026-10-21",booking_use:"standalone",items:[{item_name:"FX3 lens kit",product_id:10,quantity:1}]});
+  if(!("technical_qualification" in qualified))throw new Error("Missing basket qualification");expect(qualified.technical_qualification).toMatchObject({verified:true,setup:{status:"match"}});expect(qualified.owner_checks).toEqual([]);
+ });
  it("uses the same supplied-stock and media evidence for listing, pricing and recommendations",async()=>{
   const f=await kit();
   const card=await f.ctx.db.insert("items",{name_canonical:"256GB card",kind:"accessory",qty:4,status:"active",track_independent_stock:true,unit_kind:"unit"});

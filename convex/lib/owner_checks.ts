@@ -22,6 +22,8 @@ export function nativeOwnerChecks(receipts:Array<{tool:string;call_id:string;res
    return [{...r.result.owner_check as Exclude<OwnerCheck,{kind:"listing_mapping"}>,source_call_id:r.call_id}];
   if(r.tool==="get_listing_context"&&Array.isArray(r.result.owner_checks))
    return r.result.owner_checks.filter(c=>c?.kind==="listing_mapping").map(c=>({...c,source_call_id:r.call_id})) as OwnerCheck[];
+  if(r.tool==="check_basket_availability"&&Array.isArray(r.result.owner_checks))
+   return r.result.owner_checks.filter(c=>c?.kind==="lens_recommendation"||c?.kind==="camera_recommendation").map(c=>({...c,source_call_id:r.call_id})) as OwnerCheck[];
   return [];
  });
 }

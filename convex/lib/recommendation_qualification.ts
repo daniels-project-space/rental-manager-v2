@@ -5,6 +5,8 @@ import { assessCameraRequirements, verifiedCameraCapabilities, type CameraSpec }
 import { assessLensRequirements, verifiedLensCapabilities, type LensSpec } from "./lens_requirements";
 import { sameMount } from "./item_name_match";
 import { requiredMountAdapters } from "./required_mount_adapter";
+import type { OwnerCheck } from "./owner_checks";
+import type { Id } from "../_generated/dataModel";
 export const recommendationRequirementValidator=v.union(
  v.object({kind:v.literal("camera"),requirements:cameraRequirementsValidator,native_mount:v.optional(v.string()),target_item_id:v.optional(v.string()),quantity:v.number()}),
  v.object({kind:v.literal("lens"),requirements:lensRequirementsValidator,native_mount:v.optional(v.string()),target_item_id:v.optional(v.string()),quantity:v.number()}));
@@ -16,6 +18,26 @@ function canonical(value:unknown):unknown {
 }
 export const recommendationRequirementsKey=(requirements:RecommendationRequirement[])=>JSON.stringify(canonical(requirements));
 export type QualificationItem={item_id:string;name:string;kind:string;quantity:number;native_mount?:string|null;spec:CameraSpec&LensSpec|null};
+/** Missing basket facts use the same source-backed specification workflow as searches.
+ * Stock shortages and known mismatches are not unresolved specification facts. */
+export function basketSpecificationOwnerChecks(requirements:RecommendationRequirement[],items:QualificationItem[],dates:{start_date:string;end_date:string}) {
+ const checks:Array<Omit<Extract<OwnerCheck,{kind:"lens_recommendation"|"camera_recommendation"}>,"source_call_id">>=[];
+ const paired=items.some(i=>["camera","camera_body"].includes(i.kind))&&items.some(i=>i.kind==="lens");
+ for(const item of items){
+  if(!Number.isInteger(item.quantity)||item.quantity<1||item.quantity>20)continue;
+  const candidates=requirements.filter(r=>r.kind==="lens"?item.kind==="lens":["camera","camera_body"].includes(item.kind));
+  if(paired&&item.kind==="lens")candidates.push({kind:"lens",requirements:{coverage:"full_frame"},quantity:item.quantity});
+  if(paired&&["camera","camera_body"].includes(item.kind))candidates.push({kind:"camera",requirements:{role:"interchangeable_lens"},native_mount:item.native_mount??undefined,quantity:item.quantity});
+  for(const requirement of candidates){
+   const assessment=requirement.kind==="lens"?assessLensRequirements(verifiedLensCapabilities(item.spec??undefined,item.name),requirement.requirements)
+    :assessCameraRequirements(verifiedCameraCapabilities(item.spec,item.name),requirement.requirements,requirement.native_mount);
+   if(assessment.status!=="unknown")continue;
+   checks.push({kind:requirement.kind==="lens"?"lens_recommendation":"camera_recommendation",requirements:requirement.requirements,
+    candidate_item_ids:[item.item_id as Id<"items">],lens_mount:requirement.native_mount??null,...dates,quantity:item.quantity});
+  }
+ }
+ return checks;
+}
 /** Individual capabilities do not prove a usable camera/lens pair. Check the
  * selected physical set even when a search omitted mount or lens coverage. */
 function qualifyCameraLensSetup(requirements:RecommendationRequirement[],items:QualificationItem[]) {

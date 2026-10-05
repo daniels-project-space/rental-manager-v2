@@ -133,7 +133,7 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
     }
   }
   if(!output.reply_parts?.length) {
-    if(receipts.some(r=>r.result.new_inquiry===true||r.tool==="check_basket_availability"&&record(r.result.quote)?.source==="native_inquiry_basket") && monetaryProse.test(output.draft))return {ok:false,reason:"Use the Native quote selection for inquiry prices"};
+    if(receipts.some(r=>r.result.new_inquiry===true||r.tool==="check_basket_availability"&&(record(r.result.quote)?.source==="native_inquiry_basket"||scope.rentalStage==="INQUIRY")) && monetaryProse.test(output.draft))return {ok:false,reason:"Use the Native quote selection for inquiry prices"};
     return {ok:true,draft:withNativeContext(output.draft),quote_keys:[],recommendation_quotes:[],stock_quotes:[],commercial_quotes:[]};
   }
   if(output.draft.trim())return {ok:false,reason:"Structured reply parts cannot be mixed with a second draft"};

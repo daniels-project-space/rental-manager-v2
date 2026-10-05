@@ -18,6 +18,7 @@ import { inclusiveRentalDays, formatGbp } from "../../../../convex/lib/hygglo_pr
 import { RENTER_BOT_MODEL_ID } from "@/lib/llm-client";
 import {PRIMARY_RENTAL_REQUEST,type RentalRequest} from "@/../convex/lib/rental_request";
 import { withRenterToolScope } from "@/lib/renter-tool-scope";
+import { checkBasketAvailabilityTool } from "@/mastra/tools/renter_bot_tools";
 import { recommendationKitEvidence, renterToolReceipts, stockReceipts, successfulGrounding, type ToolReceipt } from "@/lib/renter-tool-evidence";
 import { NextResponse } from "next/server";
 import { normalizeClaimedFacts } from "../../../../convex/lib/renter_draft_evidence";
@@ -537,6 +538,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
    */
   let stockRequest: StockRequest = { items: [] };
   let priceRequest: StockRequest = {items:[]};
+  let currentInquiryBasket: {account_slug:string;thread_id:string;start_date:string;end_date:string;booking_use:"standalone";items:Array<{item_name:string;quantity:number;product_id:number}>;pickup_time?:string;return_time?:string}|undefined;
   let commercialContext: MinimumRentalContext | undefined;
   let availabilityOutKnown = false;
   const toolReceipts: ToolReceipt[] = [];
@@ -756,15 +758,20 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
             .map(c => ({ name: c.name!, quantity: c.requested_units })),
         })) };
       priceRequest = stockRequest;
+      if(authoritativeStage==="INQUIRY"&&rentalRequest.kind==="primary"&&!explicitRecommendationUse(lastRenter)&&lc.start_date&&lc.end_date&&lc.items?.length&&lc.items.length<=8&&lc.items.every((i:{owned?:boolean;product_id?:number;qty?:number})=>i.owned===true&&Number.isInteger(i.product_id)&&Number.isInteger(i.qty??1))) {
+        currentInquiryBasket={account_slug,thread_id,start_date:lc.start_date,end_date:lc.end_date,booking_use:"standalone",items:lc.items.map((i:{name:string;product_id:number;qty?:number})=>({item_name:i.name,product_id:i.product_id,quantity:i.qty??1})),...(lc.pickup_time?{pickup_time:lc.pickup_time}:{}),...(lc.return_time?{return_time:lc.return_time}:{})};
+      }
       const quoteDays = inclusiveRentalDays(lc.start_date, lc.end_date) ?? 1;
       await Promise.all((lc.items ?? []).filter((it: {owned?: boolean; name?: string; ambiguous_with?: unknown[]}) => it.owned === true && it.name && !it.ambiguous_with?.length).map(async (it: {name: string; inventory_name?: string; listing_name?: string; product_id?: number; qty?: number; replacement_cost_gbp?: number}) => {
         const names=[it.name,it.inventory_name,it.listing_name].filter((n):n is string=>!!n);
         if(account_slug && typeof it.product_id==="number")priceListingIdentities.push({account_slug,product_id:it.product_id,names});
         try {
+          if(!currentInquiryBasket) {
           const quote = await convex.query(api.renter_bot_tools.lookup_pricing, {item_name:it.name,product_id:typeof it.product_id === "number" ? it.product_id : undefined,account_slug:account_slug||undefined,days:quoteDays,quantity:it.qty??1}) as Record<string,unknown>;
           if(quote.found===true) {
             priceSources.push({tool:"lookup_pricing",call_id:`selected-price:${priceSources.length}`,result:{...quote,verified_price_names:names,start_date:lc.start_date,end_date:lc.end_date}});
             groundTruth += `EXACT RENTAL QUOTE for ${it.name}: ${JSON.stringify({source:quote.source,product_id:quote.product_id,days:quote.days,quantity:quote.quantity,daily_rate_gbp:quote.daily_rate_gbp,one_day_rate_gbp:quote.one_day_rate_gbp,listed_total_gbp:quote.listed_total_gbp,multi_day_basis:quote.multi_day_basis})}. Its daily_rate_gbp applies to ${quoteDays} days; one_day_rate_gbp is a separate base rate. Prefer listed_total_gbp; do not present the base rate as this hire's rate.\n`;
+          }
           }
         } catch { /* No quote means price confirmation is required. */ }
         if(typeof it.replacement_cost_gbp === "number") fixedPriceEvidence.push({names:[it.inventory_name??it.name],kind:"replacement",total_gbp:it.replacement_cost_gbp,call_id:"prefetch:listing-context",source:"inventory_replacement_value"});
@@ -905,6 +912,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
         groundTruth += `- ${it.name}: one-day base £${it.daily_price_gbp ?? "?"} /day${tierTxt ? ` [Hygglo multi-day rates: ${tierTxt} — quote the rate for the length they asked for, never the 1-day rate times the days]` : ""}. Included: ${kitText}\n`;
         try {
           if (lc.start_date && lc.end_date) {
+            if(currentInquiryBasket)continue;
             const av = await convex.query(api.renter_bot_tools.check_availability, {
               booking_use: "current",
               prefetch_current: true,
@@ -1174,6 +1182,17 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
   //
   // ORDERING IS LOAD-BEARING: a cache prefix must be byte-stable, so anything
   // volatile (dates, ground truth, the renter's message) must come AFTER this.
+  const renterToolScope={threadId:thread_id,accountSlug:account_slug,requestMessageId,rentalRequest,rentalStage:authoritativeStage,requestStage:activeRequestStage?.stage,minimumRentalThreshold:commercialContext?.threshold_gbp,queryRevision:querySession.getRevision,queryReadRevision:querySession.getReadRevision,recommendationRequirements};
+  if(currentInquiryBasket) {
+    try {
+      const result=await withConvexClientFactory(()=>convex,()=>withRenterToolScope(renterToolScope,()=>checkBasketAvailabilityTool.execute!(currentInquiryBasket!,{})));
+      if(!result||typeof result!=="object"||"error" in result)throw new Error("Basket tool did not return evidence");
+      toolReceipts.push({tool:"check_basket_availability",call_id:"prefetch:current-inquiry-basket",result:result as Record<string,unknown>});
+      groundTruth+=`CURRENT INQUIRY — NATIVE JOINT BASKET RESULT:\n${JSON.stringify(result)}\nThis replaces separate current-item price and availability checks. available proves stock only; technical_qualification is the setup verdict. Use renter_quote.quote_key in a quote reply_part for its price. renter_quote:null means there is no qualified offer: answer verified individual facts, explain the unresolved kit check naturally, and leave the supplied owner_checks for owner review. Do not ask the renter to verify our kit facts or promise that the unverified setup works.\n`;
+    }catch {
+      groundTruth+="CURRENT INQUIRY BASKET CHECK FAILED: price, joint availability and setup readiness remain unverified. Call check_basket_availability before offering the current basket.\n";
+    }
+  }
   const baseMessages = [
     {
       role: "system" as const,
@@ -1220,7 +1239,6 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
     // above is empty (no linked reservation yet — the common case for a
     // renter's very first "is X available" message, before any order exists)
     // this tool-call signal is the ONLY grounding check available.
-    const renterToolScope={threadId:thread_id,accountSlug:account_slug,requestMessageId,rentalRequest,rentalStage:authoritativeStage,requestStage:activeRequestStage?.stage,minimumRentalThreshold:commercialContext?.threshold_gbp,queryRevision:querySession.getRevision,queryReadRevision:querySession.getReadRevision,recommendationRequirements};
     let usedTools = false;
     let text = "";
     // Quick Reply is an explicit, on-demand OpenRouter/Haiku call with no

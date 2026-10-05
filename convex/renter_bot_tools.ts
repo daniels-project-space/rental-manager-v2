@@ -2,7 +2,7 @@ import {listingKitContext,listingKitItem} from "./lib/listing_kit_context";
 import {PRIMARY_RENTAL_REQUEST,rentalRequestValidator} from "./lib/rental_request";
 import {validateRentalRequest} from "./lib/sent_rental_request";
 import { referralContext } from "./lib/referral_context";
-import { qualifyRecommendationBasket, recommendationRequirementValidator, type RecommendationRequirement } from "./lib/recommendation_qualification";
+import { basketSpecificationOwnerChecks, qualifyRecommendationBasket, recommendationRequirementValidator, type RecommendationRequirement } from "./lib/recommendation_qualification";
 import {cameraRequirementsValidator} from "./lib/camera_requirement_validator";
 import { renterHistory } from "./lib/renter_history";
 import { getBotRenter } from "./lib/renter_identity";
@@ -816,11 +816,12 @@ export async function performJointStockCheck(ctx:QueryCtx,a:JointStockArgs,prelo
       return {item_id:r.item_id,name:r.item_name,kind:r.kind??"",quantity:r.requested_units,native_mount:item?.lens_mount,spec:specs.length===1?specs[0]:null};
     }));
     const technical_qualification=qualifyRecommendationBasket(a.recommendation_requirements??[],technicalItems);
+    const owner_checks=basketSpecificationOwnerChecks(a.recommendation_requirements??[],technicalItems,{start_date:a.start_date,end_date:a.end_date});
     const quote=preview?.total_gbp!=null && preview.total_gbp>0 ? {...preview,source:"native_inquiry_basket" as const} : null;
     return {available:check.available,reason:check.reason,booking_use:separate?"separate":plan.use,...(separate?{new_inquiry:true as const}:{}),stock_scope:"proposed_basket",source:"shared_inventory_confirmed_rentals",
       account_slug:a.account_slug,thread_id:a.thread_id ?? null,rental_stage:stage,preview_only:true,physical_identity_key:check.physical_identity_key,
       start_date:a.start_date,end_date:a.end_date,basket,components:check.receipts.map(r=>({...r,basket,...(separate?{new_inquiry:true as const}:{})})),replacement_removed_listings:plan.removed,quote,technical_qualification,
-      offered_listings:check.offerings?.map(l=>({product_id:l.product_id,quantity:l.qty})),
+      owner_checks,offered_listings:check.offerings?.map(l=>({product_id:l.product_id,quantity:l.qty})),
       guidance:"Read-only joint stock check. available:true proves dated capacity only. technical_qualification separately verifies the submitted requirements and camera/lens setup; a false or unknown setup verdict does not prove the items work together. Select a compatible verified set, or explain the missing proof. For a new inquiry, quote.total_gbp and its exact lines supply the combined price; use these instead of another pricing call or mental arithmetic. quote:null means the combined price is unverified; confirmed amendments use quote_booking_addition/replacement. Explain shared component failures; a failed proposal does not mean every item is independently unavailable. No booking or price changes were made."};
 }
 
