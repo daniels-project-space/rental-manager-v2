@@ -41,6 +41,13 @@ export function RunResultsPanel() {
             </summary>
             <div className="mt-2 space-y-1 text-xs">
               <p className="text-[#8b8fa3]">{r.model_id}{r.duration_ms != null ? ` · ${(r.duration_ms / 1000).toFixed(1)}s` : ""}{r.cost_usd != null ? ` · $${r.cost_usd.toFixed(4)}` : ""}{r.draft_evidence ? ` · ${r.draft_evidence.stage}` : ""}</p>
+              {r.generation_error&&<div role="note" aria-label="Generation failure" className="rounded bg-red-300/5 p-2 text-red-200">
+                <p>Reply withheld: {r.generation_error.error_code} (HTTP {r.generation_error.http_status}). No model reply was approved.</p>
+                {r.generation_error.request_id&&<p className="break-all">Request: {r.generation_error.request_id}</p>}
+                {r.generation_error.output_diagnostics&&<><p>Output: {r.generation_error.output_diagnostics.object_type}; text {r.generation_error.output_diagnostics.text_status}; finish {r.generation_error.output_diagnostics.finish_reason??"unknown"}; {r.generation_error.output_diagnostics.step_count} steps / {r.generation_error.output_diagnostics.tool_call_count} tool calls.</p>
+                  {[...r.generation_error.output_diagnostics.object_issues,...r.generation_error.output_diagnostics.text_issues].map((issue,i)=><p key={i}>Envelope {issue.field}: {issue.code}</p>)}
+                </>}
+              </div>}
               {r.draft_evidence?.stock.map((s, i) => <p key={i} className="text-[#8b8fa3]">Stock: {s.item} · {s.quantity} requested · {s.start_date}–{s.end_date} · {s.available === true ? "available" : s.available === false ? "unavailable" : "unknown"} · {s.free_units ?? "unknown"} free</p>)}
               <p className="text-[#8b8fa3]">Draft:</p>
               <p className="whitespace-pre-wrap rounded bg-black/30 p-2">

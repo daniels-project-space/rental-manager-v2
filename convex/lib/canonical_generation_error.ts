@@ -1,6 +1,10 @@
+import {v} from "convex/values";
+import {modelOutputDiagnosticsValidator,safeModelFailureMetadata,type ModelOutputDiagnostics} from "./model_output_failure";
 const codes = ["upstream_timeout", "upstream_throttled", "upstream_unavailable", "upstream_authorization", "cancelled", "generation_failed", "http_failure", "invalid_model_output"] as const;
 type FailureCode = typeof codes[number];
-export type CanonicalGenerationError = { http_status: number; error_code: FailureCode; upstream_status?: number; transient: boolean; request_id?: string };
+export type CanonicalGenerationError = { http_status: number; error_code: FailureCode; upstream_status?: number; transient: boolean; request_id?: string; model_id?:string;cost_usd?:number;output_diagnostics?:ModelOutputDiagnostics };
+
+export const canonicalGenerationErrorValidator=v.object({http_status:v.number(),error_code:v.union(...codes.map(c=>v.literal(c))),upstream_status:v.optional(v.number()),transient:v.boolean(),request_id:v.optional(v.string()),model_id:v.optional(v.string()),cost_usd:v.optional(v.number()),output_diagnostics:v.optional(modelOutputDiagnosticsValidator)});
 
 /** Never serialize upstream error objects: they may contain prompts, request
  * headers or credentials. Preserve only bounded diagnostic fields. */
@@ -33,5 +37,5 @@ export async function canonicalGenerationError(response: Response): Promise<Cano
   const upstream_status = typeof body.upstream_status === "number" && Number.isInteger(body.upstream_status) && body.upstream_status >= 400 && body.upstream_status <= 599 ? body.upstream_status : undefined;
   const rawId = response.headers.get("x-vercel-id");
   const request_id = rawId && /^[a-zA-Z0-9_:.~-]{1,180}$/.test(rawId) ? rawId : undefined;
-  return { http_status: response.status, error_code, upstream_status, transient: body.transient === true, request_id };
+  return { http_status: response.status, error_code, upstream_status, transient: body.transient === true, request_id, ...(error_code==="invalid_model_output"?safeModelFailureMetadata(body):{}) };
 }

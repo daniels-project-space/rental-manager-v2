@@ -1,3 +1,4 @@
+import {canonicalGenerationErrorValidator} from "./lib/canonical_generation_error";
 import {ownerCheckRequestMessageId} from "./lib/owner_check_request";
 /**
  * renter_bot_harness — runs renter_bot_fixtures through the REAL
@@ -63,6 +64,7 @@ const rubricResultValidator = v.object({
 
 export const insertRun = internalMutation({
   args: {
+    generation_error:v.optional(canonicalGenerationErrorValidator),
     draft_evidence: v.optional(draftEvidenceValidator),
     pending_owner_checks:v.optional(v.array(ownerCheckValidator)),
     fixture_id: v.optional(v.id("renter_bot_fixtures")),
@@ -148,7 +150,9 @@ export const runFixture = action({
         run_batch_id: args.runBatchId,
         account_slug: fixture.account_slug,
         draft_text: "",
-        model_id: draftResult.model_id ?? "unknown (generation failed)",
+        model_id: draftResult.model_id ?? draftResult.generation_error?.model_id ?? "unknown (generation failed)",
+        generation_error:draftResult.generation_error,
+        cost_usd:draftResult.cost_usd??draftResult.generation_error?.cost_usd,
         filter_violations: skippedScore.filter_violation_categories,
         rubric_results: skippedScore.results,
         overall_status: skippedScore.overall_status,
@@ -198,14 +202,15 @@ export const runFixture = action({
         facts_claimed: draftResult.facts_claimed,
         draft_evidence: draftResult.evidence,
         pending_owner_checks:pendingOwnerChecks??undefined,
-        model_id: draftResult.model_id ?? "unknown",
+        model_id: draftResult.model_id ?? draftResult.generation_error?.model_id ?? "unknown",
         filter_violations: rubric.filter_violation_categories,
         rubric_results: rubric.results,
         overall_status: rubric.overall_status,
         triggered_by: args.triggeredBy ?? "harness_batch",
         run_at: startedAt,
         duration_ms: Date.now() - startedAt,
-        cost_usd: draftResult.cost_usd,
+        cost_usd: draftResult.cost_usd??draftResult.generation_error?.cost_usd,
+        generation_error:draftResult.generation_error,
       });
     }
 
@@ -407,14 +412,15 @@ export const runMultiTurnScenario = action({
         facts_claimed: draftResult.facts_claimed,
         draft_evidence: draftResult.evidence,
         pending_owner_checks:pendingOwnerChecks??undefined,
-        model_id: draftResult.model_id ?? "unknown",
+        model_id: draftResult.model_id ?? draftResult.generation_error?.model_id ?? "unknown",
         filter_violations: rubric.filter_violation_categories,
         rubric_results: rubric.results,
         overall_status: rubric.overall_status,
         triggered_by: "harness_batch",
         run_at: startedAt,
         duration_ms: Date.now() - startedAt,
-        cost_usd: draftResult.cost_usd,
+        cost_usd: draftResult.cost_usd??draftResult.generation_error?.cost_usd,
+        generation_error:draftResult.generation_error,
       });
 
       if (draftText) await ctx.runMutation(internal.renter_bot_lab_actions.appendAssistantMessage, { thread_id: threadId, account_slug: args.accountSlug, text: draftText, run_id: runId });

@@ -1,3 +1,4 @@
+import type {CanonicalGenerationError} from "./lib/canonical_generation_error";
 import {recordSentRentalRequest} from "./lib/sent_rental_request";
 import { sentBookingProposals } from "./lib/renter_sent_proposal";
 import {friendReferralCodesFromMessage} from "./lib/verification_failure";
@@ -284,6 +285,7 @@ export const sendTestMessage = action({
     overall_status: string;
     runId: string;
     productionGuardFlags: unknown;
+    generation_error?:CanonicalGenerationError;
     status: string;
     reason?: string;
     rejectedDraft?: string;
@@ -327,7 +329,7 @@ export const sendTestMessage = action({
       accountSlug: args.accountSlug,
       draftText,
       factsClaimed,
-      productionFlags: draftResult.flags,
+      productionFlags: draftResult.flags??draftResult.review?.flags,
       priceEvidence:draftResult.evidence?.prices,
         bookingRecord:draftResult.evidence?.booking_record,
       priceRequest:draftResult.evidence?.stock_request,
@@ -345,14 +347,15 @@ export const sendTestMessage = action({
         facts_claimed: draftResult.facts_claimed,
         draft_evidence: draftResult.evidence,
         pending_owner_checks:pendingOwnerChecks??undefined,
-        model_id: draftResult.model_id ?? "unknown",
+        model_id: draftResult.model_id ?? draftResult.generation_error?.model_id ?? "unknown",
         filter_violations: rubric.filter_violation_categories,
         rubric_results: rubric.results,
         overall_status: rubric.overall_status,
         triggered_by: "lab_ui_manual" as const,
         run_at: startedAt,
         duration_ms: Date.now() - startedAt,
-        cost_usd: draftResult.cost_usd,
+        cost_usd: draftResult.cost_usd??draftResult.generation_error?.cost_usd,
+        generation_error:draftResult.generation_error,
       },
     );
 
@@ -376,7 +379,8 @@ export const sendTestMessage = action({
       draft: draftText,
       overall_status: rubric.overall_status,
       runId,
-      productionGuardFlags: draftResult.flags ?? [],
+      productionGuardFlags: draftResult.flags ?? draftResult.review?.flags ?? [],
+      generation_error:draftResult.generation_error,
     };
   },
 });

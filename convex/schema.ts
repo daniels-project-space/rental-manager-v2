@@ -1,3 +1,4 @@
+import {canonicalGenerationErrorValidator} from "./lib/canonical_generation_error";
 import {rentalRequestValidator} from "./lib/rental_request";
 import {sentInquiryOfferValidator} from "./lib/sent_inquiry_offer";
 import { RECORDING_MODE_RESOLUTIONS } from "./lib/camera_requirements";
@@ -2675,6 +2676,7 @@ const operationalSchema = defineSchema({
   // that fixture plus rubric scoring. Never a live send — no relationship to
   // renter_bot_drafts or any Hygglo write path.
   renter_bot_harness_runs: defineTable({
+    generation_error:v.optional(canonicalGenerationErrorValidator),
     pending_owner_checks:v.optional(v.array(ownerCheckValidator)),
     draft_evidence: v.optional(draftEvidenceValidator),
     // Optional: Lab UI live/freeform sessions (triggered_by="lab_ui_manual")

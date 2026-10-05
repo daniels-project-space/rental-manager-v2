@@ -2,7 +2,7 @@ import {renterAccountVoice} from "../../../../convex/lib/renter_account_voice";
 import { recordRecommendationRequirements } from "@/lib/renter-tool-scope";
 import type { RecommendationRequirement } from "../../../../convex/lib/recommendation_qualification";
 import { renderNativeQuoteReply, nativeBookingRecord, type NativeQuoteScope } from "@/lib/renter-native-quote";
-import { RENTER_BOT_OUTPUT_SCHEMA, parseRenterBotOutput, validateRenterBotOutput } from "@/lib/renter-bot-output";
+import { RENTER_BOT_OUTPUT_SCHEMA, parseRenterBotOutput, validateRenterBotOutput, renterBotOutputDiagnostics } from "@/lib/renter-bot-output";
 import { nativeOwnerChecks } from "../../../../convex/lib/owner_checks";
 import { itemTechnicalContext, type ItemTechnicalEvidence } from "../../../../convex/lib/item_technical_context";
 import { renterBotRuntimeAllowed } from "../../../../convex/lib/renter_bot_runtime";
@@ -588,6 +588,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
   /** True once we have supplied REAL co-rental data for something discussed. */
   let hasPairingData = false;
   /** Per-draft token accounting, so caching is observable rather than assumed. */
+  let outputFailureDiagnostics:ReturnType<typeof renterBotOutputDiagnostics>|undefined;
   let tokenUsage: {
     prompt: number | null;
     completion: number | null;
@@ -1248,6 +1249,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       })));
       text = result?.text ?? "";
       obj = validateRenterBotOutput(result?.object);
+      if(!obj)outputFailureDiagnostics=renterBotOutputDiagnostics(result?.object,text,{finishReason:result?.finishReason,steps:result?.steps});
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       usedTools = ((result?.steps ?? []) as any[]).some(
         (st) => (st?.toolCalls?.length ?? 0) > 0,
@@ -1294,7 +1296,8 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       // Fail at the model-output boundary. The caller can still recover an
       // already committed Native amendment from its ledger without rerunning
       // the model or edit tool. Prose is not a validated decision envelope.
-      return NextResponse.json({ok:false,error:"invalid_model_output",error_code:"invalid_model_output",transient:false}, {status:502});
+      return NextResponse.json({ok:false,error:"invalid_model_output",error_code:"invalid_model_output",transient:false,model_id:modelOverride??RENTER_BOT_MODEL_ID,
+        ...(typeof tokenUsage?.cost==="number"&&Number.isFinite(tokenUsage.cost)&&tokenUsage.cost>=0?{cost_usd:tokenUsage.cost}:{}),output_diagnostics:outputFailureDiagnostics}, {status:502});
     }
 
     // SECOND CHANCE (2026-08-17): if the agent escalated WITHOUT ever calling

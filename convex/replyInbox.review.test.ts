@@ -1,3 +1,6 @@
+import {sendTestMessage} from "./renter_bot_lab_actions";
+import {insertRun} from "./renter_bot_harness";
+import {getFunctionName} from "convex/server";
 import {getAll as getOverrides,getRevision as getMappingRevision,setOverride,remove as removeOverride} from "./listing_overrides";
 import {loadListingInventory} from "./lib/listing_inventory";
 import {getReview as getCameraReview,saveReview as saveCameraReview} from "./renter_bot_camera_reviews";
@@ -1073,4 +1076,17 @@ describe("physical mapping writes invalidate actual draft approvals",()=>{
   expect(await invoke(setOverride,f.ctx,{account_slug:"leo",product_id:124,components:[{item_id:f.battery,qty:1}],expected_revision:"null"})).toMatchObject({inserted:1});
   expect(f.rows.get(f.settingsId).draft_epoch).toBe(4);expect([...f.rows.values()].filter(r=>r.table==="audit_log")).toHaveLength(2);
  });
+});
+
+
+it("persists and returns a failed Lab run's real diagnostics, cost and boundary flags",async()=>{
+ const f=database(),error={http_status:502,error_code:"invalid_model_output",transient:false,model_id:"google/gemini-3.7-flash",cost_usd:0.0125,request_id:"native-output-failure",output_diagnostics:{object_type:"missing",text_status:"empty",text_length:0,object_issues:[{field:"$",code:"invalid_type"}],text_issues:[],finish_reason:"tool-calls",step_count:3,tool_call_count:4}};
+ const flags=[{type:"INVALID_MODEL_OUTPUT",severity:"critical",action:"flagged",detail:"Model output invalid"}],mutations:string[]=[];
+ const ctx={runQuery:async(ref:any)=>{const name=getFunctionName(ref);return name.endsWith("getConversationForThread")?{account_slug:"leo"}:name.endsWith("pendingOwnerChecksForDraft")?[]:null;},
+  runAction:async()=>({status:"skipped",reason:"needs_human:invalid_model_output",generation_error:error,review:{flags}}),
+  runMutation:async(ref:any,args:any)=>{const name=getFunctionName(ref);mutations.push(name);return name.endsWith("insertRun")?invoke(insertRun,f.ctx,args):null;}};
+ const result=await invoke(sendTestMessage,ctx,{threadId:"__probe__failure-telemetry",accountSlug:"leo",text:"Check my camera kit"});
+ expect(result).toMatchObject({draft:"",status:"skipped",generation_error:error,productionGuardFlags:flags});
+ const row=[...f.rows.values()].find(r=>r.table==="renter_bot_harness_runs");expect(row).toMatchObject({model_id:error.model_id,cost_usd:error.cost_usd,generation_error:error,overall_status:"fail"});
+ expect(mutations.some(n=>n.endsWith("appendAssistantMessage"))).toBe(false);
 });
