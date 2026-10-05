@@ -11,7 +11,10 @@ export function unsupportedLensFocusClaims(text:string,evidence:LensFocusEvidenc
  const initial=evidence.filter(e=>e.names.some(n=>initialNames.some(i=>normal(i)===normal(n))));
  let subject=initial.length===1?initial:[];
  const failures:string[]=[];
- const resolve=(reference:string)=>{
+ const resolve=(rawReference:string)=>{
+  // A camera paired with a lens is a relation between two items. Focus
+  // belongs to the lens noun phrase, not to the entire recommended setup.
+  const reference=itemReferenceLabel(rawReference.split(/\s+paired\s+with\s+/i).at(-1)!,"lens");
   const declared=declaredLensReferences(normal(reference));
   const candidates=evidence.filter(e=>declared.every(key=>normal(refs.get(key)?.item.names[0]??"")===normal(e.names[0])));
   const match=bestMatch(reference,candidates,e=>e.names[0],e=>e.names.slice(1));

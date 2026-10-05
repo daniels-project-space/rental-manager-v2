@@ -183,6 +183,7 @@ import type * as lib_marketing_only_requests from "../lib/marketing_only_request
 import type * as lib_message_reconciliation from "../lib/message_reconciliation.js";
 import type * as lib_minimum_rental from "../lib/minimum_rental.js";
 import type * as lib_missed_revenue from "../lib/missed_revenue.js";
+import type * as lib_model_output_failure from "../lib/model_output_failure.js";
 import type * as lib_month_projection from "../lib/month_projection.js";
 import type * as lib_monthly_verification from "../lib/monthly_verification.js";
 import type * as lib_native_inquiry_offer from "../lib/native_inquiry_offer.js";
@@ -557,6 +558,7 @@ declare const fullApi: ApiFromModules<{
   "lib/message_reconciliation": typeof lib_message_reconciliation;
   "lib/minimum_rental": typeof lib_minimum_rental;
   "lib/missed_revenue": typeof lib_missed_revenue;
+  "lib/model_output_failure": typeof lib_model_output_failure;
   "lib/month_projection": typeof lib_month_projection;
   "lib/monthly_verification": typeof lib_monthly_verification;
   "lib/native_inquiry_offer": typeof lib_native_inquiry_offer;
