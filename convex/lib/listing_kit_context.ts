@@ -4,15 +4,17 @@ import {baseListingProductIds} from "./base_listing_identity";
 import {listingMediaConflict,withoutUnverifiedMediaCapacity} from "./listing_media_conflict";
 import {recordedKit} from "./recommendation_kit";
 
+type KitSources={indexes:Doc<"hygglo_product_index">[];overrides:Doc<"listing_resolution_override">[];peers:Doc<"online_listings">[]};
+
 /** One Native interpretation for renter context and owner-task revalidation.
  * A complete stock mapping does not resolve conflicting supplied contents. */
 export async function listingKitContext(ctx:QueryCtx,account:string|null|undefined,item:Doc<"items">|undefined,
-  components:Array<{name:string|null;units_per_listing:number}>,inventory:Doc<"items">[]) {
+  components:Array<{name:string|null;units_per_listing:number}>,inventory:Doc<"items">[],sources?:KitSources) {
   const recorded=item?.compatibility?.included_with_rental??[];
   let safe=recorded,conflict=false;
   let listingNames:string[]=[];
   if(item&&account&&["camera","camera_body"].includes(item.kind??"")){
-    const [indexes,overrides,peers]=await Promise.all([
+    const [indexes,overrides,peers]=sources?[sources.indexes,sources.overrides,sources.peers]:await Promise.all([
       ctx.db.query("hygglo_product_index").withIndex("by_item_id",q=>q.eq("item_id",item._id)).collect(),
       ctx.db.query("listing_resolution_override").withIndex("by_account_product",q=>q.eq("account_slug",account)).collect(),
       ctx.db.query("online_listings").withIndex("by_account",q=>q.eq("account_slug",account)).collect(),

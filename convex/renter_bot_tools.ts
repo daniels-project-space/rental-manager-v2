@@ -1,4 +1,4 @@
-import {listingKitContext} from "./lib/listing_kit_context";
+import {listingKitContext,listingKitItem} from "./lib/listing_kit_context";
 import {PRIMARY_RENTAL_REQUEST,rentalRequestValidator} from "./lib/rental_request";
 import {validateRentalRequest} from "./lib/sent_rental_request";
 import { referralContext } from "./lib/referral_context";
@@ -15,7 +15,6 @@ import { equipmentUsageContext, equipmentFactRequests } from "./lib/item_technic
 import { renterCameraIdentities } from "./lib/renter_camera_identity";
 import { bookingRecord } from "./lib/booking_record";
 import { verifiedLensCapabilities, assessLensRequirements, hasLensRequirements, type LensCapabilities } from "./lib/lens_requirements";
-import { listingMediaConflict, withoutUnverifiedMediaCapacity } from "./lib/listing_media_conflict";
 import { resolveLensSet } from "./lib/lens_set_resolution";
 import { availabilityBasket } from "./lib/availability_basket";
 import { explicitRecommendationUse, recommendationBasket, type RecommendationLine, type RecommendationUse } from "./lib/recommendation_basket";
@@ -25,7 +24,6 @@ import { summarise } from "./lib/renter_order_quote";
 import { inclusiveRentalDays } from "./lib/hygglo_pricing";
 import { listingDisplayName } from "./lib/item_display_name";
 import { assessCameraRequirements, hasCameraRequirements, requestedCameraRole, verifiedCameraCapabilities, type CameraRequirements, type CameraCapabilities } from "./lib/camera_requirements";
-import { recommendationKit } from "./lib/recommendation_kit";
 import { verifiedItemSpec } from "./lib/verified_item_spec";
 import { loadListingInventory, listingStock, resolveListingComponents } from "./lib/listing_inventory";
 import { getBotBooking, getLabOrder, requestedListingContext } from "./lib/renter_booking";
@@ -675,18 +673,17 @@ export const lookup_pricing = query({
           }
         }
         const mediaInventory = await ctx.db.query("items").collect();
-        const storageNeedsReview = selectedContents.components.some(c => {
-          const item=mediaInventory.find(i=>String(i._id)===c.item_id);
-          if (!item || !["camera","camera_body"].includes(item.kind ?? "")) return false;
-          const recorded=(item.compatibility as {included_with_rental?:string[]} | undefined)?.included_with_rental ?? [];
-          const baseIds=baseListingProductIds(account_slug,c.item_id,idxRows,ovrRows,mediaInventory,listings);
-          return listingMediaConflict(recorded,listings.filter(l=>baseIds.includes(l.product_id)).map(l=>l.name ?? ""));
-        });
+        const kitItem=listingKitItem(selectedContents,mediaInventory);
+        const kitReviews=await Promise.all([...new Set([kitItem?._id,...selectedContents.components
+          .filter(c=>["camera","camera_body"].includes(c.kind??"")).map(c=>c.item_id)].filter(Boolean))]
+          .map(id=>listingKitContext(ctx,account_slug,mediaInventory.find(i=>String(i._id)===String(id)),selectedContents.components,mediaInventory,
+            {indexes:idxRows,overrides:ovrRows,peers:listings})));
+        const storageNeedsReview=kitReviews.some(r=>r.contents_review_required);
         return {
           found: true as const,
           ...quote,
           storage_contents_verification_required:storageNeedsReview,
-          storage_guidance:storageNeedsReview ? "Supplied storage records conflict with listing title capacities. Do not promise any supplied SSD/card capacity for this camera until the owner confirms it; neither source wins. The camera's supported recording media are separate from what the kit supplies." : null,
+          storage_guidance:storageNeedsReview ? "Supplied storage records conflict or may describe the same physical medium. Do not promise unverified supplied SSD/card type, capacity or count until the owner confirms it. The camera's supported recording media are separate from what the kit supplies." : null,
           component_base_offerings: componentBaseOfferings,
           item_name,
           matched_listing: best.name,
@@ -1247,10 +1244,12 @@ export const find_owned_alternatives = query({
       // upsell quoted during a 5-day booking uses the 5-day rate rather than
       // the 1-day one.
       const candidatePids = pidsForItem(String(it._id));
+      const candidateContents=new Map<number,ReturnType<typeof resolveListingComponents>>();
       const verifiedListings = listings.filter(listing => {
         if (!candidatePids.includes(listing.product_id)) return false;
         const mapping = ovAll.find(row => row.account_slug === account_slug && row.product_id === listing.product_id);
         const contents = resolveListingComponents(allInventory, mapping?.components.map(c => ({item_id:String(c.item_id),qty:c.qty})), String(it._id), quantity ?? 1, listing.description);
+        candidateContents.set(listing.product_id,contents);
         return contents.complete && contents.owned === true;
       });
       const altListing = chooseBaseListing(verifiedListings, candidatePids);
@@ -1283,12 +1282,13 @@ export const find_owned_alternatives = query({
       }
       const quoteDays = start_date && end_date ? Math.round((Date.parse(end_date) - Date.parse(start_date)) / 86400000) + 1 : null;
       const quote = quoteDays != null && altListing ? rentalQuote(altRawTiers, altListing.daily_price, quoteDays, quantity ?? 1) : null;
-      const mapping = ovAll.find(o => o.account_slug === account_slug && o.product_id === altPid);
-      const storedContents=(it.compatibility as {included_with_rental?:string[]} | undefined)?.included_with_rental ?? [];
-      let storageNeedsReview=["camera","camera_body"].includes(it.kind ?? "") && listingMediaConflict(storedContents,listings.filter(l=>candidatePids.includes(l.product_id)).map(l=>l.name ?? ""));
-      const safeItem=storageNeedsReview ? {...it,compatibility:{...(it.compatibility ?? {}),included_with_rental:withoutUnverifiedMediaCapacity(storedContents)}} : it;
-      const kit = recommendationKit(safeItem, mapping, allInventory);
-      storageNeedsReview ||= kit.unreconciled_contents.length>0;
+      const physical=altPid!=null?candidateContents.get(altPid):undefined;
+      const kitContext=await listingKitContext(ctx,account_slug,it,physical?.components??[],allInventory,
+        {indexes:idxAll,overrides:ovAll,peers:listings});
+      const kit=kitContext.kit,storageNeedsReview=kitContext.contents_review_required;
+      const mappingComplete=physical?.complete??false;
+      const includesLens=["camera","camera_body"].includes(it.kind??"")&&mappingComplete
+        ?physical!.components.some(c=>c.kind==="lens"):null;
       const verified = verifiedItemSpec(spec, it.name_canonical);
       alternatives.push({
         product_id:altPid??null,
@@ -1314,9 +1314,9 @@ export const find_owned_alternatives = query({
         included: kit.included,
         kit_contents: kit.contents,
         kit_source: kit.source,
-        mapping_complete: kit.mapping_complete,
+        mapping_complete: mappingComplete,
         listing_name: altListing?.name ?? null,
-        includes_lens: kit.includes_lens,
+        includes_lens: includesLens,
         spec_text: verified?.text ?? null,
         spec_verification: verified ? { model: verified.model, source_url: verified.source_url } : null,
       });

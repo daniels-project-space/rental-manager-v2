@@ -518,6 +518,32 @@ describe("kit owner checks persist through the real review mutation",()=>{
   return {...f,camera,lens,override,check};
  }
  const tasks=(f:Awaited<ReturnType<typeof kit>>)=>[...f.rows.values()].filter(r=>r.table==="renter_bot_owner_checks");
+ it("uses the same supplied-stock and media evidence for listing, pricing and recommendations",async()=>{
+  const f=await kit();
+  const card=await f.ctx.db.insert("items",{name_canonical:"256GB card",kind:"accessory",qty:4,status:"active",track_independent_stock:true,unit_kind:"unit"});
+  await f.ctx.db.patch(f.camera,{supplied_stock:[{item_id:card,qty:1,source:"owner-verified"}],compatibility:{included_with_rental:["CFexpress Type A card"]}});
+  const listing=[...f.rows.values()].find(r=>r.table==="online_listings"&&r.product_id===10);
+  await f.ctx.db.patch(listing._id,{name:"Sony FX3",description:"Included in this kit: • 1x Sony FX3",daily_price:40});
+  await f.ctx.db.insert("item_specs",{item_name_canonical:"Sony FX3",item_id:f.camera,source:"manufacturer-verified",source_url:"https://manufacturer.example/fx3",verified_model:"Sony FX3",verified_at:1,
+   camera_capabilities:{role:"interchangeable_lens",sensor_format:"full_frame",native_mount:"E",internal_4k:true,verified_model:"Sony FX3",source_url:"https://manufacturer.example/fx3",verified_at:1}});
+  const context=await invoke(get_listing_context,f.ctx,{thread_id:f.args.thread_id});
+  const price=await invoke(lookup_pricing,f.ctx,{account_slug:"leo",item_name:"Sony FX3",days:1});
+  const alternatives=await invoke(find_owned_alternatives,f.ctx,{account_slug:"leo",kind:"camera"});
+  expect(price).toMatchObject({found:true,storage_contents_verification_required:true});
+  const alt=alternatives.alternatives.find((a:any)=>a.product_id===10);expect(alt).toBeDefined();
+  expect(alt.kit_contents).toEqual(context.items[0].kit_contents);
+  expect(alt.kit_contents).toContain("1 × 256GB card");
+  expect(alt).toMatchObject({mapping_complete:true,storage_contents_verification_required:true,unreconciled_kit_contents:["CFexpress Type A card"]});
+  expect(alternatives.owner_check).toMatchObject({kind:"kit_recommendation",candidate_product_ids:[10]});
+  // A reviewed physical identity removes ambiguity on every read path.
+  await f.ctx.db.patch(card,{name_canonical:"256GB CFexpress Type A card"});
+  const reviewed=await invoke(get_listing_context,f.ctx,{thread_id:f.args.thread_id});
+  expect(reviewed.items[0].storage_contents_verification_required).toBe(false);
+  expect(await invoke(lookup_pricing,f.ctx,{account_slug:"leo",item_name:"Sony FX3",days:1})).toMatchObject({found:true,storage_contents_verification_required:false});
+  const refreshed=await invoke(find_owned_alternatives,f.ctx,{account_slug:"leo",kind:"camera"});
+  expect(refreshed.alternatives[0].kit_contents).toEqual(reviewed.items[0].kit_contents);
+  expect(refreshed.alternatives[0].storage_contents_verification_required).toBe(false);
+ });
  it("persists one grouped recommended-kit review without treating an alternative as the current rental",async()=>{
   const f=await kit();
   await f.ctx.db.patch(f.camera,{compatibility:{included_with_rental:["1x 1TB SSD"]}});
