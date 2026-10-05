@@ -35,7 +35,11 @@ export function unsupportedRenterCameraClaims(text: string, messages: string[]):
   const identities = renterCameraIdentities(messages);
   const failures: string[] = [];
   for (const sentence of sentences(text)) {
-    for (const match of sentence.matchAll(/\b(?:your|which|what)\s+(.{0,60}?)\b(?:camera(?:\s+body)?|body)\b/gi)) {
+    // A camera noun phrase must stay within its clause. Relative copulas
+    // ("the A7 V, which is a ... body") describe the offered equipment;
+    // they do not label the renter's camera. Do not consume that clause, so
+    // a nested "your Sony body" still gets its own identity check.
+    for (const match of sentence.matchAll(/\b(?:your|which|what)\s+(?!\s*(?:is|are|was|were)\b)([^,;.!?]{0,60}?)\b(?:camera(?:\s+body)?|body)\b/gi)) {
       const reference = clean(match[1]);
       if (!reference || generic.test(reference)) continue;
       const claim = normal(reference);

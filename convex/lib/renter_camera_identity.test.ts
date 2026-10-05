@@ -35,6 +35,13 @@ describe("renter camera identity provenance", () => {
   it("keeps neutral setup questions and conditional suggestions answerable", () => {
     expect(check("Which current camera body do you use? If you use a Sony body, check its manual.", [])).toEqual([]);
   });
+  it("does not promote an offered body in a relative clause to renter identity", () => {
+    const saved="I have the Sony A7 V available for 20-21 October, which is a cheaper full-frame Sony E-mount body that meets your video requirements.";
+    expect(check(saved,[])).toEqual([]);
+    expect(check("I can meet your budget; the Sony FX3 camera is an option.",[])).toEqual([]);
+    expect(check("Which is your Sony body?",[])).toHaveLength(1);
+    expect(check(saved+" Your Sony FX3 camera is ready.",[])).toHaveLength(1);
+  });
   it("accepts a stated camera followed by a support question", () => {
     expect(check("Which Sony body are you using?", ["I'm using a Sony FX3, how do I focus?"])).toEqual([]);
     expect(check("Which Sony body are you using?", ["Can I use a Sony FX3?"])).toHaveLength(1);
