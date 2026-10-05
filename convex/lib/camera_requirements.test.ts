@@ -3,6 +3,21 @@ import { assessCameraRequirements, meetsCameraRequirements, requestedCameraRole,
 const full: CameraCapabilities = { role: "interchangeable_lens", sensor_format: "full_frame", native_mount: "L", internal_4k: true };
 const action: CameraCapabilities = { role: "action", sensor_format: "small_sensor", internal_4k: true };
 describe("hard camera requirements before stock ranking", () => {
+  it("uses reviewed internal 4K as broad recording proof in either representation",()=>{
+    for(const internal of [undefined,true])expect(assessCameraRequirements(full,{recording:{resolution:"4k",...(internal===undefined?{}:{internal})}}).status).toBe("match");
+    expect(assessCameraRequirements(full,{internal_4k:true}).status).toBe("match");
+    for(const capabilities of [null,{...full,internal_4k:false}])
+      expect(assessCameraRequirements(capabilities,{recording:{resolution:"4k"}}).status).toBe("unknown");
+    expect(assessCameraRequirements({...full,internal_4k:false},{recording:{resolution:"4k",internal:true}}).status).toBe("mismatch");
+    expect(assessCameraRequirements(full,{internal_4k:false,recording:{resolution:"4k"}}).status).toBe("mismatch");
+  });
+  it("never promotes broad 4K proof into a detailed recording mode",()=>{
+    for(const recording of [{resolution:"uhd_4k" as const},{resolution:"dci_4k" as const},
+      {resolution:"4k" as const,min_fps:24},{resolution:"4k" as const,capture_format:"full_frame" as const},
+      {resolution:"4k" as const,full_width:true},{resolution:"4k" as const,full_width:false},
+      {resolution:"4k" as const,internal:false}])
+      expect(assessCameraRequirements(full,{recording}),JSON.stringify(recording)).toMatchObject({status:"unknown",unknown:["recording"]});
+  });
   const mode = (fps: number, format: "full_frame" | "aps_c", width: boolean): RecordingMode => ({ resolution: "uhd_4k", nominal_fps: [fps], capture_format: format, full_width: width, internal: true, conditions: [], verified_model: "model", source_url: "https://manufacturer.example/modes", verified_at: 1 });
   it("distinguishes full-frame sensors from capture area and uncropped modes", () => {
     const a7v = { ...full, recording_modes: [mode(60, "full_frame", true), mode(120, "aps_c", false)] };

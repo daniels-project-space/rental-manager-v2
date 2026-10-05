@@ -87,7 +87,16 @@ export function assessCameraRequirements(capabilities:CameraCapabilities|null,re
     if(recording.capture_format && capabilities?.sensor_format &&
       sensorClass[recording.capture_format]>sensorClass[capabilities.sensor_format])mismatched.push("capture_format");
     if(!RECORDING_REQUIREMENT_RESOLUTIONS.includes(recording.resolution) || recording.min_fps!==undefined&&(!Number.isFinite(recording.min_fps)||recording.min_fps<=0))mismatched.push("recording");
-    else if(!capabilities?.recording_modes?.some(mode=>matchesRecordingRequirement(mode,recording)))unknown.push("recording");
+    else {
+      // Reviewed internal 4K is positive proof of the generic 4K family,
+      // regardless of which requirement representation the caller uses.
+      // It establishes no exact format, frame rate, crop or capture area,
+      // and cannot establish external-only recording.
+      const broadInternal4K=capabilities?.internal_4k===true && recording.resolution==="4k"
+        && recording.min_fps===undefined && recording.capture_format===undefined
+        && recording.full_width===undefined && recording.internal!==false;
+      if(!broadInternal4K && !capabilities?.recording_modes?.some(mode=>matchesRecordingRequirement(mode,recording)))unknown.push("recording");
+    }
   }
   return {status:mismatched.length?"mismatch" as const:unknown.length?"unknown" as const:"match" as const,unknown,mismatched};
 }
