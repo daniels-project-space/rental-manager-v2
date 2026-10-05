@@ -2,12 +2,28 @@ import pairedQuotes from "./fixtures/renter-native-quotes.json";
 import {describe,it,expect} from "vitest";
 import inquiryNativeQuote from "./fixtures/renter-inquiry-native-quote.json";
 import jointNativeQuote from "./fixtures/renter-joint-native-quote.json";
+import bodyAlternativePriceClaim from "./fixtures/renter-body-alternative-price-claim.json";
 import {renterPriceEvidence} from "./renter-price-evidence";
 import type {ToolReceipt} from "./renter-tool-evidence";
 import {unsupportedPriceClaims} from "../../convex/lib/price_claims";
 import {draftEvidenceValidator} from "../../convex/lib/renter_draft_evidence";
 const receipt=(tool:string,result:Record<string,unknown>,call_id="call"):ToolReceipt=>({tool,result,call_id});
 describe("server price receipt adapters",()=>{
+ it("validates the captured actual body-alternative reply without borrowing the original kit's price",()=>{
+  const proof=bodyAlternativePriceClaim.prices as import("../../convex/lib/price_claims").PriceEvidence[];
+  expect(unsupportedPriceClaims(bodyAlternativePriceClaim.text,proof,bodyAlternativePriceClaim.request)).toEqual([]);
+  expect(unsupportedPriceClaims(bodyAlternativePriceClaim.text.replace("£70","£75"),proof,bodyAlternativePriceClaim.request)).not.toEqual([]);
+ });
+ it("binds an alternative named at the end of a completed offer sentence to its own Native price",()=>{
+  const candidate={name:"BMPCC 6K Pro",listing_name:"Bmpcc 6k pro camera body set",daily_price_gbp:35,quote:{days:2,quantity:1,daily_rate_gbp:35,listed_total_gbp:70,source:"hygglo_tier",start_date:"2026-10-20",end_date:"2026-10-21"}};
+  const request={items:[{name:"BMPCC 6K Full Frame",aliases:["Blackmagic 6K Full Frame"],quantity:1}],start_date:"2026-10-20",end_date:"2026-10-21"};
+  const claim="For the Blackmagic 6K Full Frame kit, the supplied storage is 1x 1TB CFexpress Type B card.\n\nIf you're looking for a cheaper body-only option with built-in ND, the best fit is the Blackmagic Pocket Cinema Camera 6K Pro. It has an active EF mount and Super 35 sensor. For 20–21 October (2 days), it is £35/day (£70 total).";
+  const proof=renterPriceEvidence([receipt("find_owned_alternatives",{alternatives:[candidate]})]);
+  expect(unsupportedPriceClaims(claim,proof,request)).toEqual([]);
+  expect(unsupportedPriceClaims(claim.replace("£70","£80"),proof,request)).not.toEqual([]);
+  expect(unsupportedPriceClaims(claim.replace("(2 days)","(4 days)"),proof,request)).not.toEqual([]);
+  expect(unsupportedPriceClaims("Blackmagic 6K Full Frame is £35/day (£70 total for 2 days).",proof,request)).not.toEqual([]);
+ });
  it("binds an exact quote's short name only to the verified account and listing",()=>{
   const listing="Sony A7 ii mirrorless Camera full frame digital cinema + 28-70mm Zoom FE Sony lens + 128gb sd card Sony a7ii";
   const native={found:true,matched_listing:listing,product_id:1172846,account_slug:"leo",days:2,quantity:1,daily_rate_gbp:28,listed_total_gbp:56,source:"hygglo_tier"};

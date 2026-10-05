@@ -1,0 +1,118 @@
+{
+  "provenance": "Actual Lab generated candidate and Native price receipts, 2026-10-05; price validation only, not kit-contents signoff",
+  "text": "For the Blackmagic 6K Full Frame kit, the supplied storage is 1x 1TB CFexpress Type B card (the body records to CFexpress Type B or external USB-C drives).\n\nIf you're looking for a cheaper body-only option with built-in ND, the best fit is the Blackmagic Pocket Cinema Camera 6K Pro. It has motorized internal ND filters (0, 2, 4, and 6 stops), an active EF mount, and Super 35 sensor. For 20\u201321 October (2 days), it is \u00a335/day (\u00a370 total). Its recorded kit includes 5x NP-F570 batteries, a cage, and a hard carry case.\n\nAnother cheaper full-frame body option is the Sony FX3 at \u00a349/day (\u00a398 total for 2 days, including a CFexpress Type A card and 2x NP-FZ100 battery sets), though it uses Sony E-mount and does not feature built-in ND filters.\n\nNothing has been changed or booked on your enquiry\u2014let me know if you'd like to go with either of these options!",
+  "prices": [
+    {
+      "base_rate_gbp": 62,
+      "call_id": "server-price:0:Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+      "daily_rate_gbp": 62,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s"
+      ],
+      "quantity": 1,
+      "source": "lab_order_quote",
+      "start_date": "2026-10-20",
+      "total_gbp": 124
+    },
+    {
+      "base_rate_gbp": 62,
+      "call_id": "server-price:1",
+      "daily_rate_gbp": 62,
+      "days": 2,
+      "kind": "rental",
+      "names": [
+        "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L series ",
+        "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+        "BMPCC 6K Full Frame"
+      ],
+      "quantity": 1,
+      "source": "hygglo_tier",
+      "total_gbp": 124
+    },
+    {
+      "base_rate_gbp": 35,
+      "call_id": "server-price:4:BMPCC 6K Pro",
+      "daily_rate_gbp": 35,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "BMPCC 6K Pro",
+        "Bmpcc 6k pro blackmagic bmpcc6k cinema camera body set + 2tb ssd"
+      ],
+      "quantity": 1,
+      "source": "hygglo_tier",
+      "start_date": "2026-10-20",
+      "total_gbp": 70
+    },
+    {
+      "base_rate_gbp": 49,
+      "call_id": "server-price:4:Sony FX3",
+      "daily_rate_gbp": 49,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Sony FX3",
+        "Sony fx 3 cinema camera full frame mirrorless 4k sony fx3 (same sensor as a7siii a7s iii )"
+      ],
+      "quantity": 1,
+      "source": "hygglo_tier",
+      "start_date": "2026-10-20",
+      "total_gbp": 98
+    },
+    {
+      "base_rate_gbp": 42,
+      "call_id": "server-price:4:Sony A7 V",
+      "daily_rate_gbp": 42,
+      "days": 2,
+      "end_date": "2026-10-21",
+      "kind": "rental",
+      "names": [
+        "Sony A7 V",
+        "Sony A7 V Full Frame Camera | Sony a7V / a7 V / a7v / Alpha 7 V /  a7 5 Full-Frame Mirrorless / 4K Camera / Hybrid Photo Video Camera"
+      ],
+      "quantity": 1,
+      "source": "hygglo_tier",
+      "start_date": "2026-10-20",
+      "total_gbp": 84
+    }
+  ],
+  "request": {
+    "end_date": "2026-10-21",
+    "items": [
+      {
+        "aliases": [
+          "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+          "BMPCC 6K Full Frame",
+          "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L series "
+        ],
+        "complete": true,
+        "components": [
+          {
+            "name": "BMPCC 6K Full Frame",
+            "quantity": 1
+          },
+          {
+            "name": "Canon EF 24-105mm f4",
+            "quantity": 1
+          },
+          {
+            "name": "NP-F570 batteries",
+            "quantity": 5
+          },
+          {
+            "name": "EF to L mount",
+            "quantity": 1
+          }
+        ],
+        "name": "BMPCC 6K Full Frame",
+        "quantity": 1
+      }
+    ],
+    "start_date": "2026-10-20"
+  }
+}

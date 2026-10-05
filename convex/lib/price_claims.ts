@@ -125,7 +125,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     if (/\n\s*\n/.test(text.slice(consumed, pos))) pricedComponents = [];
     // Normalise identities within clauses, retaining boundaries so a camera
     // mention cannot absorb a later pronoun from another sentence.
-    const before = text.slice(consumed, pos).split(/;|\n|(?<=[.!?])\s+/).map(norm).join(". ");
+    const before = text.slice(consumed, pos).split(/;|\n|(?<=[.!?])\s+/).map(norm).join(" . ");
     let lastName = "", lastAt = -1, lastEnd = -1;
     for (const n of names) {
       const at = (` ${before} `).lastIndexOf(` ${n} `);
