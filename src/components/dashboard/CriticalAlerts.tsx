@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation } from "convex/react";
+import { useMutation,useQuery,useConvexAuth } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 
@@ -398,29 +398,36 @@ function UnmappedListingsBanner({ alerts }: { alerts: UnmappedListing[] }) {
  * listing, and the button says so instead of failing silently.
  */
 function UnmappedRow({ alert: a }: { alert: UnmappedListing }) {
+  const {isAuthenticated}=useConvexAuth();
   const setOverride = useMutation(api.listing_overrides.setOverride);
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(false);
   const canPin = a.product_id !== null && !!a.account_slug;
+  const snapshot=useQuery(api.listing_overrides.getRevision,canPin?{account_slug:a.account_slug!,product_id:a.product_id!}:"skip");
+  const [error,setError]=useState<string|null>(null);
 
   async function onNotInventory() {
-    if (saving || done || !canPin) return;
+    if (saving || done || !canPin || !isAuthenticated || !snapshot?.available) return;
     setSaving(true);
+    setError(null);
     try {
       await setOverride({
         account_slug: a.account_slug as string,
         product_id: a.product_id as number,
         components: [],
         note: `marked non-inventory from dashboard alert: ${a.listing_title}`,
+        expected_revision:snapshot.revision,
       });
       setDone(true);
+    } catch(err) {
+      setError(err instanceof Error?err.message:"Could not update this listing");
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <div className="text-[11px] flex items-center gap-2" style={{ color: "#d1d5db" }}>
+    <div className="text-[11px] flex flex-wrap items-center gap-2" style={{ color: "#d1d5db" }}>
       <span style={{ color: "#f59e0b" }}>
         {fmtDate(a.start_date)}–{fmtDate(a.end_date)}
       </span>
@@ -431,7 +438,7 @@ function UnmappedRow({ alert: a }: { alert: UnmappedListing }) {
       </span>
       <button
         onClick={onNotInventory}
-        disabled={!canPin || saving || done}
+        disabled={!canPin || !isAuthenticated || !snapshot?.available || saving || done}
         className="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded font-semibold transition-colors disabled:opacity-40"
         style={{
           background: "rgba(148,163,184,0.14)",
@@ -446,6 +453,8 @@ function UnmappedRow({ alert: a }: { alert: UnmappedListing }) {
       >
         {done ? "pinned" : saving ? "…" : "not inventory"}
       </button>
+      {canPin&&!isAuthenticated&&<a href="/login" className="underline">Sign in to update</a>}
+      {(error||snapshot?.available===false)&&<p role="alert" className="basis-full text-red-300">{error??(snapshot?.available===false?snapshot.message:"")}</p>}
     </div>
   );
 }

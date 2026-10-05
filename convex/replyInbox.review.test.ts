@@ -1,3 +1,5 @@
+import {getAll as getOverrides,getRevision as getMappingRevision,setOverride,remove as removeOverride} from "./listing_overrides";
+import {loadListingInventory} from "./lib/listing_inventory";
 import {getReview as getCameraReview,saveReview as saveCameraReview} from "./renter_bot_camera_reviews";
 import {verifiedCameraCapabilities} from "./lib/camera_requirements";
 import {computeNegotiationStance,negotiationFromMessages} from "./lib/renter_bot_negotiation";
@@ -20,6 +22,7 @@ function database() {
   const rows = new Map<string, any>(); let serial = 0;
   const db = {
     get: async (id:string) => rows.get(id)??null,
+    delete: async (id:string) => {rows.delete(id);},
     insert: async (table: string, value: any) => { const id = `${table}:${++serial}`; rows.set(id, { ...value, _id: id, _creationTime: serial, table }); return id; },
     patch: async (id: string, value: any) => { const row = { ...rows.get(id) }; for (const [k, v] of Object.entries(value)) { if (v === undefined) delete row[k]; else row[k] = v; } rows.set(id, row); },
     query: (table: string) => {
@@ -996,5 +999,78 @@ describe("authoritative camera reviews retain independent evidence",()=>{
  it("previews against real readers without touching catalogue, mount, epoch or task",async()=>{
   const f=await camera(),before=structuredClone([...f.rows]);
   const preview=await invoke(saveCameraReview,f.ctx,{...f.reviewArgs,change:{...f.change,native_mount:"L"},dry_run:true});expect(preview.verified.recording_modes).toEqual([f.mode]);expect([...f.rows]).toEqual(before);
+ });
+});
+
+
+describe("physical mapping writes invalidate actual draft approvals",()=>{
+ async function mapping(){
+  const f=await setup();(f.ctx as any).auth={getUserIdentity:async()=>({issuer:"urn:rental-manager:deployment-service",subject:"rental-manager-service"})};
+  const camera=await f.ctx.db.insert("items",{name_canonical:"Sony FX3",kind:"camera",qty:2,status:"active",is_marketing_only:false});
+  const battery=await f.ctx.db.insert("items",{name_canonical:"NP-F570 battery",kind:"power",qty:12,status:"active",is_marketing_only:false,track_independent_stock:true});
+  await f.ctx.db.insert("hygglo_products",{accountSlug:"leo",productId:123,name:"Sony FX3"});
+  const override=await f.ctx.db.insert("listing_resolution_override",{account_slug:"leo",product_id:123,components:[{item_id:camera,qty:1}],source:"manual_audit",updated_at:1});
+  const row=(await invoke(getOverrides,f.ctx,{}))[0];const args={account_slug:"leo",product_id:123,components:[{item_id:camera,qty:1},{item_id:battery,qty:5}],expected_revision:row.revision,note:"Owner checked physical contents"};
+  return {...f,camera,battery,override,row,writeArgs:args};
+ }
+ it("records the actual shared-stock mapping, audits it and removes an old draft's approval",async()=>{
+  const f=await mapping();await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:f.args.context_key,draft_text:"I will check the kit contents."});
+  expect((await invoke(getDraftApprovalContext,f.ctx,{thread_id:f.args.thread_id})).draft_approval).not.toBeNull();
+  const originalCamera=structuredClone(f.rows.get(f.camera)),originalBattery=structuredClone(f.rows.get(f.battery));
+  expect(await invoke(setOverride,f.ctx,f.writeArgs)).toMatchObject({updated:1});
+  const physical=await loadListingInventory(f.ctx as any,"leo",123,2);
+  expect(physical).toMatchObject({complete:true,owned:true});expect(physical.components.find(c=>c.item_id===f.battery)).toMatchObject({units_per_listing:5,requested_units:10,stock_required:true});
+  expect(f.rows.get(f.camera)).toEqual(originalCamera);expect(f.rows.get(f.battery)).toEqual(originalBattery);expect(f.rows.get(f.settingsId).draft_epoch).toBe(3);
+  expect((await invoke(getDraftApprovalContext,f.ctx,{thread_id:f.args.thread_id})).draft_approval).toBeNull();
+  const audit=[...f.rows.values()].filter(r=>r.table==="audit_log");expect(audit).toHaveLength(1);expect(JSON.parse(audit[0].note)).toMatchObject({before:{_id:f.override},after:{components:expect.arrayContaining([{item_id:f.battery,qty:5}])}});
+ });
+ it("previews normalized duplicate quantities without editing stock, mapping, audit or epoch",async()=>{
+  const f=await mapping(),before=structuredClone([...f.rows]);
+  const result=await invoke(setOverride,f.ctx,{...f.writeArgs,dry_run:true,components:[{item_id:f.camera,qty:1},{item_id:f.battery,qty:2},{item_id:f.battery,qty:3}]});
+  expect(result).toMatchObject({preview:true,components:expect.arrayContaining([{item_id:f.battery,qty:5}])});expect(result.components).toHaveLength(2);expect([...f.rows]).toEqual(before);
+ });
+ it("requires owner authorization for writes, removals and previews even during global rollout",async()=>{
+  for(const [fn,args] of [[setOverride,{dry_run:true}],[setOverride,{}],[removeOverride,{dry_run:true}],[removeOverride,{}]] as const){
+   const f=await mapping();(f.ctx as any).auth={getUserIdentity:async()=>null};const before=structuredClone([...f.rows]);
+   await expect(invoke(fn,f.ctx,{...f.writeArgs,...args})).rejects.toThrow("OWNER_AUTH_REQUIRED");expect([...f.rows]).toEqual(before);
+  }
+ });
+ it("rejects invalid physical units, excess pooled units, non-owned inventory and foreign targets without writes",async()=>{
+  for(const invalid of ["zero","negative","fraction","nan","excess","summed_excess","missing","marketing","inactive","unknown_listing","foreign_account","product_zero","note_limit"]){
+   const f=await mapping();let args:any={...f.writeArgs};
+   if(["zero","negative","fraction","nan","excess"].includes(invalid))args.components=[{item_id:f.battery,qty:({zero:0,negative:-1,fraction:0.5,nan:NaN,excess:13} as any)[invalid]}];
+   if(invalid==="summed_excess")args.components=[{item_id:f.battery,qty:7},{item_id:f.battery,qty:6}];
+   if(invalid==="missing")args.components=[{item_id:"items:missing",qty:1}];
+   if(invalid==="marketing")await f.ctx.db.patch(f.battery,{is_marketing_only:true});if(invalid==="inactive")await f.ctx.db.patch(f.battery,{status:"inactive"});
+   if(invalid==="unknown_listing")args.product_id=124;if(invalid==="foreign_account")args.account_slug="other";if(invalid==="product_zero")args.product_id=0;if(invalid==="note_limit")args.note="x".repeat(2001);
+   const before=structuredClone([...f.rows]);await expect(invoke(setOverride,f.ctx,args)).rejects.toThrow();expect([...f.rows]).toEqual(before);
+  }
+ });
+ it("refuses stale or duplicate mappings for both updates and removals",async()=>{
+  for(const fn of [setOverride,removeOverride])for(const invalid of ["stale","duplicate"]){const f=await mapping();
+   if(invalid==="duplicate")await f.ctx.db.insert("listing_resolution_override",{...f.rows.get(f.override),_id:undefined});
+   const args={...f.writeArgs,expected_revision:invalid==="stale"?"stale":f.row.revision},before=structuredClone([...f.rows]);
+   await expect(invoke(fn,f.ctx,args)).rejects.toThrow();expect([...f.rows]).toEqual(before);
+  }
+ });
+ it("removes a mapping with an audit and invalidation, restoring the Native unknown state",async()=>{
+  const f=await mapping();await f.ctx.db.insert("hygglo_product_index",{account_slug:"leo",product_id:123,item_id:f.camera});
+  expect(await invoke(removeOverride,f.ctx,{account_slug:"leo",product_id:123,expected_revision:f.row.revision})).toEqual({deleted:1});
+  expect(f.rows.has(f.override)).toBe(false);expect(f.rows.get(f.settingsId).draft_epoch).toBe(3);expect([...f.rows.values()].filter(r=>r.table==="audit_log")).toHaveLength(1);
+  expect((await loadListingInventory(f.ctx as any,"leo",123)).complete).toBe(false);
+  expect(await invoke(removeOverride,f.ctx,{account_slug:"leo",product_id:123})).toEqual({deleted:0});expect(f.rows.get(f.settingsId).draft_epoch).toBe(3);
+ });
+ it("keeps old observed fee listings pinnable and reads only the scoped revision",async()=>{
+  const f=await mapping();expect(await invoke(getMappingRevision,f.ctx,{account_slug:"leo",product_id:123})).toEqual({available:true,revision:f.row.revision});
+  await f.ctx.db.insert("hygglo_product_index",{account_slug:"leo",product_id:125,item_id:f.camera});
+  expect(await invoke(setOverride,f.ctx,{account_slug:"leo",product_id:125,components:[],expected_revision:"null"})).toMatchObject({inserted:1});
+  await f.ctx.db.insert("listing_resolution_override",{account_slug:"leo",product_id:123,components:[]});
+  expect(await invoke(getMappingRevision,f.ctx,{account_slug:"leo",product_id:123})).toMatchObject({available:false});
+ });
+ it("supports an explicit non-rentable mapping and an authenticated new listing mapping",async()=>{
+  const f=await mapping();await invoke(setOverride,f.ctx,{...f.writeArgs,components:[]});expect(await loadListingInventory(f.ctx as any,"leo",123)).toMatchObject({owned:false});
+  await f.ctx.db.insert("online_listings",{account_slug:"leo",product_id:124,name:"NP-F570"});
+  expect(await invoke(setOverride,f.ctx,{account_slug:"leo",product_id:124,components:[{item_id:f.battery,qty:1}],expected_revision:"null"})).toMatchObject({inserted:1});
+  expect(f.rows.get(f.settingsId).draft_epoch).toBe(4);expect([...f.rows.values()].filter(r=>r.table==="audit_log")).toHaveLength(2);
  });
 });
