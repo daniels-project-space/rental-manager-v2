@@ -891,7 +891,7 @@ export const generateDraft = action({
       catalogueReadinessEvidence: ownerChecks.length && unsupportedCatalogueReadinessClaims(checkedDraft,[]).length ? await ctx.runQuery(internal.renter_bot_owner_checks.readinessEvidence,{checks:ownerChecks}) : [],
       cameraEvidence:profiles.cameras,lensEvidence:profiles.lenses,
       bookingRecord:generationMeta.evidence?.booking_record,
-      newInquiry:generationMeta.evidence?.stock_quotes?.some(q=>q.new_inquiry)||generationMeta.evidence?.stock.some(r=>r.new_inquiry),
+      newInquiry:generationMeta.evidence?.rental_request?.kind==="inquiry"||generationMeta.evidence?.stock_quotes?.some(q=>q.new_inquiry)||generationMeta.evidence?.stock.some(r=>r.new_inquiry),
       stockEvidence: routeStockRequest ? generationMeta.evidence?.stock ?? [] : undefined,
       stockRequest: routeStockRequest,
       priceEvidence: routePriceEvidence,

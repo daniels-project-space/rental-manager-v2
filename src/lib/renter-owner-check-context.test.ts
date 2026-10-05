@@ -6,6 +6,11 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 
 describe("Native owner state crossing the Mastra tool contract",()=>{
+  it("preserves independent request stage alongside the original rental stage",()=>{
+    const active_request_stage={stage:"INQUIRY",can_confirm_booking:false,can_share_pickup_address:false};
+    const parsed=renterContextOutputSchema.parse({...fullContext,active_request_stage});
+    expect(parsed.active_request_stage).toEqual(active_request_stage);expect(parsed.rental_stage).toEqual(fullContext.rental_stage);
+  });
   it("preserves the same response through Mastra's standard-schema wrapper",async()=>{
     const tool=createTool({id:"renter-context-contract-probe",description:"Validate captured Native context",inputSchema:z.object({}),outputSchema:renterContextOutputSchema,execute:async()=>renterContextOutputSchema.parse(fullContext)});
     const result=await tool.outputSchema!["~standard"].validate(fullContext);

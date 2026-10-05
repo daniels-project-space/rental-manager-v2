@@ -22,6 +22,7 @@ export const renterContextOutputSchema = z.object({
     renter_history:z.object({platform_completed_rentals:z.number().nullable(),recorded_rentals_with_us:z.number().nullable(),last_rental_with_us_at:z.number().nullable()}),
     conversation_stage: z.string(),
     rental_stage: z.unknown(),
+    active_request_stage:z.unknown().optional(),
     last_message_id: z.string().nullable(),
     owner_checks: z.array(renterOwnerCheckContextSchema),
     rental_request:z.unknown(),

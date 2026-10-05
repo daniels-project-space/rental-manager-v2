@@ -1,3 +1,4 @@
+import type {RentalRequest} from "./rental_request";
 /** Operational state comes from the current reservation, never an LLM label.
  * Hygglo order_step is the NEXT action: RETURNED means return is still due.
  */
@@ -69,4 +70,9 @@ export function rentalStage(row: {
     can_acknowledge_owner_acceptance:permissions.can_acknowledge_owner_acceptance&&
       (confirmed||["AWAITING_PAYMENT","AWAITING_VERIFICATION"].includes(stage)) };
 
+}
+
+/** An independent inquiry never inherits the original order's permissions. */
+export function requestRentalStage(request:RentalRequest,booking:Parameters<typeof rentalStage>[0],today:string) {
+ return rentalStage(request.kind==="inquiry"?null:booking,today);
 }

@@ -47,7 +47,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { checkRentalStock, loadStockSources, stockForRentalItem, stockForItem } from "./lib/renter_stock";
 import { baseListingProductIds, chooseBaseListing } from "./lib/base_listing_identity";
-import { rentalStage,isClosedRentalStage } from "./lib/rental_stage";
+import { requestRentalStage, rentalStage,isClosedRentalStage } from "./lib/rental_stage";
 import { londonToday } from "./lib/effectiveDates";
 import { chronologicalThreadMessages, recentThreadMessages } from "./lib/thread_messages";
 import { negotiationFromMessages } from "./lib/renter_bot_negotiation";
@@ -58,8 +58,8 @@ import { tierRateForDays, describeTiers, rentalQuote, type PriceTier } from "./l
 // ── Tool 1: get_renter_context ───────────────────────────────
 
 export const get_renter_context = query({
-  args: { thread_id: v.string() },
-  handler: async (ctx, { thread_id }) => {
+  args: { thread_id: v.string(),rental_request:v.optional(rentalRequestValidator) },
+  handler: async (ctx, { thread_id,rental_request }) => {
     const conversation = await ctx.db
       .query("conversations")
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
@@ -89,9 +89,8 @@ export const get_renter_context = query({
     const allMsgs = await chronologicalThreadMessages(ctx, thread_id);
     const recentMsgs = allMsgs.slice(-40);
 
-    const stage = reservation
-      ? rentalStage(reservation,londonToday()).stage
-      : conversation?.conversation_stage ?? "INQUIRY";
+    const request=await validateRentalRequest(ctx,thread_id,rental_request??conversation?.active_rental_request??PRIMARY_RENTAL_REQUEST,recentMsgs.at(-1)?.sender==="renter"?recentMsgs.at(-1)?.message_id:undefined);
+    const activeStage=requestRentalStage(request,reservation,londonToday());
 
     const ownerChecks=await ownerChecksForBot(ctx,thread_id,draftContextKey(reservation,conversation?.inquiry_items,await getLabOrder(ctx,thread_id)));
 
@@ -106,9 +105,10 @@ export const get_renter_context = query({
       renter_camera_identities: renterCameraIdentities(recentMsgs.filter(message=>message.sender!=="owner").map(message=>message.body_text)),
       renter_history:await renterHistory(ctx,profile,thread_id,londonToday()),
       owner_checks: ownerChecks,
-      rental_request:conversation?.active_rental_request??PRIMARY_RENTAL_REQUEST,
+      rental_request:request,
+      active_request_stage:activeStage,
       rental_requests:rentalRequestHistory(allMsgs),
-      conversation_stage: stage,
+      conversation_stage: activeStage.stage,
       rental_stage: rentalStage(reservation, londonToday()),
       last_message_id: recentMsgs.at(-1)?.message_id ?? null,
       last_messages: recentMsgs.slice(-12)
@@ -947,7 +947,7 @@ export const select_rental_request=query({
   if(latest?.sender!=="renter")throw new Error("Request planning requires a current renter message");
   const selected=intent==="primary"?PRIMARY_RENTAL_REQUEST:intent==="new"?{kind:"inquiry" as const,origin_message_id:latest.message_id}:intent==="resume"?{kind:"inquiry" as const,origin_message_id:origin_message_id??""}:rental_request??conversation.active_rental_request??PRIMARY_RENTAL_REQUEST;
   const request=await validateRentalRequest(ctx,thread_id,selected,intent==="resume"?undefined:latest.message_id);
-  return {rental_request:request,request_context:rentalRequestContext(messages,request),negotiation:negotiationFromMessages(messages,request),request_message_id:latest.message_id,context_only:true};
+  return {rental_request:request,active_request_stage:requestRentalStage(request,await getBotBooking(ctx,thread_id),londonToday()),request_context:rentalRequestContext(messages,request),negotiation:negotiationFromMessages(messages,request),request_message_id:latest.message_id,context_only:true};
  }
 });
 

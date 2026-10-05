@@ -1216,7 +1216,7 @@ const ASSERTS_AVAIL_RE =
       (opts.rentalPermissions?.booking_dates||opts.newInquiry) && unsupportedBookingDateClaims(text,opts.rentalPermissions?.booking_dates??{},opts.newInquiry).length>0)) {
     push("PREMATURE_CONFIRMATION", "Claims confirmation or acceptance outside the current platform order's authority", "flagged");
   }
-  if (permissions && !permissions.can_share_pickup_address && hasPickupDisclosure(text,opts.pickupPrivacySources)) {
+  if ((opts.newInquiry || permissions && !permissions.can_share_pickup_address) && hasPickupDisclosure(text,opts.pickupPrivacySources)) {
     push("PICKUP_DETAILS_EARLY", "Shares pickup details without a current confirmed platform order", "flagged");
   }
 
@@ -1335,7 +1335,7 @@ const ASSERTS_AVAIL_RE =
   // this false positive was tripping the hard-escalation backstop on an
   // otherwise-correct draft, forcing an unnecessary escalation.
   else if (
-    (!opts.ownerApproved || !!permissions && !permissions.can_acknowledge_owner_acceptance) && claimsCurrentOwnerApproval(text)
+    (opts.newInquiry || !opts.ownerApproved || !!permissions && !permissions.can_acknowledge_owner_acceptance) && claimsCurrentOwnerApproval(text)
   )
     push(
       "FALSE_ACTION_CLAIM",

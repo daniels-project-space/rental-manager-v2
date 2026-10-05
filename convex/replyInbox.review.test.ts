@@ -9,7 +9,7 @@ import { validateRenterBotOutput } from "../src/lib/renter-bot-output";
 import { describe, expect, it, vi } from "vitest";
 import { setDraftReview, setDraft, threadsNeedingDraft, claimDraftGeneration, releaseDraftGeneration, getDraftApprovalContext, recheckCopiedDraftStock } from "./replyInbox";
 import { generateDraft, sendRenterReply } from "./replyInbox_actions";
-import {performJointStockCheck,check_availability,get_negotiation_stance,get_listing_context,find_owned_alternatives,lookup_pricing} from './renter_bot_tools';
+import {get_renter_context,select_rental_request,performJointStockCheck,check_availability,get_negotiation_stance,get_listing_context,find_owned_alternatives,lookup_pricing} from './renter_bot_tools';
 import { draftContextKey } from "./lib/draft_review";
 import { canonicalGenerationError, generationFailure } from "./lib/canonical_generation_error";
 
@@ -84,6 +84,36 @@ describe("copied bot replies use current Native stock before send",()=>{
   return f;
  }
  const recheck=(f:any,text=f.text)=>invoke(recheckCopiedDraftStock,f.ctx,{thread_id:f.args.thread_id,account_slug:"leo",text,draft_approval:f.approval.draft_approval});
+ async function independentQuestion(){
+  const f=await stockDraft();await f.ctx.db.patch(f.bookingId,{status:"confirmed"});
+  for(const row of f.rows.values())if(row.table==="hygglo_messages")await f.ctx.db.patch(row._id,{sender:"renter",body_text:"Can I start another separate rental?"});
+  f.args.context_key=draftContextKey(f.rows.get(f.bookingId));
+  const request={kind:"inquiry",origin_message_id:f.args.message_id};
+  await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:f.args.context_key,draft_text:"I can check your new request.",evidence:{...f.evidence,rental_request:request}});
+  f.approval=await invoke(getDraftApprovalContext,f.ctx,{thread_id:f.args.thread_id});return {...f,request};
+ }
+ it("returns selected-hire permissions without changing the original order or persisted request",async()=>{
+  const f=await independentQuestion(),before=structuredClone(f.rows.get(f.bookingId));
+  const planned=await invoke(select_rental_request,f.ctx,{thread_id:f.args.thread_id,intent:"new"});
+  expect(planned.active_request_stage).toMatchObject({stage:"INQUIRY",can_confirm_booking:false,can_share_pickup_address:false,can_acknowledge_owner_acceptance:false});
+  const context=await invoke(get_renter_context,f.ctx,{thread_id:f.args.thread_id,rental_request:planned.rental_request});
+  expect(context).toMatchObject({conversation_stage:"INQUIRY",active_request_stage:{can_confirm_booking:false},rental_stage:{can_confirm_booking:true}});
+  const primary=await invoke(get_renter_context,f.ctx,{thread_id:f.args.thread_id,rental_request:{kind:"primary"}});
+  expect(primary.active_request_stage.can_confirm_booking).toBe(true);
+  expect(f.rows.get(f.bookingId)).toEqual(before);expect(f.rows.get(f.convId).active_rental_request).toBeUndefined();
+ });
+ it("blocks independent inquiry confirmation and acceptance even without a stock quote",async()=>{
+  const f=await independentQuestion();
+  expect(await recheck(f,"Your booking is confirmed.")).toEqual({ok:false,reason:"booking_state_unverified"});
+  expect(await recheck(f,"Your booking is approved.")).toEqual({ok:false,reason:"booking_state_unverified"});
+  expect(await recheck(f,"Your current rental is confirmed.")).toMatchObject({ok:true});
+  expect(await recheck(f,"I can check availability for the separate rental.")).toMatchObject({ok:true});
+ });
+ it("withholds pickup details for an independent unconfirmed question without a quote",async()=>{
+  const f=await independentQuestion(),account=await f.ctx.db.insert("accounts",{slug:"leo"});
+  await f.ctx.db.insert("account_profiles",{account_id:account,pickup_address:"123 Owner Lane"});
+  expect(await recheck(f,"Collect the new rental from 123 Owner Lane.")).toEqual({ok:false,reason:"pickup_details_unverified"});
+ });
  it("revalidates supplied contents after inventory records change",async()=>{
   const f=await stockDraft();await f.ctx.db.patch(f.itemId,{kind:"camera",compatibility:{included_with_rental:["2 x NP-FZ100 batteries","1 x 128GB SD card"]}});
   expect(await recheck(f,"Sony FX3 includes two NP-FZ100 batteries and a 128GB SD card.")).toMatchObject({ok:true});

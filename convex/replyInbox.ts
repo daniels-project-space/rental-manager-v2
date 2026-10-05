@@ -2172,13 +2172,13 @@ export const recheckCopiedDraftStock = internalQuery({
       catch{return {ok:false,reason:"rental_request_unverified"};}
       if(evidence.stock_quotes?.some(q=>q.rental_request&&!sameRentalRequest(q.rental_request,evidence.rental_request!)))return {ok:false,reason:"rental_request_unverified"};
     }
-    const newInquiry=evidence?.stock_quotes?.some(q=>q.new_inquiry)||evidence?.stock.some(r=>r.new_inquiry);
+    const newInquiry=evidence?.rental_request?.kind==="inquiry"||evidence?.stock_quotes?.some(q=>q.new_inquiry)||evidence?.stock.some(r=>r.new_inquiry);
     if(unsupportedRenterCameraClaims(text,cameraMessages.filter(message=>message.sender!=="owner").map(message=>message.body_text)).length)
       return {ok:false,reason:"renter_camera_identity_unverified"};
     const permissions=currentStage;
     if(unsupportedBookingDateClaims(text,currentStage.booking_dates,newInquiry).length || !permissions.can_confirm_booking && claimsBookingConfirmation(text) ||
-      !permissions.can_acknowledge_owner_acceptance && claimsCurrentOwnerApproval(text))return {ok:false,reason:"booking_state_unverified"};
-    if(!currentStage.can_share_pickup_address) {
+      (newInquiry||!permissions.can_acknowledge_owner_acceptance) && claimsCurrentOwnerApproval(text))return {ok:false,reason:"booking_state_unverified"};
+    if(newInquiry||!currentStage.can_share_pickup_address) {
       const accountId=booking?.account_id??conv?.account_id??(await ctx.db.query("accounts").withIndex("by_slug",q=>q.eq("slug",account_slug)).first())?._id;
       const profile=accountId?await ctx.db.query("account_profiles").withIndex("by_account",q=>q.eq("account_id",accountId)).first():null;
       if(hasPickupDisclosure(text,pickupPrivacySources(profile)))return {ok:false,reason:"pickup_details_unverified"};

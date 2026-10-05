@@ -998,3 +998,10 @@ describe("business intent survives courtesy wording",()=>{
   expect(guardDraft("Camera £84, lens £40, total £124.",{history:[],lastRenterMessage:"Hi!"}).flags).toContainEqual(expect.objectContaining({type:"CONTRACT:price-dump-on-greeting"}));
  });
 });
+
+describe("independent request authority without a quote",()=>{
+ it("does not inherit pickup and approval from the confirmed original rental",()=>{
+  const result=guardDraft("Your booking is approved. Collect the new rental from 123 Owner Lane.",{history:[],lastRenterMessage:"Can I start a separate hire?",stage:"IN_USE",ownerApproved:true,newInquiry:true,pickupPrivacySources:["123 Owner Lane"]});
+  expect(result.flags.some(f=>f.type==="FALSE_ACTION_CLAIM")).toBe(true);expect(result.flags.some(f=>f.type==="PICKUP_DETAILS_EARLY")).toBe(true);
+ });
+});
