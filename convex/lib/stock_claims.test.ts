@@ -1,3 +1,4 @@
+import passiveActionFixture from "../../src/lib/fixtures/renter-passive-action-stock-claim.json";
 import { describe, expect, it } from "vitest";
 import { stockRequestForSeparateCheck, stockRequestForInquiryQuote, unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
 import { guardDraft } from "./draft_guard";
@@ -532,7 +533,7 @@ describe("booking status is not equipment occupancy",()=>{
 
 describe("booking actions versus occupied equipment", () => {
  it("does not treat a first-person enquiry action as stock evidence", () => {
-  for (const sentence of ["Nothing has been changed or booked on your enquiry.", "I haven't changed or booked anything on your enquiry.", "We have not booked your order.", "I have booked your enquiry."])
+  for (const sentence of ["Nothing has been booked or changed on your inquiry.", "Nothing has been changed or booked on your enquiry.", "I haven't changed or booked anything on your enquiry.", "We have not booked your order.", "I have booked your enquiry."])
    expect(check(sentence, [])).toEqual([]);
  });
  it("preserves real stock verdicts alongside booking actions", () => {
@@ -540,4 +541,11 @@ describe("booking actions versus occupied equipment", () => {
    expect(check(sentence, [])).not.toEqual([]);
   expect(check("I haven't changed or booked anything on your enquiry, but Sony FX3 is unavailable.")).toEqual([]);
  });
+});
+
+it("validates the final live candidate with its actual Native stock receipts",()=>{
+ const scope=passiveActionFixture.request as StockRequest;
+ const receipts=passiveActionFixture.stock as StockReceipt[];
+ expect(unsupportedStockClaims(passiveActionFixture.text,receipts,scope)).toEqual([]);
+ expect(unsupportedStockClaims(passiveActionFixture.text+" Sony FX3 is unavailable.",[],scope)).not.toEqual([]);
 });

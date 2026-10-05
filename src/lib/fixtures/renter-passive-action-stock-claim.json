@@ -1,0 +1,220 @@
+{
+  "provenance": "Actual rejected Lab candidate and Native stock receipts, 2026-10-05. Stock validation regression only.",
+  "text": "For the Blackmagic Cinema Camera 6K Full Frame kit, the supplied storage is 1x 1TB CFexpress Type B card (the camera also supports external USB-C recording).\n\nIf you'd like a cheaper body-only option with built-in ND, here are two available alternatives for 20\u201321 October (2 days):\n\n1. Blackmagic Pocket Cinema Camera 6K Pro \u2013 \u00a335/day (\u00a370 total for 2 days). This has built-in motorized ND filters (2, 4, and 6 stops) with an active EF mount and Super 35 sensor. The recorded kit includes 5x NP-F570 batteries, a camera cage, and a hard carry case.\n\n2. Sony FX3 \u2013 \u00a349/day (\u00a398 total for 2 days). Full-frame Sony E mount (does not have built-in ND). The kit includes 1x CFexpress Type A card and 2 sets of NP-FZ100 batteries.\n\nNothing has been booked or changed on your inquiry. Let me know if either of those fits what you need!\n\nThe supplied storage for BMPCC 6K Pro still needs owner confirmation of its type, capacity and quantity.",
+  "stock": [
+    {
+      "available": true,
+      "call_id": "call_21825193:BMPCC 6K Full Frame:basket:kn740n15w16172sn1qj8h89gx586b2xf",
+      "checked_at": 1791173672965,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "BMPCC 6K Full Frame",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "call_21825193:BMPCC 6K Full Frame:basket:kn7b8ezbpk7k3c4gdrb1smn7ad89a2j0",
+      "checked_at": 1791173672965,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "EF to L mount",
+      "kind": "accessory",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "call_21825193:BMPCC 6K Full Frame:basket:kn7fwc3jkvtbfnkr6tfb0hgxcn8fhdp6",
+      "checked_at": 1791173672965,
+      "end_date": "2026-10-21",
+      "free_units": 12,
+      "item": "NP-F570 batteries",
+      "kind": "power",
+      "owned": true,
+      "quantity": 5,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "call_21825193:BMPCC 6K Pro:basket:kn737xq0jcc8a011f6x2m6srt986az25",
+      "checked_at": 1791173672965,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "BMPCC 6K Pro",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "call_21825193:BMPCC 6K Pro:basket:kn7fwc3jkvtbfnkr6tfb0hgxcn8fhdp6",
+      "checked_at": 1791173672965,
+      "end_date": "2026-10-21",
+      "free_units": 12,
+      "item": "NP-F570 batteries",
+      "kind": "power",
+      "owned": true,
+      "quantity": 5,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "call_21825193:Sony FX3:basket:kn7bw2cr1ye5hqj3x770b332ks86atzw",
+      "checked_at": 1791173672965,
+      "end_date": "2026-10-21",
+      "free_units": 3,
+      "item": "Sony FX3",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "call_21825193:Sony A7 III:basket:kn74p93r60ndmmb0qghjqg84yh86abvh",
+      "checked_at": 1791173672965,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "Sony A7 III",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "call_21825193:Sony A7 II:basket:kn71src7p25m5ppzkxnjwadm1s86azfk",
+      "checked_at": 1791173672965,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "Sony A7 II",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "call_21825193:Sony A7 V:basket:kn71951h7f9z8p3cea06v6zjjx86bgn4",
+      "checked_at": 1791173672965,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "Sony A7 V",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "call_21825193:BMPCC 6K Full Frame",
+      "checked_at": 1791173672965,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "BMPCC 6K Full Frame",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "call_21825193:BMPCC 6K Pro",
+      "checked_at": 1791173672965,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "BMPCC 6K Pro",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "call_21825193:Sony FX3",
+      "checked_at": 1791173672965,
+      "end_date": "2026-10-21",
+      "free_units": 3,
+      "item": "Sony FX3",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "call_21825193:Sony A7 III",
+      "checked_at": 1791173672965,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "Sony A7 III",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "call_21825193:Sony A7 II",
+      "checked_at": 1791173672965,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "Sony A7 II",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    },
+    {
+      "available": true,
+      "call_id": "call_21825193:Sony A7 V",
+      "checked_at": 1791173672965,
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "item": "Sony A7 V",
+      "kind": "camera",
+      "owned": true,
+      "quantity": 1,
+      "start_date": "2026-10-20"
+    }
+  ],
+  "request": {
+    "end_date": "2026-10-21",
+    "items": [
+      {
+        "aliases": [
+          "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L s",
+          "BMPCC 6K Full Frame",
+          "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L series "
+        ],
+        "complete": true,
+        "components": [
+          {
+            "name": "BMPCC 6K Full Frame",
+            "quantity": 1
+          },
+          {
+            "name": "Canon EF 24-105mm f4",
+            "quantity": 1
+          },
+          {
+            "name": "NP-F570 batteries",
+            "quantity": 5
+          },
+          {
+            "name": "EF to L mount",
+            "quantity": 1
+          }
+        ],
+        "name": "BMPCC 6K Full Frame",
+        "quantity": 1
+      }
+    ],
+    "start_date": "2026-10-20"
+  }
+}
