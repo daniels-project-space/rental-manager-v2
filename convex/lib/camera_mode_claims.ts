@@ -71,10 +71,17 @@ export function unsupportedCameraModeClaims(text: string, evidence: CameraEviden
       const requirement: RecordingRequirement = { resolution: "4k", ...(Number.isFinite(nominalFps)?{min_fps:nominalFps}:{}),
         ...(hasApsc ? { capture_format: "aps_c" } : /\bfull.frame\b/i.test(clause) ? { capture_format: "full_frame" } : {}),
         ...(fullWidth ? { full_width: true } : {}) };
+      const locations=[...new Set([...clause.matchAll(/\b(internal(?:ly)?|external(?:ly)?)\b/gi)].flatMap(label=>{
+        const before=clause.slice(0,label.index),after=clause.slice(label.index!+label[0].length);
+        // Recording location describes encoding, not an external SSD, power
+        // supply or microphone. Adjectives must govern a recording phrase.
+        const recordingLocation=/ly$/i.test(label[1])||/^\s+(?:(?:and|or)\s+(?:internal|external)\s+)?(?:(?:uncropped|cropped|full.frame|full.width|UHD|DCI)\s+)*(?:4k(?=\d|\b)|record(?:er|ing)\b|video\b|capture\b)/i.test(after);
+        return !recordingLocation||/\b(?:not|without|rather than|instead of)\s*$/i.test(before)?[]:[/^internal/i.test(label[1])];
+      }))];
       const candidates = clauseNamed.length ? clauseNamed : subject;
-      if (!candidates.length || !candidates.every(e => e.capabilities.recording_modes?.some(m =>
-        (Number.isNaN(nominalFps)||m.nominal_fps.includes(nominalFps)) && matchesRecordingRequirement(m, requirement))
-        && formats.every(resolution=>e.capabilities.recording_modes?.some(m=>(Number.isNaN(nominalFps)||m.nominal_fps.includes(nominalFps))&&matchesRecordingRequirement(m,{...requirement,resolution}))))) failures.push(sentence.trim());
+      if (!candidates.length || !candidates.every(e => (locations.length?locations:[undefined]).every(internal=>e.capabilities.recording_modes?.some(m =>
+        (Number.isNaN(nominalFps)||m.nominal_fps.includes(nominalFps)) && matchesRecordingRequirement(m, {...requirement,internal}))
+        && formats.every(resolution=>e.capabilities.recording_modes?.some(m=>(Number.isNaN(nominalFps)||m.nominal_fps.includes(nominalFps))&&matchesRecordingRequirement(m,{...requirement,resolution,internal})))))) failures.push(sentence.trim());
     }
   }
   return [...new Set(failures)];

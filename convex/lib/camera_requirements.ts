@@ -1,3 +1,4 @@
+import {cameraIdentityReviewedAt} from "./camera_identity_review";
 import { sameMount } from "./item_name_match";
 import { verifiedItemSpec, type SpecRecord } from "./verified_item_spec";
 
@@ -26,19 +27,26 @@ export type RecordingMode = {
 export type RecordingRequirement = { resolution: RecordingRequirementResolution; min_fps?: number; capture_format?: SensorFormat; full_width?: boolean; internal?: boolean };
 export type CameraCapabilities = { role: CameraRole; sensor_format: SensorFormat; native_mount?: string; internal_4k: boolean; built_in_nd?: boolean; built_in_nd_review?:{verified_model:string;source_url:string;verified_at:number}; recording_modes?: RecordingMode[] };
 export type CameraRequirements = { role?: CameraRole; sensor_format?: SensorFormat; internal_4k?: boolean; built_in_nd?: boolean; recording?: RecordingRequirement };
-export type CameraSpec = SpecRecord & { camera_capabilities?: CameraCapabilities & { verified_model?: string; source_url?: string; verified_at?: number } };
+export type CameraSpec = SpecRecord & { camera_capabilities?: CameraCapabilities & { identity_review?:{verified_model:string;verified_at:number}; verified_model?: string; source_url?: string; verified_at?: number } };
+
+/** Source-qualified mode reviews, including any conflict with a later profile.
+ * Review UI retains these references; public capability evidence filters conflicts. */
+export function cameraRecordingReviews(spec:CameraSpec) {
+ const identityAt=cameraIdentityReviewedAt(spec);
+ return spec.camera_capabilities?.recording_modes?.filter(m=>m.verified_model===spec.verified_model&&/^https:\/\//.test(m.source_url)&&
+  Number.isFinite(m.verified_at)&&m.verified_at>=identityAt&&m.nominal_fps.length>0&&m.nominal_fps.every(f=>Number.isFinite(f)&&f>0))??[];
+}
 
 export function verifiedCameraCapabilities(spec: CameraSpec | null | undefined, name: string): CameraCapabilities | null {
   const cap = spec?.camera_capabilities;
   if (!cap || !verifiedItemSpec(spec, name) || cap.verified_model !== spec!.verified_model || cap.source_url !== spec!.source_url || !Number.isFinite(cap.verified_at) || cap.verified_at! < spec!.verified_at! || cap.verified_at! <= 0) return null;
   // Mode provenance is independent: a sensor profile does not qualify a
   // recording mode, and an older mode review cannot survive a new model review.
+  const identityAt=cameraIdentityReviewedAt(spec!);
   const nd=cap.built_in_nd_review;
-  const ndValid=!nd || nd.verified_model===spec!.verified_model && /^https:\/\//.test(nd.source_url) && Number.isFinite(nd.verified_at) && nd.verified_at>=spec!.verified_at!;
-  return { ...cap, built_in_nd:ndValid?cap.built_in_nd:undefined, recording_modes: cap.recording_modes?.filter(m =>
-    m.verified_model === spec!.verified_model && /^https:\/\//.test(m.source_url) &&
-    Number.isFinite(m.verified_at) && m.verified_at >= spec!.verified_at! &&
-    m.nominal_fps.length > 0 && m.nominal_fps.every(f => Number.isFinite(f) && f > 0)) };
+  const ndValid=!nd || nd.verified_model===spec!.verified_model && /^https:\/\//.test(nd.source_url) && Number.isFinite(nd.verified_at) && nd.verified_at>=identityAt;
+  const visible={...cap};delete visible.identity_review;
+  return { ...visible, built_in_nd:ndValid?cap.built_in_nd:undefined, recording_modes: cameraRecordingReviews(spec!).filter(m=>!m.internal||cap.internal_4k) };
 }
 
 export function matchesRecordingRequirement(mode: RecordingMode, requirement: RecordingRequirement) {

@@ -171,6 +171,7 @@ const operationalSchema = defineSchema({
       verified_model:v.string(),source_url:v.string(),verified_at:v.number(),
     })),
     camera_capabilities: v.optional(v.object({
+      identity_review:v.optional(v.object({verified_model:v.string(),verified_at:v.number()})),
       role: v.union(v.literal("action"), v.literal("interchangeable_lens")),
       sensor_format: v.union(v.literal("full_frame"), v.literal("super35"), v.literal("aps_c"), v.literal("small_sensor")),
       native_mount: v.optional(v.string()), internal_4k: v.boolean(), built_in_nd: v.optional(v.boolean()),

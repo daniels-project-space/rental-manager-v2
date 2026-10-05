@@ -1,4 +1,5 @@
 "use client";
+import {CameraSpecificationReview} from "./CameraSpecificationReview";
 import {LensSpecificationReview} from "./LensSpecificationReview";
 import { useState } from "react";
 import { useMutation, usePaginatedQuery } from "convex/react";
@@ -30,6 +31,7 @@ function cameraCriteria(r:CameraRequirements) {
 }
 export function OwnerChecksPanel({accountSlug,onOpen,labOnly=false}:{accountSlug?:string;labOnly?:boolean;onOpen:(thread:string)=>void}) {
   const {results,status,loadMore}=usePaginatedQuery(api.renter_bot_owner_checks.list,{account_slug:accountSlug,lab_only:labOnly},{initialNumItems:10});
+  const [reviewingCamera,setReviewingCamera]=useState<{taskId:Id<"renter_bot_owner_checks">;itemId:Id<"items">}|null>(null);
   const [reviewingLens,setReviewingLens]=useState<{taskId:Id<"renter_bot_owner_checks">;itemId:Id<"items">}|null>(null);
   const handle=useMutation(api.renter_bot_owner_checks.handle);
   const [editing,setEditing]=useState<Id<"renter_bot_owner_checks">|null>(null),[editingRequest,setEditingRequest]=useState<string|null>(null),[note,setNote]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState<string|null>(null);
@@ -44,6 +46,7 @@ export function OwnerChecksPanel({accountSlug,onOpen,labOnly=false}:{accountSlug
       {task.current_specification_reviews&&<div className="mt-2 text-[#cbd5e1]">
         <p>Current specification records</p>
         {task.current_specification_reviews.map(review=><div key={review.item_id}><p>{shortItemName(review.name)}: {review.status==="match"?"reviewed requirements match":review.status==="mismatch"?"reviewed requirements do not match":"missing evidence for one or more requested properties"}.</p>
+         {task.check.kind==="camera_recommendation"&&<button className="mt-1 rounded bg-white/10 px-3 py-1.5" onClick={()=>setReviewingCamera({taskId:task._id,itemId:review.item_id})}>Review camera specifications</button>}
          {task.check.kind==="lens_recommendation"&&<button className="mt-1 rounded bg-white/10 px-3 py-1.5" onClick={()=>setReviewingLens({taskId:task._id,itemId:review.item_id})}>Review lens specifications</button>}
         </div>)}
         {!task.current_specification_reviews.length&&<p>No candidates from this check are currently eligible for specification review.</p>}
@@ -57,6 +60,7 @@ export function OwnerChecksPanel({accountSlug,onOpen,labOnly=false}:{accountSlug
         {task.mapping_details.complete&&!task.mapping_details.contents_review&&<p>Kit mapping is now complete. Review the current conversation before closing this check.</p>}
         {!task.mapping_details.complete&&!task.mapping_details.missing.length&&!task.mapping_details.unresolved.length&&<p>Confirm every required item and quantity in this listing’s kit mapping.</p>}
       </div>}
+      {reviewingCamera?.taskId===task._id&&<CameraSpecificationReview key={`${reviewingCamera.taskId}:${reviewingCamera.itemId}`} taskId={reviewingCamera.taskId} itemId={reviewingCamera.itemId} onClose={()=>setReviewingCamera(null)}/>}
       {reviewingLens?.taskId===task._id&&<LensSpecificationReview key={`${reviewingLens.taskId}:${reviewingLens.itemId}`} taskId={reviewingLens.taskId} itemId={reviewingLens.itemId} onClose={()=>setReviewingLens(null)}/>}
       <blockquote className="mt-2 text-[#a3aab8] line-clamp-3">“{task.source_question}”</blockquote>
       {(task.context_changed||task.newer_renter_message)&&<p className="mt-2 text-amber-200">The booking or renter message has changed. Review the current conversation before handling this check.</p>}

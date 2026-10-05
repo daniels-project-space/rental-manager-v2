@@ -133,3 +133,21 @@ describe("fronted feature modifiers retain the following camera subject",()=>{
    expect(check(text),text).not.toEqual([]);
  });
 });
+
+
+it("requires the asserted recording location rather than borrowing external mode proof for internal recording",()=>{
+ const external:CameraEvidence[]=[{names:["Sony FX3"],capabilities:{...evidence[1].capabilities,recording_modes:[{...mode(60,"full_frame",true),internal:false}]}}];
+ expect(unsupportedCameraModeClaims("Sony FX3 records UHD 4K60p externally.",external)).toEqual([]);
+ expect(unsupportedCameraModeClaims("Sony FX3 records UHD 4K60p internally.",external)).toHaveLength(1);
+ expect(unsupportedCameraModeClaims("Sony FX3 supports internal and external UHD 4K60p.",external)).toHaveLength(1);
+ const both=[{...external[0],capabilities:{...external[0].capabilities,recording_modes:[...external[0].capabilities.recording_modes!,mode(60,"full_frame",true)]}}];
+ expect(unsupportedCameraModeClaims("Sony FX3 supports internal and external UHD 4K60p.",both)).toEqual([]);
+ expect(unsupportedCameraModeClaims("Sony FX3 records UHD 4K60p externally, not internally.",external)).toEqual([]);
+});
+
+it("does not confuse external supplied media or accessories with an external recording pipeline",()=>{
+ const internal=[evidence[1]];
+ for(const text of ["Sony FX3 records UHD 4K60p with an external microphone.","Sony FX3 records UHD 4K60p to an external SSD."])
+  expect(unsupportedCameraModeClaims(text,internal)).toEqual([]);
+ expect(unsupportedCameraModeClaims("Sony FX3 records external UHD 4K60p using a recorder.",internal)).toHaveLength(1);
+});

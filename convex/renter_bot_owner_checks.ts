@@ -190,17 +190,17 @@ export const handle=mutation({args:{id:v.id("renter_bot_owner_checks"),note:v.st
 
 
 /** Owner-only catalogue review. A task supplies scope, never factual proof. */
-async function lensReviewTarget(ctx:QueryCtx,taskId:Doc<"renter_bot_owner_checks">["_id"],itemId:Doc<"items">["_id"]) {
+export async function specificationReviewTarget(ctx:QueryCtx,taskId:Doc<"renter_bot_owner_checks">["_id"],itemId:Doc<"items">["_id"],kind:"lens_recommendation"|"camera_recommendation"="lens_recommendation") {
  const task=await ctx.db.get(taskId),item=await ctx.db.get(itemId);
- if(!task||task.status!=="pending"||task.check.kind!=="lens_recommendation"||!task.check.candidate_item_ids.includes(itemId))throw new Error("This lens is not part of an open specification check");
- if(!item||item.kind!=="lens"||item.status!=="active"||item.is_marketing_only||item.qty<=0)throw new Error("This lens is no longer owned rentable inventory");
+ if(!task||task.status!=="pending"||(task.check.kind!=="lens_recommendation"&&task.check.kind!=="camera_recommendation")||task.check.kind!==kind||!task.check.candidate_item_ids.includes(itemId))throw new Error("This item is not part of an open specification check");
+ if(!item||(kind==="lens_recommendation"?item.kind!=="lens":!["camera","camera_body"].includes(item.kind??""))||item.status!=="active"||item.is_marketing_only||item.qty<=0)throw new Error("This item is no longer owned rentable inventory");
  const specs=await ctx.db.query("item_specs").withIndex("by_item",q=>q.eq("item_id",itemId)).collect();
  if(specs.length>1)throw new Error("Duplicate specification records need reconciliation before review");
  const revision=JSON.stringify({item_name:item.name_canonical,mount:item.lens_mount??null,spec:specs[0]??null});
  return {task,item,spec:specs[0],revision};
 }
 export const getLensReview=query({args:{task_id:v.id("renter_bot_owner_checks"),item_id:v.id("items")},handler:async(ctx,a)=>{
- try{const {task,item,spec,revision}=await lensReviewTarget(ctx,a.task_id,a.item_id);
+ try{const {task,item,spec,revision}=await specificationReviewTarget(ctx,a.task_id,a.item_id);
  return {available:true as const,task_id:task._id,item_id:item._id,name:item.name_canonical,mount:item.lens_mount??null,request_message_id:ownerCheckRequestMessageId(task),revision,
   reviewed:verifiedLensCapabilities(spec,item.name_canonical)};
  }catch(error){return {available:false as const,message:error instanceof Error?error.message:"The lens review is unavailable"};}
@@ -209,7 +209,7 @@ const lensFactLabels:Record<keyof LensFacts,string>={focus_mode:"Focus",manual_f
 export const reviewLensSpecification=mutation({args:{task_id:v.id("renter_bot_owner_checks"),item_id:v.id("items"),expected_request_message_id:v.string(),expected_revision:v.string(),
  model:v.string(),source_url:v.string(),facts:v.object(lensFactFields),confirmed_model:v.boolean(),dry_run:v.optional(v.boolean())},handler:async(ctx,a)=>{
  await requireOwner(ctx,true);
- const {task,item,spec,revision}=await lensReviewTarget(ctx,a.task_id,a.item_id);
+ const {task,item,spec,revision}=await specificationReviewTarget(ctx,a.task_id,a.item_id);
  if(ownerCheckRequestMessageId(task)!==a.expected_request_message_id||revision!==a.expected_revision)throw new Error("The check or specification changed. Reopen the review before saving");
  const model=a.model.trim(),url=a.source_url.trim();
  if(!a.confirmed_model||model.length<3||model.length>200)throw new Error("Confirm the exact model of the physical lens");

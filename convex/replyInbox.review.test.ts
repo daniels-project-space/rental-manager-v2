@@ -1,3 +1,5 @@
+import {getReview as getCameraReview,saveReview as saveCameraReview} from "./renter_bot_camera_reviews";
+import {verifiedCameraCapabilities} from "./lib/camera_requirements";
 import {computeNegotiationStance,negotiationFromMessages} from "./lib/renter_bot_negotiation";
 import {rentalRequestContext,rentalRequestHistory} from "./lib/rental_request_history";
 import type {Id} from "./_generated/dataModel";
@@ -935,5 +937,64 @@ describe("authoritative owner lens reviews",()=>{
    expect(await invoke(getLensReview,f.ctx,{task_id:f.task,item_id:f.lens})).toMatchObject({available:false});
    const before=structuredClone([...f.rows]);await expect(invoke(reviewLensSpecification,f.ctx,f.reviewArgs)).rejects.toThrow();expect([...f.rows]).toEqual(before);
   }
+ });
+});
+
+
+describe("authoritative camera reviews retain independent evidence",()=>{
+ async function camera(){
+  const f=await setup();(f.ctx as any).auth={getUserIdentity:async()=>({issuer:"urn:rental-manager:deployment-service",subject:"rental-manager-service"})};
+  const item=await f.ctx.db.insert("items",{name_canonical:"Sony FX3",kind:"camera",lens_mount:"E",qty:2,status:"active",is_marketing_only:false});
+  const mode={resolution:"uhd_4k",nominal_fps:[60],capture_format:"full_frame",full_width:true,internal:true,conditions:["Use the reviewed setting"],verified_model:"Sony FX3",source_url:"https://manufacturer.example/modes",verified_at:2};
+  const spec=await f.ctx.db.insert("item_specs",{item_id:item,item_name_canonical:"Sony FX3",description:"Reviewed original profile",source:"manufacturer-verified",source_url:"https://manufacturer.example/fx3",verified_model:"Sony FX3",verified_at:1,
+   camera_capabilities:{role:"interchangeable_lens",sensor_format:"full_frame",native_mount:"E",internal_4k:true,verified_model:"Sony FX3",source_url:"https://manufacturer.example/fx3",verified_at:1,recording_modes:[mode]}});
+  const task=await f.ctx.db.insert("renter_bot_owner_checks",{status:"pending",source_message_id:f.args.message_id,check:{kind:"camera_recommendation",candidate_item_ids:[item],requirements:{recording:{resolution:"uhd_4k",min_fps:60,internal:true}},quantity:1,lens_mount:null}});
+  const review=await invoke(getCameraReview,f.ctx,{task_id:task,item_id:item});expect(review.available).toBe(true);
+  const args={task_id:task,item_id:item,expected_request_message_id:review.request_message_id,expected_revision:review.revision,confirmed_model:true};
+  const change={kind:"profile",model:"Sony FX3",source_url:"https://manufacturer.example/current-profile",role:"interchangeable_lens",sensor_format:"full_frame",native_mount:"E",internal_4k:true,built_in_nd:false};
+  return {...f,item,spec,task,mode,review,reviewArgs:args,change};
+ }
+ it("updates a same-model profile without changing the recording source/date or original stock",async()=>{
+  const f=await camera(),original=structuredClone(f.rows.get(f.item));
+  const result=await invoke(saveCameraReview,f.ctx,{...f.reviewArgs,change:{...f.change,native_mount:"L"}});
+  expect(result).toMatchObject({ok:true,assessment:{status:"match"}});expect(result.verified.recording_modes).toEqual([f.mode]);
+  expect(f.rows.get(f.spec).camera_capabilities.identity_review).toEqual({verified_model:"Sony FX3",verified_at:1});
+  expect(f.rows.get(f.spec).verified_at).toBeGreaterThan(2);expect(f.rows.get(f.spec).camera_capabilities.recording_modes).toEqual([f.mode]);
+  expect(f.rows.get(f.item)).toMatchObject({qty:original.qty,lens_mount:"L"});expect(f.rows.get(f.task).status).toBe("pending");
+  expect([...f.rows.values()].find(r=>r.table==="settings").draft_epoch).toBe(3);expect([...f.rows.values()].filter(r=>r.table==="audit_log")).toHaveLength(1);
+  expect(result.verified.identity_review).toBeUndefined();
+ });
+ it("does not carry modes to a different physical model",async()=>{
+  const f=await camera();const result=await invoke(saveCameraReview,f.ctx,{...f.reviewArgs,change:{...f.change,model:"Sony FX3 alternate model"}});
+  expect(result.assessment).toMatchObject({status:"unknown",unknown:["recording"]});expect(result.verified.recording_modes).toEqual([]);
+  expect(f.rows.get(f.spec).camera_capabilities.recording_modes).toBeUndefined();
+ });
+ it("corrects one mode without rewriting profile provenance, ND or other modes",async()=>{
+  const f=await camera(),before=structuredClone(f.rows.get(f.spec));
+  const change={kind:"recording_mode",resolution:"dci_4k",source_url:"https://manufacturer.example/dci-external",nominal_fps:[60,24,60],full_width:false,internal:false,conditions:["External recorder required"]};
+  const result=await invoke(saveCameraReview,f.ctx,{...f.reviewArgs,change});
+  expect(result.verified.recording_modes[0]).toEqual(f.mode);expect(result.verified.recording_modes[1]).toMatchObject({nominal_fps:[24,60],internal:false,conditions:change.conditions});
+  const current=f.rows.get(f.spec);expect(current.source_url).toBe(before.source_url);expect(current.verified_at).toBe(before.verified_at);expect(current.camera_capabilities.built_in_nd).toBeUndefined();
+  expect(current.camera_capabilities.recording_modes[1].capture_format).toBeUndefined();
+ });
+ it("preserves contradictory mode references for review while excluding them from public claims",async()=>{
+  const f=await camera();await invoke(saveCameraReview,f.ctx,{...f.reviewArgs,change:{...f.change,internal_4k:false}});
+  const read=await invoke(getCameraReview,f.ctx,{task_id:f.task,item_id:f.item});expect(read.recording_reviews).toEqual([f.mode]);expect(read.profile.recording_modes).toEqual([]);
+  const result=await invoke(saveCameraReview,f.ctx,{...f.reviewArgs,expected_revision:read.revision,change:{kind:"recording_mode",mode_index:0,resolution:"uhd_4k",source_url:"https://manufacturer.example/external",nominal_fps:[60],full_width:true,internal:false,conditions:["External recorder required"]}});
+  expect(result.verified.recording_modes).toHaveLength(1);expect(result.verified.recording_modes[0].internal).toBe(false);
+ });
+ it("rejects stale, invalid, impossible and unauthorized reviews without writes",async()=>{
+  for(const invalid of ["stale","unauthorized","unchecked","source","fps","index","sensor"]){
+   const f=await camera();let args:any={...f.reviewArgs,change:{kind:"recording_mode",resolution:"uhd_4k",source_url:"https://manufacturer.example/mode",nominal_fps:[60],full_width:true,internal:true,conditions:[]}};
+   if(invalid==="stale")args.expected_revision="old";if(invalid==="unchecked")args.confirmed_model=false;
+   if(invalid==="unauthorized")(f.ctx as any).auth={getUserIdentity:async()=>null};if(invalid==="source")args.change.source_url="http://example.com";
+   if(invalid==="fps")args.change.nominal_fps=[0];if(invalid==="index")args.change.mode_index=3;
+   if(invalid==="sensor"){const row=f.rows.get(f.spec);await f.ctx.db.patch(f.spec,{camera_capabilities:{...row.camera_capabilities,sensor_format:"aps_c"}});args.expected_revision=(await invoke(getCameraReview,f.ctx,{task_id:f.task,item_id:f.item})).revision;args.change.capture_format="full_frame";}
+   const before=structuredClone([...f.rows]);await expect(invoke(saveCameraReview,f.ctx,args)).rejects.toThrow();expect([...f.rows]).toEqual(before);
+  }
+ });
+ it("previews against real readers without touching catalogue, mount, epoch or task",async()=>{
+  const f=await camera(),before=structuredClone([...f.rows]);
+  const preview=await invoke(saveCameraReview,f.ctx,{...f.reviewArgs,change:{...f.change,native_mount:"L"},dry_run:true});expect(preview.verified.recording_modes).toEqual([f.mode]);expect([...f.rows]).toEqual(before);
  });
 });

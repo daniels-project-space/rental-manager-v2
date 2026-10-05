@@ -143,3 +143,13 @@ describe("targeted Full Frame recording source review",()=>{
   await expect(invoke(f)).rejects.toThrow("identity");expect(f.patches).toBe(0);
  });
 });
+
+
+it("binds independent mode lifetime to a reviewed model identity while retaining conservative legacy dates",()=>{
+ const model="Reviewed camera",mode:RecordingMode={resolution:"dci_4k",nominal_fps:[60],full_width:false,internal:true,conditions:[],verified_model:model,source_url:"https://manufacturer.example/mode",verified_at:2};
+ const spec={item_name_canonical:model,description:"Updated profile",source:"owner-verified",source_url:"https://manufacturer.example/profile",verified_model:model,verified_at:10,camera_capabilities:{...full,verified_model:model,source_url:"https://manufacturer.example/profile",verified_at:10,recording_modes:[mode]}};
+ expect(verifiedCameraCapabilities(spec,model)?.recording_modes).toEqual([]);
+ const current={...spec,camera_capabilities:{...spec.camera_capabilities,identity_review:{verified_model:model,verified_at:1}}};
+ expect(verifiedCameraCapabilities(current,model)?.recording_modes).toEqual([mode]);
+ for(const identity_review of [{verified_model:"other",verified_at:1},{verified_model:model,verified_at:11},{verified_model:model,verified_at:0}])expect(verifiedCameraCapabilities({...current,camera_capabilities:{...current.camera_capabilities,identity_review}},model)?.recording_modes).toEqual([]);
+});
