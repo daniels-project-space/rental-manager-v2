@@ -216,9 +216,10 @@ describe("verification questions do not assert supplied contents", () => {
  const check=(text:string)=>unsupportedKitClaims(text,evidence,["BMPCC 6K Pro"]);
  it("permits the captured uncertainty about card/SSD contents",()=>{
   expect(check("Supplied storage isn't confirmed in the inventory record for this listing, so I would need to confirm whether a card/SSD is included with that set.")).toEqual([]);
+  expect(check("While the listing title notes an SSD, our verified inventory records don't currently confirm the specific drive model or capacity included in the box, so I will check the exact storage details for you rather than guess.")).toEqual([]);
  });
  it("still validates affirmative contents outside the question",()=>{
-  for(const text of ["I confirmed that a card/SSD is included.","I need to confirm whether a card is included, but the kit includes an SSD.","I need to confirm whether a card is included and the kit includes an SSD.","The kit includes an SSD; I need to confirm whether a card is included."])
+  for(const text of ["Our records don't confirm the card included, but the kit includes an SSD.","Our records don't confirm the card included and the kit includes an SSD.","I confirmed that a card/SSD is included.","I need to confirm whether a card is included, but the kit includes an SSD.","I need to confirm whether a card is included and the kit includes an SSD.","The kit includes an SSD; I need to confirm whether a card is included."])
    expect(check(text),text).not.toEqual([]);
  });
 });

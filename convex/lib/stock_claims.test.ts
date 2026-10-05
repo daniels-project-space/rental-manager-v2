@@ -532,7 +532,7 @@ describe("booking status is not equipment occupancy",()=>{
 
 describe("booking actions versus occupied equipment", () => {
  it("does not treat a first-person enquiry action as stock evidence", () => {
-  for (const sentence of ["I haven't changed or booked anything on your enquiry.", "We have not booked your order.", "I have booked your enquiry."])
+  for (const sentence of ["Nothing has been changed or booked on your enquiry.", "I haven't changed or booked anything on your enquiry.", "We have not booked your order.", "I have booked your enquiry."])
    expect(check(sentence, [])).toEqual([]);
  });
  it("preserves real stock verdicts alongside booking actions", () => {

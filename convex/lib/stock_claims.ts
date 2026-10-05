@@ -237,7 +237,9 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
       // Mask only the verb so an independent availability verdict survives.
       const bookingAction = /\b(?:I|we)\s+(?:have|has|haven't|had|hadn't|have\s+not|had\s+not)\s+(?:(?:already|yet|just|now)\s+)?(?:(?:changed|modified|cancelled|canceled)\s+or\s+)?$/i.test(before)
         && /^\s+(?:anything|your\s+(?:booking|rental|request|order|enquiry|inquiry))\b/i.test(after);
-      return (adjective || ownerConfirmation || inclusionReference || bookingAction) && !/^\s*(?:[-–—]\s*)?out\b/i.test(after) && !/\b(?:by|for)\s+(?:another|other|someone\s+else|a different)\b/i.test(after) ? " ".repeat(word.length) : word;
+      const passiveAction = /\bnothing\s+(?:has|had)\s+been\s+(?:(?:changed|modified|cancelled|canceled)\s+or\s+)?$/i.test(before)
+        && /^\s+(?:on|in|for)\s+your\s+(?:booking|rental|request|order|enquiry|inquiry)\b/i.test(after);
+      return (adjective || ownerConfirmation || inclusionReference || bookingAction || passiveAction) && !/^\s*(?:[-–—]\s*)?out\b/i.test(after) && !/\b(?:by|for)\s+(?:another|other|someone\s+else|a different)\b/i.test(after) ? " ".repeat(word.length) : word;
     });
     const match = /\b(?:(isn't|aren't|is not|are not|not)\s+(available|in stock|free)|(?:is|are|it's|that's|they're)\s+(available|in stock|free)|(?:unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|booked|none (?:left|available)))\b/i.exec(availabilityClause);
     if (!match) continue;
