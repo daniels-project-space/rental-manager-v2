@@ -9,6 +9,17 @@ function mentionsCamera(text: string, name: string) {
 const explicitCameraModel = /\b(?:Sony\s+(?:A7\s*(?:III|II|IV|V|S\s*III)?|FX\d+)|Canon\s+(?:EOS\s+)?(?:C\d+|R\d+)|Nikon\s+Z\d+|(?:Blackmagic|BMPCC|Pyxis|Komodo|RED|ARRI)\b)/i;
 // Named-item scope crosses sentences, but never switches because of a model's
 // own claimed provenance. Evidence is supplied by the reviewed catalog query.
+// Keep identity labels out of capability parsing while preserving offsets for
+// claim scope. Use current inventory/model names, longest first, so an alias
+// cannot leave a capability-sounding suffix behind.
+function cameraClaimContent(text:string,evidence:CameraEvidence[]) {
+  const names=[...new Set(evidence.flatMap(e=>e.names))].sort((a,b)=>b.length-a.length);
+  return names.reduce((content,name)=>{
+    const parts=name.toLowerCase().match(/[a-z0-9]+/g);
+    return parts?.length?content.replace(new RegExp(`(?<![a-z0-9])${parts.join("[^a-z0-9]*")}(?![a-z0-9])`,"gi"),match=>" ".repeat(match.length)):content;
+  },text);
+}
+
 export function unsupportedCameraModeClaims(text: string, evidence: CameraEvidence[]) {
   const failures: string[] = [];
   let subject: CameraEvidence[] = [];
@@ -16,11 +27,12 @@ export function unsupportedCameraModeClaims(text: string, evidence: CameraEviden
     const named = evidence.filter(e => e.names.some(n => n && mentionsCamera(sentence, n)));
     if (named.length) subject = named;
     else if (explicitCameraModel.test(sentence)) subject = [];
+    const content=cameraClaimContent(sentence,evidence);
     const mode = /\b4k\s*(?:at\s*|up to\s*)?(\d{2,3})(?:\.\d+)?\s*(?:p|fps|frames?\s*(?:per|\/)\s*second)\b|\b4k\b[^.!?]{0,35}?\b(\d{2,3})(?:\.\d+)?\s*(?:fps|p)\b|\b(\d{2,3})(?:\.\d+)?\s*fps\b[^.!?]{0,25}?\b4k\b/gi;
-    const claims=[...sentence.matchAll(mode)].map(match=>({match,fps:Number(match[1]??match[2]??match[3])}));
+    const claims=[...content.matchAll(mode)].map(match=>({match,fps:Number(match[1]??match[2]??match[3])}));
     // Format proof is still required when no frame rate is stated. Rate claims
     // above are checked separately, so a format-only match cannot weaken them.
-    for(const match of sentence.matchAll(/\b(?:UHD|DCI)\s+4k\b|\b4k\s+(?:UHD|DCI)\b/gi))claims.push({match,fps:NaN});
+    for(const match of content.matchAll(/\b(?:UHD|DCI)\s+4k\b|\b4k\s+(?:UHD|DCI)\b/gi))claims.push({match,fps:NaN});
     for (const {match,fps} of claims) {
       // A negative/conditional recording claim is not a promise that a mode
       // can be supplied. Do not let a different clause excuse an assertion.
@@ -37,7 +49,7 @@ export function unsupportedCameraModeClaims(text: string, evidence: CameraEviden
         if (separator.index! < match.index!) start = separator.index! + separator[0].length;
         else { end = separator.index!; break; }
       }
-      const clause = sentence.slice(start, end);
+      const clause = sentence.slice(start, end),claimClause=content.slice(start,end);
       const clauseNamed = evidence.filter(e => e.names.some(n => n && mentionsCamera(clause, n)));
       if (clauseNamed.length) subject = clauseNamed;
       else if (explicitCameraModel.test(clause)) subject = [];
@@ -59,20 +71,20 @@ export function unsupportedCameraModeClaims(text: string, evidence: CameraEviden
       if (reviewTarget) continue;
       if (/\b(?:does(?:n['’]t| not)|do(?:n['’]t| not)\s+(?:stock|have|offer)|can(?:not|['’]t)|won['’]t|not support|not (?:full.frame|uncropped)|if|whether|check(?:ing|ed)?)\b|^\s*(?:none of|neither\b)/i.test(polarityScope) || /\byou\s+(?:want|need|require|prefer)\b/i.test(polarityScope)) continue;
       const nominalFps = fps === 119 ? 120 : fps === 59 ? 60 : fps === 29 ? 30 : fps === 23 ? 24 : fps;
-      const hasApsc = /\b(?:aps.c|super\s*35)\b/i.test(clause) &&
-        !/\b(?:without|not|no|rather than|instead of)\b[^,;]{0,30}\b(?:aps.c|super\s*35)\b|\b(?:aps.c|super\s*35)(?:\s*\/\s*S35)?\s+(?:shooting|mode)\s+(?:is\s+)?off\b/i.test(clause);
-      const fullWidth = /\b(?:uncropped|full.width|full.sensor.width|entire sensor|full.frame image area)\b|\b(?:no|without|zero)\s+(?:any\s+)?crop\b/i.test(clause);
+      const hasApsc = /\b(?:aps.c|super\s*35)\b/i.test(claimClause) &&
+        !/\b(?:without|not|no|rather than|instead of)\b[^,;]{0,30}\b(?:aps.c|super\s*35)\b|\b(?:aps.c|super\s*35)(?:\s*\/\s*S35)?\s+(?:shooting|mode)\s+(?:is\s+)?off\b/i.test(claimClause);
+      const fullWidth = /\b(?:uncropped|full.width|full.sensor.width|entire sensor|full.frame image area)\b|\b(?:no|without|zero)\s+(?:any\s+)?crop\b/i.test(claimClause);
       // A generic 4K claim can use either concrete reviewed 4K format.
       // An explicit UHD/DCI claim needs that exact format's own mode proof.
-      const formats:RecordingResolution[]=[...clause.matchAll(/\b(UHD|DCI)\b/gi)].flatMap(label=>{
-        const before=clause.slice(0,label.index);
+      const formats:RecordingResolution[]=[...claimClause.matchAll(/\b(UHD|DCI)\b/gi)].flatMap(label=>{
+        const before=claimClause.slice(0,label.index);
         return /\b(?:not|without|rather than|instead of)\s*$/i.test(before) ? [] : [label[1].toUpperCase()==="UHD" ? "uhd_4k" : "dci_4k"];
       });
       const requirement: RecordingRequirement = { resolution: "4k", ...(Number.isFinite(nominalFps)?{min_fps:nominalFps}:{}),
-        ...(hasApsc ? { capture_format: "aps_c" } : /\bfull.frame\b/i.test(clause) ? { capture_format: "full_frame" } : {}),
+        ...(hasApsc ? { capture_format: "aps_c" } : /\bfull.frame\b/i.test(claimClause) ? { capture_format: "full_frame" } : {}),
         ...(fullWidth ? { full_width: true } : {}) };
-      const locations=[...new Set([...clause.matchAll(/\b(internal(?:ly)?|external(?:ly)?)\b/gi)].flatMap(label=>{
-        const before=clause.slice(0,label.index),after=clause.slice(label.index!+label[0].length);
+      const locations=[...new Set([...claimClause.matchAll(/\b(internal(?:ly)?|external(?:ly)?)\b/gi)].flatMap(label=>{
+        const before=claimClause.slice(0,label.index),after=claimClause.slice(label.index!+label[0].length);
         // Recording location describes encoding, not an external SSD, power
         // supply or microphone. Adjectives must govern a recording phrase.
         const recordingLocation=/ly$/i.test(label[1])||/^\s+(?:(?:and|or)\s+(?:internal|external)\s+)?(?:(?:uncropped|cropped|full.frame|full.width|UHD|DCI)\s+)*(?:4k(?=\d|\b)|record(?:er|ing)\b|video\b|capture\b)/i.test(after);

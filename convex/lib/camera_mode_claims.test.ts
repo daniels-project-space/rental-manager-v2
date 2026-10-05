@@ -151,3 +151,20 @@ it("does not confuse external supplied media or accessories with an external rec
   expect(unsupportedCameraModeClaims(text,internal)).toEqual([]);
  expect(unsupportedCameraModeClaims("Sony FX3 records external UHD 4K60p using a recorder.",internal)).toHaveLength(1);
 });
+
+
+it("separates current camera identity labels from recording capability claims",()=>{
+ const camera:CameraEvidence={names:["BMPCC 6K", "BMPCC 6K Full Frame","Blackmagic Cinema Camera 6K"],capabilities:{role:"interchangeable_lens",sensor_format:"full_frame",internal_4k:true,recording_modes:[{...mode(60,"full_frame",false),resolution:"dci_4k",capture_format:undefined}]}};
+ for(const name of ["BMPCC 6K Full Frame","BMPCC 6K Full-Frame","Blackmagic Cinema Camera 6K"]){
+  expect(unsupportedCameraModeClaims(`${name} records DCI 4K60p internally.`,[camera])).toEqual([]);
+  expect(unsupportedCameraModeClaims(`${name} records full-frame DCI 4K60p internally.`,[camera])).toHaveLength(1);
+  expect(unsupportedCameraModeClaims(`${name} records uncropped DCI 4K60p internally.`,[camera])).toHaveLength(1);
+  expect(unsupportedCameraModeClaims(`${name} records DCI 4K120p internally.`,[camera])).toHaveLength(1);
+  expect(unsupportedCameraModeClaims(`${name} records DCI 4K60p externally.`,[camera])).toHaveLength(1);
+ }
+ const labelled={...camera,names:["DCI 4K Full Frame Camera"]};
+ expect(unsupportedCameraModeClaims("DCI 4K Full Frame Camera is the camera name.",[labelled])).toEqual([]);
+ expect(unsupportedCameraModeClaims("DCI 4K Full Frame Camera records UHD 4K60p.",[labelled])).toHaveLength(1);
+ expect(unsupportedCameraModeClaims("DCI 4K Full Frame Camera records DCI 4K60p internally.",[labelled])).toEqual([]);
+ expect(unsupportedCameraModeClaims("BMPCC 6K Full Frame records DCI 4K60p internally. It records full-frame DCI 4K60p internally.",[camera])).toHaveLength(1);
+});
