@@ -23,7 +23,7 @@ import {
 } from "./lib/reservations/predicates";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
-import { isItemUnitAvailable } from "./lib/availability";
+import { loadStockSources, stockForItem, validIsoDate } from "./lib/renter_stock";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -220,13 +220,22 @@ export const getClosestAvailableDates = query({
     vacationPeriod: v.optional(
       v.object({ start: v.string(), end: v.string() }),
     ),
+    alternative_stock_scope: v.union(v.literal("physical_item"), v.literal("not_checked")),
+    availability_guidance: v.string(),
     before: v.optional(v.object({ start: v.string(), end: v.string() })),
     after: v.optional(v.object({ start: v.string(), end: v.string() })),
   }),
   handler: async (ctx, args) => {
     const today = todayLondon();
     const reqQty = args.requested_qty ?? 1;
+    if (!validIsoDate(args.requested_start) || !validIsoDate(args.requested_end) ||
+        args.requested_end < args.requested_start || !Number.isInteger(reqQty) || reqQty < 1 || reqQty > 20 ||
+        diffDaysInclusive(args.requested_start, args.requested_end) > 366) {
+      throw new Error("Supply valid ordered ISO dates (at most 366 days) and an integer quantity from 1 to 20.");
+    }
     const len = diffDaysInclusive(args.requested_start, args.requested_end);
+    const alternative_stock_scope = args.item_id ? "physical_item" as const : "not_checked" as const;
+    const availability_guidance = "This is a vacation calendar check, not confirmation of the requested rental. Alternative windows without an item have no stock check. With an item, only that physical item's requested units are checked. Before offering dates, check the exact complete listing/basket, its kit components, current booking context and prices through the rental availability/quote tools.";
 
     // 1. Find first active vacation overlapping the request.
     const vacations = await ctx.db
@@ -238,45 +247,19 @@ export const getClosestAvailableDates = query({
         v.start_date <= args.requested_end &&
         v.end_date >= args.requested_start,
     );
-    if (!overlapping) return { inVacation: false };
+    if (!overlapping) return { inVacation: false, alternative_stock_scope: "not_checked" as const, availability_guidance };
 
-    // 2. Pre-load confirmed reservations once (used for both before/after probes).
-    //    by_status index scopes the scan to ~250 confirmed rows vs ~1700 total.
-    const confirmedRes = (
-      await ctx.db
-        .query("reservations")
-        .withIndex("by_status", (q) => q.eq("status", "confirmed"))
-        .collect()
-    ).filter(isConfirmedWithDates) as Array<Doc<"reservations">>;
-
-    // 3. Helper: is the candidate window free?
-    const isWindowFree = async (s: string, e: string): Promise<boolean> => {
-      // Vacation overlap
-      for (const v of vacations) {
-        if (v.start_date <= e && v.end_date >= s) return false;
-      }
-      // Confirmed-reservation overlap (account-wide if no item, else only
-      // bookings for the same item).
-      for (const r of confirmedRes) {
-        if (!r.start_date || !r.end_date) continue;
-        const sameScope =
-          args.item_id === undefined
-            ? true
-            : ((r as any).item_id_resolved as Id<"items"> | undefined) ===
-              args.item_id;
-        if (!sameScope) continue;
-        if (r.start_date <= e && r.end_date >= s) return false;
-      }
-      // Item availability (per-day) when item_id provided.
-      if (args.item_id !== undefined) {
-        let cur = s;
-        while (cur <= e) {
-          const av = await isItemUnitAvailable(ctx, args.item_id, cur);
-          if (av.available < reqQty) return false;
-          cur = addDays(cur, 1);
-        }
-      }
-      return true;
+    // A calendar opening is not a business-wide stock verdict. When a
+    // physical item is supplied, use the same snapshot as renter availability.
+    // Never reload reservations and inventory for every candidate day.
+    const sources = args.item_id ? await loadStockSources(ctx) : null;
+    const item = sources?.items.find(i => i._id === args.item_id);
+    const isWindowFree = (s: string, e: string): boolean => {
+      if (vacations.some(v => v.start_date <= e && v.end_date >= s)) return false;
+      if (!args.item_id) return true;
+      return !!item && !!sources && stockForItem(sources, item, {
+        item_name: item.name_canonical, start_date: s, end_date: e, quantity: reqQty,
+      }).available === true;
     };
 
     // 4. Look back up to 30 days for "before" slot ending on or before
@@ -288,7 +271,7 @@ export const getClosestAvailableDates = query({
       const candStart = addDays(candEnd, -(len - 1));
       if (candEnd < today) break; // entirely in the past — stop
       if (candStart < today) continue;
-      if (await isWindowFree(candStart, candEnd)) {
+      if (isWindowFree(candStart, candEnd)) {
         before = { start: candStart, end: candEnd };
         break;
       }
@@ -301,7 +284,8 @@ export const getClosestAvailableDates = query({
     for (let offset = 0; offset <= 30; offset++) {
       const candStart = addDays(dayAfter, offset);
       const candEnd = addDays(candStart, len - 1);
-      if (await isWindowFree(candStart, candEnd)) {
+      if (candStart < today) continue;
+      if (isWindowFree(candStart, candEnd)) {
         after = { start: candStart, end: candEnd };
         break;
       }
@@ -309,6 +293,8 @@ export const getClosestAvailableDates = query({
 
     return {
       inVacation: true,
+      alternative_stock_scope,
+      availability_guidance,
       vacationPeriod: {
         start: overlapping.start_date,
         end: overlapping.end_date,

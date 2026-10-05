@@ -28,6 +28,7 @@ export default defineConfig({
       "convex/lib/owner_setup.test.ts",
       "convex/lib/owner_authorization.test.ts",
       "convex/owner_functions.test.ts",
+      "convex/vacation.availability.test.ts",
       "src/lib/convex-service.test.ts",
       "src/lib/convex-request-context.test.ts",
       "src/lib/convex-query-session.test.ts",

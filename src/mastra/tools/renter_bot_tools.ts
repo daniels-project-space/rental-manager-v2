@@ -29,6 +29,7 @@ import { getFunctionName } from "convex/server";
 import { bindRenterToolArgs, currentRenterToolScope } from "@/lib/renter-tool-scope";
 import { completeMountBasket, withBookingAdditionPreview } from "@/lib/renter-pricing-preview";
 import { api } from "@/../convex/_generated/api";
+import type { Id } from "@/../convex/_generated/dataModel";
 // Convex typegen runs against a real deployment via `npx convex dev`.
 // Until the new modules (renter_bot_tools, knowledge, renter_bot_drafts)
 // are typed against the live deployment, we use the project-wide
@@ -278,7 +279,7 @@ export const getTemplateTool = createTool({
 export const checkVacationTool = createTool({
   id: "check_vacation",
   description:
-    "Check whether a requested date range overlaps an active owner-vacation period. Call BEFORE drafting ANY rental confirmation, quote, or availability-affirming reply. If in_vacation=true, the requested window is closed — propose `before` and/or `after` alternative windows in the draft instead of confirming. Returns {in_vacation, vacation?, before?, after?}.",
+    "Check whether a requested date range overlaps an active owner-vacation period. Call BEFORE drafting ANY rental confirmation, quote, or availability-affirming reply. If in_vacation=true, the requested window is closed. before/after are candidate windows; read alternative_stock_scope and availability_guidance. A calendar opening never proves the complete rental is available: check the exact basket and dates before offering it. Returns {in_vacation, vacation?, before?, after?, alternative_stock_scope, availability_guidance}.",
   inputSchema: z.object({
     start_date: z.string().describe("ISO YYYY-MM-DD"),
     end_date: z.string().describe("ISO YYYY-MM-DD"),
@@ -287,6 +288,8 @@ export const checkVacationTool = createTool({
   }),
   outputSchema: z.object({
     in_vacation: z.boolean(),
+    alternative_stock_scope: z.enum(["physical_item", "not_checked"]),
+    availability_guidance: z.string(),
     vacation: z
       .object({ start: z.string(), end: z.string() })
       .optional(),
@@ -295,16 +298,18 @@ export const checkVacationTool = createTool({
   }),
   execute: async ({ start_date, end_date, item_id, requested_qty }) => {
     const res = await convex().query(
-      anyApi.vacation.getClosestAvailableDates,
+      api.vacation.getClosestAvailableDates,
       {
         requested_start: start_date,
         requested_end: end_date,
-        ...(item_id ? { item_id } : {}),
+        ...(item_id ? { item_id: item_id as Id<"items"> } : {}),
         ...(requested_qty ? { requested_qty } : {}),
       },
     );
     return {
-      in_vacation: !!res?.inVacation,
+      in_vacation: res.inVacation,
+      alternative_stock_scope: res.alternative_stock_scope,
+      availability_guidance: res.availability_guidance,
       vacation: res?.vacationPeriod,
       before: res?.before,
       after: res?.after,
