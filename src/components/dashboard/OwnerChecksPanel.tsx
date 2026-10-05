@@ -42,7 +42,8 @@ export function OwnerChecksPanel({accountSlug,onOpen,labOnly=false}:{accountSlug
       {task.mapping_details&&<div className="mt-2 text-[#cbd5e1]">
         {task.mapping_details.missing.map(c=><p key={c.item_id}>Missing from kit mapping: {c.qty} × {shortItemName(c.name)}</p>)}
         {task.mapping_details.unresolved.map((name,i)=><p key={i}>Unresolved equipment: {name}</p>)}
-        {task.mapping_details.complete&&<p>Kit mapping is now complete. Review the current conversation before closing this check.</p>}
+        {task.mapping_details.contents_review&&<div><p>Confirm the supplied storage type, capacity and count.</p><p>Recorded contents: {task.mapping_details.contents_review.recorded_contents.join(", ")}</p><p>Related listing names: {task.mapping_details.contents_review.listing_names.join("; ")}</p>{task.mapping_details.contents_review.unreconciled_contents.map((note,i)=><p key={i}>Unreconciled content: {note}</p>)}</div>}
+        {task.mapping_details.complete&&!task.mapping_details.contents_review&&<p>Kit mapping is now complete. Review the current conversation before closing this check.</p>}
         {!task.mapping_details.complete&&!task.mapping_details.missing.length&&!task.mapping_details.unresolved.length&&<p>Confirm every required item and quantity in this listing’s kit mapping.</p>}
       </div>}
       <blockquote className="mt-2 text-[#a3aab8] line-clamp-3">“{task.source_question}”</blockquote>

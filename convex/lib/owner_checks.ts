@@ -35,9 +35,9 @@ function ownerCheckScope(check:OwnerCheck) {
   requirementScope(check.requirements)];
 }
 /** A known non-rentable listing is a denial, not an unresolved owner task. */
-export function listingMappingOwnerCheck(physical:{product_id:number;listing_name:string|null;complete:boolean;owned:boolean|null;valid_quantity:boolean}|null,
+export function listingMappingOwnerCheck(physical:{product_id:number;listing_name:string|null;complete:boolean;contents_review_required?:boolean;owned:boolean|null;valid_quantity:boolean}|null,
  dates:{start_date:string|null;end_date:string|null;quantity:number}) {
- if(!physical?.listing_name||physical.complete||physical.owned===false||!physical.valid_quantity)return null;
+ if(!physical?.listing_name||physical.complete&&!physical.contents_review_required||physical.owned===false||!physical.valid_quantity)return null;
  return {kind:"listing_mapping" as const,product_id:physical.product_id,...dates};
 }
 export function ownerCheckScopeKey(check:OwnerCheck) {return JSON.stringify(ownerCheckScope(check));}

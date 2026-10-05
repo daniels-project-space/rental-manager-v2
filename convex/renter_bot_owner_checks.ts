@@ -1,3 +1,4 @@
+import {listingKitContext,listingKitItem} from "./lib/listing_kit_context";
 import {ownerCheckRequestMessageId} from "./lib/owner_check_request";
 import {assessCameraRequirements,hasCameraRequirements,verifiedCameraCapabilities} from "./lib/camera_requirements";
 import { paginationOptsValidator } from "convex/server";
@@ -68,7 +69,8 @@ export async function persistOwnerChecks(ctx:MutationCtx,a:{thread_id:string;mes
    if(booking?.account_slug&&booking.account_slug!==conv.account_slug||check.start_date!==request.start_date||check.end_date!==request.end_date||!request.lines.some(l=>l.product_id===check.product_id&&l.qty===check.quantity))continue;
    inventory??=await ctx.db.query("items").collect();
    const physical=await loadListingInventory(ctx,conv.account_slug,check.product_id,check.quantity,{items:inventory});
-   if(!listingMappingOwnerCheck(physical,check))continue;
+   const kit=await listingKitContext(ctx,conv.account_slug,listingKitItem(physical,inventory),physical.components,inventory);
+   if(!listingMappingOwnerCheck({...physical,contents_review_required:kit.contents_review_required},check))continue;
    names.push(physical.listing_name!);
   } else {
   if(check.kind==="camera_recommendation" ? !hasCameraRequirements(check.requirements,check.lens_mount) : !hasLensRequirements(check.requirements))continue;
@@ -120,7 +122,8 @@ export const list=query({args:{account_slug:v.optional(v.string()),lab_only:v.op
   const conv=await ctx.db.query("conversations").withIndex("by_thread",q=>q.eq("thread_id",task.thread_id)).first();
   const recent=await recentThreadMessages(ctx,task.thread_id,12),latestRenter=recent.filter(m=>m.sender==="renter").at(-1);
   const physical=task.check.kind==="listing_mapping"&&inventory?await loadListingInventory(ctx,task.account_slug,task.check.product_id,task.check.quantity,{items:inventory}):null;
-  return {...task,mapping_details:physical?{complete:physical.complete,missing:physical.coverage?.missing??[],unresolved:[...(physical.coverage?.unresolved??[]),...physical.unresolved_default_adapters]}:null,
+  const kit=physical&&inventory?await listingKitContext(ctx,task.account_slug,listingKitItem(physical,inventory),physical.components,inventory):null;
+  return {...task,mapping_details:physical?{complete:physical.complete,contents_review:kit?.contents_review??null,missing:physical.coverage?.missing??[],unresolved:[...(physical.coverage?.unresolved??[]),...physical.unresolved_default_adapters]}:null,
    context_changed:!conv||draftContextKey(booking,conv.inquiry_items,order)!==task.source_context_key,newer_renter_message:latestRenter?.message_id!==ownerCheckRequestMessageId(task),is_lab:task.thread_id.startsWith("__probe__")};
  }))};
 }});

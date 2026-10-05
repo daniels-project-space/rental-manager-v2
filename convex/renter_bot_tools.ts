@@ -1,3 +1,4 @@
+import {listingKitContext} from "./lib/listing_kit_context";
 import {PRIMARY_RENTAL_REQUEST,rentalRequestValidator} from "./lib/rental_request";
 import {validateRentalRequest} from "./lib/sent_rental_request";
 import { referralContext } from "./lib/referral_context";
@@ -24,7 +25,7 @@ import { summarise } from "./lib/renter_order_quote";
 import { inclusiveRentalDays } from "./lib/hygglo_pricing";
 import { listingDisplayName } from "./lib/item_display_name";
 import { assessCameraRequirements, hasCameraRequirements, requestedCameraRole, verifiedCameraCapabilities, type CameraRequirements } from "./lib/camera_requirements";
-import { recommendationKit, recordedKit } from "./lib/recommendation_kit";
+import { recommendationKit } from "./lib/recommendation_kit";
 import { verifiedItemSpec } from "./lib/verified_item_spec";
 import { loadListingInventory, listingStock, resolveListingComponents } from "./lib/listing_inventory";
 import { getBotBooking, getLabOrder, requestedListingContext } from "./lib/renter_booking";
@@ -320,8 +321,6 @@ export const get_listing_context = query({
         ? await loadListingInventory(ctx, account_slug, l.product_id, l.qty, {items:allItems})
         : null;
       if (listingInventory) {
-        const check=listingMappingOwnerCheck(listingInventory,{start_date:request.start_date,end_date:request.end_date,quantity:l.qty});
-        if(check)owner_checks.push(check);
         owned = listingInventory.owned;
         ownership_source = listingInventory.source;
         const main = listingInventory.primary_camera ?? listingInventory.components.find((c) => ["camera", "camera_body"].includes(c.kind ?? ""))
@@ -377,24 +376,13 @@ export const get_listing_context = query({
         units_per_listing: 1, requested_units: l.qty, stock_required: true,
         owned: it.status === "active" && !it.is_marketing_only && it.qty > 0,
       }] : []);
-      let storageNeedsReview = false;
-      if (it && account_slug && ["camera","camera_body"].includes(it.kind ?? "")) {
-        const [indexes,overrides,peers]=await Promise.all([
-          ctx.db.query("hygglo_product_index").withIndex("by_item_id",q=>q.eq("item_id",it!._id)).collect(),
-          ctx.db.query("listing_resolution_override").withIndex("by_account_product",q=>q.eq("account_slug",account_slug)).collect(),
-          ctx.db.query("online_listings").withIndex("by_account",q=>q.eq("account_slug",account_slug)).collect(),
-        ]);
-        const ids=baseListingProductIds(account_slug,String(it._id),indexes,overrides,allItems,peers);
-        storageNeedsReview=listingMediaConflict(included_with_rental ?? [],peers.filter(p=>ids.includes(p.product_id)).map(p=>p.name ?? ""));
-        if (storageNeedsReview) included_with_rental=withoutUnverifiedMediaCapacity(included_with_rental ?? []);
+      const kitContext=await listingKitContext(ctx,account_slug,it,inventoryComponents,allItems);
+      const kit=kitContext.kit,storageNeedsReview=kitContext.contents_review_required;
+      included_with_rental=kitContext.included_with_rental;
+      if(listingInventory){
+        const check=listingMappingOwnerCheck({...listingInventory,contents_review_required:storageNeedsReview},{start_date:request.start_date,end_date:request.end_date,quantity:l.qty});
+        if(check)owner_checks.push(check);
       }
-      // Stock mapping proves physical identity, not an exhaustive accessory kit.
-      const kit = recordedKit(
-        inventoryComponents.map(c => ({ name: c.name, qty: c.units_per_listing })),
-        included_with_rental ?? [],
-      );
-      storageNeedsReview ||= kit.unreconciled_contents.length>0;
-      included_with_rental=(included_with_rental??[]).filter(text=>!kit.unreconciled_contents.includes(text));
       items.push({
         unreconciled_kit_contents:kit.unreconciled_contents,
         storage_contents_verification_required:storageNeedsReview,

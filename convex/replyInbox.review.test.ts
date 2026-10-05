@@ -9,7 +9,7 @@ import { validateRenterBotOutput } from "../src/lib/renter-bot-output";
 import { describe, expect, it, vi } from "vitest";
 import { setDraftReview, setDraft, threadsNeedingDraft, claimDraftGeneration, releaseDraftGeneration, getDraftApprovalContext, recheckCopiedDraftStock } from "./replyInbox";
 import { generateDraft, sendRenterReply } from "./replyInbox_actions";
-import {performJointStockCheck,check_availability,get_negotiation_stance,lookup_pricing} from './renter_bot_tools';
+import {performJointStockCheck,check_availability,get_negotiation_stance,get_listing_context,lookup_pricing} from './renter_bot_tools';
 import { draftContextKey } from "./lib/draft_review";
 import { canonicalGenerationError, generationFailure } from "./lib/canonical_generation_error";
 
@@ -453,6 +453,26 @@ describe("kit owner checks persist through the real review mutation",()=>{
   return {...f,camera,lens,override,check};
  }
  const tasks=(f:Awaited<ReturnType<typeof kit>>)=>[...f.rows.values()].filter(r=>r.table==="renter_bot_owner_checks");
+ it("keeps a Native owner task for conflicting supplied storage after physical mapping is complete",async()=>{
+  const f=await kit();
+  await f.ctx.db.patch(f.override,{components:[{item_id:f.camera,qty:1}]});
+  const listing=[...f.rows.values()].find(r=>r.table==="online_listings"&&r.product_id===10);
+  await f.ctx.db.patch(listing._id,{name:"Sony FX3 with 256GB card",description:"Included in this kit: • 1x Sony FX3"});
+  await f.ctx.db.patch(f.camera,{compatibility:{included_with_rental:["1x 1TB SSD"]}});
+  const context=await invoke(get_listing_context,f.ctx,{thread_id:f.args.thread_id});
+  expect(context.items[0].storage_contents_verification_required).toBe(true);expect(context.owner_checks).toHaveLength(1);
+  const checks=nativeOwnerChecks([{tool:"get_listing_context",call_id:"native-storage",result:context}]);
+  expect(await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:checks})).toMatchObject({ok:true});
+  expect(tasks(f)).toHaveLength(1);expect(tasks(f)[0].status).toBe("pending");
+  await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:checks});expect(tasks(f)).toHaveLength(1);
+  expect(await ownerChecksForBot(f.ctx as any,f.args.thread_id,f.args.context_key)).toContainEqual(expect.objectContaining({kind:"listing_mapping",customer_input_required:false,specification_result_verified:false}));
+  const resolved=await kit();const ownListing=[...resolved.rows.values()].find(r=>r.table==="online_listings"&&r.product_id===10);
+  await resolved.ctx.db.patch(resolved.override,{components:[{item_id:resolved.camera,qty:1}]});
+  await resolved.ctx.db.patch(ownListing._id,{name:"Sony FX3 with 256GB card",description:"Included in this kit: • 1x Sony FX3"});
+  await resolved.ctx.db.patch(resolved.camera,{compatibility:{included_with_rental:["1x 256GB card"]}});
+  await invoke(setDraftReview,resolved.ctx,{...resolved.args,owner_checks:[resolved.check]});expect(tasks(resolved)).toEqual([]);
+ });
+
  it("harvests actual listing receipts, ignores prose/other tools, and saves durable work",async()=>{
   const f=await kit();const {source_call_id,...check}=f.check;
   const checks=nativeOwnerChecks([{tool:"get_listing_context",call_id:source_call_id,result:{owner_checks:[check]}},{tool:"search",call_id:"untrusted",result:{owner_checks:[check]}}]);
