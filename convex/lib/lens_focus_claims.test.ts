@@ -93,3 +93,13 @@ describe("focus identity in a paired camera/lens recommendation",()=>{
   expect(check("I'd recommend my Sony FX3 paired with the TTArtisan 11mm f2.8 Fisheye (Sony E). It provides autofocus.")).not.toEqual([]);
  });
 });
+
+describe("paired focus claims in equipment offers",()=>{
+ it("binds the lens after paired-with instead of the speaker before can",()=>{
+  const text="I can offer the Sony FX3 paired with the Sony FE 16-35mm f/2.8 GM wide autofocus zoom.";
+  expect(check(text)).toEqual([]);
+  expect(check(text.replace("Sony FE 16-35mm f/2.8 GM","TTArtisan 11mm f2.8 Fisheye (Sony E)"))).not.toEqual([]);
+  expect(check(text.replace("Sony FE 16-35mm f/2.8 GM","an unknown 16-35mm"))).not.toEqual([]);
+  expect(check(text,[lens,{...sony,capabilities:null}])).not.toEqual([]);
+ });
+});

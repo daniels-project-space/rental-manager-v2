@@ -9,6 +9,7 @@ import {renterToolReceipts,stockReceipts} from "./renter-tool-evidence";
 import {unsupportedPriceClaims} from "../../convex/lib/price_claims";
 import {validateRenterBotOutput,type RenterBotOutput} from "./renter-bot-output";
 import fixtures from "./fixtures/renter-native-quotes.json";
+import basketReview from "./fixtures/renter-native-basket-review.json";
 import sales from "./fixtures/renter-sales-structured-native.json";
 import {unsupportedStockClaims,type StockReceipt} from "../../convex/lib/stock_claims";
 import {forbiddenFulfillmentClaims} from "../../convex/lib/fulfillment_claims";
@@ -375,4 +376,25 @@ it("does not relabel a stale closed booking record as a current snapshot",()=>{
  const context={...scope,rentalStage:"COMPLETED",queryRevision:()=>2};
  expect(nativeBookingRecord(record,context,0)).toBeNull();
  expect(nativeBookingRecord(record,context,2)).toMatchObject({request_revision:2,record});
+});
+
+describe("a Native basket review cannot silently swallow a requested quote",()=>{
+ const context={...scope,threadId:basketReview.thread_id};
+ const evidence={tool:"check_basket_availability",call_id:"captured-native-basket",result:basketReview};
+ const draft="The Blackmagic 6K Full Frame kit is available for 20-21 October.";
+ const notice="I need to confirm the camera and lens pairing for the BMPCC 6K Full Frame kit before I can give you the full quote.";
+ it("preserves stock facts while showing the unresolved Native setup check without a price",()=>{
+  const before=structuredClone(evidence);
+  expect(renderNativeQuoteReply({...base,draft},[evidence],context)).toMatchObject({ok:true,draft:draft+"\n\n"+notice,quote_keys:[],stock_quotes:[]});
+  expect(evidence).toEqual(before);
+  expect(renderNativeQuoteReply({...base,draft:draft+"\n\n"+notice},[evidence,evidence],context)).toMatchObject({ok:true,draft:draft+"\n\n"+notice});
+ });
+ it("does not project an unrelated, foreign, failed or stale review onto the chosen setup",()=>{
+  expect(renderNativeQuoteReply({...base,draft:"Sony FX3 is the option."},[evidence],context)).toMatchObject({ok:true,draft:"Sony FX3 is the option."});
+  for(const result of [{...basketReview,account_slug:"other"},{...basketReview,thread_id:"another"},{...basketReview,ok:false},{...basketReview,available:false}])
+   expect(renderNativeQuoteReply({...base,draft},[{...evidence,result}],context)).toMatchObject({ok:true,draft});
+  expect(renderNativeQuoteReply({...base,draft},[evidence],{...context,queryRevision:()=>1,queryReadRevision:()=>0})).toMatchObject({ok:true,draft});
+  const resolved={...evidence,result:{...basketReview,owner_checks:[],technical_qualification:{...basketReview.technical_qualification,verified:true}}};
+  expect(renderNativeQuoteReply({...base,draft},[evidence,resolved],context)).toMatchObject({ok:true,draft});
+ });
 });

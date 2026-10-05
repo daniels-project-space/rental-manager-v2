@@ -44,7 +44,8 @@ export function unsupportedLensFocusClaims(text:string,evidence:LensFocusEvidenc
   // an item name or allow another explicitly named model to borrow its proof.
   const pronoun=/^\s*(?:so\s+)?(it|this|that|one)\b/i.exec(prefix)?.[1];
   const namedTarget=declaredLensReferences(normal(prefix)).length>0||cameraNames.some(name=>normal(prefix).includes(normal(name)));
-  const noun=(existential?target??"":pronoun?(namedTarget?prefix:pronoun):predicate?prefix.slice(0,predicate.index):prefix).trim().replace(/^(?:(?:the|a|an|my|our|your|this|that)\s+)+/i,"");
+  const pairedObject=/\s+paired\s+with\s+/i.test(prefix)?prefix.split(/\s+paired\s+with\s+/i).at(-1):undefined;
+  const noun=(existential?target??"":pairedObject?pairedObject:pronoun?(namedTarget?prefix:pronoun):predicate?prefix.slice(0,predicate.index):prefix).trim().replace(/^(?:(?:the|a|an|my|our|your|this|that)\s+)+/i,"");
   const reference=itemReferenceLabel(noun.split(/\s+from\s+/i)[0],"lens");
   const generic=/^(?:it|this|that|one|the same lens|lens|this lens|that lens)?$/i.test(reference);
   if(!generic && bestMatch(reference,cameraNames,n=>n).confident){subject=[];continue;}

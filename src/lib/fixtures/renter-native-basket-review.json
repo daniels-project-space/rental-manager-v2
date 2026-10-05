@@ -1,0 +1,338 @@
+{
+  "account_slug": "leo",
+  "available": true,
+  "basket": {
+    "available": true,
+    "items": [
+      {
+        "name": "Canon EF 24-105mm f4",
+        "quantity": 1
+      },
+      {
+        "name": "BMPCC 6K Full Frame",
+        "quantity": 1
+      },
+      {
+        "name": "EF to L mount",
+        "quantity": 1
+      },
+      {
+        "name": "NP-F570 batteries",
+        "quantity": 5
+      }
+    ]
+  },
+  "booking_use": "standalone",
+  "components": [
+    {
+      "available": true,
+      "basket": {
+        "available": true,
+        "items": [
+          {
+            "name": "Canon EF 24-105mm f4",
+            "quantity": 1
+          },
+          {
+            "name": "BMPCC 6K Full Frame",
+            "quantity": 1
+          },
+          {
+            "name": "EF to L mount",
+            "quantity": 1
+          },
+          {
+            "name": "NP-F570 batteries",
+            "quantity": 5
+          }
+        ]
+      },
+      "buffer_minutes": 60,
+      "checked_at": 1791198731607,
+      "conflicts": [],
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "is_marketing_only": false,
+      "item_id": "kn701tq0apy4hps33r49be6a0986a051",
+      "item_name": "Canon EF 24-105mm f4",
+      "kind": "lens",
+      "owned": true,
+      "per_day": [
+        {
+          "booked": 0,
+          "date": "2026-10-20",
+          "free": 1,
+          "repair": 0,
+          "total": 1
+        },
+        {
+          "booked": 0,
+          "date": "2026-10-21",
+          "free": 1,
+          "repair": 0,
+          "total": 1
+        }
+      ],
+      "reason": "available",
+      "requested_units": 1,
+      "source": "shared_inventory_confirmed_rentals",
+      "start_date": "2026-10-20",
+      "total_units": 1
+    },
+    {
+      "available": true,
+      "basket": {
+        "available": true,
+        "items": [
+          {
+            "name": "Canon EF 24-105mm f4",
+            "quantity": 1
+          },
+          {
+            "name": "BMPCC 6K Full Frame",
+            "quantity": 1
+          },
+          {
+            "name": "EF to L mount",
+            "quantity": 1
+          },
+          {
+            "name": "NP-F570 batteries",
+            "quantity": 5
+          }
+        ]
+      },
+      "buffer_minutes": 60,
+      "checked_at": 1791198731607,
+      "conflicts": [],
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "is_marketing_only": false,
+      "item_id": "kn740n15w16172sn1qj8h89gx586b2xf",
+      "item_name": "BMPCC 6K Full Frame",
+      "kind": "camera",
+      "owned": true,
+      "per_day": [
+        {
+          "booked": 0,
+          "date": "2026-10-20",
+          "free": 1,
+          "repair": 0,
+          "total": 1
+        },
+        {
+          "booked": 0,
+          "date": "2026-10-21",
+          "free": 1,
+          "repair": 0,
+          "total": 1
+        }
+      ],
+      "reason": "available",
+      "requested_units": 1,
+      "source": "shared_inventory_confirmed_rentals",
+      "start_date": "2026-10-20",
+      "total_units": 1
+    },
+    {
+      "available": true,
+      "basket": {
+        "available": true,
+        "items": [
+          {
+            "name": "Canon EF 24-105mm f4",
+            "quantity": 1
+          },
+          {
+            "name": "BMPCC 6K Full Frame",
+            "quantity": 1
+          },
+          {
+            "name": "EF to L mount",
+            "quantity": 1
+          },
+          {
+            "name": "NP-F570 batteries",
+            "quantity": 5
+          }
+        ]
+      },
+      "buffer_minutes": 60,
+      "checked_at": 1791198731607,
+      "conflicts": [],
+      "end_date": "2026-10-21",
+      "free_units": 1,
+      "is_marketing_only": false,
+      "item_id": "kn7b8ezbpk7k3c4gdrb1smn7ad89a2j0",
+      "item_name": "EF to L mount",
+      "kind": "accessory",
+      "owned": true,
+      "per_day": [
+        {
+          "booked": 0,
+          "date": "2026-10-20",
+          "free": 1,
+          "repair": 0,
+          "total": 1
+        },
+        {
+          "booked": 0,
+          "date": "2026-10-21",
+          "free": 1,
+          "repair": 0,
+          "total": 1
+        }
+      ],
+      "reason": "available",
+      "requested_units": 1,
+      "source": "shared_inventory_confirmed_rentals",
+      "start_date": "2026-10-20",
+      "total_units": 1
+    },
+    {
+      "available": true,
+      "basket": {
+        "available": true,
+        "items": [
+          {
+            "name": "Canon EF 24-105mm f4",
+            "quantity": 1
+          },
+          {
+            "name": "BMPCC 6K Full Frame",
+            "quantity": 1
+          },
+          {
+            "name": "EF to L mount",
+            "quantity": 1
+          },
+          {
+            "name": "NP-F570 batteries",
+            "quantity": 5
+          }
+        ]
+      },
+      "buffer_minutes": 60,
+      "checked_at": 1791198731607,
+      "conflicts": [],
+      "end_date": "2026-10-21",
+      "free_units": 12,
+      "is_marketing_only": false,
+      "item_id": "kn7fwc3jkvtbfnkr6tfb0hgxcn8fhdp6",
+      "item_name": "NP-F570 batteries",
+      "kind": "power",
+      "owned": true,
+      "per_day": [
+        {
+          "booked": 0,
+          "date": "2026-10-20",
+          "free": 12,
+          "repair": 0,
+          "total": 12
+        },
+        {
+          "booked": 0,
+          "date": "2026-10-21",
+          "free": 12,
+          "repair": 0,
+          "total": 12
+        }
+      ],
+      "quantity_basis": {
+        "basis": "owner_lower_bound",
+        "note": "12 is the conservative allocatable lower bound. Owner reported more than 12; exact total is unconfirmed.",
+        "recorded_at": 1790966638263,
+        "source": "Owner confirmation 2026-10-02: native NP-F570; total 'like over 12'. Kit allocations retain the recorded five batteries per camera."
+      },
+      "reason": "available",
+      "requested_units": 5,
+      "source": "shared_inventory_confirmed_rentals",
+      "start_date": "2026-10-20",
+      "total_units": 12
+    }
+  ],
+  "end_date": "2026-10-21",
+  "guidance": "Read-only joint stock check. available:true proves dated capacity only. technical_qualification separately verifies the submitted requirements and camera/lens setup; a false or unknown setup verdict does not prove the items work together. Select a compatible verified set, or explain the missing proof. For a new inquiry, quote.total_gbp and its exact lines supply the combined price; use these instead of another pricing call or mental arithmetic. quote:null means the combined price is unverified; confirmed amendments use quote_booking_addition/replacement. Explain shared component failures; a failed proposal does not mean every item is independently unavailable. No booking or price changes were made.",
+  "offered_listings": [
+    {
+      "product_id": 1172450,
+      "quantity": 1
+    }
+  ],
+  "owner_checks": [
+    {
+      "candidate_item_ids": [
+        "kn701tq0apy4hps33r49be6a0986a051"
+      ],
+      "end_date": "2026-10-21",
+      "kind": "lens_recommendation",
+      "lens_mount": null,
+      "quantity": 1,
+      "requirements": {
+        "coverage": "full_frame"
+      },
+      "start_date": "2026-10-20"
+    }
+  ],
+  "physical_identity_key": "[[\"kn701tq0apy4hps33r49be6a0986a051\",\"Canon EF 24-105mm f4\",1],[\"kn740n15w16172sn1qj8h89gx586b2xf\",\"BMPCC 6K Full Frame\",1],[\"kn7b8ezbpk7k3c4gdrb1smn7ad89a2j0\",\"EF to L mount\",1],[\"kn7fwc3jkvtbfnkr6tfb0hgxcn8fhdp6\",\"NP-F570 batteries\",5]]",
+  "preview_only": true,
+  "quote": {
+    "days": 2,
+    "end_date": "2026-10-21",
+    "lines": [
+      {
+        "daily_price_gbp": 62,
+        "effective_rate_gbp": 62,
+        "line_total_gbp": 124,
+        "name": "BMPCC 6K Full Frame + Canon EF 24-105mm f4",
+        "price_tiers": [
+          {
+            "days": 1,
+            "pricePerDay": 62
+          },
+          {
+            "days": 3,
+            "pricePerDay": 56.666666666666664
+          },
+          {
+            "days": 7,
+            "pricePerDay": 41.42857142857143
+          }
+        ],
+        "pricing_basis": "listing",
+        "product_id": 1172450,
+        "qty": 1,
+        "tiers": "1 day \u00a362, 3+ days ~\u00a356.67/day (\u00a3170 for 3 days), 7+ days ~\u00a341.43/day (\u00a3290 for 7 days)",
+        "verified_price_names": [
+          "Blackmagic 6k Full frame cinema camera + 24-105mm Cannon Zoom lens L series "
+        ]
+      }
+    ],
+    "source": "native_inquiry_basket",
+    "start_date": "2026-10-20",
+    "total_gbp": 124,
+    "unpriced": []
+  },
+  "reason": "available",
+  "rental_stage": "INQUIRY",
+  "replacement_removed_listings": [],
+  "source": "shared_inventory_confirmed_rentals",
+  "start_date": "2026-10-20",
+  "stock_scope": "proposed_basket",
+  "technical_qualification": {
+    "allocations": [],
+    "groups": [],
+    "requirements_applied": false,
+    "requirements_key": "[]",
+    "setup": {
+      "applied": true,
+      "mismatched": [],
+      "status": "unknown",
+      "unknown": [
+        "lens_sensor_coverage"
+      ]
+    },
+    "verified": false
+  },
+  "thread_id": "__probe__lab-1791198727835-e84qi8ip"
+}

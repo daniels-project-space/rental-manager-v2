@@ -14,6 +14,7 @@ import type { ToolReceipt } from "./renter-tool-evidence";
 import type { RenterBotOutput } from "./renter-bot-output";
 import { renterItemNames } from "../../convex/lib/renter_item_names";
 import { shortItemName } from "../../convex/lib/item_display_name";
+import { renterAccountVoice } from "../../convex/lib/renter_account_voice";
 
 export type NativeQuoteScope={bookingRecord?:NativeBookingRecord;referralContext?:{ok?:boolean;code?:string;already_linked?:boolean;items?:Array<{product_id:number}>};referralContextRevision?:number;threadId:string;accountSlug:string;requestMessageId?:string;rentalRequest?:RentalRequest;rentalStage?:string;minimumRentalThreshold?:number;queryRevision?:()=>number;queryReadRevision?:(value:unknown)=>number|undefined;recommendationRequirements?:RecommendationRequirement[]};
 export type NativeBookingRecord={record_key:string;display_text:string;request_revision:number;record:BookingRecord};
@@ -70,11 +71,21 @@ export function nativeInquiryQuote(value:unknown,scope:NativeQuoteScope,readRevi
  * Stock mapping and a valid price cannot settle supplied storage contents. */
 function kitReviewNotices(draft:string,receipts:ToolReceipt[],scope:NativeQuoteScope) {
  const latest=new Map<string,{name:string;review:boolean}>();
+ const setups=new Map<string,{name:string;review:boolean;pairing:boolean}>();
  for(const receipt of receipts) {
   const r=receipt.result;
   if(!receipt.call_id||r.error||r.ok===false||r.account_slug!==scope.accountSlug||r.thread_id!==scope.threadId)continue;
   const revision=scope.queryReadRevision?.(r);
   if(revision!==undefined&&scope.queryRevision&&revision!==scope.queryRevision())continue;
+  if(receipt.tool==="check_basket_availability"&&r.available===true&&r.preview_only===true&&Array.isArray(r.components)) {
+   const technical=record(r.technical_qualification),setup=record(technical?.setup);
+   const review=technical?.verified===false&&Array.isArray(r.owner_checks)&&r.owner_checks.some(c=>["lens_recommendation","camera_recommendation"].includes(String(record(c)?.kind)));
+   for(const value of r.components) {
+    const item=record(value);
+    if(!item||!["camera","camera_body"].includes(String(item.kind))||typeof item.item_name!=="string")continue;
+    setups.set(itemIdentity(item.item_name)[0],{name:item.item_name,review,pairing:setup?.status==="unknown"});
+   }
+  }
   const recommendations=receipt.tool==="find_owned_alternatives";
   const rows=recommendations?r.alternatives:receipt.tool==="get_listing_context"?r.items:null;
   if(!Array.isArray(rows))continue;
@@ -90,8 +101,12 @@ function kitReviewNotices(draft:string,receipts:ToolReceipt[],scope:NativeQuoteS
   }
  }
  const text=` ${draft.toLowerCase().replace(/[^a-z0-9]+/g," ").trim()} `;
- return [...latest.values()].filter(item=>item.review&&itemIdentity(item.name).some(name=>text.includes(` ${name} `)))
-  .map(item=>`The supplied storage for ${shortItemName(item.name)} still needs owner confirmation of its type, capacity and quantity.`)
+ const mentioned=(name:string)=>itemIdentity(name).some(label=>text.includes(` ${label} `));
+ const speaker=renterAccountVoice(scope.accountSlug).firstPerson?"I":"We";
+ return [...[...latest.values()].filter(item=>item.review&&mentioned(item.name))
+  .map(item=>`The supplied storage for ${shortItemName(item.name)} still needs owner confirmation of its type, capacity and quantity.`),
+  ...[...setups.values()].filter(item=>item.review&&mentioned(item.name))
+   .map(item=>`${speaker} need to confirm ${item.pairing?"the camera and lens pairing":"the required specifications"} for the ${shortItemName(item.name)} kit before ${speaker.toLowerCase()==="i"?"I":"we"} can give you the full quote.`)]
   .filter(notice=>!draft.includes(notice));
 }
 /** Render before any guard or persistence. Unknown references, hand-written
