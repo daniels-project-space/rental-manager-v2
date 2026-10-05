@@ -1,10 +1,25 @@
 import type { LensCapabilities } from "./lens_requirements";
+import type { CameraCapabilities } from "./camera_requirements";
+import { bestMatch } from "./item_name_match";
+import { ownedInventoryItem } from "./inventory_spec_grounding";
 
 export type ItemTechnicalEvidence = {
   spec_text?: string | null;
   spec_verification?: { model: string; source_url: string | null } | null;
   lens_capabilities?: LensCapabilities | null;
+  camera_capabilities?: CameraCapabilities | null;
 };
+
+/** Resolve facts against the full inventory before excluding unowned items.
+ * Filtering first could turn an exact marketing item into a different owned
+ * substitute. Fact lookup never substitutes equipment. */
+export function equipmentFactRequests<T extends {name_canonical:string;aliases?:string[];status:string;qty:number;is_marketing_only?:boolean}>(names:string[],items:T[]) {
+  if(names.length>6 || names.some(name=>!name.trim() || name.length>160))throw new Error("Request one to six short equipment names");
+  return [...new Set(names.map(name=>name.trim()))].map(requested_name=>{
+    const match=bestMatch(requested_name,items,item=>item.name_canonical,item=>item.aliases??[]);
+    return {requested_name,item:match.confident && match.match && ownedInventoryItem(match.match)?match.match:null};
+  });
+}
 
 type RequestedEquipment = {
   inventory_components?: Array<{ name: string | null; kind?: string | null; owned?: boolean | null }>;
@@ -43,6 +58,9 @@ export function itemTechnicalContext(item: ItemTechnicalEvidence): string {
   ];
   if (lens) {
     sections.push(`Reviewed lens capabilities: ${JSON.stringify(lens)}. Omitted properties are unknown.`);
+  }
+  if (item.camera_capabilities) {
+    sections.push(`Reviewed camera capabilities: ${JSON.stringify(item.camera_capabilities)}. Omitted properties and recording modes are unknown. Mandatory recording-mode conditions still apply.`);
   }
   sections.push("Use this evidence for technical claims. A listing name, brand, mount or prior reply does not establish an unrecorded property. Focus mode does not establish electronic contacts, EXIF transmission or camera menu settings; those require their own reviewed evidence. Body-specific controls also require the actual body model from the renter, not the lens mount.");
   return sections.join(" ");

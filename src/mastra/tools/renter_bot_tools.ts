@@ -99,11 +99,12 @@ export const getListingContextTool = createTool({
     "Fetch the listing/items context for a thread. Returns items, dates, prices, recorded kit contents, equipment_usage, booking_record and owner_checks for unresolved selected kit mappings. For closed-rental history select booking_record.record_key in a booking_record reply part; its original recorded amount is distinct from a new enquiry quote and may be paid, quoted or unknown. equipment_usage separates supplied camera bodies from the renter's unknown chosen body; lens mount never identifies their camera. Those checks become persistent owner tasks when the draft or review is saved; no extra tool call or renter input is needed for an internal mapping gap. whats_included and kit_contents contain recorded inventory contents per listing, never advertising prose. kit_completeness is partial or unknown: an absent accessory is unverified, not excluded; mapping_complete refers only to stock mapping.",
   inputSchema: z.object({
     thread_id: z.string(),
+    equipment_names: z.array(z.string().trim().min(1).max(160)).max(6).optional().describe("Batch exact equipment names for technical fact lookup, including models outside the current basket. Returns equipment_facts for owned resolved items, separate from the current rental items. Use this to inspect specs without inventing camera/lens requirements in find_owned_alternatives. Facts do not prove supplied accessories, prices, availability or suitability."),
   }),
   outputSchema: z.unknown(),
-  execute: async ({ thread_id }) => {
+  execute: async ({ thread_id, equipment_names }) => {
     const scope=currentRenterToolScope(),revision=scope?.queryRevision?.();
-    const result=await convex().query(anyApi.renter_bot_tools.get_listing_context, {thread_id});
+    const result=await convex().query(anyApi.renter_bot_tools.get_listing_context, {thread_id,...(equipment_names?{equipment_names}:{})});
     return {...result,booking_record:scope?nativeBookingRecord(result.booking_record,scope,scope.queryReadRevision?.(result)??revision):null};
   },
 });

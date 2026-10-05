@@ -11,7 +11,7 @@ import { ownerChecksForBot } from "./renter_bot_owner_checks";
 import { draftContextKey } from "./lib/draft_review";
 import { inventorySpecMap } from "./lib/inventory_spec_grounding";
 import { equipmentClaimProfiles } from "./lib/equipment_claim_profiles";
-import { equipmentUsageContext } from "./lib/item_technical_context";
+import { equipmentUsageContext, equipmentFactRequests } from "./lib/item_technical_context";
 import { renterCameraIdentities } from "./lib/renter_camera_identity";
 import { bookingRecord } from "./lib/booking_record";
 import { verifiedLensCapabilities, assessLensRequirements, hasLensRequirements, type LensCapabilities } from "./lib/lens_requirements";
@@ -24,7 +24,7 @@ import { renterItemNames } from "./lib/renter_item_names";
 import { summarise } from "./lib/renter_order_quote";
 import { inclusiveRentalDays } from "./lib/hygglo_pricing";
 import { listingDisplayName } from "./lib/item_display_name";
-import { assessCameraRequirements, hasCameraRequirements, requestedCameraRole, verifiedCameraCapabilities, type CameraRequirements } from "./lib/camera_requirements";
+import { assessCameraRequirements, hasCameraRequirements, requestedCameraRole, verifiedCameraCapabilities, type CameraRequirements, type CameraCapabilities } from "./lib/camera_requirements";
 import { recommendationKit } from "./lib/recommendation_kit";
 import { verifiedItemSpec } from "./lib/verified_item_spec";
 import { loadListingInventory, listingStock, resolveListingComponents } from "./lib/listing_inventory";
@@ -125,8 +125,8 @@ export const get_renter_context = query({
 // ── Tool 2: get_listing_context ──────────────────────────────
 
 export const get_listing_context = query({
-  args: { thread_id: v.string() },
-  handler: async (ctx, { thread_id }) => {
+  args: { thread_id: v.string(), equipment_names: v.optional(v.array(v.string())) },
+  handler: async (ctx, { thread_id, equipment_names }) => {
     const reservation = await getBotBooking(ctx, thread_id);
     const simOrder = await getLabOrder(ctx, thread_id);
     const conv = await ctx.db
@@ -147,6 +147,15 @@ export const get_listing_context = query({
     // renter is actually asking about.
     const items: Array<Record<string, unknown>> = [];
     const allItems = await ctx.db.query("items").collect();
+    const equipment_facts = await Promise.all(equipmentFactRequests(equipment_names??[],allItems).map(async ({requested_name,item})=>{
+      if(!item || !account_slug)return {requested_name,status:"unresolved" as const};
+      const rows=await ctx.db.query("item_specs").withIndex("by_item",q=>q.eq("item_id",item._id)).collect();
+      const spec=rows.length===1?rows[0]:undefined,verified=verifiedItemSpec(spec,item.name_canonical);
+      return {requested_name,status:"owned" as const,name:item.name_canonical,kind:item.kind??null,
+        spec_text:verified?.text??null,spec_verification:verified?{model:verified.model,source_url:verified.source_url}:null,
+        camera_capabilities:["camera","camera_body"].includes(item.kind??"")?verifiedCameraCapabilities(spec,item.name_canonical):null,
+        lens_capabilities:item.kind==="lens"?verifiedLensCapabilities(spec,item.name_canonical):null};
+    }));
     for (const l of lines) {
       let daily_price_gbp: number | null = null;
       let listing_name: string | null = null;
@@ -193,6 +202,7 @@ export const get_listing_context = query({
       let replacement_cost_gbp: number | null = null;
       let spec_text: string | null = null;
       let lens_capabilities: LensCapabilities | null = null;
+      let camera_capabilities: CameraCapabilities | null = null;
       let spec_verification: { model: string; source_url: string | null } | null = null;
       // When the renter's wording matches SEVERAL real products (e.g. "BMPCC
       // 6K" fully describes both the 6K Pro and the 6K Full Frame), the bot
@@ -369,6 +379,7 @@ export const get_listing_context = query({
           const verified = verifiedItemSpec(itemSpec, it.name_canonical);
           spec_text = verified?.text ?? null;
           lens_capabilities = it.kind === "lens" ? verifiedLensCapabilities(itemSpec, it.name_canonical) : null;
+          camera_capabilities = ["camera","camera_body"].includes(it.kind??"") ? verifiedCameraCapabilities(itemSpec,it.name_canonical) : null;
           spec_verification = verified ? { model: verified.model, source_url: verified.source_url } : null;
       }
       const inventoryComponents = listingInventory?.components ?? (it ? [{
@@ -410,6 +421,7 @@ export const get_listing_context = query({
         replacement_cost_gbp,
         spec_text,
         lens_capabilities,
+        camera_capabilities,
         spec_verification,
         ambiguous_with,
         listing_name,
@@ -427,6 +439,7 @@ export const get_listing_context = query({
       is_inquiry: !reservation,
       account_slug,
       items,
+      equipment_facts,
       equipment_usage: equipmentUsageContext(items),
       booking_record: account_slug?bookingRecord(thread_id,account_slug,rentalStage(reservation,londonToday()).stage,reservation,simOrder):null,
       // The request itself: dates, pickup/return time, what they pay, location.
