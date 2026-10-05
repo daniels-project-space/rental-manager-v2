@@ -371,11 +371,7 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
       /\bwe (have|can|do|offer|provide|also|stock|carry|include|don'?t|did|are|get|will|should|could|would|need)\b/gi,
       "I $1",
     );
-    text = text.replace(
-      /\bour (gear|kit|equipment|stock|inventory|items|prices?|rates?|rental|business|location|shop|studio|place|selection)\b/gi,
-      "my $1",
-    );
-    text = text.replace(/\bour\b/gi, "my");
+    text = text.replace(/\bour\b/gi, word => word === "OUR" ? "MY" : word[0] === "O" ? "My" : "my");
     text = text.replace(/\bWe\b/g, "I");
     text = text.replace(/\bwe\b/g, "I");
     text = text.replace(/\bI'm I\b/g, "I'm");

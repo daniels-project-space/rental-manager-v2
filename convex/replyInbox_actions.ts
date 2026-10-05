@@ -11,6 +11,8 @@ import { amendedDraftContext, currentDraftReview, type DraftContextTransition, t
 import { unknownKitItems } from "./lib/renter_kit_evidence";
 import { canonicalGenerationError, type CanonicalGenerationError } from "./lib/canonical_generation_error";
 "use node";
+
+import {renterAccountVoice} from "./lib/renter_account_voice";
 import type { OwnerCheck } from "./lib/owner_checks";
 import { unsupportedCatalogueReadinessClaims } from "./lib/catalogue_readiness";
 /**
@@ -903,7 +905,7 @@ export const generateDraft = action({
       pickupWindows: c.pickup_windows ?? undefined,
       pickupPrivacySources:c.pickup_privacy_sources,
       rentalPermissions:c.rental_stage,
-      firstPerson: c.account_slug === "leo" || c.account_slug === "diogo",
+      firstPerson: renterAccountVoice(c.account_slug).firstPerson,
       // Genuinely approved ONLY when it's no longer awaiting my approve/decline.
       // (order_step=APPROVED + awaiting_owner_action=true is still a PENDING
       // request, not an approval.)

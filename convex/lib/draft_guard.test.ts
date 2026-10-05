@@ -132,6 +132,10 @@ describe("first-person agreement",()=>{
   const leakScore=scoreDraft({accountSlug:"leo",draftText:leaked.text,productionFlags:leaked.flags});
   expect(leakScore.results.find(r=>r.category==="production_guard:INTERNAL_ACTION")?.status).toBe("flag");
  });
+ it("preserves capitalization in the captured kit recommendation",()=>{
+  const result=guardDraft("Our recorded kit includes the body. The storage in our kit needs confirmation.",{history:[],lastRenterMessage:"What's included?",firstPerson:true});
+  expect(result.text).toBe("My recorded kit includes the body. The storage in my kit needs confirmation.");
+ });
  it("preserves the verification-failure meaning when rewriting the owner's voice",()=>{
   const result=guardDraft("We aren't able to release the collection address without a confirmed booking.",{history:[],lastRenterMessage:"Verification failed, can I collect?",stage:"VERIFICATION_FAILED",firstPerson:true});
   expect(result.text).toBe("I'm not able to release the collection address without a confirmed booking.");

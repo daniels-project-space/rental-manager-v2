@@ -1,3 +1,4 @@
+import {renterAccountVoice} from "../../../../convex/lib/renter_account_voice";
 import { recordRecommendationRequirements } from "@/lib/renter-tool-scope";
 import type { RecommendationRequirement } from "../../../../convex/lib/recommendation_qualification";
 import { renderNativeQuoteReply, nativeBookingRecord, type NativeQuoteScope } from "@/lib/renter-native-quote";
@@ -891,7 +892,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
         if (it.card_type) detail.push(`takes ${it.card_type} cards`);
         if (it.battery_type) detail.push(`uses ${it.battery_type} batteries`);
         if (it.size_note) detail.push(`${it.size_note} packed`);
-        if (structuredKit && it.whats_included) detail.push(`kit per our records: ${it.included_with_rental!.join(", ")}`);
+        if (structuredKit && it.whats_included) detail.push(`kit per ${renterAccountVoice(account_slug).firstPerson?"my":"our"} records: ${it.included_with_rental!.join(", ")}`);
         if (detail.length)
           groundTruth += `  ${it.inventory_name ?? it.name} PRIMARY ITEM FACTS (per individual item, not the whole kit — use them, do not say you'll check): ${detail.join("; ")}.\n`;
         groundTruth += `  ${it.inventory_name ?? it.name} PRIMARY ITEM TECHNICAL EVIDENCE: ${itemTechnicalContext(it)}\n`;
@@ -1194,6 +1195,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
         "UNKNOWN stock is neither available nor unavailable. Do not say an unverified item is booked, unavailable or not available for the dates. You can offer a separately verified owned alternative without inventing a negative about the original.",
         `THREAD: ${thread_id}`,
         `ACCOUNT: ${account_slug}`,
+        `ACCOUNT VOICE: ${renterAccountVoice(account_slug).instruction}`,
         renterContext ? `RENTER CONTEXT (internal tone and relationship context):\n${JSON.stringify(renterContext)}\nPlatform completed rentals are Hygglo-wide. Recorded rentals with this business establish prior business here. Missing identity or counts are unknown; they do not establish first-time rental experience. Keep profile/trust details internal.` : "",
         ownerCheckContext.length ? `OWNER CHECK WORKFLOW (internal task state, not specification, price or stock evidence):\n${JSON.stringify(ownerCheckContext)}` : "",
         groundTruth ? `\n${headlineAvailability}${groundTruth}` : "",
