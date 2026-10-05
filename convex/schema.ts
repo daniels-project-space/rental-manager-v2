@@ -2677,6 +2677,7 @@ const operationalSchema = defineSchema({
   // renter_bot_drafts or any Hygglo write path.
   renter_bot_harness_runs: defineTable({
     generation_error:v.optional(canonicalGenerationErrorValidator),
+    native_quote_diagnostic:v.optional(v.string()),
     pending_owner_checks:v.optional(v.array(ownerCheckValidator)),
     draft_evidence: v.optional(draftEvidenceValidator),
     // Optional: Lab UI live/freeform sessions (triggered_by="lab_ui_manual")

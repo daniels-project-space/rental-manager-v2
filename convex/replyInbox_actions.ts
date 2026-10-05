@@ -91,6 +91,7 @@ export const generateDraft = action({
     evidence?: DraftEvidence;
     for_message_id?: string | null;
     diagnostic_candidate?: string;
+    native_quote_diagnostic?: string;
     guard_candidate?: string;
     facts_claimed?: Array<{ kind: string; value: string; sourceTool: string; sourceCallId: string; verified: boolean }>;
     /**
@@ -584,7 +585,7 @@ export const generateDraft = action({
     // fix shipped, a correctly-answerable fresh inquiry still hard-escalated
     // as UNGROUNDED_AVAILABILITY/UNGROUNDED_PRICE, because this signal was
     // still empty.
-    let generationMeta: { diagnostic_candidate?: string; evidence?: DraftEvidence; model_id?: string; draft_intent?: string; draft_stage?: string; cost_usd?: number; facts_claimed?: Array<{ kind: string; value: string; sourceTool: string; sourceCallId: string; verified: boolean }> } = {};
+    let generationMeta: { diagnostic_candidate?: string; native_quote_diagnostic?: string; evidence?: DraftEvidence; model_id?: string; draft_intent?: string; draft_stage?: string; cost_usd?: number; facts_claimed?: Array<{ kind: string; value: string; sourceTool: string; sourceCallId: string; verified: boolean }> } = {};
     let routeStockRequest: StockRequest | undefined;
     let freshInquiryItems: Array<{ name: string; dailyRateGbp?: number }> = [];
     // Names the draft route resolved but has NO kit text for — see
@@ -674,6 +675,7 @@ export const generateDraft = action({
           intent?: string;
           conversation_stage?: string;
           diagnostic_candidate?: string;
+          native_quote_diagnostic?: string;
           booking_record?:BookingRecord;
           recommendation_quotes?: RecommendationQuoteEvidence[];
           stock_quotes?: NonNullable<DraftEvidence["stock_quotes"]>;
@@ -727,7 +729,7 @@ export const generateDraft = action({
         };
         ownerChecks = j.owner_checks ?? [];
         generationMeta = { model_id: j.model_id, draft_intent: j.intent, draft_stage: j.conversation_stage, cost_usd: j.tokenUsage?.cost ?? undefined, facts_claimed: normalizeClaimedFacts(j.factsClaimed) };
-        if (thread_id.startsWith("__probe__")) generationMeta.diagnostic_candidate = j.diagnostic_candidate;
+        if (thread_id.startsWith("__probe__")) {generationMeta.diagnostic_candidate = j.diagnostic_candidate;generationMeta.native_quote_diagnostic=j.native_quote_diagnostic;}
         if (j.bookingContextTransitions?.length) {
           const amendedKey = amendedDraftContext(c.draft_context_key, thread_id, j.bookingContextTransitions);
           if (amendedKey === null) return { status: "skipped", reason: "stale_context", ...generationMeta };

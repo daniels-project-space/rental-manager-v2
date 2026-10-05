@@ -66,6 +66,7 @@ const rubricResultValidator = v.object({
 export const insertRun = internalMutation({
   args: {
     generation_error:v.optional(canonicalGenerationErrorValidator),
+    native_quote_diagnostic:v.optional(v.string()),
     draft_evidence: v.optional(draftEvidenceValidator),
     pending_owner_checks:v.optional(v.array(ownerCheckValidator)),
     fixture_id: v.optional(v.id("renter_bot_fixtures")),

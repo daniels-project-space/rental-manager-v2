@@ -27,6 +27,19 @@ describe("Native inquiry quote rendering",()=>{
   expect(receipts).toEqual(before);expect(candidate.draft).toContain("£124");
   expect(reviewNativeQuoteReply({...base,draft:"The bundled lens still needs confirmation."},receipts,scope)).toMatchObject({needs_human_reason:null,renderedReply:{draft:"The bundled lens still needs confirmation."}});
  });
+ it("preserves the exact reason and scoped Native choices when a structured selection fails",()=>{
+  const receipts=[receipt()],before=structuredClone(receipts);
+  const output=parts("inquiry_"+"0".repeat(32));
+  const review=reviewNativeQuoteReply(output,receipts,scope);
+  const diagnostic=JSON.parse(review.diagnostic!);
+  expect(diagnostic.reason).toBe("Quote selection is missing, stale or duplicated");
+  expect(diagnostic.reply_parts).toEqual(output.reply_parts);
+  expect(diagnostic.quote_receipts).toMatchObject([{call_id:"real-native",descriptor_key:nativeInquiryQuote(fixtures.first,scope)!.quote_key,current_key:nativeInquiryQuote(fixtures.first,scope)!.quote_key,read_revision:0}]);
+  expect(review.renderedReply.stock_quotes).toEqual([]);
+  expect(review.renderedReply.draft).toBe("");expect(receipts).toEqual(before);
+  const stale=reviewNativeQuoteReply(output,receipts,{...scope,queryRevision:()=>1});
+  expect(JSON.parse(stale.diagnostic!).quote_receipts[0].current_key).toBeNull();
+ });
  const kitReceipt=(review=true)=>({tool:"find_owned_alternatives",call_id:"native-kit",result:{account_slug:"leo",thread_id:scope.threadId,
   owner_check:{kind:"kit_recommendation",candidate_product_ids:[10,20]},alternatives:[{name:"BMPCC 6K Pro",product_id:10,mapping_complete:true,storage_contents_verification_required:review},
    {name:"Sony A7 V",product_id:20,mapping_complete:true,storage_contents_verification_required:true}]}});

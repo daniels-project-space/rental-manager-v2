@@ -286,6 +286,7 @@ export const sendTestMessage = action({
     runId: string;
     productionGuardFlags: unknown;
     generation_error?:CanonicalGenerationError;
+    native_quote_diagnostic?:string;
     status: string;
     reason?: string;
     rejectedDraft?: string;
@@ -356,6 +357,7 @@ export const sendTestMessage = action({
         duration_ms: Date.now() - startedAt,
         cost_usd: draftResult.cost_usd??draftResult.generation_error?.cost_usd,
         generation_error:draftResult.generation_error,
+        native_quote_diagnostic:draftResult.native_quote_diagnostic,
       },
     );
 
@@ -381,6 +383,7 @@ export const sendTestMessage = action({
       runId,
       productionGuardFlags: draftResult.flags ?? draftResult.review?.flags ?? [],
       generation_error:draftResult.generation_error,
+      native_quote_diagnostic:draftResult.native_quote_diagnostic,
     };
   },
 });

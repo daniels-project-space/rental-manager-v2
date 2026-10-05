@@ -194,5 +194,18 @@ export function reviewNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
  const rendered=renderNativeQuoteReply(output,receipts,scope);
  if(rendered.ok)return {renderedReply:rendered,needs_human_reason:null,diagnostic_candidate:rendered.draft};
  const renderedReply:Extract<ReturnType<typeof renderNativeQuoteReply>,{ok:true}>={ok:true,draft:"",quote_keys:[],stock_quotes:[],commercial_quotes:[],recommendation_quotes:[]};
- return {renderedReply,needs_human_reason:"native_quote_selection",diagnostic_candidate:output.draft};
+ // Keep renderer failures inspectable in Lab responses. A structured reply
+ // has an empty draft by design, so preserving draft alone lost the cause.
+ const diagnostic=JSON.stringify({reason:rendered.reason,reply_parts:output.reply_parts??null,
+  stage:scope.rentalStage,current_request_revision:scope.queryRevision?.(),
+  requirements_key:recommendationRequirementsKey(scope.recommendationRequirements??[]),
+  quote_receipts:receipts.filter(r=>r.tool==="check_basket_availability").map(r=>{
+   const descriptor=record(r.result.renter_quote),qualification=record(r.result.technical_qualification);
+   const revision=typeof descriptor?.request_revision==="number"?descriptor.request_revision:undefined;
+   return {call_id:r.call_id,descriptor_key:descriptor?.quote_key??null,read_revision:revision??null,
+    current_key:nativeInquiryQuote(r.result,scope,revision)?.quote_key??null,
+    descriptor_reason:r.result.renter_quote_reason??null,stage:r.result.rental_stage,
+    requirements_key:qualification?.requirements_key,technical_verified:qualification?.verified};
+  })});
+ return {renderedReply,needs_human_reason:"native_quote_selection",diagnostic_candidate:output.draft,diagnostic};
 }

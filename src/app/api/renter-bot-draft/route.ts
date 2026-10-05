@@ -1412,6 +1412,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
         : null,
       intent: obj.intent ?? null,
       diagnostic_candidate: diagnosticCandidate,
+      native_quote_diagnostic:thread_id.startsWith("__probe__")?quoteReview.diagnostic:undefined,
       conversation_stage: renterToolScope.requestStage??authoritativeStage,
       model_id: modelOverride ?? RENTER_BOT_MODEL_ID,
       factsClaimed: normalizeClaimedFacts(obj.factsClaimed),
