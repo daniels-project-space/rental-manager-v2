@@ -1,6 +1,6 @@
 "use client";
 import {useState} from "react";
-import {useMutation,useQuery} from "convex/react";
+import {useConvexAuth,useMutation,useQuery} from "convex/react";
 import {api} from "../../../convex/_generated/api";
 import type {Id} from "../../../convex/_generated/dataModel";
 import type {LensFacts} from "../../../convex/lib/lens_variant_review";
@@ -18,6 +18,7 @@ export function LensSpecificationReview({taskId,itemId,onClose}:{taskId:Id<"rent
  return review===undefined?<p>Loading current lens record…</p>:review.available?<ReviewForm review={review} onClose={onClose}/>:<div role="alert"><p>{review.message}</p><button onClick={onClose}>Close review</button></div>;
 }
 function ReviewForm({review,onClose}:{review:Review;onClose:()=>void}) {
+ const {isAuthenticated}=useConvexAuth();
  const [original]=useState(review);
  const [model,setModel]=useState(original.reviewed?.model_scope==="shared_variants"?"":original.reviewed?.model??"");
  const [url,setUrl]=useState(original.reviewed?.source_url??"");
@@ -42,9 +43,10 @@ function ReviewForm({review,onClose}:{review:Review;onClose:()=>void}) {
    {numbers.map(([key,label])=><label key={key}>{label}<input aria-label={label} type="number" min="0.001" step="any" placeholder="Unknown" value={fields[key]} onChange={e=>setFields({...fields,[key]:e.target.value})} className="mt-1 block w-full rounded bg-black/30 p-2"/></label>)}
   </div>
   <label className="flex gap-2"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/>I checked the actual lens model and every property entered against the reference.</label>
+  {!isAuthenticated&&<p><a href="/login" className="text-amber-200 underline">Sign in to save reviewed specifications</a></p>}
   {changed&&!saved&&<p role="alert" className="text-amber-200">This record changed while you were reviewing it. Close and reopen the form.</p>}
   {error&&<p role="alert" className="text-red-300">{error}</p>}{saved&&<p role="status" className="text-emerald-200">{saved}</p>}
-  <button disabled={busy||!confirmed||changed||!!saved} className="rounded bg-amber-300/15 px-3 py-2 disabled:opacity-40">{busy?"Saving…":"Save reviewed specifications"}</button>
+  <button disabled={busy||!isAuthenticated||!confirmed||changed||!!saved} className="rounded bg-amber-300/15 px-3 py-2 disabled:opacity-40">{busy?"Saving…":"Save reviewed specifications"}</button>
   <button type="button" className="ml-3" onClick={onClose}>Close</button>
  </form>;
 }

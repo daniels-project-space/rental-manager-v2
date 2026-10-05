@@ -8,8 +8,8 @@ import { authorizeOwner, ownerEnforcementRequired } from "./lib/owner_authorizat
 
 export * from "./_generated/server";
 
-export async function requireOwner(ctx: GenericCtx<DataModel>) {
-  if (!ownerEnforcementRequired(process.env.OWNER_AUTH_REQUIRED)) return;
+export async function requireOwner(ctx: GenericCtx<DataModel>, enforce = false) {
+  if (!enforce && !ownerEnforcementRequired(process.env.OWNER_AUTH_REQUIRED)) return;
   await authorizeOwner(
     await ctx.auth.getUserIdentity(),
     process.env.CONVEX_SITE_URL,

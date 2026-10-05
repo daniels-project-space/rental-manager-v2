@@ -884,7 +884,7 @@ describe("negotiation rental request identity",()=>{
 
 describe("authoritative owner lens reviews",()=>{
  async function lensReview(){
-  const f=await setup();(f.ctx as any).auth={getUserIdentity:async()=>({subject:"owner-review-test"})};
+  const f=await setup();(f.ctx as any).auth={getUserIdentity:async()=>({issuer:"urn:rental-manager:deployment-service",subject:"rental-manager-service"})};
   await f.ctx.db.patch(f.convId,{account_slug:"leo"});
   const lens=await f.ctx.db.insert("items",{name_canonical:"Unknown 11mm lens",kind:"lens",lens_mount:"E",qty:1,status:"active",is_marketing_only:false});
   const spec=await f.ctx.db.insert("item_specs",{item_id:lens,item_name_canonical:"Unknown 11mm lens",description:"Legacy autofocus claim",specs_long:"Unverified extra promises",source:"legacy",lens_variant_reviews:[]});
@@ -906,6 +906,10 @@ describe("authoritative owner lens reviews",()=>{
   const fresh=await invoke(getLensReview,f.ctx,{task_id:f.task,item_id:f.lens});
   await invoke(reviewLensSpecification,f.ctx,{...f.reviewArgs,expected_revision:fresh.revision,facts:{...f.reviewArgs.facts,macro:false}});
   expect((await ownerChecksForBot(f.ctx as any,f.args.thread_id,f.args.context_key))[0]).toMatchObject({current_specification_reviews:[{status:"mismatch",mismatched:["macro"]}]});
+ });
+ it("requires owner authorization even when the optional app enforcement flag is disabled",async()=>{
+  const f=await lensReview();(f.ctx as any).auth={getUserIdentity:async()=>null};
+  const before=structuredClone([...f.rows]);await expect(invoke(reviewLensSpecification,f.ctx,{...f.reviewArgs,dry_run:true})).rejects.toThrow("OWNER_AUTH_REQUIRED");expect([...f.rows]).toEqual(before);
  });
  it("previews without altering the catalogue, epoch, audit trail or task",async()=>{
   const f=await lensReview(),before=structuredClone([...f.rows]);

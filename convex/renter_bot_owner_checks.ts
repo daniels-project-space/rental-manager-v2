@@ -3,7 +3,7 @@ import {ownerCheckRequestMessageId} from "./lib/owner_check_request";
 import {assessCameraRequirements,hasCameraRequirements,verifiedCameraCapabilities} from "./lib/camera_requirements";
 import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
-import { query, mutation } from "./owner_functions";
+import { query, mutation, requireOwner } from "./owner_functions";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { ownerCheckKey, ownerCheckScopeKey, ownerCheckValidator, listingMappingOwnerCheck, type OwnerCheck } from "./lib/owner_checks";
@@ -208,6 +208,7 @@ export const getLensReview=query({args:{task_id:v.id("renter_bot_owner_checks"),
 const lensFactLabels:Record<keyof LensFacts,string>={focus_mode:"Focus",manual_focus_available:"Manual focus available",wide_angle:"Wide angle",macro:"Macro",projection:"Projection",coverage:"Coverage",focal_min_mm:"Minimum focal length (mm)",focal_max_mm:"Maximum focal length (mm)",max_aperture_f:"Maximum aperture (f-number)",max_aperture_t:"Maximum aperture (T-stop)"};
 export const reviewLensSpecification=mutation({args:{task_id:v.id("renter_bot_owner_checks"),item_id:v.id("items"),expected_request_message_id:v.string(),expected_revision:v.string(),
  model:v.string(),source_url:v.string(),facts:v.object(lensFactFields),confirmed_model:v.boolean(),dry_run:v.optional(v.boolean())},handler:async(ctx,a)=>{
+ await requireOwner(ctx,true);
  const {task,item,spec,revision}=await lensReviewTarget(ctx,a.task_id,a.item_id);
  if(ownerCheckRequestMessageId(task)!==a.expected_request_message_id||revision!==a.expected_revision)throw new Error("The check or specification changed. Reopen the review before saving");
  const model=a.model.trim(),url=a.source_url.trim();
