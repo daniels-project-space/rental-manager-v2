@@ -1,3 +1,4 @@
+import {ownerCheckBlocksRequest} from "./lib/owner_checks";
 import {canonicalGenerationErrorValidator} from "./lib/canonical_generation_error";
 import {ownerCheckRequestMessageId} from "./lib/owner_check_request";
 /**
@@ -45,7 +46,7 @@ export const pendingOwnerChecksForDraft=internalQuery({
     const conv=await ctx.db.query("conversations").withIndex("by_thread",q=>q.eq("thread_id",a.thread_id)).first();
     if(!conv?.ai_draft_for_message_id||!conv.ai_draft_context_key||conv.ai_draft_text!==a.draft_text)return null;
     const tasks=await ctx.db.query("renter_bot_owner_checks").withIndex("by_status_thread",q=>q.eq("status","pending").eq("thread_id",a.thread_id)).collect();
-    return tasks.filter(task=>task.account_slug===conv.account_slug&&task.source_context_key===conv.ai_draft_context_key&&
+    return tasks.filter(task=>ownerCheckBlocksRequest(task.check)&&task.account_slug===conv.account_slug&&task.source_context_key===conv.ai_draft_context_key&&
       ownerCheckRequestMessageId(task)===conv.ai_draft_for_message_id).map(task=>task.check);
   }
 });

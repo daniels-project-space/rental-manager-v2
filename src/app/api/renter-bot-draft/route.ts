@@ -1405,7 +1405,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       recommendation_quotes:renderedReply.recommendation_quotes,
       stock_quotes:renderedReply.stock_quotes,
       rental_request:renterToolScope.rentalRequest,
-      owner_checks: nativeOwnerChecks(toolReceipts),
+      owner_checks: nativeOwnerChecks(toolReceipts,{quotes:renderedReply.stock_quotes,discussion:`${lastRenter}\n${obj.draft??""}`}),
       needs_human: !!obj.needs_human,
       needs_human_reason: obj.needs_human
         ? (needsHumanReason ?? "model_declined")

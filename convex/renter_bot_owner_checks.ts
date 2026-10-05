@@ -1,3 +1,4 @@
+import {ownerCheckBlocksRequest} from "./lib/owner_checks";
 import {listingKitContext,listingKitItem} from "./lib/listing_kit_context";
 import {ownerCheckRequestMessageId} from "./lib/owner_check_request";
 import {assessCameraRequirements,hasCameraRequirements,verifiedCameraCapabilities} from "./lib/camera_requirements";
@@ -48,7 +49,7 @@ export async function ownerChecksForBot(ctx:QueryCtx,threadId:string,contextKey:
   ctx.db.query("renter_bot_owner_checks").withIndex("by_status_thread",q=>q.eq("status","pending").eq("thread_id",threadId)).order("desc").collect(),
   ctx.db.query("renter_bot_owner_checks").withIndex("by_status_thread",q=>q.eq("status","handled_by_owner").eq("thread_id",threadId)).order("desc").take(20),
  ]);
- const tasks=[...pending,...handled];
+ const tasks=[...pending,...handled].filter(task=>ownerCheckBlocksRequest(task.check));
  const readReviews=ownerSpecificationReader(ctx);
  return Promise.all(tasks.map(async task=>{
   const reviews=await readReviews(task.check);
@@ -141,13 +142,15 @@ export async function persistOwnerChecks(ctx:MutationCtx,a:{thread_id:string;mes
   }
   // The original question is the audit anchor; the current request/context
   // fences retry identity. Human handling never becomes specification proof.
-  if(observed.some(task=>task.status==="handled_by_owner"&&task.account_slug===conv.account_slug&&task.source_context_key===a.context_key&&ownerCheckScopeKey(task.check)===ownerCheckScopeKey(check)))continue;
+  if(observed.some(task=>task.status==="handled_by_owner"&&task.account_slug===conv.account_slug&&task.source_context_key===a.context_key&&ownerCheckScopeKey(task.check)===ownerCheckScopeKey(check)&&
+    ownerCheckBlocksRequest(task.check)&&ownerCheckBlocksRequest(check)))continue;
   const key=ownerCheckKey(a.thread_id,a.message_id,check,a.context_key);
   const saved=await ctx.db.query("renter_bot_owner_checks").withIndex("by_key",q=>q.eq("key",key)).unique()
     ?? await ctx.db.query("renter_bot_owner_checks").withIndex("by_key",q=>q.eq("key",ownerCheckKey(a.thread_id,a.message_id,check))).unique();
   if(saved&&saved.source_context_key===a.context_key) {
-    if(saved.status==="pending"&&saved.account_slug===conv.account_slug&&saved.source_context_key===a.context_key)
-      await ctx.db.patch(saved._id,{check:verified,candidate_names:names,last_requested_message_id:a.message_id});
+    const promoted=saved.status==="handled_by_owner"&&!ownerCheckBlocksRequest(saved.check)&&ownerCheckBlocksRequest(check);
+    if((saved.status==="pending"||promoted||ownerCheckBlocksRequest(saved.check)!==ownerCheckBlocksRequest(check))&&saved.account_slug===conv.account_slug)
+      await ctx.db.patch(saved._id,{check:verified,candidate_names:names,last_requested_message_id:a.message_id,...(promoted?{status:"pending" as const}:{})});
     continue;
   }
   const existing=pending.find(task=>task.account_slug===conv.account_slug&&task.source_context_key===a.context_key&&ownerCheckScopeKey(task.check)===ownerCheckScopeKey(check));

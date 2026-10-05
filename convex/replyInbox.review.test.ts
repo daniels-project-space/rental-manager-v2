@@ -585,6 +585,20 @@ describe("kit owner checks persist through the real review mutation",()=>{
   await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:[{...f.check,product_id:20}]});expect(tasks(f)).toHaveLength(1);
   expect(await ownerChecksForBot(f.ctx as any,f.args.thread_id,f.args.context_key)).toContainEqual(expect.objectContaining({kind:"kit_recommendation",candidate_product_ids:[20],specification_result_verified:false,customer_input_required:false}));
  });
+ it("keeps inventory reviews pending while removing them from renter context, and reopens them when required",async()=>{
+  const f=await kit();await f.ctx.db.patch(f.camera,{compatibility:{included_with_rental:["1x 1TB SSD"]}});
+  await f.ctx.db.insert("online_listings",{account_slug:"leo",product_id:20,name:"Sony FX3 with 256GB card",description:"Included in this kit: • 1x Sony FX3",daily_price:40});
+  await f.ctx.db.insert("listing_resolution_override",{account_slug:"leo",product_id:20,components:[{item_id:f.camera,qty:1}]});
+  const check={kind:"kit_recommendation" as const,source_call_id:"native-search",candidate_product_ids:[20],start_date:null,end_date:null,quantity:1,purpose:"inventory" as const};
+  await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:[check]});
+  expect(tasks(f)).toHaveLength(1);expect(tasks(f)[0]).toMatchObject({status:"pending",check:{purpose:"inventory"}});
+  expect(await ownerChecksForBot(f.ctx as any,f.args.thread_id,f.args.context_key)).toEqual([]);
+  (f.ctx as any).auth={getUserIdentity:async()=>({subject:"test-owner"})};
+  await invoke(handleOwnerCheck,f.ctx,{id:tasks(f)[0]._id,note:"Reviewed the inventory issue separately.",expected_request_message_id:f.args.message_id});
+  await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:[{...check,purpose:"request"}]});
+  expect(tasks(f)).toHaveLength(1);expect(tasks(f)[0]).toMatchObject({status:"pending",check:{purpose:"request"}});
+  expect(await ownerChecksForBot(f.ctx as any,f.args.thread_id,f.args.context_key)).toContainEqual(expect.objectContaining({kind:"kit_recommendation",specification_result_verified:false}));
+ });
  it("rechecks recommended kit conflicts and rejects marketing or foreign-account candidates",async()=>{
   for(const invalid of ["resolved","marketing","foreign"]){
    const f=await kit();await f.ctx.db.patch(f.camera,{compatibility:{included_with_rental:["1x 1TB SSD"]},...(invalid==="marketing"?{is_marketing_only:true}:{})});
