@@ -1,4 +1,5 @@
 import {replacementValueComparisonsForText} from "./replacement_value_comparison";
+import {nativeFinancialBlockPositions as occurrences} from "./native_financial_blocks";
 import {inclusiveRentalDays} from "./hygglo_pricing";
 import {shortItemName} from "./item_display_name";
 import {bookingRecordText} from "./booking_record";
@@ -17,15 +18,6 @@ export function inquiryQuoteText(quote:Pick<StockQuoteEvidence,"start_date"|"end
  const period=quote.start_date===quote.end_date?date(quote.start_date):`${date(quote.start_date)} to ${date(quote.end_date)}`;
  const rows=priced.lines.map(l=>`- ${l.quantity} × ${shortItemName(l.name)}: ${money(l.total_gbp)}`);
  return `For ${days} ${days===1?"day":"days"} (${period}):\n${rows.join("\n")}\nTotal: ${money(priced.total_gbp)}`;
-}
-function occurrences(text:string,block:string):number[]{
- const found:number[]=[];let at=text.indexOf(block);
- while(at>=0){
-  // Exact line boundaries prevent a retained £50 prefix proving £500.
-  if((at===0||text[at-1]==="\n")&&(at+block.length===text.length||text[at+block.length]==="\n"))found.push(at);
-  at=text.indexOf(block,at+1);
- }
- return found;
 }
 
 /** A human may change surrounding text or remove an option. Each surviving

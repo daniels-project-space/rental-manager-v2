@@ -1,4 +1,5 @@
 import {v,type Infer} from "convex/values";
+import {selectNativeFinancialBlocks} from "./native_financial_blocks";
 const item=v.object({item_id:v.string(),name:v.string(),value_gbp:v.number()});
 export const replacementValueComparisonValidator=v.object({value_key:v.string(),alternative:item,original:item});
 export type ReplacementValueComparison=Infer<typeof replacementValueComparisonValidator>;
@@ -11,13 +12,6 @@ export function replacementValueComparisonText(c:ReplacementValueComparison):str
 /** Exact Native value blocks are information, not rental quotes or offers.
  * Never strip an edited amount, repeated block or free-form financial claim. */
 export function replacementValueComparisonsForText(comparisons:ReplacementValueComparison[]|undefined,savedText:string|undefined,text:string) {
- let claim_text=text;const selected:ReplacementValueComparison[]=[];const seen=new Set<string>();
- const count=(s:string,part:string)=>s.split(part).length-1;
- for(const c of comparisons??[]){
-  const block=replacementValueComparisonText(c);
-  if(!block||seen.has(block)||!savedText||count(savedText,block)!==1||count(text,block)>1)return {ok:false,claim_text:text,comparisons:[]};
-  seen.add(block);
-  if(count(text,block)===1){selected.push(c);claim_text=claim_text.replace(block,"");}
- }
- return {ok:true,claim_text,comparisons:selected};
+ const result=selectNativeFinancialBlocks(comparisons,savedText,text,replacementValueComparisonText);
+ return {ok:result.ok,claim_text:result.claim_text,comparisons:result.selected};
 }

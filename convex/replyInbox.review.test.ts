@@ -113,6 +113,10 @@ describe("current Native replacement values at copied-reply approval",()=>{
   expect(f.rows.get(f.convId).ai_draft_evidence.stock_quotes).toBeUndefined();
   expect(f.rows.get(f.bookingId).status).toBe("PENDING");
  });
+ it("does not validate a longer value through its canonical amount prefix",async()=>{
+  const f=await fixture();
+  expect(await check(f,f.text+"0")).toMatchObject({ok:false});
+ });
  it("refuses changed values, unknown items and marketing items against current catalogue rows",async()=>{
   for(const changes of [{replacement_cost_gbp:2100},{replacement_cost_gbp:null},{is_marketing_only:true},{status:"inactive"},{qty:0},{name_canonical:"Different physical camera"}]){
    const f=await fixture();await f.ctx.db.patch(f.alternative,changes);expect(await check(f)).toMatchObject({ok:false,reason:"replacement_value_unverified"});

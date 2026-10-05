@@ -186,6 +186,7 @@ import type * as lib_missed_revenue from "../lib/missed_revenue.js";
 import type * as lib_model_output_failure from "../lib/model_output_failure.js";
 import type * as lib_month_projection from "../lib/month_projection.js";
 import type * as lib_monthly_verification from "../lib/monthly_verification.js";
+import type * as lib_native_financial_blocks from "../lib/native_financial_blocks.js";
 import type * as lib_native_inquiry_offer from "../lib/native_inquiry_offer.js";
 import type * as lib_notification_events from "../lib/notification_events.js";
 import type * as lib_offering_consent_identity from "../lib/offering_consent_identity.js";
@@ -562,6 +563,7 @@ declare const fullApi: ApiFromModules<{
   "lib/model_output_failure": typeof lib_model_output_failure;
   "lib/month_projection": typeof lib_month_projection;
   "lib/monthly_verification": typeof lib_monthly_verification;
+  "lib/native_financial_blocks": typeof lib_native_financial_blocks;
   "lib/native_inquiry_offer": typeof lib_native_inquiry_offer;
   "lib/notification_events": typeof lib_notification_events;
   "lib/offering_consent_identity": typeof lib_offering_consent_identity;
