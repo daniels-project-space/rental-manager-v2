@@ -1,7 +1,7 @@
 import {renterAccountVoice} from "../../../../convex/lib/renter_account_voice";
 import { recordRecommendationRequirements } from "@/lib/renter-tool-scope";
 import type { RecommendationRequirement } from "../../../../convex/lib/recommendation_qualification";
-import { renderNativeQuoteReply, nativeBookingRecord, type NativeQuoteScope } from "@/lib/renter-native-quote";
+import { reviewNativeQuoteReply, nativeBookingRecord, type NativeQuoteScope } from "@/lib/renter-native-quote";
 import { RENTER_BOT_OUTPUT_SCHEMA, parseRenterBotOutput, validateRenterBotOutput, renterBotOutputDiagnostics } from "@/lib/renter-bot-output";
 import { nativeOwnerChecks } from "../../../../convex/lib/owner_checks";
 import { itemTechnicalContext, type ItemTechnicalEvidence } from "../../../../convex/lib/item_technical_context";
@@ -1382,10 +1382,11 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       }
     }
 
-    const renderedReply=renderNativeQuoteReply(obj,toolReceipts,{...renterToolScope,bookingRecord:nativeBookingRecordContext,referralContext:nativeReferralContext,referralContextRevision:nativeReferralContextRevision});
-    if(!renderedReply.ok)return NextResponse.json({ok:false,error:"invalid_native_quote_selection",error_code:"invalid_model_output",transient:false}, {status:502});
+    const quoteReview=reviewNativeQuoteReply(obj,toolReceipts,{...renterToolScope,bookingRecord:nativeBookingRecordContext,referralContext:nativeReferralContext,referralContextRevision:nativeReferralContextRevision});
+    const renderedReply=quoteReview.renderedReply;
+    if(quoteReview.needs_human_reason){obj.needs_human=true;needsHumanReason=quoteReview.needs_human_reason;}
     obj.draft=renderedReply.draft;
-    const diagnosticCandidate = thread_id.startsWith("__probe__") ? obj?.draft ?? "" : undefined;
+    const diagnosticCandidate = thread_id.startsWith("__probe__") ? quoteReview.diagnostic_candidate : undefined;
     // BACKSTOP: never let a draft AFFIRM a phantom item is available. If the
     // marketing item's model token sits near availability/pickup language, the
     // bot is confirming an item we can't rent — blank it and escalate. (We do

@@ -172,3 +172,12 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
   if(selection.supported&&!selection.ok)return {ok:false,reason:"Rendered Native quote blocks are inconsistent or ambiguous"};
   return {ok:true,draft,...(selectedRecord?{booking_record:selectedRecord}:{}),quote_keys:[...used],stock_quotes,commercial_quotes:[...used].flatMap(key=>commercial.has(key)?[commercial.get(key)!]:[]),recommendation_quotes:[...used].flatMap(key=>qualified.has(key)?[qualified.get(key)!]:[])};
 }
+
+/** A valid decision with an invalid quote is an owner review, not a broken
+ * model envelope. Keep the normal receipt/cost/task path while approving no reply. */
+export function reviewNativeQuoteReply(output:RenterBotOutput,receipts:ToolReceipt[],scope:NativeQuoteScope) {
+ const rendered=renderNativeQuoteReply(output,receipts,scope);
+ if(rendered.ok)return {renderedReply:rendered,needs_human_reason:null,diagnostic_candidate:rendered.draft};
+ const renderedReply:Extract<ReturnType<typeof renderNativeQuoteReply>,{ok:true}>={ok:true,draft:"",quote_keys:[],stock_quotes:[],commercial_quotes:[],recommendation_quotes:[]};
+ return {renderedReply,needs_human_reason:"native_quote_selection",diagnostic_candidate:output.draft};
+}

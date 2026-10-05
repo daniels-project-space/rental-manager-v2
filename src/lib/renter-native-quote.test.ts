@@ -2,7 +2,7 @@ import {inquiryOffersForText} from "../../convex/lib/native_inquiry_offer";
 import { REFERRAL_RESTORE_OFFER } from "../../convex/lib/referral_offer";
 import {stockRequestForInquiryQuote} from "../../convex/lib/stock_claims";
 import {describe,it,expect} from "vitest";
-import {nativeInquiryQuote,nativeBookingRecord,renderNativeQuoteReply} from "./renter-native-quote";
+import {nativeInquiryQuote,nativeBookingRecord,renderNativeQuoteReply,reviewNativeQuoteReply} from "./renter-native-quote";
 import {bookingRecordText,type BookingRecord} from "../../convex/lib/booking_record";
 import {renterPriceEvidence} from "./renter-price-evidence";
 import {renterToolReceipts,stockReceipts} from "./renter-tool-evidence";
@@ -18,6 +18,14 @@ const base:RenterBotOutput={draft:"",intent:"EQUIPMENT_QUESTION",conversation_st
 const clone=()=>structuredClone(fixtures.first);
 const parts=(key=nativeInquiryQuote(fixtures.first,scope)!.quote_key):RenterBotOutput=>({...base,reply_parts:[{type:"text",text:"The R5 kit isn't available, but I can offer this Sony setup:"},{type:"quote",quote_key:key},{type:"text",text:"Would this work for your shoot?"}]});
 describe("Native inquiry quote rendering",()=>{
+ it("classifies an unqualified financial selection as review while approving no candidate or financial proof",()=>{
+  const candidate={...base,draft:"The kit is £124 for both days."};
+  const receipts=[{tool:"check_basket_availability",call_id:"native-basket",result:{available:true,quote:null,renter_quote:null,owner_checks:[{kind:"lens_recommendation"}]}}];
+  const before=structuredClone(receipts),review=reviewNativeQuoteReply(candidate,receipts,scope);
+  expect(review).toMatchObject({needs_human_reason:"native_quote_selection",diagnostic_candidate:candidate.draft,renderedReply:{ok:true,draft:"",quote_keys:[],stock_quotes:[],commercial_quotes:[],recommendation_quotes:[]}});
+  expect(receipts).toEqual(before);expect(candidate.draft).toContain("£124");
+  expect(reviewNativeQuoteReply({...base,draft:"The bundled lens still needs confirmation."},receipts,scope)).toMatchObject({needs_human_reason:null,renderedReply:{draft:"The bundled lens still needs confirmation."}});
+ });
  const kitReceipt=(review=true)=>({tool:"find_owned_alternatives",call_id:"native-kit",result:{account_slug:"leo",thread_id:scope.threadId,
   owner_check:{kind:"kit_recommendation",candidate_product_ids:[10,20]},alternatives:[{name:"BMPCC 6K Pro",product_id:10,mapping_complete:true,storage_contents_verification_required:review},
    {name:"Sony A7 V",product_id:20,mapping_complete:true,storage_contents_verification_required:true}]}});
