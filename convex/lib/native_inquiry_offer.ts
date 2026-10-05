@@ -1,4 +1,4 @@
-import {replacementValueComparisonsForText} from "./replacement_value_comparison";
+import {nativeInformationForText} from "./native_information_blocks";
 import {nativeFinancialBlockPositions as occurrences} from "./native_financial_blocks";
 import {inclusiveRentalDays} from "./hygglo_pricing";
 import {shortItemName} from "./item_display_name";
@@ -25,8 +25,8 @@ export function inquiryQuoteText(quote:Pick<StockQuoteEvidence,"start_date"|"end
  * Legacy evidence without a rendered block remains on the old review path. */
 export function inquiryOffersForText(evidence:DraftEvidence|undefined,savedText:string|undefined,text:string):{supported:boolean;ok:boolean;quotes:StockQuoteEvidence[]}{
  const quotes=evidence?.stock_quotes??[];
- const values=replacementValueComparisonsForText(evidence?.replacement_value_comparisons,savedText,text);
- const supported=quotes.some(q=>q.offer_text!==undefined)||!!evidence?.replacement_value_comparisons?.length;
+ const values=nativeInformationForText(evidence,savedText,text);
+ const supported=quotes.some(q=>q.offer_text!==undefined)||!!evidence?.replacement_value_comparisons?.length||!!evidence?.budget_price_checks?.length;
  if(!values.ok)return {supported:true,ok:false,quotes:[]};
  if(!supported)return {supported:false,ok:!!savedText&&savedText.trim()===text.trim(),quotes};
  const canonical=quotes.every(q=>{

@@ -243,7 +243,10 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
       const passiveAction = /\bnothing\s+(?:has|had)\s+been\s+(?:(?:changed|modified|cancelled|canceled)\s+or\s+)?$/i.test(before);
       return (adjective || ownerConfirmation || inclusionReference || bookingAction || passiveAction) && !/^\s*(?:[-–—]\s*)?out\b/i.test(after) && !/\b(?:by|for)\s+(?:another|other|someone\s+else|a different)\b/i.test(after) ? " ".repeat(word.length) : word;
     });
-    const match = /\b(?:(isn't|aren't|is not|are not|not)\s+(available|in stock|free)|(?:is|are|it's|that's|they're)\s+(available|in stock|free)|(?:unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|booked|none (?:left|available)))\b/i.exec(availabilityClause);
+    // Short replies can omit the copula: "Available for your dates" is
+    // still a stock verdict. The empty subject uses the same Native subject
+    // binding below; it never creates a receipt or an arbitrary item identity.
+    const match = /(?:\b(?:(isn't|aren't|is not|are not|not)\s+(available|in stock|free)|(?:is|are|it's|that's|they're)\s+(available|in stock|free)|(?:unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|booked|none (?:left|available)))\b|^\s*(?:available|in stock)(?=\s+(?:for|on|from|until|through|during|today|tomorrow|now)\b|[.!?:]|$)\b)/i.exec(availabilityClause);
     if (!match) continue;
     const prefix = availabilityClause.slice(0, match.index);
     if (/\b(?:once|when|after|if|until|as soon as)\b[^,;:]{0,100}$/i.test(prefix)) continue;

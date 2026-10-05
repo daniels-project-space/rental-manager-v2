@@ -1,4 +1,5 @@
-import {replacementValueComparisonsForText} from "./lib/replacement_value_comparison";
+import {nativeInformationForText,nativeInformationClaimRequest} from "./lib/native_information_blocks";
+import {ownedItemHirePriceReader} from "./lib/owned_item_hire_price";
 import {currentKitEvidence} from "./lib/current_kit_evidence";
 import {unsupportedKitClaims,kitClaimsNeedEvidence} from "./lib/kit_claims";
 import {inquiryOffersForText} from "./lib/native_inquiry_offer";
@@ -2168,12 +2169,27 @@ export const recheckCopiedDraftStock = internalQuery({
       const keys=new Set(selection.quotes.map(q=>q.quote_key));
       evidence={...evidence!,stock_quotes:selection.quotes,recommendation_quotes:evidence?.recommendation_quotes?.filter(q=>keys.has(q.quote_key))};
     }
-    const values=replacementValueComparisonsForText(evidence?.replacement_value_comparisons,conv?.ai_draft_text,text);
+    const values=nativeInformationForText(evidence,conv?.ai_draft_text,text);
     if(!values.ok)return {ok:false,reason:"replacement_value_text_unverified"};
     for(const comparison of values.comparisons)for(const proof of [comparison.original,comparison.alternative]){
       const id=ctx.db.normalizeId("items",proof.item_id),item=id?await ctx.db.get(id):null;
       if(!item||item.status!=="active"||item.is_marketing_only||item.qty<=0||item.name_canonical!==proof.name||item.replacement_cost_gbp!==proof.value_gbp)
         return {ok:false,reason:"replacement_value_unverified"};
+    }
+    if(values.budget_checks.length){
+      const [listings,index,overrides,items]=await Promise.all([
+        ctx.db.query("online_listings").withIndex("by_account",q=>q.eq("account_slug",account_slug)).collect(),
+        ctx.db.query("hygglo_product_index").collect(),ctx.db.query("listing_resolution_override").collect(),ctx.db.query("items").collect(),
+      ]);
+      for(const check of values.budget_checks){
+        const reader=ownedItemHirePriceReader(ctx,account_slug,listings,index,overrides,items,inclusiveRentalDays(check.start_date,check.end_date),check.quantity);
+        for(const proof of check.prices){
+          const item=items.find(i=>String(i._id)===proof.item_id);
+          if(!item||item.status!=="active"||item.is_marketing_only||item.qty<=0||item.name_canonical!==proof.name)return {ok:false,reason:"budget_price_unverified"};
+          const current=await reader.price(item);
+          if(current.altPid!==proof.product_id||current.quote?.listed_total_gbp!==proof.total_gbp)return {ok:false,reason:"budget_price_unverified"};
+        }
+      }
     }
     const financialClaimText=values.claim_text;
     if(evidence?.rental_request){
@@ -2198,6 +2214,7 @@ export const recheckCopiedDraftStock = internalQuery({
         return {ok:false,reason:"booking_record_unverified"};
     }
     const request=stockRequestForInquiryQuote(stockRequestForSeparateCheck(evidence?.stock_request??{items:[]},evidence?.stock??[]),evidence?.stock_quotes??[],rentalStage(booking,londonToday()).stage);
+    const claimRequest=nativeInformationClaimRequest(request,values.budget_checks);
     if(kitClaimsNeedEvidence(text)) {
       const currentLines=requestedListingContext(booking,labOrder,conv?.inquiry_items).lines.map(l=>({...l,name:l.name??""}));
       const selectedLines=(evidence?.stock_quotes??[]).flatMap(q=>q.listing_quote?.lines??[]);
@@ -2226,7 +2243,7 @@ export const recheckCopiedDraftStock = internalQuery({
     const inbound=latest?.sender!=="owner"?latest?.body_text??"":"";
     if(!evidence?.stock_request && !evidence?.recommendation_quotes?.length && !evidence?.stock_quotes?.length) {
       if(unsupportedPriceClaims(financialClaimText,prices,request,inbound,evidence?.booking_record).length)return {ok:false,reason:"price_unverified"};
-      return unsupportedStockClaims(financialClaimText,[],request).length?{ok:false,reason:"stock_unverified"}:{ok:true};
+      return unsupportedStockClaims(financialClaimText,[],claimRequest).length?{ok:false,reason:"stock_unverified"}:{ok:true};
     }
     const sources=await loadStockSources(ctx);
     // Selected Native offers are commitments to a particular physical basket,
@@ -2283,7 +2300,7 @@ export const recheckCopiedDraftStock = internalQuery({
     }
     // Missing legacy scope cannot qualify a stock assertion, but a human's
     // edited reply with no such assertion does not need old stock receipts.
-    if (!evidence?.stock_request) return unsupportedStockClaims(financialClaimText,[],request).length?{ok:false,reason:"stock_unverified"}:{ok:true};
+    if (!evidence?.stock_request) return unsupportedStockClaims(financialClaimText,[],claimRequest).length?{ok:false,reason:"stock_unverified"}:{ok:true};
     const receipts:StockReceipt[]=[];
     const checked=new Set<string>();
     for(const old of evidence.stock) {
@@ -2318,7 +2335,7 @@ export const recheckCopiedDraftStock = internalQuery({
       const item=resolveStockItem(name,sources.items);
       return item.confident&&!!item.match&&(item.match.is_marketing_only===true||item.match.status!=="active"||item.match.qty<=0);
     });
-    return unsupportedStockClaims(financialClaimText,receipts,request,excluded,latest?.sender!=="owner" ? latest?.body_text ?? "" : "").length?
+    return unsupportedStockClaims(financialClaimText,receipts,claimRequest,excluded,latest?.sender!=="owner" ? latest?.body_text ?? "" : "").length?
       {ok:false,reason:"stock_unverified",checked_at:Date.now()}:{ok:true,checked_at:Date.now()};
   },
 });

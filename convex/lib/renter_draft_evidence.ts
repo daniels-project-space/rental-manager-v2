@@ -1,3 +1,4 @@
+import {budgetPriceCheckValidator} from "./budget_price_check";
 import {replacementValueComparisonValidator} from "./replacement_value_comparison";
 import {rentalRequestValidator} from "./rental_request";
 import { v, type Infer } from "convex/values";
@@ -29,6 +30,7 @@ export const draftEvidenceValidator = v.object({
   booking_record:v.optional(bookingRecordValidator),
   stock_quotes:v.optional(v.array(stockQuoteEvidenceValidator)),
   replacement_value_comparisons:v.optional(v.array(replacementValueComparisonValidator)),
+  budget_price_checks:v.optional(v.array(budgetPriceCheckValidator)),
   model_id: v.string(),
   recommendation_quotes:v.optional(v.array(recommendationQuoteEvidenceValidator)),
   stage: v.string(),

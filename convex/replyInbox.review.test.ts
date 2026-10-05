@@ -1,3 +1,4 @@
+import {budgetPriceCheckText} from "./lib/budget_price_check";
 import {replacementValueComparisonText} from "./lib/replacement_value_comparison";
 import {sendTestMessage} from "./renter_bot_lab_actions";
 import {insertRun} from "./renter_bot_harness";
@@ -92,6 +93,48 @@ describe("Native independent hire budget qualification",()=>{
   const f=await fixture();expect(await invoke(find_owned_alternatives,f.ctx,{...f.args,booking_use:"replacement"})).toMatchObject({budget_outcome:"joint_quote_required",alternatives:[]});
   for(const changed of [{start_date:undefined},{end_date:"2026-02-30"},{quantity:0},{max_rental_total_gbp:-1}])
    expect(await invoke(find_owned_alternatives,f.ctx,{...f.args,...changed})).toMatchObject({budget_outcome:"invalid_budget_scope",alternatives:[]});
+ });
+});
+
+describe("current Native budget information at copied-reply approval",()=>{
+ async function fixture(){
+  const f=await setup();await f.ctx.db.patch(f.convId,{account_slug:"leo"});await f.ctx.db.patch(f.bookingId,{account_slug:"leo"});
+  const item=await f.ctx.db.insert("items",{name_canonical:"Sony FX3",kind:"camera",status:"active",qty:1,is_marketing_only:false});
+  const listing=await f.ctx.db.insert("online_listings",{account_slug:"leo",product_id:10,name:"Sony FX3",description:"Included in this kit: • 1x Sony FX3",daily_price:49});
+  const mapping=await f.ctx.db.insert("listing_resolution_override",{account_slug:"leo",product_id:10,components:[{item_id:item,qty:1}]});
+  const hp=await f.ctx.db.insert("hygglo_products",{accountSlug:"leo",productId:10,masterItemId:item,prices:[{days:1,pricePerDay:49}]});
+  const proof={budget_key:"budget_"+"a".repeat(32),start_date:"2026-10-20",end_date:"2026-10-21",quantity:1,max_total_gbp:65,prices:[{item_id:item,name:"Sony FX3",product_id:10,total_gbp:98}]};
+  const text=budgetPriceCheckText(proof)!;
+  await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:f.args.context_key,draft_text:text,evidence:{model_id:"native",stage:"INQUIRY",stock:[],budget_price_checks:[proof]}});
+  const approval=await invoke(getDraftApprovalContext,f.ctx,{thread_id:f.args.thread_id});
+  return {...f,item,listing,mapping,hp,proof,text,approval:approval.draft_approval};
+ }
+ const check=(f:any,text=f.text)=>invoke(recheckCopiedDraftStock,f.ctx,{thread_id:f.args.thread_id,account_slug:"leo",text,draft_approval:f.approval});
+ it("explains the search maximum and rejected price without creating stock or hire authority",async()=>{
+  const f=await fixture(),before={...f.rows.get(f.bookingId)};
+  expect(await check(f)).toMatchObject({ok:true});
+  expect(f.rows.get(f.convId).ai_draft_evidence.stock_quotes).toBeUndefined();
+  expect(f.rows.get(f.bookingId)).toEqual(before);
+  for(const text of [f.text.replace("£65","£66"),f.text.replace("£98","£980"),f.text+"\nAvailable for your dates",f.text+"\n  Available for your dates",f.text+"\nI can offer it for £60"])
+   expect(await check(f,text),text).toMatchObject({ok:false});
+ });
+ it("rechecks current exact account tier prices and physical eligibility",async()=>{
+  for(const change of ["price","mapping","marketing","inactive","account"]){
+   const f=await fixture();
+   if(change==="price")await f.ctx.db.patch(f.hp,{prices:[{days:1,pricePerDay:48}]});
+   if(change==="mapping")await f.ctx.db.patch(f.mapping,{components:[{item_id:"unknown",qty:1}]});
+   if(change==="marketing")await f.ctx.db.patch(f.item,{is_marketing_only:true});
+   if(change==="inactive")await f.ctx.db.patch(f.item,{status:"inactive"});
+   if(change==="account")await f.ctx.db.patch(f.listing,{account_slug:"diogo"});
+   expect(await check(f)).toMatchObject({ok:false,reason:"budget_price_unverified"});
+  }
+ });
+ it("does not borrow a single-unit price for a longer or larger hire",async()=>{
+  for(const changes of [{quantity:2},{end_date:"2026-10-22"}]){
+   const f=await fixture(),proof={...f.proof,...changes},text=budgetPriceCheckText(proof)!;
+   await f.ctx.db.patch(f.convId,{ai_draft_text:text,ai_draft_evidence:{model_id:"native",stage:"INQUIRY",stock:[],budget_price_checks:[proof]}});
+   expect(await check(f,text)).toMatchObject({ok:false,reason:"budget_price_unverified"});
+  }
  });
 });
 

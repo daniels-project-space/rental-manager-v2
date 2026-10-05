@@ -680,6 +680,7 @@ export const generateDraft = action({
           recommendation_quotes?: RecommendationQuoteEvidence[];
           stock_quotes?: NonNullable<DraftEvidence["stock_quotes"]>;
           replacement_value_comparisons?:DraftEvidence["replacement_value_comparisons"];
+          budget_price_checks?:DraftEvidence["budget_price_checks"];
           rental_request?:DraftEvidence["rental_request"];
           availabilityReceipts?: Array<{ item_name: string; start_date: string; end_date: string; requested_units: number; available: boolean | null; free_units: number | null; checked_at: number; call_id: string; kind?: string; owned?: boolean; new_inquiry?:true; identity_names?:string[]; basket?: StockReceipt["basket"] }>;
           stockRequest?: StockRequest;
@@ -747,7 +748,7 @@ export const generateDraft = action({
         routePriceRequest = j.priceRequest;
         routeCommercialContext = j.commercialContext ? minimumRentalContext(c.rental_stage.stage,
           j.commercialContext.threshold_gbp, j.priceEvidence ?? [], j.priceRequest ?? {items:[]},j.selectedInquiryQuotes??[]) : undefined;
-        generationMeta.evidence = { rental_request:j.rental_request, booking_record:j.booking_record, stock_quotes:j.stock_quotes,replacement_value_comparisons:j.replacement_value_comparisons, recommendation_quotes: j.recommendation_quotes, camera_comparisons: verifiedSensorComparisons, rental_eligibility: { ineligible_items: [...new Set([...(c.fact_pack?.marketingItems ?? []), ...(j.marketingItems ?? [])].filter((n): n is string => typeof n === "string" && !!n))], source: "native_catalogue" }, commercial: routeCommercialContext, prices: routePriceEvidence, model_id: j.model_id ?? "unknown", stage: c.rental_stage.stage, cost_usd: j.tokenUsage?.cost ?? undefined, stock: (j.availabilityReceipts ?? []).filter((r) => typeof r.item_name === "string" && typeof r.start_date === "string" && typeof r.end_date === "string" && typeof r.requested_units === "number" && typeof r.checked_at === "number" && (typeof r.available === "boolean" || r.available === null) && (typeof r.free_units === "number" || r.free_units === null) && typeof r.call_id === "string").map((r) => ({ item: r.item_name, start_date: r.start_date, end_date: r.end_date, quantity: r.requested_units, available: r.available, free_units: r.free_units, checked_at: r.checked_at, call_id: r.call_id })) };
+        generationMeta.evidence = { rental_request:j.rental_request, booking_record:j.booking_record, stock_quotes:j.stock_quotes,replacement_value_comparisons:j.replacement_value_comparisons,budget_price_checks:j.budget_price_checks, recommendation_quotes: j.recommendation_quotes, camera_comparisons: verifiedSensorComparisons, rental_eligibility: { ineligible_items: [...new Set([...(c.fact_pack?.marketingItems ?? []), ...(j.marketingItems ?? [])].filter((n): n is string => typeof n === "string" && !!n))], source: "native_catalogue" }, commercial: routeCommercialContext, prices: routePriceEvidence, model_id: j.model_id ?? "unknown", stage: c.rental_stage.stage, cost_usd: j.tokenUsage?.cost ?? undefined, stock: (j.availabilityReceipts ?? []).filter((r) => typeof r.item_name === "string" && typeof r.start_date === "string" && typeof r.end_date === "string" && typeof r.requested_units === "number" && typeof r.checked_at === "number" && (typeof r.available === "boolean" || r.available === null) && (typeof r.free_units === "number" || r.free_units === null) && typeof r.call_id === "string").map((r) => ({ item: r.item_name, start_date: r.start_date, end_date: r.end_date, quantity: r.requested_units, available: r.available, free_units: r.free_units, checked_at: r.checked_at, call_id: r.call_id })) };
         generationMeta.evidence.stock_request = routeStockRequest;
         generationMeta.evidence.stock.forEach(receipt=>{
           const native=j.availabilityReceipts?.find(r=>r.call_id===receipt.call_id&&r.item_name===receipt.item);
@@ -895,6 +896,7 @@ export const generateDraft = action({
       cameraEvidence:profiles.cameras,lensEvidence:profiles.lenses,
       bookingRecord:generationMeta.evidence?.booking_record,
       replacementValueComparisons:generationMeta.evidence?.replacement_value_comparisons,
+      budgetPriceChecks:generationMeta.evidence?.budget_price_checks,
       newInquiry:generationMeta.evidence?.rental_request?.kind==="inquiry"||generationMeta.evidence?.stock_quotes?.some(q=>q.new_inquiry)||generationMeta.evidence?.stock.some(r=>r.new_inquiry),
       stockEvidence: routeStockRequest ? generationMeta.evidence?.stock ?? [] : undefined,
       stockRequest: routeStockRequest,

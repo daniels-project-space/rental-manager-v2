@@ -1,3 +1,4 @@
+import {ownedItemHirePriceReader} from "./lib/owned_item_hire_price";
 import {listingKitContext,listingKitItem} from "./lib/listing_kit_context";
 import {PRIMARY_RENTAL_REQUEST,rentalRequestValidator} from "./lib/rental_request";
 import {validateRentalRequest} from "./lib/sent_rental_request";
@@ -1122,43 +1123,7 @@ export const find_owned_alternatives = query({
     const allInventory = await ctx.db.query("items").collect();
     const specs = await ctx.db.query("item_specs").collect();
     const specsByItem = inventorySpecMap(specs);
-    const pidsForItem = (itemId: string): number[] => baseListingProductIds(account_slug, itemId, idxAll, ovAll, allInventory,listings);
-    // Resolve each candidate's exact account offering once. Budget screening
-    // happens before stock/kit reads, and never uses a curated daily estimate.
-    const readCandidateListing=(it:typeof owned[number])=>{
-      const candidatePids=pidsForItem(String(it._id));
-      const candidateContents=new Map<number,ReturnType<typeof resolveListingComponents>>();
-      const verifiedListings=listings.filter(listing=>{
-        if(!candidatePids.includes(listing.product_id))return false;
-        const mapping=ovAll.find(row=>row.account_slug===account_slug&&row.product_id===listing.product_id);
-        const contents=resolveListingComponents(allInventory,mapping?.components.map(c=>({item_id:String(c.item_id),qty:c.qty})),String(it._id),quantity??1,listing.description);
-        candidateContents.set(listing.product_id,contents);
-        return contents.complete&&contents.owned===true;
-      });
-      const altListing=chooseBaseListing(verifiedListings,candidatePids),altPid=altListing?.product_id;
-      return {candidateContents,altListing,altPid};
-    };
-    const candidateListings=new Map<string,ReturnType<typeof readCandidateListing>>();
-    const candidateListing=(it:typeof owned[number])=>{
-      const id=String(it._id);let listing=candidateListings.get(id);
-      if(!listing){listing=readCandidateListing(it);candidateListings.set(id,listing);}return listing;
-    };
-    const readCandidatePrice=async(it:typeof owned[number])=>{
-      const {candidateContents,altListing,altPid}=candidateListing(it);
-      let altRawTiers:PriceTier[]=[],altTiers:string|null=null,altOneDay:number|null=null;
-      if(altPid!=null){
-        const hp=await ctx.db.query("hygglo_products").withIndex("by_account_product",q=>q.eq("accountSlug",account_slug).eq("productId",altPid)).unique();
-        altRawTiers=(hp?.prices??[]) as PriceTier[];
-        altTiers=describeTiers(altRawTiers);altOneDay=tierRateForDays(altRawTiers,1);
-      }
-      const quote=quoteDays!==null&&altListing?rentalQuote(altRawTiers,altListing.daily_price,quoteDays,quantity??1):null;
-      return {candidateContents,altListing,altPid,altTiers,altOneDay,quote};
-    };
-    const candidatePrices=new Map<string,ReturnType<typeof readCandidatePrice>>();
-    const candidatePrice=(it:typeof owned[number])=>{
-      const id=String(it._id);let read=candidatePrices.get(id);
-      if(!read){read=readCandidatePrice(it);candidatePrices.set(id,read);}return read;
-    };
+    const {listing:candidateListing,price:candidatePrice}=ownedItemHirePriceReader(ctx,account_slug,listings,idxAll,ovAll,allInventory,quoteDays,quantity??1);
     // Alternative listing quotes require identity-backed account pricing.
 
     // Rank by SUBSTITUTABILITY, not bare name overlap. A renter asking for a
@@ -1248,6 +1213,14 @@ export const find_owned_alternatives = query({
     const rejected = { requirements: 0, stock: 0, budget_over_limit:0, budget_price_unknown:0 };
     const rejectedBudgetOptions:Array<{item_id:string;name:string;total_gbp:number;product_id:number|null}>=[];
     const budgetPriceReviewNeeded:Array<{item_id:string;name:string;product_id:number|null}>=[];
+    const budgetPriceFacts:Array<{item_id:string;name:string;product_id:number;total_gbp:number}>=[];
+    const recordBudgetPrice=(item:typeof owned[number],priced:Awaited<ReturnType<typeof candidatePrice>>)=>{
+      if(priced.quote&&priced.altPid!=null)budgetPriceFacts.push({item_id:String(item._id),name:item.name_canonical,product_id:priced.altPid,total_gbp:priced.quote.listed_total_gbp});
+    };
+    if(max_rental_total_gbp!==undefined&&targetRentable&&targetId){
+      const original=allInventory.find(item=>String(item._id)===targetId);
+      if(original)recordBudgetPrice(original,await candidatePrice(original));
+    }
     const lensReviewNeeded: Array<{item_id:string;name:string;unverified_requirements:string[]}> = [];
     const cameraReviewNeeded: Array<{item_id:string;name:string;unverified_requirements:string[]}> = [];
     const rejectedStockOptions: Array<Record<string,unknown>> = [];
@@ -1278,6 +1251,7 @@ export const find_owned_alternatives = query({
       if(lensAssessment?.status==="mismatch"||cameraAssessment?.status==="mismatch"){rejected.requirements++;continue;}
       const budgetPrice=max_rental_total_gbp!==undefined?await candidatePrice(it):null;
       if(budgetPrice){
+        recordBudgetPrice(it,budgetPrice);
         if(budgetPrice.quote&&Math.round(budgetPrice.quote.listed_total_gbp*100)>Math.round(max_rental_total_gbp!*100)){
           rejected.budget_over_limit++;
           rejectedBudgetOptions.push({item_id:String(it._id),name:it.name_canonical,total_gbp:budgetPrice.quote.listed_total_gbp,product_id:budgetPrice.altPid??null});
@@ -1413,6 +1387,7 @@ export const find_owned_alternatives = query({
         cameraReviewNeeded.length||lensReviewNeeded.length||budgetPriceReviewNeeded.length?"needs_review":"no_verified_match",
       rejected_budget_options:rejectedBudgetOptions.slice(0,8),
       budget_price_review_needed:budgetPriceReviewNeeded.slice(0,8),
+      budget_check_facts:max_rental_total_gbp!==undefined?{start_date:start_date!,end_date:end_date!,quantity:quantity??1,max_total_gbp:max_rental_total_gbp,prices:budgetPriceFacts.slice(0,8)}:null,
       budget_matches_exhaustive:false,
       budget_guidance:max_rental_total_gbp===undefined?null:"Returned alternatives have a verified dated candidate hire total within the supplied maximum. The limit is a hard constraint, not an ideal target. Rejected-budget rows are price diagnostics, not stock or capability proof. Unknown price or mode proof does not establish an affordable match or that no suitable owned option exists. Continue specification/price owner review where needed; do not claim the cheapest option from partial verification. This search grants no discount or booking authority. Current-booking changes require a quote for the complete proposed basket.",
       recording_requirement_checked: !!requirements.recording,

@@ -334,6 +334,7 @@ export const sendTestMessage = action({
       priceEvidence:draftResult.evidence?.prices,
         bookingRecord:draftResult.evidence?.booking_record,
       replacementValueComparisons:draftResult.evidence?.replacement_value_comparisons,
+      budgetPriceChecks:draftResult.evidence?.budget_price_checks,
       priceRequest:draftResult.evidence?.stock_request,
       lastRenterMessage:args.text,
     });

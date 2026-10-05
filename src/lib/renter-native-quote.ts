@@ -1,3 +1,4 @@
+import {budgetPriceCheckText,type BudgetPriceCheck} from "../../convex/lib/budget_price_check";
 import {replacementValueComparisonText,type ReplacementValueComparison} from "../../convex/lib/replacement_value_comparison";
 import {inquiryOffersForText,inquiryQuoteText,monetaryProse} from "../../convex/lib/native_inquiry_offer";
 import type {RentalRequest} from "../../convex/lib/rental_request";
@@ -29,6 +30,16 @@ export function nativeBookingRecord(record:BookingRecord|null|undefined,scope:Na
 export type NativeInquiryQuote={quote_key:string;display_text:string;request_revision:number;commercial_context?:MinimumRentalContext;commercial_guidance?:string};
 const record=(value:unknown):Record<string,unknown>|null=>value && typeof value==="object" && !Array.isArray(value)?value as Record<string,unknown>:null;
 const itemIdentity=(name:string)=>renterItemNames(name).map(n=>n.toLowerCase().replace(/[^a-z0-9]+/g," ").trim());
+
+export function nativeBudgetPriceChecks(value:unknown,scope:NativeQuoteScope,readRevision=scope.queryRevision?.()) {
+ const r=record(value),facts=record(r?.budget_check_facts),revision=scope.queryRevision?.();
+ if(!r||!facts||r.account_slug!==scope.accountSlug||r.thread_id!==scope.threadId||r.budget_price_scope!=="independent_candidate_hire"||!Number.isInteger(revision)||readRevision!==revision||
+  r.max_rental_total_gbp!==facts.max_total_gbp)return [];
+ const budget_key=`budget_${createHash("sha256").update(JSON.stringify([scope.threadId,scope.accountSlug,scope.requestMessageId??"",scope.rentalRequest??null,revision,recommendationRequirementsKey(scope.recommendationRequirements??[]),facts])).digest("hex").slice(0,32)}`;
+ const check={budget_key,...facts} as BudgetPriceCheck;
+ const display_text=budgetPriceCheckText(check);
+ return display_text?[{...check,request_revision:revision as number,display_text}]:[];
+}
 
 export function nativeReplacementValueComparisons(value:unknown,scope:NativeQuoteScope,readRevision=scope.queryRevision?.()) {
  const r=record(value),revision=scope.queryRevision?.();
@@ -128,8 +139,8 @@ function kitReviewNotices(draft:string,receipts:ToolReceipt[],scope:NativeQuoteS
 /** Render before any guard or persistence. Unknown references, hand-written
  * money in structured prose, and receipts from before a write fail closed. */
 export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolReceipt[],scope:NativeQuoteScope):
-  {ok:true;draft:string;booking_record?:BookingRecord;quote_keys:string[];recommendation_quotes:RecommendationQuoteEvidence[];stock_quotes:StockQuoteEvidence[];commercial_quotes:PriceEvidence[];replacement_value_comparisons?:ReplacementValueComparison[]}|{ok:false;reason:string} {
-  if(output.needs_human)return {ok:true,draft:"",quote_keys:[],recommendation_quotes:[],stock_quotes:[],commercial_quotes:[]};
+  {ok:true;draft:string;booking_record?:BookingRecord;quote_keys:string[];recommendation_quotes:RecommendationQuoteEvidence[];stock_quotes:StockQuoteEvidence[];commercial_quotes:PriceEvidence[];replacement_value_comparisons?:ReplacementValueComparison[];budget_price_checks?:BudgetPriceCheck[]}|{ok:false;reason:string} {
+  if(output.needs_human&&!output.reply_parts?.length)return {ok:true,draft:"",quote_keys:[],recommendation_quotes:[],stock_quotes:[],commercial_quotes:[]};
   // A completed referral action carries its own next steps. Keep these with
   // the Native transaction rather than relying on the model to repeat them.
   const restoredReferral=receipts.some(({tool,result})=>{
@@ -148,6 +159,14 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
       for(const v of nativeReplacementValueComparisons(r.result,scope,d.request_revision))if(v.value_key===d.value_key)values.set(v.value_key,v);
     }
   }
+  const budgets=new Map<string,ReturnType<typeof nativeBudgetPriceChecks>[number]>();
+  for(const r of receipts)if(r.tool==="find_owned_alternatives"){
+    for(const descriptor of Array.isArray(r.result.budget_price_checks)?r.result.budget_price_checks:[]){
+      const d=record(descriptor);if(typeof d?.request_revision!=="number")continue;
+      for(const check of nativeBudgetPriceChecks(r.result,scope,d.request_revision))if(check.budget_key===d.budget_key)budgets.set(check.budget_key,check);
+    }
+  }
+  const selectedBudgets:BudgetPriceCheck[]=[];
   const selectedValues:ReplacementValueComparison[]=[];
   const quotes=new Map<string,NativeInquiryQuote>();
   const stock=new Map<string,StockQuoteEvidence>();
@@ -182,6 +201,11 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
     if(part.type==="text") {
       if(monetaryProse.test(part.text))return {ok:false,reason:"Financial amounts must come from Native quote parts"};
       if(part.text.trim())parts.push(part.text.trim());
+    } else if(part.type==="budget_check") {
+      const check=budgets.get(part.budget_key);
+      if(!check||selectedBudgets.some(c=>c.budget_key===part.budget_key))return {ok:false,reason:"Budget comparison selection is missing, stale or duplicated"};
+      const {request_revision,display_text,...proof}=check;
+      selectedBudgets.push(proof);parts.push(display_text);
     } else if(part.type==="replacement_value") {
       const value=values.get(part.value_key);
       if(!value||selectedValues.some(v=>v.value_key===part.value_key))return {ok:false,reason:"Replacement value selection is missing, stale or duplicated"};
@@ -211,9 +235,9 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
   }
   if(!parts.length)return {ok:false,reason:"The rendered reply is empty"};
   const draft=withNativeContext(parts.join("\n\n")),stock_quotes=[...used].map(key=>stock.get(key)!);
-  const selection=inquiryOffersForText({model_id:"native-render",stage:scope.rentalStage??"INQUIRY",stock:[],stock_quotes,replacement_value_comparisons:selectedValues,booking_record:selectedRecord},draft,draft);
+  const selection=inquiryOffersForText({model_id:"native-render",stage:scope.rentalStage??"INQUIRY",stock:[],stock_quotes,replacement_value_comparisons:selectedValues,budget_price_checks:selectedBudgets,booking_record:selectedRecord},draft,draft);
   if(selection.supported&&!selection.ok)return {ok:false,reason:"Rendered Native quote blocks are inconsistent or ambiguous"};
-  return {ok:true,draft,replacement_value_comparisons:selectedValues,...(selectedRecord?{booking_record:selectedRecord}:{}),quote_keys:[...used],stock_quotes,commercial_quotes:[...used].flatMap(key=>commercial.has(key)?[commercial.get(key)!]:[]),recommendation_quotes:[...used].flatMap(key=>qualified.has(key)?[qualified.get(key)!]:[])};
+  return {ok:true,draft,budget_price_checks:selectedBudgets,replacement_value_comparisons:selectedValues,...(selectedRecord?{booking_record:selectedRecord}:{}),quote_keys:[...used],stock_quotes,commercial_quotes:[...used].flatMap(key=>commercial.has(key)?[commercial.get(key)!]:[]),recommendation_quotes:[...used].flatMap(key=>qualified.has(key)?[qualified.get(key)!]:[])};
 }
 
 /** A valid decision with an invalid quote is an owner review, not a broken

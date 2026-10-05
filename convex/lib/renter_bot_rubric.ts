@@ -1,4 +1,6 @@
-import {replacementValueComparisonsForText,type ReplacementValueComparison} from "./replacement_value_comparison";
+import {nativeInformationForText} from "./native_information_blocks";
+import type {BudgetPriceCheck} from "./budget_price_check";
+import {type ReplacementValueComparison} from "./replacement_value_comparison";
 import type {OwnerCheck} from "./owner_checks";
 import {unsupportedPriceClaims,type PriceEvidence} from "./price_claims";
 import type {StockRequest} from "./stock_claims";
@@ -54,6 +56,7 @@ export interface RubricInput {
   lastRenterMessage?: string;
   bookingRecord?: BookingRecord;
   replacementValueComparisons?:ReplacementValueComparison[];
+  budgetPriceChecks?:BudgetPriceCheck[];
   /** Persisted Native review tasks for this exact generated draft/context. */
   pendingOwnerChecks?: OwnerCheck[];
 }
@@ -110,7 +113,7 @@ export function scoreDraft(input: RubricInput): RubricOutput {
     factsClaimed,
   );
   const nativePricing=input.priceEvidence!==undefined&&input.priceRequest!==undefined;
-  const nativePriceFailures=nativePricing?unsupportedPriceClaims(replacementValueComparisonsForText(input.replacementValueComparisons,draftText,draftText).claim_text,input.priceEvidence!,input.priceRequest!,input.lastRenterMessage??"",input.bookingRecord):[];
+  const nativePriceFailures=nativePricing?unsupportedPriceClaims(nativeInformationForText({replacement_value_comparisons:input.replacementValueComparisons,budget_price_checks:input.budgetPriceChecks},draftText,draftText).claim_text,input.priceEvidence!,input.priceRequest!,input.lastRenterMessage??"",input.bookingRecord):[];
   const allViolations = [...real.violations, ...supplemental.filter(v=>!nativePricing||!["MADE_UP_PRICE","UNVERIFIABLE_PRICE"].includes(v.category))];
   const cats = new Set(allViolations.map((v) => v.category));
   if(nativePriceFailures.length)cats.add("NATIVE_PRICE_UNSUPPORTED");

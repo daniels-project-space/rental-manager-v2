@@ -7,9 +7,10 @@ export const RENTER_BOT_OUTPUT_SCHEMA = z.object({
   reply_parts: z.array(z.discriminatedUnion("type",[
     z.object({type:z.literal("text"),text:z.string()}),
     z.object({type:z.literal("quote"),quote_key:z.string().regex(/^inquiry_[a-f0-9]{32}$/),offer_action:z.literal("restore_referral").optional()}),
+    z.object({type:z.literal("budget_check"),budget_key:z.string().regex(/^budget_[a-f0-9]{32}$/)}),
     z.object({type:z.literal("replacement_value"),value_key:z.string().regex(/^value_[a-f0-9]{32}$/)}),
     z.object({type:z.literal("booking_record"),record_key:z.string().regex(/^record_[a-f0-9]{32}$/)}),
-  ])).min(1).max(12).optional().describe("Use text parts without money, replacement_value parts selecting a Native replacement_value_comparisons.value_key for equipment values, quote parts selecting renter_quote.quote_key for prospective hires, and booking_record parts selecting booking_record.record_key for an original closed rental. Both financial purposes can appear together. Leave draft empty; the server renders each verified block."),
+  ])).min(1).max(12).optional().describe("Use text parts without money, budget_check parts selecting Native budget_price_checks.budget_key for the search maximum and verified price comparisons (not hire offers), replacement_value parts selecting a Native replacement_value_comparisons.value_key for equipment values, quote parts selecting renter_quote.quote_key for prospective hires, and booking_record parts selecting booking_record.record_key for an original closed rental. Both financial purposes can appear together. Leave draft empty; the server renders each verified block."),
   intent: z.enum(RENTER_BOT_INTENTS),
   conversation_stage: z.enum(CONVERSATION_STAGES),
   red_flags: z.array(z.string()),

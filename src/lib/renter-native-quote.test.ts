@@ -2,7 +2,7 @@ import {inquiryOffersForText} from "../../convex/lib/native_inquiry_offer";
 import { REFERRAL_RESTORE_OFFER } from "../../convex/lib/referral_offer";
 import {stockRequestForInquiryQuote} from "../../convex/lib/stock_claims";
 import {describe,it,expect} from "vitest";
-import {nativeInquiryQuote,nativeBookingRecord,nativeReplacementValueComparisons,renderNativeQuoteReply,reviewNativeQuoteReply} from "./renter-native-quote";
+import {nativeInquiryQuote,nativeBookingRecord,nativeReplacementValueComparisons,nativeBudgetPriceChecks,renderNativeQuoteReply,reviewNativeQuoteReply} from "./renter-native-quote";
 import {bookingRecordText,type BookingRecord} from "../../convex/lib/booking_record";
 import {renterPriceEvidence} from "./renter-price-evidence";
 import {renterToolReceipts,stockReceipts} from "./renter-tool-evidence";
@@ -435,5 +435,35 @@ describe("Native equipment value comparisons",()=>{
    expect(nativeReplacementValueComparisons(changed,scope)).toEqual([]);
   const d=nativeReplacementValueComparisons(source,scope)[0];
   expect(nativeReplacementValueComparisons(source,{...scope,requestMessageId:"different"})[0].value_key).not.toBe(d.value_key);
+ });
+});
+
+
+describe("Native budget comparison information",()=>{
+ const source={account_slug:"leo",thread_id:scope.threadId,budget_price_scope:"independent_candidate_hire",max_rental_total_gbp:65,
+  budget_check_facts:{start_date:"2026-10-20",end_date:"2026-10-21",quantity:1,max_total_gbp:65,prices:[
+   {item_id:"fx3",name:"Sony FX3",product_id:10,total_gbp:98},{item_id:"a7v",name:"Sony A7 V",product_id:20,total_gbp:84}]}};
+ const receipt=()=>({tool:"find_owned_alternatives",call_id:"actual-budget-search",result:{...source,budget_price_checks:nativeBudgetPriceChecks(source,scope)}});
+ it("renders verified rejected prices during review without commercial or stock authority",()=>{
+  const descriptor=nativeBudgetPriceChecks(source,scope)[0];expect(descriptor.display_text).toContain("£65");
+  const output={...base,needs_human:true,reply_parts:[{type:"budget_check" as const,budget_key:descriptor.budget_key},{type:"text" as const,text:"The other camera's exact mode and hire price still need review."}]};
+  const rendered=renderNativeQuoteReply(output,[receipt()],scope);expect(rendered.ok).toBe(true);if(!rendered.ok)return;
+  expect(rendered.draft).toContain("£84 — above the maximum");expect(rendered.stock_quotes).toEqual([]);expect(rendered.commercial_quotes).toEqual([]);expect(rendered.recommendation_quotes).toEqual([]);
+  const evidence={model_id:"native",stage:"INQUIRY",stock:[],budget_price_checks:rendered.budget_price_checks};
+  expect(inquiryOffersForText(evidence,rendered.draft,rendered.draft)).toMatchObject({supported:true,ok:true,quotes:[]});
+  for(const edited of [rendered.draft.replace("£65","£66"),rendered.draft.replace("£84","£840"),rendered.draft+"\nIt is £60 instead."])
+   expect(inquiryOffersForText(evidence,rendered.draft,edited).ok).toBe(false);
+ });
+ it("binds budget information to current Native account, request and requirements",()=>{
+  const descriptor=nativeBudgetPriceChecks(source,scope)[0],output={...base,reply_parts:[{type:"budget_check" as const,budget_key:descriptor.budget_key}]};
+  for(const changed of [{...source,account_slug:"diogo"},{...source,thread_id:"other"},{...source,budget_price_scope:"amended_basket"},{...source,max_rental_total_gbp:66}])
+   expect(nativeBudgetPriceChecks(changed,scope)).toEqual([]);
+  for(const context of [{...scope,requestMessageId:"different"},{...scope,queryRevision:()=>1},{...scope,recommendationRequirements:[{kind:"camera" as const,target_item_id:"fx3",quantity:1,requirements:{built_in_nd:true}}]}])
+   expect(renderNativeQuoteReply(output,[receipt()],context).ok).toBe(false);
+  expect(renderNativeQuoteReply({...output,reply_parts:[...output.reply_parts,...output.reply_parts]},[receipt()],scope).ok).toBe(false);
+ });
+ it("does not permit free-form money or borrowed prices outside a selected informational block",()=>{
+  const descriptor=nativeBudgetPriceChecks(source,scope)[0];
+  expect(renderNativeQuoteReply({...base,reply_parts:[{type:"budget_check",budget_key:descriptor.budget_key},{type:"text",text:"Your ideal budget is £65."}]},[receipt()],scope).ok).toBe(false);
  });
 });
