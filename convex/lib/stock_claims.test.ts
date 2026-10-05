@@ -533,11 +533,11 @@ describe("booking status is not equipment occupancy",()=>{
 
 describe("booking actions versus occupied equipment", () => {
  it("does not treat a first-person enquiry action as stock evidence", () => {
-  for (const sentence of ["Nothing has been booked or changed on your inquiry.", "Nothing has been changed or booked on your enquiry.", "I haven't changed or booked anything on your enquiry.", "We have not booked your order.", "I have booked your enquiry."])
+  for (const sentence of ["Nothing has been booked or changed on your inquiry.", "Nothing has been changed or booked on your enquiry.", "Nothing has been booked.", "Nothing has been booked or locked in.", "Since this was just an options check, nothing has been booked or locked in.", "I haven't changed or booked anything on your enquiry.", "We have not booked your order.", "I have booked your enquiry."])
    expect(check(sentence, [])).toEqual([]);
  });
  it("preserves real stock verdicts alongside booking actions", () => {
-  for (const sentence of ["I haven't changed or booked anything on your enquiry, but Sony FX3 is unavailable.", "Sony FX3 is booked out.", "Sony FX3 is booked for another renter.", "I have booked your order and Sony FX3 is unavailable."])
+  for (const sentence of ["I haven't changed or booked anything on your enquiry, but Sony FX3 is unavailable.", "Nothing has been booked, but Sony FX3 is unavailable.", "Nothing has been booked out.", "Nothing has been booked for another renter.", "Sony FX3 is booked out.", "Sony FX3 is booked for another renter.", "I have booked your order and Sony FX3 is unavailable."])
    expect(check(sentence, [])).not.toEqual([]);
   expect(check("I haven't changed or booked anything on your enquiry, but Sony FX3 is unavailable.")).toEqual([]);
  });
