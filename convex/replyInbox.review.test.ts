@@ -1,7 +1,7 @@
 import {computeNegotiationStance,negotiationFromMessages} from "./lib/renter_bot_negotiation";
 import {rentalRequestContext,rentalRequestHistory} from "./lib/rental_request_history";
 import type {Id} from "./_generated/dataModel";
-import {handle as handleOwnerCheck, ownerChecksForBot } from "./renter_bot_owner_checks";
+import {getLensReview,reviewLensSpecification,handle as handleOwnerCheck, ownerChecksForBot } from "./renter_bot_owner_checks";
 import {ownerCheckScopeKey, nativeOwnerChecks } from "./lib/owner_checks";
 import schema from "./schema";
 import { CONVERSATION_STAGES } from "./lib/renter_bot_intents";
@@ -878,5 +878,58 @@ describe("negotiation rental request identity",()=>{
  });
  it("can return to primary booking history without importing independent hire objections",()=>{
   expect((negotiationFromMessages as any)([...history,{sender:"renter",body_text:"Back to my original booking, any discount?"}],primary)).toMatchObject({objectionCount:3,threadObjectionCount:5,rentalRequest:primary});
+ });
+});
+
+
+describe("authoritative owner lens reviews",()=>{
+ async function lensReview(){
+  const f=await setup();(f.ctx as any).auth={getUserIdentity:async()=>({subject:"owner-review-test"})};
+  await f.ctx.db.patch(f.convId,{account_slug:"leo"});
+  const lens=await f.ctx.db.insert("items",{name_canonical:"Unknown 11mm lens",kind:"lens",lens_mount:"E",qty:1,status:"active",is_marketing_only:false});
+  const spec=await f.ctx.db.insert("item_specs",{item_id:lens,item_name_canonical:"Unknown 11mm lens",description:"Legacy autofocus claim",specs_long:"Unverified extra promises",source:"legacy",lens_variant_reviews:[]});
+  const check={kind:"lens_recommendation",candidate_item_ids:[lens],requirements:{focus_mode:"manual_focus",macro:true},lens_mount:"E",quantity:1,start_date:null,end_date:null};
+  const task=await f.ctx.db.insert("renter_bot_owner_checks",{thread_id:f.args.thread_id,account_slug:"leo",status:"pending",source_message_id:f.args.message_id,source_context_key:f.args.context_key,check,candidate_names:["Unknown 11mm lens"]});
+  const review=await invoke(getLensReview,f.ctx,{task_id:task,item_id:lens});expect(review.available).toBe(true);expect(review.reviewed).toBeNull();
+  const args={task_id:task,item_id:lens,expected_request_message_id:review.request_message_id,expected_revision:review.revision,model:"TTArtisan 11mm f/2.8",source_url:"https://manufacturer.example/11mm",facts:{focus_mode:"manual_focus",focal_min_mm:11,focal_max_mm:11},confirmed_model:true};
+  return {...f,lens,spec,task,review,reviewArgs:args};
+ }
+ it("saves source-backed partial facts, refreshes bot evidence and keeps workflow and inventory independent",async()=>{
+  const f=await lensReview(),before=structuredClone(f.rows.get(f.lens));
+  expect(await invoke(reviewLensSpecification,f.ctx,f.reviewArgs)).toMatchObject({ok:true,preview:false,assessment:{status:"unknown",unknown:["macro"]},verified:{focus_mode:"manual_focus",focal_min_mm:11}});
+  expect(f.rows.get(f.spec)).toMatchObject({source:"owner-verified",verified_model:f.reviewArgs.model,lens_capabilities:{focus_mode:"manual_focus"}});
+  expect(f.rows.get(f.spec).lens_variant_reviews).toBeUndefined();expect(f.rows.get(f.spec).specs_long).toBeUndefined();expect(f.rows.get(f.spec).description).not.toContain("autofocus");
+  expect(f.rows.get(f.lens)).toEqual(before);expect(f.rows.get(f.task).status).toBe("pending");
+  expect([...f.rows.values()].find(r=>r.table==="settings").draft_epoch).toBe(3);
+  expect([...f.rows.values()].filter(r=>r.table==="audit_log")).toHaveLength(1);
+  expect((await ownerChecksForBot(f.ctx as any,f.args.thread_id,f.args.context_key))[0]).toMatchObject({specification_result_verified:false,current_specification_reviews:[{status:"unknown",unknown:["macro"]}]});
+  const fresh=await invoke(getLensReview,f.ctx,{task_id:f.task,item_id:f.lens});
+  await invoke(reviewLensSpecification,f.ctx,{...f.reviewArgs,expected_revision:fresh.revision,facts:{...f.reviewArgs.facts,macro:false}});
+  expect((await ownerChecksForBot(f.ctx as any,f.args.thread_id,f.args.context_key))[0]).toMatchObject({current_specification_reviews:[{status:"mismatch",mismatched:["macro"]}]});
+ });
+ it("previews without altering the catalogue, epoch, audit trail or task",async()=>{
+  const f=await lensReview(),before=structuredClone([...f.rows]);
+  expect(await invoke(reviewLensSpecification,f.ctx,{...f.reviewArgs,dry_run:true})).toMatchObject({ok:true,preview:true});expect([...f.rows]).toEqual(before);
+ });
+ it("rejects stale record or refreshed renter work before any writes",async()=>{
+  for(const changed of ["record","request"]){const f=await lensReview();
+   if(changed==="record")await f.ctx.db.patch(f.spec,{description:"A later reviewed record"});else await f.ctx.db.patch(f.task,{last_requested_message_id:"new-renter-message"});
+   const before=structuredClone([...f.rows]);await expect(invoke(reviewLensSpecification,f.ctx,f.reviewArgs)).rejects.toThrow("changed");expect([...f.rows]).toEqual(before);
+  }
+ });
+ it("rejects invalid sources, unchecked identity, empty facts and impossible numeric or focus records",async()=>{
+  for(const patch of [{source_url:"http://manufacturer.example"},{confirmed_model:false},{facts:{}},{facts:{focal_min_mm:20}},{facts:{focal_min_mm:20,focal_max_mm:11}},{facts:{max_aperture_f:0}},{facts:{focus_mode:"manual_focus",manual_focus_available:false}}]){
+   const f=await lensReview(),before=structuredClone([...f.rows]);await expect(invoke(reviewLensSpecification,f.ctx,{...f.reviewArgs,...patch})).rejects.toThrow();expect([...f.rows]).toEqual(before);
+  }
+ });
+ it("cannot review foreign candidates, duplicates, handled tasks or ineligible inventory",async()=>{
+  for(const invalid of ["foreign","duplicate","handled","marketing","inactive"]){const f=await lensReview();
+   if(invalid==="foreign")await f.ctx.db.patch(f.task,{check:{...f.rows.get(f.task).check,candidate_item_ids:[]}});
+   if(invalid==="duplicate")await f.ctx.db.insert("item_specs",{item_id:f.lens,description:"duplicate"});
+   if(invalid==="handled")await f.ctx.db.patch(f.task,{status:"handled_by_owner"});
+   if(invalid==="marketing")await f.ctx.db.patch(f.lens,{is_marketing_only:true});if(invalid==="inactive")await f.ctx.db.patch(f.lens,{status:"inactive"});
+   expect(await invoke(getLensReview,f.ctx,{task_id:f.task,item_id:f.lens})).toMatchObject({available:false});
+   const before=structuredClone([...f.rows]);await expect(invoke(reviewLensSpecification,f.ctx,f.reviewArgs)).rejects.toThrow();expect([...f.rows]).toEqual(before);
+  }
  });
 });

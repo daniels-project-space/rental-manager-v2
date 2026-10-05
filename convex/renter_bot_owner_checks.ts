@@ -10,6 +10,7 @@ import { ownerCheckKey, ownerCheckScopeKey, ownerCheckValidator, listingMappingO
 import { internalQuery } from "./_generated/server";
 import { lensReadinessSubject } from "./lib/catalogue_readiness";
 import { assessLensRequirements, hasLensRequirements, verifiedLensCapabilities } from "./lib/lens_requirements";
+import {lensFactFields,type LensFacts} from "./lib/lens_variant_review";
 import { sameMount } from "./lib/item_name_match";
 import { getBotBooking, getLabOrder, requestedListingContext } from "./lib/renter_booking";
 import { loadListingInventory } from "./lib/listing_inventory";
@@ -35,7 +36,7 @@ export function ownerSpecificationReader(ctx:QueryCtx,inventory?:Doc<"items">[])
  return async(check:OwnerCheck)=>{
   return check.kind==="camera_recommendation"||check.kind==="lens_recommendation" ? (await Promise.all([...new Set(check.candidate_item_ids)].map(async id=>{
    const {item,specs}=await readCandidate(id),assessment=ownerSpecificationAssessment(check,item,specs);
-   return assessment&&item?{name:item.name_canonical,...assessment}:null;
+   return assessment&&item?{item_id:item._id,name:item.name_canonical,...assessment}:null;
   }))).filter((review):review is NonNullable<typeof review>=>review!==null):null;
  };
 }
@@ -185,4 +186,47 @@ export const handle=mutation({args:{id:v.id("renter_bot_owner_checks"),note:v.st
  if(ownerCheckRequestMessageId(task)!==a.expected_request_message_id)throw new Error("This check changed while you were reviewing it. Reopen the handling form and review the current request.");
  const identity=await ctx.auth.getUserIdentity();
  await ctx.db.patch(task._id,{status:"handled_by_owner",handled_at:Date.now(),handled_by_auth_subject:identity?.subject,handling_note:note});return {ok:true,already_handled:false};
+}});
+
+
+/** Owner-only catalogue review. A task supplies scope, never factual proof. */
+async function lensReviewTarget(ctx:QueryCtx,taskId:Doc<"renter_bot_owner_checks">["_id"],itemId:Doc<"items">["_id"]) {
+ const task=await ctx.db.get(taskId),item=await ctx.db.get(itemId);
+ if(!task||task.status!=="pending"||task.check.kind!=="lens_recommendation"||!task.check.candidate_item_ids.includes(itemId))throw new Error("This lens is not part of an open specification check");
+ if(!item||item.kind!=="lens"||item.status!=="active"||item.is_marketing_only||item.qty<=0)throw new Error("This lens is no longer owned rentable inventory");
+ const specs=await ctx.db.query("item_specs").withIndex("by_item",q=>q.eq("item_id",itemId)).collect();
+ if(specs.length>1)throw new Error("Duplicate specification records need reconciliation before review");
+ const revision=JSON.stringify({item_name:item.name_canonical,mount:item.lens_mount??null,spec:specs[0]??null});
+ return {task,item,spec:specs[0],revision};
+}
+export const getLensReview=query({args:{task_id:v.id("renter_bot_owner_checks"),item_id:v.id("items")},handler:async(ctx,a)=>{
+ try{const {task,item,spec,revision}=await lensReviewTarget(ctx,a.task_id,a.item_id);
+ return {available:true as const,task_id:task._id,item_id:item._id,name:item.name_canonical,mount:item.lens_mount??null,request_message_id:ownerCheckRequestMessageId(task),revision,
+  reviewed:verifiedLensCapabilities(spec,item.name_canonical)};
+ }catch(error){return {available:false as const,message:error instanceof Error?error.message:"The lens review is unavailable"};}
+}});
+const lensFactLabels:Record<keyof LensFacts,string>={focus_mode:"Focus",manual_focus_available:"Manual focus available",wide_angle:"Wide angle",macro:"Macro",projection:"Projection",coverage:"Coverage",focal_min_mm:"Minimum focal length (mm)",focal_max_mm:"Maximum focal length (mm)",max_aperture_f:"Maximum aperture (f-number)",max_aperture_t:"Maximum aperture (T-stop)"};
+export const reviewLensSpecification=mutation({args:{task_id:v.id("renter_bot_owner_checks"),item_id:v.id("items"),expected_request_message_id:v.string(),expected_revision:v.string(),
+ model:v.string(),source_url:v.string(),facts:v.object(lensFactFields),confirmed_model:v.boolean(),dry_run:v.optional(v.boolean())},handler:async(ctx,a)=>{
+ const {task,item,spec,revision}=await lensReviewTarget(ctx,a.task_id,a.item_id);
+ if(ownerCheckRequestMessageId(task)!==a.expected_request_message_id||revision!==a.expected_revision)throw new Error("The check or specification changed. Reopen the review before saving");
+ const model=a.model.trim(),url=a.source_url.trim();
+ if(!a.confirmed_model||model.length<3||model.length>200)throw new Error("Confirm the exact model of the physical lens");
+ try{if(url.length>2000||new URL(url).protocol!=="https:")throw new Error();}catch{throw new Error("Add an HTTPS reference for the reviewed specifications");}
+ const facts=Object.fromEntries(Object.entries(a.facts).filter(([,value])=>value!==undefined)) as LensFacts;
+ if(!Object.keys(facts).length)throw new Error("Record at least one reviewed property; leave unverified fields unknown");
+ if(facts.focus_mode==="manual_focus"&&facts.manual_focus_available===false)throw new Error("A manual-focus lens cannot lack manual focus");
+ const now=Date.now();
+ const patch={item_name_canonical:item.name_canonical,source:"owner-verified",source_url:url,verified_model:model,verified_at:now,
+  description:`Owner-reviewed lens: ${model}. `+Object.entries(facts).map(([key,value])=>`${lensFactLabels[key as keyof LensFacts]}: ${typeof value==="string"?value.replaceAll("_"," "):value}`).join(". "),
+  specs_long:undefined,lens_variant_reviews:undefined,lens_capabilities:{...facts,verified_model:model,source_url:url,verified_at:now}};
+ if(!verifiedLensCapabilities(patch,item.name_canonical))throw new Error("Focal lengths must form a positive ordered range and apertures must be positive numbers");
+ const assessment=assessLensRequirements(verifiedLensCapabilities(patch,item.name_canonical),task.check.kind==="lens_recommendation"?task.check.requirements:{});
+ if(a.dry_run)return {ok:true,preview:true,assessment,verified:verifiedLensCapabilities(patch,item.name_canonical)};
+ if(spec)await ctx.db.patch(spec._id,patch);else await ctx.db.insert("item_specs",{...patch,item_id:item._id,created_at:now});
+ const identity=await ctx.auth.getUserIdentity();
+ await ctx.db.insert("audit_log",{table_name:"item_specs",actor:identity?.subject??"owner-service",op:spec?"update":"insert",count:1,source_file:"renter_bot_owner_checks.reviewLensSpecification",
+  note:JSON.stringify({item_id:item._id,task_id:task._id,before:spec??null,after:patch}),ts:now});
+ const settings=await ctx.db.query("settings").first();if(settings)await ctx.db.patch(settings._id,{draft_epoch:(settings.draft_epoch??0)+1});
+ return {ok:true,preview:false,assessment,verified:verifiedLensCapabilities(patch,item.name_canonical)};
 }});
