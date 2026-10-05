@@ -103,3 +103,27 @@ describe("paired focus claims in equipment offers",()=>{
   expect(check(text,[lens,{...sony,capabilities:null}])).not.toEqual([]);
  });
 });
+
+
+describe("shortened references after a named camera/lens pairing",()=>{
+ const canon:LensFocusEvidence={names:["Canon EF 16-35mm f2.8"],capabilities:null};
+ const offer="I can set you up with the Sony FX3 paired with the Sony FE 16-35mm f/2.8 GM lens. ";
+ const follow="and the 16-35mm gives you full-frame autofocus coverage across that wide zoom range.";
+ it("uses the named pairing rather than another inventory lens with the same range",()=>{
+  expect(check(offer+follow,[lens,sony,canon])).toEqual([]);
+  expect(check(offer+"The 16-35mm supports autofocus.",[lens,sony,canon])).toEqual([]);
+  expect(check(offer+follow,[lens,{...sony,capabilities:null},canon])).not.toEqual([]);
+ });
+ it("requires a unique established subject and preserves stated identity qualifiers",()=>{
+  expect(check(follow,[sony,canon],[])).not.toEqual([]);
+  for(const other of ["Canon EF 16-35mm", "Sony FE 16-35mm F2.8 GM II", "16-35mm f4", "RF 16-35mm"])
+   expect(check(offer+`The ${other} gives you autofocus.`,[lens,sony,canon])).not.toEqual([]);
+  expect(check(offer.replace("Sony FE 16-35mm f/2.8 GM","Sony FE 16-35mm f/2.8 GM II")+follow,[lens,sony,canon])).not.toEqual([]);
+ });
+ it("does not grant focus capabilities from a pairing or descriptive verb",()=>{
+  const manual=offer.replace("Sony FE 16-35mm f/2.8 GM", "TTArtisan 11mm f2.8 Fisheye (Sony E)");
+  expect(check(manual+"The 11mm gives you autofocus.")).not.toEqual([]);
+  expect(check(manual+"The 11mm gives you manual-focus only operation.")).toEqual([]);
+  expect(check(offer+"The 16-35mm gives you manual-focus only operation.",[lens,sony,canon])).not.toEqual([]);
+ });
+});

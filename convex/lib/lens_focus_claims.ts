@@ -17,7 +17,12 @@ export function unsupportedLensFocusClaims(text:string,evidence:LensFocusEvidenc
   const reference=itemReferenceLabel(rawReference.split(/\s+paired\s+with\s+/i).at(-1)!,"lens");
   const declared=declaredLensReferences(normal(reference));
   const candidates=evidence.filter(e=>declared.every(key=>normal(refs.get(key)?.item.names[0]??"")===normal(e.names[0])));
-  const match=bestMatch(reference,candidates,e=>e.names[0],e=>e.names.slice(1));
+  // A bare range is an anaphoric reference after a named pairing.
+  // Brand, mount, aperture and generation qualifiers still use the full
+  // inventory identity check and cannot borrow the previous lens review.
+  const bareRange=/^\d+(?:\.\d+)?(?:\s*[-–]\s*\d+(?:\.\d+)?)?\s*mm$/i.test(reference);
+  const scoped=bareRange&&subject.length?candidates.filter(e=>subject.includes(e)):candidates;
+  const match=bestMatch(reference,scoped,e=>e.names[0],e=>e.names.slice(1));
   if(match.confident&&match.match)return [match.match];
   // Copies may share model identity, but all current reviews must agree.
   if(match.match&&match.ambiguousWith.length&&match.ambiguousWith.every(e=>normal(e.names[0])===normal(match.match!.names[0])))return [match.match,...match.ambiguousWith];
@@ -28,12 +33,18 @@ export function unsupportedLensFocusClaims(text:string,evidence:LensFocusEvidenc
   // Otherwise a later "it" incorrectly inherits the original rented lens.
   const recommendation=/\b(?:recommend|suggest)\s+(?:(?:the|a|an)\s+)?(.+?)[.!?]?\s*$/i.exec(clause)?.[1];
   if(recommendation)subject=resolve(itemReferenceLabel(recommendation,"lens"));
+  const pairing=clause.split(/\s+paired\s+with\s+/i);
+  if(pairing.length>1)subject=resolve(pairing.at(-1)!.replace(/[.!?]\s*$/, ""));
   for(const focus of clause.matchAll(/\b(auto[- ]?focus|manual[- ]focus(?:\s+only)?|AF)\b/gi)) {
   if(/^\s*(?:does|do|can|could|would|is|are)\b/i.test(clause) && /\?\s*$/.test(clause))continue;
   const prefix=clause.slice(0,focus.index);
   if(/\b(?:if|whether|check(?:ing)?|verify(?:ing)?|confirm(?:ing)?|want|need|require|prefer|looking for)\b[^;:]{0,100}$/i.test(prefix))continue;
   const predicates=[...prefix.matchAll(/\b(?:it's|that's|they're|has|have|supports?|offers?|uses?|features?|is|are|can(?:not|'t)?|does(?:n't| not)?|do(?:n't| not)?)\b/gi)];
-  const predicate=predicates[0];
+  // An indirect object also bounds a grammatical subject: "the lens
+  // gives/provides/brings you ...". No per-model or per-verb capability
+  // assumption is made; only the noun before that verb is resolved.
+  const recipientPredicate=/\b[a-z]+\s+(?:you|us|me|them)\b/i.exec(prefix);
+  const predicate=[predicates[0],recipientPredicate].filter((p):p is RegExpExecArray=>!!p).sort((a,b)=>a.index-b.index)[0];
   // Existential clauses have a dummy grammatical subject ("there"),
   // while the equipment subject is either a following target or the
   // already-bound lens. Never let a named target borrow that prior proof.
