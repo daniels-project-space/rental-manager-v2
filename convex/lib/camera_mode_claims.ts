@@ -81,8 +81,16 @@ export function unsupportedCameraModeClaims(text: string, evidence: CameraEviden
       if (reviewTarget) continue;
       if (/\b(?:does(?:n['’]t| not)|do(?:n['’]t| not)\s+(?:stock|have|offer)|can(?:not|['’]t)|won['’]t|not support|not (?:full.frame|uncropped)|if|whether|check(?:ing|ed)?)\b|^\s*(?:none of|neither\b)/i.test(polarityScope) || /\byou\s+(?:want|need|require|prefer)\b/i.test(polarityScope)) continue;
       const nominalFps = fps === 119 ? 120 : fps === 59 ? 60 : fps === 29 ? 30 : fps === 23 ? 24 : fps;
-      const hasApsc = /\b(?:aps.c|super\s*35)\b/i.test(claimClause) &&
-        !/\b(?:without|not|no|rather than|instead of)\b[^,;]{0,30}\b(?:aps.c|super\s*35)\b|\b(?:aps.c|super\s*35)(?:\s*\/\s*S35)?\s+(?:shooting|mode)\s+(?:is\s+)?off\b/i.test(claimClause);
+      // Interpret polarity per capture-area mention: a disabled crop setting
+      // is not a cropped recording promise, and cannot negate another mention.
+      const hasApsc = [...claimClause.matchAll(/\b(?:aps.c|super\s*35|S35)\b/gi)].some(label=>{
+        const before=claimClause.slice(0,label.index),after=claimClause.slice(label.index!+label[0].length);
+        const negated=/\b(?:without|not|no|rather than|instead of)\b[^,;]{0,30}$/i.test(before);
+        const disabled=/^(?:\s*\/\s*(?:aps.c|super\s*35|S35))?\s+(?:shooting|mode|crop)(?:\s+(?:mode|setting))?\s+(?:(?:is|turned|switched)\s+)?off\b/i.test(after);
+        // The second name in "APS-C/Super 35 crop off" shares its setting.
+        const sharedNegation=/\b(?:without|not|no|rather than|instead of)\s+(?:aps.c|super\s*35|S35)\s*\/\s*$/i.test(before);
+        return !negated&&!disabled&&!sharedNegation;
+      });
       const fullWidth = /\b(?:uncropped|full.width|full.sensor.width|entire sensor|full.frame image area)\b|\b(?:no|without|zero)\s+(?:any\s+)?crop\b/i.test(claimClause);
       // A generic 4K claim can use either concrete reviewed 4K format.
       // An explicit UHD/DCI claim needs that exact format's own mode proof.

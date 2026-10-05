@@ -186,3 +186,14 @@ it("separates current camera identity labels from recording capability claims",(
  expect(unsupportedCameraModeClaims("DCI 4K Full Frame Camera records DCI 4K60p internally.",[labelled])).toEqual([]);
  expect(unsupportedCameraModeClaims("BMPCC 6K Full Frame records DCI 4K60p internally. It records full-frame DCI 4K60p internally.",[camera])).toHaveLength(1);
 });
+
+describe("capture-area setting polarity",()=>{
+  it("recognises disabled crop settings without inventing full-width proof",()=>{
+    const text="The FX3 records full-width internal UHD 4K up to 60 fps with APS-C/Super 35 crop turned off.";
+    expect(unsupportedCameraModeClaims(text,evidence)).toEqual([]);
+    expect(unsupportedCameraModeClaims(text.replace("60 fps","120 fps"),evidence)).toHaveLength(1);
+    expect(unsupportedCameraModeClaims(text.replace("turned off","turned on"),evidence)).toHaveLength(1);
+    expect(unsupportedCameraModeClaims(text,[{...evidence[1],capabilities:{...evidence[1].capabilities,recording_modes:[]}}])).toHaveLength(1);
+    expect(unsupportedCameraModeClaims("Sony FX3 records UHD 4K60p in APS-C mode with Super 35 crop turned off.",evidence)).toHaveLength(1);
+  });
+});

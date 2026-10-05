@@ -549,3 +549,22 @@ it("validates the final live candidate with its actual Native stock receipts",()
  expect(unsupportedStockClaims(passiveActionFixture.text,receipts,scope)).toEqual([]);
  expect(unsupportedStockClaims(passiveActionFixture.text+" Sony FX3 is unavailable.",[],scope)).not.toEqual([]);
 });
+
+describe("coordinated category references to the preceding quote",()=>{
+ const items=[{name:"Sony FX3",quantity:1},{name:"Sony 16-35mm f2.8 GM",quantity:1}];
+ const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items};
+ const receipts:StockReceipt[]=items.map((i,index)=>({...i,item:i.name,kind:index?"lens":"camera",start_date:scope.start_date!,end_date:scope.end_date!,available:true,free_units:1,checked_at:1,call_id:`joint:${index}`,basket:{available:true,items}}));
+ const quote="For 2 days (20 October 2026 to 21 October 2026):\n- 1 × Sony FX3: £98\n- 1 × Sony 16-35mm f2.8 GM: £40\nTotal: £138\n\nBoth the camera and lens are available for those dates.";
+ it("binds camera/lens to the quoted members and requires joint dated stock proof",()=>{
+  expect(unsupportedStockClaims(quote,receipts,scope)).toEqual([]);
+  for(const evidence of [receipts.slice(0,1),receipts.map(r=>({...r,basket:undefined})),receipts.map(r=>({...r,end_date:"2026-10-22"})),receipts.map(r=>({...r,basket:{available:false,items}}))])
+   expect(unsupportedStockClaims(quote,evidence,scope).length).toBeGreaterThan(0);
+  expect(unsupportedStockClaims(quote.replace("1 × Sony FX3","2 × Sony FX3"),receipts,scope).length).toBeGreaterThan(0);
+ });
+ it("refuses ambiguous category members and disconnected antecedents",()=>{
+  const camera={...receipts[0],item:"Sony A7 V"};
+  expect(unsupportedStockClaims(quote.replace("Total: £138","- 1 × Sony A7 V: £50\nTotal: £188"),[...receipts,camera],scope).length).toBeGreaterThan(0);
+  expect(unsupportedStockClaims("Both the camera and lens are available for those dates.",receipts,scope).length).toBeGreaterThan(0);
+  expect(unsupportedStockClaims(quote.replace("Both the camera","I can check the pickup time.\nBoth the camera"),receipts,scope).length).toBeGreaterThan(0);
+ });
+});

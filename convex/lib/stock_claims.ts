@@ -345,7 +345,13 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
         const exact=knownSubjects.filter(i=>[i.name,...(i.aliases??[])].some(n=>sameItem(parsed.name,n))
           || receipts.some(r=>r.kind==="lens" && sameItem(r.item,i.name)) && sameItem(lens,i.name));
         const focal=references.get(identity(lens));
-        const resolved=exact.length===1 ? exact[0] : exact.length===0 ? focal?.item ?? lensSubject(parsed.name) : undefined;
+        // A category reference binds only to an unambiguous member of the
+        // immediately preceding quote, with that row's actual quantity.
+        // Never borrow an arbitrary camera/lens from the receipt history.
+        const category=/^(?:camera|body|lens)$/i.test(parsed.name) ? parsed.name.toLowerCase() : undefined;
+        const categoryMembers=category&&!precedingInvalid ? precedingBullets.filter(item=>receipts.some(r=>sameItem(r.item,item.name)&&
+          (category==="lens" ? r.kind==="lens" : ["camera","camera_body"].includes(r.kind??"")))) : [];
+        const resolved=exact.length===1 ? exact[0] : exact.length===0 ? focal?.item ?? lensSubject(parsed.name) ?? (categoryMembers.length===1 ? categoryMembers[0] : undefined) : undefined;
         return resolved ? [withQuantity(resolved,parsed.quantity??resolved.quantity)] : [];
       });
       if(targets.length!==coordinated.length)targets=[];
