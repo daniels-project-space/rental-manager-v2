@@ -1,3 +1,4 @@
+import {replacementValueComparisonText,type ReplacementValueComparison} from "../../convex/lib/replacement_value_comparison";
 import {inquiryOffersForText,inquiryQuoteText,monetaryProse} from "../../convex/lib/native_inquiry_offer";
 import type {RentalRequest} from "../../convex/lib/rental_request";
 import { bookingRecordText, type BookingRecord } from "../../convex/lib/booking_record";
@@ -28,6 +29,21 @@ export function nativeBookingRecord(record:BookingRecord|null|undefined,scope:Na
 export type NativeInquiryQuote={quote_key:string;display_text:string;request_revision:number;commercial_context?:MinimumRentalContext;commercial_guidance?:string};
 const record=(value:unknown):Record<string,unknown>|null=>value && typeof value==="object" && !Array.isArray(value)?value as Record<string,unknown>:null;
 const itemIdentity=(name:string)=>renterItemNames(name).map(n=>n.toLowerCase().replace(/[^a-z0-9]+/g," ").trim());
+
+export function nativeReplacementValueComparisons(value:unknown,scope:NativeQuoteScope,readRevision=scope.queryRevision?.()) {
+ const r=record(value),revision=scope.queryRevision?.();
+ if(!r||r.account_slug!==scope.accountSlug||r.thread_id!==scope.threadId||r.lower_value_only!==true||r.target_identity_resolved!==true||r.target_rentable!==true||
+  typeof r.target_item_id!=="string"||typeof r.target!=="string"||typeof r.target_replacement_cost_gbp!=="number"||
+  !Array.isArray(r.alternatives)||!Number.isInteger(revision)||readRevision!==revision)return [];
+ return r.alternatives.flatMap(raw=>{
+  const a=record(raw);if(!a||typeof a.item_id!=="string"||typeof a.name!=="string"||typeof a.replacement_cost_gbp!=="number")return [];
+  const facts={original:{item_id:r.target_item_id as string,name:r.target as string,value_gbp:r.target_replacement_cost_gbp as number},
+   alternative:{item_id:a.item_id,name:a.name,value_gbp:a.replacement_cost_gbp}};
+  const value_key=`value_${createHash("sha256").update(JSON.stringify([scope.threadId,scope.accountSlug,scope.requestMessageId??"",scope.rentalRequest??null,revision,facts])).digest("hex").slice(0,32)}`;
+  const comparison={value_key,...facts},display_text=replacementValueComparisonText(comparison);
+  return display_text?[{...comparison,request_revision:revision as number,display_text}]:[];
+ });
+}
 
 /** Identity and arithmetic come from the same Native joint check, not model
  * text or a model-supplied price. The key selects this request's receipt only. */
@@ -112,7 +128,7 @@ function kitReviewNotices(draft:string,receipts:ToolReceipt[],scope:NativeQuoteS
 /** Render before any guard or persistence. Unknown references, hand-written
  * money in structured prose, and receipts from before a write fail closed. */
 export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolReceipt[],scope:NativeQuoteScope):
-  {ok:true;draft:string;booking_record?:BookingRecord;quote_keys:string[];recommendation_quotes:RecommendationQuoteEvidence[];stock_quotes:StockQuoteEvidence[];commercial_quotes:PriceEvidence[]}|{ok:false;reason:string} {
+  {ok:true;draft:string;booking_record?:BookingRecord;quote_keys:string[];recommendation_quotes:RecommendationQuoteEvidence[];stock_quotes:StockQuoteEvidence[];commercial_quotes:PriceEvidence[];replacement_value_comparisons?:ReplacementValueComparison[]}|{ok:false;reason:string} {
   if(output.needs_human)return {ok:true,draft:"",quote_keys:[],recommendation_quotes:[],stock_quotes:[],commercial_quotes:[]};
   // A completed referral action carries its own next steps. Keep these with
   // the Native transaction rather than relying on the model to repeat them.
@@ -125,6 +141,14 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
       nativeInquiryQuote(quote,scope,descriptor.request_revision)?.quote_key===descriptor.quote_key;
   });
   const withNativeContext=(draft:string)=>[draft,...kitReviewNotices(draft,receipts,scope),...(restoredReferral?[FRIEND_BOOKING_NEXT_STEPS]:[])].filter(Boolean).join("\n\n");
+  const values=new Map<string,ReturnType<typeof nativeReplacementValueComparisons>[number]>();
+  for(const r of receipts)if(r.tool==="find_owned_alternatives"){
+    const descriptors=Array.isArray(r.result.replacement_value_comparisons)?r.result.replacement_value_comparisons:[];
+    for(const descriptor of descriptors){const d=record(descriptor);if(typeof d?.request_revision!=="number")continue;
+      for(const v of nativeReplacementValueComparisons(r.result,scope,d.request_revision))if(v.value_key===d.value_key)values.set(v.value_key,v);
+    }
+  }
+  const selectedValues:ReplacementValueComparison[]=[];
   const quotes=new Map<string,NativeInquiryQuote>();
   const stock=new Map<string,StockQuoteEvidence>();
   const qualified=new Map<string,RecommendationQuoteEvidence>();
@@ -158,6 +182,10 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
     if(part.type==="text") {
       if(monetaryProse.test(part.text))return {ok:false,reason:"Financial amounts must come from Native quote parts"};
       if(part.text.trim())parts.push(part.text.trim());
+    } else if(part.type==="replacement_value") {
+      const value=values.get(part.value_key);
+      if(!value||selectedValues.some(v=>v.value_key===part.value_key))return {ok:false,reason:"Replacement value selection is missing, stale or duplicated"};
+      selectedValues.push({value_key:value.value_key,original:value.original,alternative:value.alternative});parts.push(value.display_text);
     } else if(part.type==="booking_record") {
       const descriptor=scope.bookingRecord;
       if(selectedRecord||!descriptor||descriptor.record_key!==part.record_key||descriptor.request_revision!==scope.queryRevision?.()||
@@ -183,9 +211,9 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
   }
   if(!parts.length)return {ok:false,reason:"The rendered reply is empty"};
   const draft=withNativeContext(parts.join("\n\n")),stock_quotes=[...used].map(key=>stock.get(key)!);
-  const selection=inquiryOffersForText({model_id:"native-render",stage:scope.rentalStage??"INQUIRY",stock:[],stock_quotes,booking_record:selectedRecord},draft,draft);
+  const selection=inquiryOffersForText({model_id:"native-render",stage:scope.rentalStage??"INQUIRY",stock:[],stock_quotes,replacement_value_comparisons:selectedValues,booking_record:selectedRecord},draft,draft);
   if(selection.supported&&!selection.ok)return {ok:false,reason:"Rendered Native quote blocks are inconsistent or ambiguous"};
-  return {ok:true,draft,...(selectedRecord?{booking_record:selectedRecord}:{}),quote_keys:[...used],stock_quotes,commercial_quotes:[...used].flatMap(key=>commercial.has(key)?[commercial.get(key)!]:[]),recommendation_quotes:[...used].flatMap(key=>qualified.has(key)?[qualified.get(key)!]:[])};
+  return {ok:true,draft,replacement_value_comparisons:selectedValues,...(selectedRecord?{booking_record:selectedRecord}:{}),quote_keys:[...used],stock_quotes,commercial_quotes:[...used].flatMap(key=>commercial.has(key)?[commercial.get(key)!]:[]),recommendation_quotes:[...used].flatMap(key=>qualified.has(key)?[qualified.get(key)!]:[])};
 }
 
 /** A valid decision with an invalid quote is an owner review, not a broken

@@ -1,3 +1,4 @@
+import {replacementValueComparisonText} from "./lib/replacement_value_comparison";
 import {sendTestMessage} from "./renter_bot_lab_actions";
 import {insertRun} from "./renter_bot_harness";
 import {getFunctionName} from "convex/server";
@@ -25,6 +26,7 @@ function database() {
   const rows = new Map<string, any>(); let serial = 0;
   const db = {
     get: async (id:string) => rows.get(id)??null,
+    normalizeId:(table:string,id:string)=>rows.get(id)?.table===table?id:null,
     delete: async (id:string) => {rows.delete(id);},
     insert: async (table: string, value: any) => { const id = `${table}:${++serial}`; rows.set(id, { ...value, _id: id, _creationTime: serial, table }); return id; },
     patch: async (id: string, value: any) => { const row = { ...rows.get(id) }; for (const [k, v] of Object.entries(value)) { if (v === undefined) delete row[k]; else row[k] = v; } rows.set(id, row); },
@@ -43,6 +45,31 @@ function database() {
   return { ctx: { db }, rows };
 }
 const invoke = (fn: any, ctx: any, args: any) => fn._handler(ctx, args);
+describe("current Native replacement values at copied-reply approval",()=>{
+ async function fixture(){
+  const f=await setup();await f.ctx.db.patch(f.convId,{account_slug:"leo"});await f.ctx.db.patch(f.bookingId,{account_slug:"leo"});
+  const original=await f.ctx.db.insert("items",{name_canonical:"Sony FX3",kind:"camera",status:"active",qty:1,is_marketing_only:false,replacement_cost_gbp:3300});
+  const alternative=await f.ctx.db.insert("items",{name_canonical:"Sony A7 V",kind:"camera",status:"active",qty:1,is_marketing_only:false,replacement_cost_gbp:2200});
+  const comparison={value_key:"value_"+"a".repeat(32),original:{item_id:original,name:"Sony FX3",value_gbp:3300},alternative:{item_id:alternative,name:"Sony A7 V",value_gbp:2200}};
+  const text=replacementValueComparisonText(comparison)!;
+  await invoke(setDraft,f.ctx,{thread_id:f.args.thread_id,message_id:f.args.message_id,epoch:2,context_key:f.args.context_key,draft_text:text,evidence:{model_id:"native",stage:"INQUIRY",stock:[],replacement_value_comparisons:[comparison]}});
+  const approval=await invoke(getDraftApprovalContext,f.ctx,{thread_id:f.args.thread_id});
+  return {...f,original,alternative,text,comparison,approval:approval.draft_approval};
+ }
+ const check=(f:any,text=f.text)=>invoke(recheckCopiedDraftStock,f.ctx,{thread_id:f.args.thread_id,account_slug:"leo",text,draft_approval:f.approval});
+ it("approves information without creating a hire offer and refuses edited numbers",async()=>{
+  const f=await fixture();expect(await check(f)).toMatchObject({ok:true});
+  expect(await check(f,f.text.replace("£2,200","£2,100"))).toMatchObject({ok:false});
+  expect(f.rows.get(f.convId).ai_draft_evidence.stock_quotes).toBeUndefined();
+  expect(f.rows.get(f.bookingId).status).toBe("PENDING");
+ });
+ it("refuses changed values, unknown items and marketing items against current catalogue rows",async()=>{
+  for(const changes of [{replacement_cost_gbp:2100},{replacement_cost_gbp:null},{is_marketing_only:true},{status:"inactive"},{qty:0},{name_canonical:"Different physical camera"}]){
+   const f=await fixture();await f.ctx.db.patch(f.alternative,changes);expect(await check(f)).toMatchObject({ok:false,reason:"replacement_value_unverified"});
+  }
+  const f=await fixture();await f.ctx.db.delete(f.original);expect(await check(f)).toMatchObject({ok:false,reason:"replacement_value_unverified"});
+ });
+});
 describe("Native earlier hire descriptions",()=>{
  const request={kind:"inquiry",origin_message_id:"landscape-hire"} as const;
  const origin={message_id:request.origin_message_id,sender:"renter",rental_request:request,body_text:"Sony 16-35mm for landscapes on 22 to 24 October.",hygglo_sent_at:1};

@@ -20,7 +20,7 @@ import { renterContextOutputSchema } from "../../lib/renter-owner-check-context"
 import "server-only";
 
 import { recordRentalRequest,recordRecommendationRequirements } from "@/lib/renter-tool-scope";
-import { nativeInquiryQuote, nativeBookingRecord } from "@/lib/renter-native-quote";
+import { nativeInquiryQuote, nativeBookingRecord, nativeReplacementValueComparisons } from "@/lib/renter-native-quote";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import type { ConvexHttpClient } from "convex/browser";
@@ -385,7 +385,7 @@ export const checkLocationTool = createTool({
 export const findOwnedAlternativesTool = createTool({
   id: "find_owned_alternatives",
   description:
-    "Find owned alternatives that meet the requested role, sensor format, internal 4K, built-in ND and native mount before checking stock. Pass camera_requirements for every explicit hard camera requirement and lens_requirements for focus, wide-angle, macro, projection, coverage, focal length and aperture requirements. Do not call a lens suitable when lens_requirement_checked is false or required properties are unverified; clarify the exact lens/camera instead. Missing camera mode proof can return camera_review_needed and an owner_review_workflow. Those candidates are not qualified options; continue the owner check without asking the renter for permission. An unreviewed mode does not prove a camera is incapable or unavailable. Cinema/interchangeable-lens bodies must not be replaced with action cameras. Pass start_date, end_date, quantity and current thread_id when known: only options available for that request are returned. Without dates, ownership does NOT prove availability; check_availability before promising an option. For a current confirmed booking, pass booking_use=additional to retain the existing basket, or replacement plus its exact replace_product_id to remove the selected listing before checking the proposed basket. A replacement removes that listing’s kit contents; explain the difference. For a separate new hire use booking_use=separate: Native retains the current reservation and evaluates only the new candidate. Never use standalone to bypass an existing booking. Unknown context cannot prove availability. Returns account prices and tier tables. Look up the selected option's exact multi-day total before quoting it.",
+    "Find owned alternatives that meet the requested role, sensor format, internal 4K, built-in ND and native mount before checking stock. Pass camera_requirements for every explicit hard camera requirement and lens_requirements for focus, wide-angle, macro, projection, coverage, focal length and aperture requirements. Do not call a lens suitable when lens_requirement_checked is false or required properties are unverified; clarify the exact lens/camera instead. Missing camera mode proof can return camera_review_needed and an owner_review_workflow. Those candidates are not qualified options; continue the owner check without asking the renter for permission. An unreviewed mode does not prove a camera is incapable or unavailable. Cinema/interchangeable-lens bodies must not be replaced with action cameras. Pass start_date, end_date, quantity and current thread_id when known: only options available for that request are returned. Without dates, ownership does NOT prove availability; check_availability before promising an option. For a current confirmed booking, pass booking_use=additional to retain the existing basket, or replacement plus its exact replace_product_id to remove the selected listing before checking the proposed basket. A replacement removes that listing’s kit contents; explain the difference. For a separate new hire use booking_use=separate: Native retains the current reservation and evaluates only the new candidate. Never use standalone to bypass an existing booking. Unknown context cannot prove availability. Returns account prices and tier tables. Look up the selected option's exact multi-day total before quoting it. Equipment values have their own Native replacement_value_comparisons descriptors; select value_key in a replacement_value reply part instead of writing their amounts in text.",
   inputSchema: z.object({
     account_slug: z.string(),
     kind: z
@@ -420,8 +420,9 @@ export const findOwnedAlternativesTool = createTool({
     const result=await convex().query(anyApi.renter_bot_tools.find_owned_alternatives, recording
       ? {...input,camera_requirements:{...input.camera_requirements,recording:{...recording,resolution:canonicalRecordingResolution(recording.resolution)}}}
       : input);
-    recordRecommendationRequirements(currentRenterToolScope(),result);
-    return result;
+    const scope=currentRenterToolScope();
+    recordRecommendationRequirements(scope,result);
+    return {...result,replacement_value_comparisons:scope?nativeReplacementValueComparisons(result,scope,scope.queryReadRevision?.(result)):[]};
   },
 });
 

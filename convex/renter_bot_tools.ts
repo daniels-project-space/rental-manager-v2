@@ -1131,6 +1131,7 @@ export const find_owned_alternatives = query({
     const targetName = item_name ?? exclude_name ?? null;
     let targetId: string | null = null;
     let targetValue: number | null = null;
+    let targetRentable=false;
     let target: { name: string; kind?: string | null; lens_mount?: string | null } | null = null;
     if (targetName) {
       // Resolve against the FULL catalog, not just owned: the item being
@@ -1142,6 +1143,7 @@ export const find_owned_alternatives = query({
       if (tm.match && tm.confident) {
         targetValue = typeof tm.match.replacement_cost_gbp === "number" && tm.match.replacement_cost_gbp > 0 ? tm.match.replacement_cost_gbp : null;
         targetId = String(tm.match._id);
+        targetRentable=tm.match.status==="active"&&!tm.match.is_marketing_only&&tm.match.qty>0;
         target = {
           name: tm.match.name_canonical,
           kind: tm.match.kind ?? null,
@@ -1292,6 +1294,7 @@ export const find_owned_alternatives = query({
         ?physical!.components.some(c=>c.kind==="lens"):null;
       const verified = verifiedItemSpec(spec, it.name_canonical);
       alternatives.push({
+        item_id:String(it._id),
         product_id:altPid??null,
         quote: quote ? { ...quote, start_date, end_date, product_id: altPid, matched_listing: altListing?.name } : null,
         price_tiers: altTiers,
@@ -1348,6 +1351,7 @@ export const find_owned_alternatives = query({
       matched_by: matchedBy,
       kind_fell_back: kindFellBack,
       target: target?.name ?? null,
+      target_rentable:targetRentable,
       target_identity_resolved: targetId != null,
       target_item_id:targetId!=null?String(targetId):null,
       lower_value_only: lower_value_only === true,

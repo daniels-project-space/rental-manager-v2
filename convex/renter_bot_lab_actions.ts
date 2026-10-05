@@ -333,6 +333,7 @@ export const sendTestMessage = action({
       productionFlags: draftResult.flags??draftResult.review?.flags,
       priceEvidence:draftResult.evidence?.prices,
         bookingRecord:draftResult.evidence?.booking_record,
+      replacementValueComparisons:draftResult.evidence?.replacement_value_comparisons,
       priceRequest:draftResult.evidence?.stock_request,
       lastRenterMessage:args.text,
     });

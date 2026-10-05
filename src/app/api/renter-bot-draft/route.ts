@@ -1404,6 +1404,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       selectedInquiryQuotes:renderedReply.commercial_quotes,
       recommendation_quotes:renderedReply.recommendation_quotes,
       stock_quotes:renderedReply.stock_quotes,
+      replacement_value_comparisons:renderedReply.replacement_value_comparisons,
       rental_request:renterToolScope.rentalRequest,
       owner_checks: nativeOwnerChecks(toolReceipts,{quotes:renderedReply.stock_quotes,discussion:`${lastRenter}\n${obj.draft??""}`}),
       needs_human: !!obj.needs_human,

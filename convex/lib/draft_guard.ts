@@ -1,3 +1,4 @@
+import {replacementValueComparisonsForText,type ReplacementValueComparison} from "./replacement_value_comparison";
 import {rentalReplyPermissions} from "./rental_stage";
 import { unsupportedRenterCameraClaims } from "./renter_camera_identity";
 import { hasSingleBookingRecord, type BookingRecord } from "./booking_record";
@@ -52,6 +53,7 @@ export interface GuardResult {
 
 export interface GuardOpts {
   bookingRecord?: BookingRecord;
+  replacementValueComparisons?:ReplacementValueComparison[];
   newInquiry?:boolean;
   catalogueReadinessEvidence?: CatalogueReadinessEvidence[];
   stockEvidence?: StockReceipt[];
@@ -606,7 +608,7 @@ const ASSERTS_AVAIL_RE =
   }
 
   if (opts.stockEvidence !== undefined || text.split(/(?<=[.!?])\s+|\n+|;\s*|,\s+/).some(sentence=>rentalRefusalSubject(sentence))) {
-    for (const failure of unsupportedStockClaims(text, opts.stockEvidence ?? [], opts.stockRequest ?? { items: [] }, marketingItems, opts.lastRenterMessage)) {
+    for (const failure of unsupportedStockClaims(replacementValueComparisonsForText(opts.replacementValueComparisons,text,text).claim_text, opts.stockEvidence ?? [], opts.stockRequest ?? { items: [] }, marketingItems, opts.lastRenterMessage)) {
       push(failure.negative ? "UNGROUNDED_UNAVAILABILITY" : "UNGROUNDED_AVAILABILITY", failure.detail, "flagged");
     }
   }
@@ -1038,10 +1040,10 @@ const ASSERTS_AVAIL_RE =
   }
 
   if(opts.bookingRecord&&!hasSingleBookingRecord(text,opts.bookingRecord))push("BOOKING_RECORD_UNVERIFIED","The historical financial record was edited, omitted or duplicated.","flagged");
-  if (opts.priceEvidence !== undefined) for (const detail of unsupportedPriceClaims(text, opts.priceEvidence, opts.priceRequest ?? opts.stockRequest ?? {items:[]}, opts.lastRenterMessage,opts.bookingRecord)) {
+  if (opts.priceEvidence !== undefined) for (const detail of unsupportedPriceClaims(replacementValueComparisonsForText(opts.replacementValueComparisons,text,text).claim_text, opts.priceEvidence, opts.priceRequest ?? opts.stockRequest ?? {items:[]}, opts.lastRenterMessage,opts.bookingRecord)) {
     push("PRICE_HALLUCINATION", detail, "flagged");
   }
-  if (opts.priceEvidence !== undefined) for (const detail of incompleteSetupQuotes(text, opts.priceEvidence)) {
+  if (opts.priceEvidence !== undefined) for (const detail of incompleteSetupQuotes(replacementValueComparisonsForText(opts.replacementValueComparisons,text,text).claim_text, opts.priceEvidence)) {
     push("PRICE_HALLUCINATION", detail, "flagged");
   }
 

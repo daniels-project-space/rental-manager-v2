@@ -1,3 +1,4 @@
+import {replacementValueComparisonsForText} from "./lib/replacement_value_comparison";
 import {currentKitEvidence} from "./lib/current_kit_evidence";
 import {unsupportedKitClaims,kitClaimsNeedEvidence} from "./lib/kit_claims";
 import {inquiryOffersForText} from "./lib/native_inquiry_offer";
@@ -2167,6 +2168,14 @@ export const recheckCopiedDraftStock = internalQuery({
       const keys=new Set(selection.quotes.map(q=>q.quote_key));
       evidence={...evidence!,stock_quotes:selection.quotes,recommendation_quotes:evidence?.recommendation_quotes?.filter(q=>keys.has(q.quote_key))};
     }
+    const values=replacementValueComparisonsForText(evidence?.replacement_value_comparisons,conv?.ai_draft_text,text);
+    if(!values.ok)return {ok:false,reason:"replacement_value_text_unverified"};
+    for(const comparison of values.comparisons)for(const proof of [comparison.original,comparison.alternative]){
+      const id=ctx.db.normalizeId("items",proof.item_id),item=id?await ctx.db.get(id):null;
+      if(!item||item.status!=="active"||item.is_marketing_only||item.qty<=0||item.name_canonical!==proof.name||item.replacement_cost_gbp!==proof.value_gbp)
+        return {ok:false,reason:"replacement_value_unverified"};
+    }
+    const financialClaimText=values.claim_text;
     if(evidence?.rental_request){
       try{await validateRentalRequest(ctx,thread_id,evidence.rental_request,latest?.sender==="renter"?latest.message_id:undefined);}
       catch{return {ok:false,reason:"rental_request_unverified"};}
@@ -2216,8 +2225,8 @@ export const recheckCopiedDraftStock = internalQuery({
     const prices:PriceEvidence[]=evidence?.stock_quotes?.length?[]:evidence?.prices??[];
     const inbound=latest?.sender!=="owner"?latest?.body_text??"":"";
     if(!evidence?.stock_request && !evidence?.recommendation_quotes?.length && !evidence?.stock_quotes?.length) {
-      if(unsupportedPriceClaims(text,prices,request,inbound,evidence?.booking_record).length)return {ok:false,reason:"price_unverified"};
-      return unsupportedStockClaims(text,[],request).length?{ok:false,reason:"stock_unverified"}:{ok:true};
+      if(unsupportedPriceClaims(financialClaimText,prices,request,inbound,evidence?.booking_record).length)return {ok:false,reason:"price_unverified"};
+      return unsupportedStockClaims(financialClaimText,[],request).length?{ok:false,reason:"stock_unverified"}:{ok:true};
     }
     const sources=await loadStockSources(ctx);
     // Selected Native offers are commitments to a particular physical basket,
@@ -2254,7 +2263,7 @@ export const recheckCopiedDraftStock = internalQuery({
         return {ok:false,reason:"price_unverified"};
       prices.push(...renterPriceEvidence([{tool:"check_basket_availability",call_id:`send-quote:${quote.quote_key}`,result:fresh}],[],thread_id));
     }
-    if(unsupportedPriceClaims(text,prices,request,inbound,evidence?.booking_record).length)return {ok:false,reason:"price_unverified"};
+    if(unsupportedPriceClaims(financialClaimText,prices,request,inbound,evidence?.booking_record).length)return {ok:false,reason:"price_unverified"};
     // A copied recommendation must still qualify even when its prose says
     // only "this setup". Reuse the initial Native criteria and physical IDs;
     // an old model claim or old review is never current technical proof.
@@ -2274,7 +2283,7 @@ export const recheckCopiedDraftStock = internalQuery({
     }
     // Missing legacy scope cannot qualify a stock assertion, but a human's
     // edited reply with no such assertion does not need old stock receipts.
-    if (!evidence?.stock_request) return unsupportedStockClaims(text,[],request).length?{ok:false,reason:"stock_unverified"}:{ok:true};
+    if (!evidence?.stock_request) return unsupportedStockClaims(financialClaimText,[],request).length?{ok:false,reason:"stock_unverified"}:{ok:true};
     const receipts:StockReceipt[]=[];
     const checked=new Set<string>();
     for(const old of evidence.stock) {
@@ -2309,7 +2318,7 @@ export const recheckCopiedDraftStock = internalQuery({
       const item=resolveStockItem(name,sources.items);
       return item.confident&&!!item.match&&(item.match.is_marketing_only===true||item.match.status!=="active"||item.match.qty<=0);
     });
-    return unsupportedStockClaims(text,receipts,request,excluded,latest?.sender!=="owner" ? latest?.body_text ?? "" : "").length?
+    return unsupportedStockClaims(financialClaimText,receipts,request,excluded,latest?.sender!=="owner" ? latest?.body_text ?? "" : "").length?
       {ok:false,reason:"stock_unverified",checked_at:Date.now()}:{ok:true,checked_at:Date.now()};
   },
 });

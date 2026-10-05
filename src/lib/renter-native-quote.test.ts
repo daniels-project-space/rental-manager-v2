@@ -2,7 +2,7 @@ import {inquiryOffersForText} from "../../convex/lib/native_inquiry_offer";
 import { REFERRAL_RESTORE_OFFER } from "../../convex/lib/referral_offer";
 import {stockRequestForInquiryQuote} from "../../convex/lib/stock_claims";
 import {describe,it,expect} from "vitest";
-import {nativeInquiryQuote,nativeBookingRecord,renderNativeQuoteReply,reviewNativeQuoteReply} from "./renter-native-quote";
+import {nativeInquiryQuote,nativeBookingRecord,nativeReplacementValueComparisons,renderNativeQuoteReply,reviewNativeQuoteReply} from "./renter-native-quote";
 import {bookingRecordText,type BookingRecord} from "../../convex/lib/booking_record";
 import {renterPriceEvidence} from "./renter-price-evidence";
 import {renterToolReceipts,stockReceipts} from "./renter-tool-evidence";
@@ -409,5 +409,31 @@ describe("a Native basket review cannot silently swallow a requested quote",()=>
   expect(renderNativeQuoteReply({...base,draft},[evidence],{...context,queryRevision:()=>1,queryReadRevision:()=>0})).toMatchObject({ok:true,draft});
   const resolved={...evidence,result:{...basketReview,owner_checks:[],technical_qualification:{...basketReview.technical_qualification,verified:true}}};
   expect(renderNativeQuoteReply({...base,draft},[evidence,resolved],context)).toMatchObject({ok:true,draft});
+ });
+});
+
+
+describe("Native equipment value comparisons",()=>{
+ const source={account_slug:"leo",thread_id:scope.threadId,lower_value_only:true,target_identity_resolved:true,target_rentable:true,
+  target:"Sony FX3",target_item_id:"original",target_replacement_cost_gbp:3300,alternatives:[{item_id:"alternative",name:"Sony A7 V",replacement_cost_gbp:2200}]};
+ const receipt=()=>({tool:"find_owned_alternatives",call_id:"actual-search",result:{...source,replacement_value_comparisons:nativeReplacementValueComparisons(source,scope)}});
+ it("renders exact values independently of hire quotes and refuses changed or stale selection",()=>{
+  const descriptor=nativeReplacementValueComparisons(source,scope)[0];expect(descriptor.display_text).toContain("£2,200");
+  const output={...base,reply_parts:[{type:"replacement_value" as const,value_key:descriptor.value_key}]};
+  const rendered=renderNativeQuoteReply(output,[receipt()],scope);expect(rendered.ok).toBe(true);if(!rendered.ok)return;
+  expect(rendered.stock_quotes).toEqual([]);expect(rendered.commercial_quotes).toEqual([]);expect(rendered.recommendation_quotes).toEqual([]);
+  expect(rendered.replacement_value_comparisons).toHaveLength(1);
+  const evidence={model_id:"native",stage:"INQUIRY",stock:[],replacement_value_comparisons:rendered.replacement_value_comparisons};
+  expect(inquiryOffersForText(evidence,rendered.draft,rendered.draft)).toMatchObject({supported:true,ok:true,quotes:[]});
+  expect(inquiryOffersForText(evidence,rendered.draft,rendered.draft.replace("£2,200","£2,100")).ok).toBe(false);
+  expect(renderNativeQuoteReply(output,[receipt()],{...scope,queryRevision:()=>1}).ok).toBe(false);
+  expect(renderNativeQuoteReply({...base,reply_parts:[...output.reply_parts,...output.reply_parts]},[receipt()],scope).ok).toBe(false);
+ });
+ it("does not invent replacement value proof or accept another request's descriptor",()=>{
+  for(const changed of [{...source,account_slug:"dbcinema"},{...source,thread_id:"other"},{...source,target_rentable:false},
+   {...source,target_replacement_cost_gbp:null},{...source,alternatives:[{...source.alternatives[0],replacement_cost_gbp:3400}]}])
+   expect(nativeReplacementValueComparisons(changed,scope)).toEqual([]);
+  const d=nativeReplacementValueComparisons(source,scope)[0];
+  expect(nativeReplacementValueComparisons(source,{...scope,requestMessageId:"different"})[0].value_key).not.toBe(d.value_key);
  });
 });
