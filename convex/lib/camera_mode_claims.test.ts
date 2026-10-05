@@ -8,6 +8,24 @@ const evidence: CameraEvidence[] = [
   { names: ["Sony FX3", "FX3"], capabilities: { role: "interchangeable_lens", sensor_format: "full_frame", internal_4k: true, recording_modes: [mode(60, "full_frame", true), mode(120, "full_frame", false)] } },
 ];
 describe("recording mode claims use exact model and capture area", () => {
+  it("requires reviewed proof for a generic 4K recording assertion without a frame rate",()=>{
+    const basic=[{...evidence[1],capabilities:{...evidence[1].capabilities,recording_modes:[]}}];
+    expect(unsupportedCameraModeClaims("Canon R5 records 4K internally.",basic)).toHaveLength(1);
+    expect(unsupportedCameraModeClaims("Sony FX3 records 4K internally.",basic)).toEqual([]);
+    expect(unsupportedCameraModeClaims("Sony FX3 records 4K externally.",basic)).toHaveLength(1);
+    expect(unsupportedCameraModeClaims("Sony FX3 records uncropped 4K internally.",basic)).toHaveLength(1);
+    expect(unsupportedCameraModeClaims("Sony FX3 records DCI 4K internally.",basic)).toHaveLength(1);
+    expect(unsupportedCameraModeClaims("Sony FX3 records 4K60p internally.",basic)).toHaveLength(1);
+    expect(unsupportedCameraModeClaims("Sony FX3 records 4K internally.",[{...basic[0],capabilities:{...basic[0].capabilities,internal_4k:false}}])).toHaveLength(1);
+    const guard=guardDraft("Canon R5 records 4K internally.",{history:[],lastRenterMessage:"Does it record 4K?",cameraEvidence:basic});
+    expect(guard.flags.some(f=>f.type==="CAMERA_MODE_HALLUCINATION")).toBe(true);
+  });
+  it("does not treat a model identity, question, requirement or accessory as a generic recording promise",()=>{
+    for(const text of ["Does Canon R5 record 4K internally?","I'll check whether Canon R5 records 4K internally.","You need 4K recording for this shoot.","The Sony FX3 kit includes a 4K monitor."])
+      expect(unsupportedCameraModeClaims(text,evidence)).toEqual([]);
+    const named=[{...evidence[1],names:["Blackmagic Pocket Cinema Camera 4K"],capabilities:{...evidence[1].capabilities,internal_4k:false,recording_modes:[]}}];
+    expect(unsupportedCameraModeClaims("I have the Blackmagic Pocket Cinema Camera 4K.",named)).toEqual([]);
+  });
   it("blocks the actual misleading A7 V full-frame 4K120 recommendation", () => {
     expect(unsupportedCameraModeClaims("Sony A7 V: Records internally up to 4K 120p on a full-frame sensor. 3-day total is £110.", evidence)).toHaveLength(1);
   });

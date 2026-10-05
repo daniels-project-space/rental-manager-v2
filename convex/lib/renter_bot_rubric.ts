@@ -165,7 +165,7 @@ export function scoreDraft(input: RubricInput): RubricOutput {
   add(
     "gear_knowledge",
     "n_a",
-    "No automated check yet — would need factsClaimed cross-referenced against a real catalog source, not implemented in this pass.",
+    "Production checks cover selected 4K recording, built-in ND, lens focus and kit claims. They do not verify every specification or whether the reply fully answers the renter's requirements; broader gear knowledge remains unverified.",
   );
 
   // ── Pricing / quoting ──

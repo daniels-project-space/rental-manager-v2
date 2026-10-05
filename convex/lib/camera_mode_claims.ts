@@ -33,6 +33,15 @@ export function unsupportedCameraModeClaims(text: string, evidence: CameraEviden
     // Format proof is still required when no frame rate is stated. Rate claims
     // above are checked separately, so a format-only match cannot weaken them.
     for(const match of content.matchAll(/\b(?:UHD|DCI)\s+4k\b|\b4k\s+(?:UHD|DCI)\b/gi))claims.push({match,fps:NaN});
+    // A recording assertion without a format/rate still needs its reviewed
+    // capability. Reuse the same subject and clause checks as detailed modes.
+    for(const match of content.matchAll(/\b4k\b/gi)) {
+      if(claims.some(c=>match.index!>=c.match.index!&&match.index!<c.match.index!+c.match[0].length))continue;
+      const prefix=content.slice(0,match.index),after=content.slice(match.index!+match[0].length);
+      const recording=/\b(?:records?|shoots?|captures?|films?)\b/i.test(prefix);
+      const support=/\b(?:supports?|offers?|can\s+do)\b/i.test(prefix)&&!/^\s+(?:monitors?|screens?|displays?)\b/i.test(after);
+      if(recording||support)claims.push({match,fps:NaN});
+    }
     for (const {match,fps} of claims) {
       // A negative/conditional recording claim is not a promise that a mode
       // can be supplied. Do not let a different clause excuse an assertion.
@@ -59,6 +68,7 @@ export function unsupportedCameraModeClaims(text: string, evidence: CameraEviden
       const independentAssertion = clauseNamed.length > 0 || explicitCameraModel.test(clause) ||
         /\b(?:records|shoots|supports|achieves|can|does|is|has|offers|tops\s*out|requires)\b|\b(?:they|these|those|bodies|cameras|models)\s+(?:record|shoot|support|achieve|offer|require)\b/i.test(clause.slice(0, match.index! - start));
       const polarityScope = start > 0 && sentence[start - 1] === "," && !independentAssertion ? sentence.slice(0, end) : clause;
+      if(/^\s*(?:does|do|can|could|would|is|are)\b/i.test(polarityScope)&&/\?\s*$/.test(polarityScope))continue;
       // A fronted request phrase has its governing predicate AFTER the comma:
       // "For a camera recording ..., I'm checking the recording specs." It
       // describes the search target, not a verified capability. Only carry that
@@ -91,8 +101,10 @@ export function unsupportedCameraModeClaims(text: string, evidence: CameraEviden
         return !recordingLocation||/\b(?:not|without|rather than|instead of)\s*$/i.test(before)?[]:[/^internal/i.test(label[1])];
       }))];
       const candidates = clauseNamed.length ? clauseNamed : subject;
-      if (!candidates.length || !candidates.every(e => (locations.length?locations:[undefined]).every(internal=>e.capabilities.recording_modes?.some(m =>
+      const genericCapability=Number.isNaN(nominalFps)&&!formats.length&&!requirement.capture_format&&!requirement.full_width;
+      if (!candidates.length || !candidates.every(e => (locations.length?locations:[undefined]).every(internal=>(genericCapability&&internal!==false&&e.capabilities.internal_4k || e.capabilities.recording_modes?.some(m =>
         (Number.isNaN(nominalFps)||m.nominal_fps.includes(nominalFps)) && matchesRecordingRequirement(m, {...requirement,internal}))
+        )
         && formats.every(resolution=>e.capabilities.recording_modes?.some(m=>(Number.isNaN(nominalFps)||m.nominal_fps.includes(nominalFps))&&matchesRecordingRequirement(m,{...requirement,resolution,internal})))))) failures.push(sentence.trim());
     }
   }
