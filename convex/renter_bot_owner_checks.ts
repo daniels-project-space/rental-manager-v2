@@ -59,7 +59,7 @@ export async function ownerChecksForBot(ctx:QueryCtx,threadId:string,contextKey:
   context_changed:task.source_context_key!==contextKey,source_message_id:task.source_message_id,last_requested_message_id:ownerCheckRequestMessageId(task),
   specification_result_verified:verified,current_specification_reviews:reviews,
   specification_guidance:reviews?"These current reviewed requirements are independent of task handling. A match establishes only the requested technical properties; recheck dated stock, price and kit contents before offering it. Missing proof remains unknown, never unavailable.":null,
-  customer_input_required:false};}));
+  customer_input_required:false as const};}));
 }
 /** Recompute capability absence from current Native inventory, independently
  * of model prose, tool-use booleans, stock results and prices. */

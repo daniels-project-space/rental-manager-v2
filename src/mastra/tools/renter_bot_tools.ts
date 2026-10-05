@@ -1,4 +1,5 @@
 import { RECORDING_REQUIREMENT_RESOLUTIONS, canonicalRecordingResolution } from "../../../convex/lib/camera_requirements";
+import { renterContextOutputSchema } from "../../lib/renter-owner-check-context";
 /**
  * Renter-bot Mastra tools (7) — thin wrappers over Convex queries.
  *
@@ -60,32 +61,9 @@ export const getRenterContextTool = createTool({
   inputSchema: z.object({
     thread_id: z.string().describe("Hygglo thread id (= hygglo_order_id)"),
   }),
-  outputSchema: z.object({
-    thread_id: z.string(),
-    account_slug: z.string(),
-    hygglo_order_id: z.string(),
-    renter: z.unknown().nullable(),
-    renter_history:z.object({platform_completed_rentals:z.number().nullable(),recorded_rentals_with_us:z.number().nullable(),last_rental_with_us_at:z.number().nullable()}),
-    conversation_stage: z.string(),
-    rental_stage: z.unknown(),
-    last_message_id: z.string().nullable(),
-    owner_checks: z.array(z.object({
-      kind:z.enum(["lens_recommendation","camera_recommendation","listing_mapping"]),product_id:z.number().nullable(),
-      task_id:z.string(),status:z.enum(["pending","handled_by_owner"]),requirements:z.unknown(),lens_mount:z.string().nullable(),
-      start_date:z.string().nullable(),end_date:z.string().nullable(),quantity:z.number(),candidate_names:z.array(z.string()),
-      context_changed:z.boolean(),source_message_id:z.string(),specification_result_verified:z.literal(false),customer_input_required:z.literal(false),
-    })),
-    last_messages: z.array(
-      z.object({
-        sender: z.string(),
-        sender_name: z.string(),
-        body: z.string(),
-        at: z.number(),
-      }),
-    ),
-  }),
+  outputSchema: renterContextOutputSchema,
   execute: async ({ thread_id }) => {
-    return await convex().query(anyApi.renter_bot_tools.get_renter_context, {
+    return await convex().query(api.renter_bot_tools.get_renter_context, {
       thread_id,
     });
   },

@@ -1,0 +1,63 @@
+{
+  "provenance": "Actual Native renter context for a scoped Lab camera owner task, 2026-10-05. No equipment specification was changed.",
+  "check": {
+    "candidate_names": [
+      "BMPCC 6K Pro",
+      "Sony A7 III",
+      "Sony A7 V"
+    ],
+    "candidate_product_ids": null,
+    "context_changed": false,
+    "current_specification_reviews": [
+      {
+        "mismatched": [],
+        "name": "BMPCC 6K Pro",
+        "status": "unknown",
+        "unknown": [
+          "recording"
+        ]
+      },
+      {
+        "mismatched": [],
+        "name": "Sony A7 III",
+        "status": "unknown",
+        "unknown": [
+          "built_in_nd",
+          "recording"
+        ]
+      },
+      {
+        "mismatched": [],
+        "name": "Sony A7 V",
+        "status": "unknown",
+        "unknown": [
+          "built_in_nd",
+          "recording"
+        ]
+      }
+    ],
+    "customer_input_required": false,
+    "end_date": "2026-10-21",
+    "kind": "camera_recommendation",
+    "last_requested_message_id": "__probe__lab-1791176601647-4n6rq72w-m1791176604372-snezk8d3",
+    "lens_mount": null,
+    "product_id": null,
+    "quantity": 1,
+    "requirements": {
+      "built_in_nd": true,
+      "recording": {
+        "full_width": true,
+        "internal": true,
+        "min_fps": 120,
+        "resolution": "uhd_4k"
+      },
+      "role": "interchangeable_lens"
+    },
+    "source_message_id": "__probe__lab-1791176601647-4n6rq72w-m1791176604372-snezk8d3",
+    "specification_guidance": "These current reviewed requirements are independent of task handling. A match establishes only the requested technical properties; recheck dated stock, price and kit contents before offering it. Missing proof remains unknown, never unavailable.",
+    "specification_result_verified": false,
+    "start_date": "2026-10-20",
+    "status": "pending",
+    "task_id": "kx7xg4trm77hgf1x15cydad52n8fpa0p"
+  }
+}

@@ -78,6 +78,7 @@ export default defineConfig({
       "convex/lib/renter_identity.test.ts",
       "src/lib/renter-tool-evidence.test.ts",
       "src/lib/renter-tool-scope.test.ts",
+      "src/lib/renter-owner-check-context.test.ts",
       "convex/lib/thread_messages.test.ts",
       "convex/lib/base_listing_identity.test.ts",
       "convex/lib/effectiveDates.test.ts",
