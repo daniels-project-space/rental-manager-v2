@@ -45,6 +45,56 @@ function database() {
   return { ctx: { db }, rows };
 }
 const invoke = (fn: any, ctx: any, args: any) => fn._handler(ctx, args);
+describe("Native independent hire budget qualification",()=>{
+ async function fixture(){
+  const f=database();const ids:any={};
+  for(const [name,pid,rate,marketing] of [["Sony FX3",10,49,false],["Sony A7 V",20,42,false],["Sony A7 III",30,28,false],["Canon R5",40,10,true]] as const){
+   const id=await f.ctx.db.insert("items",{name_canonical:name,kind:"camera",lens_mount:"E",status:"active",qty:10,is_marketing_only:marketing});ids[name]=id;
+   await f.ctx.db.insert("online_listings",{account_slug:"leo",product_id:pid,name,description:`Included in this kit: • 1x ${name}`,daily_price:rate});
+   await f.ctx.db.insert("listing_resolution_override",{account_slug:"leo",product_id:pid,components:[{item_id:id,qty:1}]});
+   await f.ctx.db.insert("hygglo_products",{accountSlug:"leo",productId:pid,masterItemId:id,prices:[{days:1,pricePerDay:rate}]});
+   const proof={verified_model:name,source_url:"https://manufacturer.example/mode",verified_at:1};
+   await f.ctx.db.insert("item_specs",{item_name_canonical:name,item_id:id,source:"manufacturer-verified",...proof,
+    camera_capabilities:{...proof,role:"interchangeable_lens",native_mount:"E",sensor_format:"full_frame",internal_4k:true,
+     recording_modes:[{...proof,resolution:"uhd_4k",nominal_fps:[30],capture_format:"full_frame",full_width:true,internal:true,conditions:[]}]}});
+  }
+  const args={account_slug:"leo",kind:"camera",item_name:"Sony FX3",lens_mount:"E",camera_requirements:{sensor_format:"full_frame",recording:{resolution:"uhd_4k",min_fps:30,full_width:true,internal:true}},start_date:"2026-10-20",end_date:"2026-10-21",quantity:1,booking_use:"standalone",max_rental_total_gbp:65};
+  return {...f,ids,args};
+ }
+ it("filters a verified over-budget offer while retaining an exactly priced suitable alternative",async()=>{
+  const f=await fixture(),r=await invoke(find_owned_alternatives,f.ctx,f.args);
+  expect(r.alternatives.map((a:any)=>[a.name,a.quote.listed_total_gbp])).toEqual([["Sony A7 III",56]]);
+  expect(r).toMatchObject({budget_outcome:"verified_matches",budget_price_scope:"independent_candidate_hire",rejected:{budget_over_limit:1}});
+  expect(r.rejected_budget_options).toEqual([{item_id:f.ids["Sony A7 V"],name:"Sony A7 V",total_gbp:84,product_id:20}]);
+  expect(r.alternatives.some((a:any)=>a.name==="Canon R5")).toBe(false);
+ });
+ it("applies exact duration tiers and quantity rather than a daily-price shortcut",async()=>{
+  const f=await fixture();const hp=[...f.rows.values()].find(r=>r.table==="hygglo_products"&&r.productId===20);
+  await f.ctx.db.patch(hp._id,{prices:[{days:1,pricePerDay:42},{days:3,pricePerDay:21}]});
+  const r=await invoke(find_owned_alternatives,f.ctx,{...f.args,end_date:"2026-10-22"});
+  expect(r.alternatives.map((a:any)=>[a.name,a.quote.listed_total_gbp])).toEqual([["Sony A7 V",63]]);
+  expect((await invoke(find_owned_alternatives,f.ctx,{...f.args,quantity:2})).alternatives).toEqual([]);
+ });
+ it("keeps unknown price and recording facts explicit and opens specification review",async()=>{
+  const f=await fixture();
+  for(const row of f.rows.values())if(row.table==="hygglo_products"&&row.productId===30)await f.ctx.db.patch(row._id,{prices:[]});
+  for(const row of f.rows.values())if(row.table==="online_listings"&&row.product_id===30)await f.ctx.db.patch(row._id,{daily_price:undefined});
+  for(const row of f.rows.values())if(row.table==="item_specs"&&row.item_id===f.ids["Sony A7 III"])await f.ctx.db.patch(row._id,{camera_capabilities:{...row.camera_capabilities,recording_modes:[]}});
+  const r=await invoke(find_owned_alternatives,f.ctx,f.args);
+  expect(r.alternatives).toEqual([]);expect(r.budget_outcome).toBe("needs_review");
+  expect(r.budget_price_review_needed).toEqual([{item_id:f.ids["Sony A7 III"],name:"Sony A7 III",product_id:null}]);
+  expect(r.owner_check).toMatchObject({kind:"camera_recommendation",candidate_item_ids:[f.ids["Sony A7 III"]]});
+  // A correct specification does not invent the missing rental total.
+  for(const row of f.rows.values())if(row.table==="item_specs"&&row.item_id===f.ids["Sony A7 III"])await f.ctx.db.patch(row._id,{camera_capabilities:{...row.camera_capabilities,recording_modes:[{verified_model:"Sony A7 III",source_url:"https://manufacturer.example/mode",verified_at:1,resolution:"uhd_4k",nominal_fps:[30],capture_format:"full_frame",full_width:true,internal:true,conditions:[]}]}});
+  expect((await invoke(find_owned_alternatives,f.ctx,f.args)).alternatives).toEqual([]);
+ });
+ it("cannot turn a candidate price into an amended-basket total or use invalid scope",async()=>{
+  const f=await fixture();expect(await invoke(find_owned_alternatives,f.ctx,{...f.args,booking_use:"replacement"})).toMatchObject({budget_outcome:"joint_quote_required",alternatives:[]});
+  for(const changed of [{start_date:undefined},{end_date:"2026-02-30"},{quantity:0},{max_rental_total_gbp:-1}])
+   expect(await invoke(find_owned_alternatives,f.ctx,{...f.args,...changed})).toMatchObject({budget_outcome:"invalid_budget_scope",alternatives:[]});
+ });
+});
+
 describe("current Native replacement values at copied-reply approval",()=>{
  async function fixture(){
   const f=await setup();await f.ctx.db.patch(f.convId,{account_slug:"leo"});await f.ctx.db.patch(f.bookingId,{account_slug:"leo"});

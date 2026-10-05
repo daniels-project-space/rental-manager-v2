@@ -1042,6 +1042,7 @@ export const find_owned_alternatives = query({
     item_name: v.optional(v.string()),
     exclude_name: v.optional(v.string()),
     lower_value_only: v.optional(v.boolean()),
+    max_rental_total_gbp: v.optional(v.number()),
     start_date: v.optional(v.string()),
     end_date: v.optional(v.string()),
     quantity: v.optional(v.number()),
@@ -1050,7 +1051,11 @@ export const find_owned_alternatives = query({
     replace_product_id: v.optional(v.number()),
     replace_quantity: v.optional(v.number()),
   },
-  handler: async (ctx, { account_slug, kind, lens_mount, item_name, exclude_name, start_date, end_date, quantity, thread_id, camera_requirements, lens_requirements, lower_value_only, booking_use, replace_product_id, replace_quantity }) => {
+  handler: async (ctx, { account_slug, kind, lens_mount, item_name, exclude_name, start_date, end_date, quantity, thread_id, camera_requirements, lens_requirements, lower_value_only, max_rental_total_gbp, booking_use, replace_product_id, replace_quantity }) => {
+    const quoteDays=inclusiveRentalDays(start_date,end_date);
+    if(max_rental_total_gbp!==undefined&&(!Number.isFinite(max_rental_total_gbp)||max_rental_total_gbp<=0||
+      quoteDays===null||quoteDays>366||!Number.isInteger(quantity??1)||(quantity??1)<1||(quantity??1)>20))
+      return {count:0,alternatives:[],budget_outcome:"invalid_budget_scope",error:"A rental-total limit needs a positive amount, valid exact dates and quantity. A daily rate cannot establish a total-budget match."};
     // Owned = active + not marketing-only + qty>0 on the SHARED items table
     // (accounts front the same gear). If kind is given AND real, narrow by it;
     // otherwise scan all and rank by NAME similarity to the requested item —
@@ -1118,6 +1123,42 @@ export const find_owned_alternatives = query({
     const specs = await ctx.db.query("item_specs").collect();
     const specsByItem = inventorySpecMap(specs);
     const pidsForItem = (itemId: string): number[] => baseListingProductIds(account_slug, itemId, idxAll, ovAll, allInventory,listings);
+    // Resolve each candidate's exact account offering once. Budget screening
+    // happens before stock/kit reads, and never uses a curated daily estimate.
+    const readCandidateListing=(it:typeof owned[number])=>{
+      const candidatePids=pidsForItem(String(it._id));
+      const candidateContents=new Map<number,ReturnType<typeof resolveListingComponents>>();
+      const verifiedListings=listings.filter(listing=>{
+        if(!candidatePids.includes(listing.product_id))return false;
+        const mapping=ovAll.find(row=>row.account_slug===account_slug&&row.product_id===listing.product_id);
+        const contents=resolveListingComponents(allInventory,mapping?.components.map(c=>({item_id:String(c.item_id),qty:c.qty})),String(it._id),quantity??1,listing.description);
+        candidateContents.set(listing.product_id,contents);
+        return contents.complete&&contents.owned===true;
+      });
+      const altListing=chooseBaseListing(verifiedListings,candidatePids),altPid=altListing?.product_id;
+      return {candidateContents,altListing,altPid};
+    };
+    const candidateListings=new Map<string,ReturnType<typeof readCandidateListing>>();
+    const candidateListing=(it:typeof owned[number])=>{
+      const id=String(it._id);let listing=candidateListings.get(id);
+      if(!listing){listing=readCandidateListing(it);candidateListings.set(id,listing);}return listing;
+    };
+    const readCandidatePrice=async(it:typeof owned[number])=>{
+      const {candidateContents,altListing,altPid}=candidateListing(it);
+      let altRawTiers:PriceTier[]=[],altTiers:string|null=null,altOneDay:number|null=null;
+      if(altPid!=null){
+        const hp=await ctx.db.query("hygglo_products").withIndex("by_account_product",q=>q.eq("accountSlug",account_slug).eq("productId",altPid)).unique();
+        altRawTiers=(hp?.prices??[]) as PriceTier[];
+        altTiers=describeTiers(altRawTiers);altOneDay=tierRateForDays(altRawTiers,1);
+      }
+      const quote=quoteDays!==null&&altListing?rentalQuote(altRawTiers,altListing.daily_price,quoteDays,quantity??1):null;
+      return {candidateContents,altListing,altPid,altTiers,altOneDay,quote};
+    };
+    const candidatePrices=new Map<string,ReturnType<typeof readCandidatePrice>>();
+    const candidatePrice=(it:typeof owned[number])=>{
+      const id=String(it._id);let read=candidatePrices.get(id);
+      if(!read){read=readCandidatePrice(it);candidatePrices.set(id,read);}return read;
+    };
     // Alternative listing quotes require identity-backed account pricing.
 
     // Rank by SUBSTITUTABILITY, not bare name overlap. A renter asking for a
@@ -1190,6 +1231,8 @@ export const find_owned_alternatives = query({
     const stage = rentalStage(booking,londonToday()).stage;
     const closed = ["COMPLETED","CANCELLED","VERIFICATION_FAILED"].includes(stage);
     const requiresBookingContext = ["CONFIRMED_UPCOMING","COLLECTION_DUE","IN_USE","RETURN_OVERDUE"].includes(stage);
+    if(max_rental_total_gbp!==undefined&&booking_use!=="separate"&&(requiresBookingContext||booking_use&&booking_use!=="standalone"))
+      return {count:0,alternatives:[],budget_outcome:"joint_quote_required",error:"This total-budget filter applies to an independent candidate hire. A current-booking addition or replacement needs a Native quote for the complete proposed basket; its candidate price is not the basket total."};
     const existingLines: RecommendationLine[] = labOrder ? labOrder.items.map(l=>({name:l.name,qty:l.qty,product_id:l.product_id,item_id:l.item_id ? String(l.item_id) : undefined}))
       : booking?.hygglo_items?.length ? booking.hygglo_items.map(l=>({name:l.name,qty:l.qty ?? 1,product_id:l.product_id}))
       : booking?.items?.map(l=>({name:l.item_name,qty:l.qty ?? 1})) ?? [];
@@ -1202,7 +1245,9 @@ export const find_owned_alternatives = query({
     const basketContext = {requires_booking_context:requiresBookingContext,open_basket:!closed && existingLines.length>0,
       can_replace:!["IN_USE","RETURN_OVERDUE"].includes(stage),booking_use,expected_use:expectedUse,replace_product_id,replace_quantity};
     const alternatives: Array<Record<string, unknown>> = [];
-    const rejected = { requirements: 0, stock: 0 };
+    const rejected = { requirements: 0, stock: 0, budget_over_limit:0, budget_price_unknown:0 };
+    const rejectedBudgetOptions:Array<{item_id:string;name:string;total_gbp:number;product_id:number|null}>=[];
+    const budgetPriceReviewNeeded:Array<{item_id:string;name:string;product_id:number|null}>=[];
     const lensReviewNeeded: Array<{item_id:string;name:string;unverified_requirements:string[]}> = [];
     const cameraReviewNeeded: Array<{item_id:string;name:string;unverified_requirements:string[]}> = [];
     const rejectedStockOptions: Array<Record<string,unknown>> = [];
@@ -1216,6 +1261,8 @@ export const find_owned_alternatives = query({
       if (String(it._id) === targetId || (excludedMatch && it._id === excludedMatch._id)) continue;
       if (exclude && nameLower === exclude) continue;
       if (targetLower && nameLower === targetLower) continue;
+      const requiredKind = normKind(target?.kind ?? kind);
+      if (requiredKind && normKind(it.kind) !== requiredKind) continue;
       // Normalised compare: inventory spells the same mount several ways
       // ("Canon EF mount" vs "EF"), and an exact compare silently filtered out
       // every genuinely-compatible lens.
@@ -1223,40 +1270,41 @@ export const find_owned_alternatives = query({
       const capabilities = verifiedCameraCapabilities(spec, it.name_canonical);
       const lensCapabilities = lensQuery && it.kind === "lens" ? verifiedLensCapabilities(spec,it.name_canonical) : null;
       if (!cameraQuery && lens_mount && !sameMount(it.lens_mount ?? "", lens_mount)) continue;
+      const budgetPrice=max_rental_total_gbp!==undefined?await candidatePrice(it):null;
+      if(budgetPrice){
+        if(budgetPrice.quote&&Math.round(budgetPrice.quote.listed_total_gbp*100)>Math.round(max_rental_total_gbp!*100)){
+          rejected.budget_over_limit++;
+          rejectedBudgetOptions.push({item_id:String(it._id),name:it.name_canonical,total_gbp:budgetPrice.quote.listed_total_gbp,product_id:budgetPrice.altPid??null});
+          continue;
+        }
+      }
+      const recordBudgetPriceReview=()=>{
+        if(budgetPrice&&!budgetPrice.quote){
+          rejected.budget_price_unknown++;
+          budgetPriceReviewNeeded.push({item_id:String(it._id),name:it.name_canonical,product_id:budgetPrice.altPid??null});
+        }
+      };
       if (lensQuery) {
         if (it.kind !== "lens" || !lensRequirementsSpecified) {rejected.requirements++; continue;}
         const assessment = assessLensRequirements(lensCapabilities, desiredLensRequirements);
         if (assessment.status !== "match") {
-          if (assessment.status === "unknown") lensReviewNeeded.push({item_id:String(it._id),name:it.name_canonical,unverified_requirements:assessment.unknown});
+          if (assessment.status === "unknown") {lensReviewNeeded.push({item_id:String(it._id),name:it.name_canonical,unverified_requirements:assessment.unknown});recordBudgetPriceReview();}
           rejected.requirements++; continue;
         }
       }
       if(cameraQuery) {
         const assessment=assessCameraRequirements(capabilities,requirements,lens_mount);
         if(assessment.status!=="match") {
-          if(assessment.status==="unknown")cameraReviewNeeded.push({item_id:String(it._id),name:it.name_canonical,unverified_requirements:assessment.unknown});
+          if(assessment.status==="unknown"){cameraReviewNeeded.push({item_id:String(it._id),name:it.name_canonical,unverified_requirements:assessment.unknown});recordBudgetPriceReview();}
           rejected.requirements++;continue;
         }
       }
-      // With a known target, keep suggestions in the same category. Offering a
-      // lens as a substitute for a camera body is never useful.
-      const requiredKind = normKind(target?.kind ?? kind);
-      if (requiredKind && normKind(it.kind) !== requiredKind) continue;
+      if(budgetPrice&&!budgetPrice.quote){recordBudgetPriceReview();continue;}
 
       // Tier table for the listing this alternative is priced from, so an
       // upsell quoted during a 5-day booking uses the 5-day rate rather than
       // the 1-day one.
-      const candidatePids = pidsForItem(String(it._id));
-      const candidateContents=new Map<number,ReturnType<typeof resolveListingComponents>>();
-      const verifiedListings = listings.filter(listing => {
-        if (!candidatePids.includes(listing.product_id)) return false;
-        const mapping = ovAll.find(row => row.account_slug === account_slug && row.product_id === listing.product_id);
-        const contents = resolveListingComponents(allInventory, mapping?.components.map(c => ({item_id:String(c.item_id),qty:c.qty})), String(it._id), quantity ?? 1, listing.description);
-        candidateContents.set(listing.product_id,contents);
-        return contents.complete && contents.owned === true;
-      });
-      const altListing = chooseBaseListing(verifiedListings, candidatePids);
-      const altPid = altListing?.product_id;
+      const {candidateContents,altListing,altPid}=candidateListing(it);
       const basket = recommendationBasket(existingLines,{name:it.name_canonical,qty:quantity ?? 1,item_id:String(it._id),product_id:altPid},basketContext);
       const check = stockSources && start_date && end_date && basket.ok
         ? await checkOrderRentalStock(ctx,account_slug,basket.lines,start_date,end_date,basket.use==="separate"?"":thread_id ?? "",stockSources) : null;
@@ -1269,22 +1317,7 @@ export const find_owned_alternatives = query({
       const stock = stockSources && start_date && end_date ? {available:check?.available ?? null,
         start_date,end_date,quantity:quantity ?? 1,free_units:["standalone","separate"].includes(basket.use??"") ? check?.receipts.find(r=>r.item_id===String(it._id))?.free_units ?? null : null,
         checked_at:Date.now(),basis:basket.use ?? "unresolved_booking_context",reason:basket.ok ? check?.reason ?? "dates_required" : basket.reason} : null;
-      let altRawTiers: PriceTier[] = [];
-      let altTiers: string | null = null;
-      let altOneDay: number | null = null;
-      if (altPid != null) {
-        const hp = await ctx.db
-          .query("hygglo_products")
-          .withIndex("by_account_product", (q) =>
-            q.eq("accountSlug", account_slug).eq("productId", altPid),
-          )
-          .unique();
-        altRawTiers = (hp?.prices ?? []) as PriceTier[];
-        altTiers = describeTiers(altRawTiers);
-        altOneDay = tierRateForDays((hp?.prices ?? []) as PriceTier[], 1);
-      }
-      const quoteDays = start_date && end_date ? Math.round((Date.parse(end_date) - Date.parse(start_date)) / 86400000) + 1 : null;
-      const quote = quoteDays != null && altListing ? rentalQuote(altRawTiers, altListing.daily_price, quoteDays, quantity ?? 1) : null;
+      const {altTiers,altOneDay,quote}=budgetPrice??await candidatePrice(it);
       const physical=altPid!=null?candidateContents.get(altPid):undefined;
       const kitContext=await listingKitContext(ctx,account_slug,it,physical?.components??[],allInventory,
         {indexes:idxAll,overrides:ovAll,peers:listings});
@@ -1375,6 +1408,14 @@ export const find_owned_alternatives = query({
         status:"owner_review_required",persistence:"with_saved_draft_or_review",customer_input_required:false,specification_result_verified:false,
       } : null,
       lens_guidance: "Pass a structured lens_requirements object for the desired option, including {} when no technical constraints apply. Current-item descriptions and questions are not alternative requirements. Lens suitability requires reviewed exact-model properties. Unknown does not satisfy a hard requirement. lens_review_needed names are owned items requiring specification review, not verified alternatives. Zero verified matches never proves that we do not own an item or that it is booked; explain missing verification and ask the owner to check. Wide-angle labels do not guarantee angle of view on a cropped sensor; confirm the camera and recording mode. F-stops and T-stops are distinct. Stock and native mount checks remain separate.",
+      max_rental_total_gbp:max_rental_total_gbp??null,
+      budget_price_scope:max_rental_total_gbp!==undefined?"independent_candidate_hire":null,
+      budget_outcome:max_rental_total_gbp===undefined?null:alternatives.length?"verified_matches":
+        cameraReviewNeeded.length||lensReviewNeeded.length||budgetPriceReviewNeeded.length?"needs_review":"no_verified_match",
+      rejected_budget_options:rejectedBudgetOptions.slice(0,8),
+      budget_price_review_needed:budgetPriceReviewNeeded.slice(0,8),
+      budget_matches_exhaustive:false,
+      budget_guidance:max_rental_total_gbp===undefined?null:"Returned alternatives have a verified dated candidate hire total within the supplied maximum. The limit is a hard constraint, not an ideal target. Rejected-budget rows are price diagnostics, not stock or capability proof. Unknown price or mode proof does not establish an affordable match or that no suitable owned option exists. Continue specification/price owner review where needed; do not claim the cheapest option from partial verification. This search grants no discount or booking authority. Current-booking changes require a quote for the complete proposed basket.",
       recording_requirement_checked: !!requirements.recording,
       // Only the recorded mode properties are checked, never arbitrary codecs.
       requirements_match_is_not_codec_verification: true,
