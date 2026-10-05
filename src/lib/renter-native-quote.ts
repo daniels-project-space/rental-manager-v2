@@ -2,6 +2,7 @@ import {inquiryOffersForText,inquiryQuoteText,monetaryProse} from "../../convex/
 import type {RentalRequest} from "../../convex/lib/rental_request";
 import { bookingRecordText, type BookingRecord } from "../../convex/lib/booking_record";
 import { REFERRAL_RESTORE_OFFER } from "../../convex/lib/referral_offer";
+import { FRIEND_BOOKING_NEXT_STEPS } from "../../convex/lib/verification_failure";
 import {isClosedRentalStage} from "../../convex/lib/rental_stage";
 import { minimumRentalContext, minimumRentalPrompt, type MinimumRentalContext } from "../../convex/lib/minimum_rental";
 import type { PriceEvidence } from "../../convex/lib/price_claims";
@@ -69,6 +70,17 @@ export function nativeInquiryQuote(value:unknown,scope:NativeQuoteScope,readRevi
 export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolReceipt[],scope:NativeQuoteScope):
   {ok:true;draft:string;booking_record?:BookingRecord;quote_keys:string[];recommendation_quotes:RecommendationQuoteEvidence[];stock_quotes:StockQuoteEvidence[];commercial_quotes:PriceEvidence[]}|{ok:false;reason:string} {
   if(output.needs_human)return {ok:true,draft:"",quote_keys:[],recommendation_quotes:[],stock_quotes:[],commercial_quotes:[]};
+  // A completed referral action carries its own next steps. Keep these with
+  // the Native transaction rather than relying on the model to repeat them.
+  const restoredReferral=receipts.some(({tool,result})=>{
+    if(tool!=="restore_referral_basket" || result.ok!==true || result.action_performed!==true ||
+      result.source!=="native_lab_amendment" || result.thread_id!==scope.threadId || result.account_slug!==scope.accountSlug ||
+      record(result.context_transition)?.source!=="native_lab_amendment")return false;
+    const quote=record(result.verified_inquiry_quote),descriptor=record(quote?.renter_quote);
+    return typeof descriptor?.request_revision==="number" && typeof descriptor.quote_key==="string" &&
+      nativeInquiryQuote(quote,scope,descriptor.request_revision)?.quote_key===descriptor.quote_key;
+  });
+  const withNextSteps=(draft:string)=>restoredReferral?`${draft}\n\n${FRIEND_BOOKING_NEXT_STEPS}`:draft;
   const quotes=new Map<string,NativeInquiryQuote>();
   const stock=new Map<string,StockQuoteEvidence>();
   const qualified=new Map<string,RecommendationQuoteEvidence>();
@@ -93,7 +105,7 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
   }
   if(!output.reply_parts?.length) {
     if(receipts.some(r=>r.result.new_inquiry===true||r.tool==="check_basket_availability"&&record(r.result.quote)?.source==="native_inquiry_basket") && monetaryProse.test(output.draft))return {ok:false,reason:"Use the Native quote selection for inquiry prices"};
-    return {ok:true,draft:output.draft,quote_keys:[],recommendation_quotes:[],stock_quotes:[],commercial_quotes:[]};
+    return {ok:true,draft:withNextSteps(output.draft),quote_keys:[],recommendation_quotes:[],stock_quotes:[],commercial_quotes:[]};
   }
   if(output.draft.trim())return {ok:false,reason:"Structured reply parts cannot be mixed with a second draft"};
   const used=new Set<string>(),parts:string[]=[];
@@ -126,7 +138,7 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
     }
   }
   if(!parts.length)return {ok:false,reason:"The rendered reply is empty"};
-  const draft=parts.join("\n\n"),stock_quotes=[...used].map(key=>stock.get(key)!);
+  const draft=withNextSteps(parts.join("\n\n")),stock_quotes=[...used].map(key=>stock.get(key)!);
   const selection=inquiryOffersForText({model_id:"native-render",stage:scope.rentalStage??"INQUIRY",stock:[],stock_quotes,booking_record:selectedRecord},draft,draft);
   if(selection.supported&&!selection.ok)return {ok:false,reason:"Rendered Native quote blocks are inconsistent or ambiguous"};
   return {ok:true,draft,...(selectedRecord?{booking_record:selectedRecord}:{}),quote_keys:[...used],stock_quotes,commercial_quotes:[...used].flatMap(key=>commercial.has(key)?[commercial.get(key)!]:[]),recommendation_quotes:[...used].flatMap(key=>qualified.has(key)?[qualified.get(key)!]:[])};

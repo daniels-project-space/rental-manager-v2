@@ -153,10 +153,22 @@ describe("Native inquiry quote rendering",()=>{
  });
  it("renders an atomic inquiry write through the existing quote, stock and price evidence path",()=>{
   const next={...scope,queryRevision:()=>2},quote=nativeInquiryQuote(fixtures.first,next)!;
-  const result={ok:true,action_performed:true,source:"native_lab_amendment",context_transition:{source:"native_lab_amendment"},stock_receipts:fixtures.first.components,verified_inquiry_quote:{...fixtures.first,renter_quote:quote}};
+  const result={ok:true,action_performed:true,source:"native_lab_amendment",thread_id:scope.threadId,account_slug:scope.accountSlug,context_transition:{source:"native_lab_amendment"},stock_receipts:fixtures.first.components,verified_inquiry_quote:{...fixtures.first,renter_quote:quote}};
   const receipts=renterToolReceipts([{toolName:"restore_referral_basket",toolCallId:"restore-once",result}]);
   const rendered=renderNativeQuoteReply(parts(quote.quote_key),receipts,next);
   expect(rendered.ok).toBe(true);expect(stockReceipts(receipts)).toHaveLength(fixtures.first.components.length);
+  if(rendered.ok){expect(rendered.draft).toContain("approval, payment and verification");expect(rendered.draft).toContain("even if your account was verified before");}
+  const readOnly=renderNativeQuoteReply(parts(quote.quote_key),[receipt(fixtures.first,next)],next);
+  if(readOnly.ok)expect(readOnly.draft).not.toContain("even if your account was verified before");
+  const prose={...base,draft:"I've restored the gear to your inquiry."};
+  const actionOnly=renderNativeQuoteReply(prose,receipts,next);
+  if(actionOnly.ok)expect(actionOnly.draft).toContain("approval, payment and verification");
+  for(const changed of [{...result,action_performed:false},{...result,already_applied:true,action_performed:false},
+    {...result,thread_id:"other"},{...result,account_slug:"other"},{...result,context_transition:{source:"unverified"}},
+    {...result,verified_inquiry_quote:{...result.verified_inquiry_quote,renter_quote:{request_revision:2}}}]){
+   const untouched=renderNativeQuoteReply(prose,[{tool:"restore_referral_basket",call_id:"unverified",result:changed}],next);
+   if(untouched.ok)expect(untouched.draft).not.toContain("even if your account was verified before");
+  }
   expect(renterPriceEvidence(receipts,[],scope.threadId)).toContainEqual(expect.objectContaining({source:"native_inquiry_basket",quote_role:"inquiry",total_gbp:138}));
   if(rendered.ok)expect(unsupportedPriceClaims(rendered.draft,renterPriceEvidence(receipts,[],scope.threadId),{items:[]})).toEqual([]);
   expect(renderNativeQuoteReply(parts(nativeInquiryQuote(fixtures.first,scope)!.quote_key),receipts,next).ok).toBe(false);

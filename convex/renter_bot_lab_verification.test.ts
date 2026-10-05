@@ -12,8 +12,16 @@ function fixture() {
   const db = {
     query: (table: string) => {
       const filters: Array<[string, any]> = [];
+      let direction="asc";
       const q = { eq: (key: string, value: any) => { filters.push([key, value]); return q; } };
       const result: any = { withIndex: (_name: string, select: any) => { select(q); return result; },
+        order: (value:string) => { direction=value; return result; },
+        [Symbol.asyncIterator]: async function* () {
+          const rows=await result.collect();
+          rows.sort((a:any,b:any)=>(a.hygglo_sent_at??0)-(b.hygglo_sent_at??0));
+          if(direction==="desc")rows.reverse();
+          yield* rows;
+        },
         collect: async () => (tables[table] ?? []).filter(row => filters.every(([key, value]) => row[key] === value)),
         first: async () => (await result.collect())[0] ?? null, unique: async () => (await result.collect())[0] ?? null };
       return result;
