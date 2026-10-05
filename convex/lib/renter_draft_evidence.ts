@@ -15,6 +15,7 @@ export const stockQuoteEvidenceValidator=v.object({
   quote_key:v.string(),start_date:v.string(),end_date:v.string(),
   rental_request:v.optional(rentalRequestValidator),
   new_inquiry:v.optional(v.literal(true)),
+  // Exact Native financial block; referral offers additionally retain the action.
   referral_code:v.optional(v.string()),offer_text:v.optional(v.string()),
   // Optional for schema compatibility; old drafts are invalidated on release.
   listing_quote:v.optional(v.object({total_gbp:v.number(),lines:v.array(v.object({product_id:v.number(),name:v.string(),quantity:v.number(),total_gbp:v.number()}))})),

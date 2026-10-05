@@ -1,3 +1,4 @@
+import {inquiryOffersForText,inquiryQuoteText,monetaryProse} from "../../convex/lib/native_inquiry_offer";
 import type {RentalRequest} from "../../convex/lib/rental_request";
 import { bookingRecordText, type BookingRecord } from "../../convex/lib/booking_record";
 import { REFERRAL_RESTORE_OFFER } from "../../convex/lib/referral_offer";
@@ -11,7 +12,6 @@ import { renterPriceEvidence } from "./renter-price-evidence";
 import type { ToolReceipt } from "./renter-tool-evidence";
 import type { RenterBotOutput } from "./renter-bot-output";
 import { renterItemNames } from "../../convex/lib/renter_item_names";
-import { shortItemName } from "../../convex/lib/item_display_name";
 
 export type NativeQuoteScope={bookingRecord?:NativeBookingRecord;referralContext?:{ok?:boolean;code?:string;already_linked?:boolean;items?:Array<{product_id:number}>};referralContextRevision?:number;threadId:string;accountSlug:string;requestMessageId?:string;rentalRequest?:RentalRequest;rentalStage?:string;minimumRentalThreshold?:number;queryRevision?:()=>number;recommendationRequirements?:RecommendationRequirement[]};
 export type NativeBookingRecord={record_key:string;display_text:string;request_revision:number;record:BookingRecord};
@@ -23,10 +23,7 @@ export function nativeBookingRecord(record:BookingRecord|null|undefined,scope:Na
 }
 export type NativeInquiryQuote={quote_key:string;display_text:string;request_revision:number;commercial_context?:MinimumRentalContext;commercial_guidance?:string};
 const record=(value:unknown):Record<string,unknown>|null=>value && typeof value==="object" && !Array.isArray(value)?value as Record<string,unknown>:null;
-const money=(value:number)=>`£${value.toFixed(2).replace(/\.00$/,"")}`;
-const date=(iso:string)=>new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"long",year:"numeric",timeZone:"UTC"}).format(new Date(`${iso}T12:00:00Z`));
 const itemIdentity=(name:string)=>renterItemNames(name).map(n=>n.toLowerCase().replace(/[^a-z0-9]+/g," ").trim());
-const monetaryProse=/(?:[£$€]\s*\d|\b\d+(?:\.\d+)?\s*(?:GBP|pounds?|pence)\b|\b(?:price|costs?|total|rate|budget|charge)\b[^.!?\n]{0,24}\b\d+(?:\.\d+)?\b)/i;
 
 /** Identity and arithmetic come from the same Native joint check, not model
  * text or a model-supplied price. The key selects this request's receipt only. */
@@ -59,10 +56,11 @@ export function nativeInquiryQuote(value:unknown,scope:NativeQuoteScope,readRevi
     !prices.some(p=>p.kind==="rental"&&p.call_id===`native-render:line:${l.product_id}`&&p.quantity===l.qty&&p.total_gbp===l.line_total_gbp)))return null;
   const quote_key=`inquiry_${createHash("sha256").update(JSON.stringify([scope.threadId,scope.accountSlug,scope.requestMessageId??"",scope.rentalRequest??null,readRevision,requirementsKey,result.physical_identity_key,total.start_date,total.end_date,
     lines.map(l=>[l!.product_id,l!.name,l!.qty,l!.line_total_gbp]),total.total_gbp])).digest("hex").slice(0,32)}`;
-  const period=total.start_date===total.end_date?date(total.start_date):`${date(total.start_date)} to ${date(total.end_date)}`;
-  const rows=lines.map(l=>`- ${l!.qty} × ${shortItemName(l!.name as string)}: ${money(l!.line_total_gbp as number)}`);
+  const display_text=inquiryQuoteText({start_date:total.start_date,end_date:total.end_date,listing_quote:{total_gbp:total.total_gbp,
+    lines:lines.map(l=>({product_id:l!.product_id as number,name:l!.name as string,quantity:l!.qty as number,total_gbp:l!.line_total_gbp as number}))}});
+  if(!display_text)return null;
   const commercial_context=typeof scope.minimumRentalThreshold==="number"?minimumRentalContext("INQUIRY",scope.minimumRentalThreshold,[],{items:[]},[total]):undefined;
-  return {quote_key,request_revision:readRevision,...(commercial_context?{commercial_context,commercial_guidance:minimumRentalPrompt(commercial_context)}:{}),display_text:`For ${total.days} ${total.days===1?"day":"days"} (${period}):\n${rows.join("\n")}\nTotal: ${money(total.total_gbp)}`};
+  return {quote_key,request_revision:readRevision,...(commercial_context?{commercial_context,commercial_guidance:minimumRentalPrompt(commercial_context)}:{}),display_text};
 }
 
 /** Render before any guard or persistence. Unknown references, hand-written
@@ -80,7 +78,7 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
     const quote=nativeInquiryQuote(receipt.result,scope,descriptor.request_revision);
     if(quote && descriptor.quote_key===quote.quote_key){
       quotes.set(quote.quote_key,quote);
-      stock.set(quote.quote_key,{quote_key:quote.quote_key,...(scope.rentalRequest?{rental_request:structuredClone(scope.rentalRequest)}:{}),start_date:receipt.result.start_date as string,end_date:receipt.result.end_date as string,
+      stock.set(quote.quote_key,{quote_key:quote.quote_key,offer_text:quote.display_text,...(scope.rentalRequest?{rental_request:structuredClone(scope.rentalRequest)}:{}),start_date:receipt.result.start_date as string,end_date:receipt.result.end_date as string,
         ...(isClosedRentalStage(scope.rentalStage)||receipt.result.new_inquiry===true?{new_inquiry:true as const}:{}),
         listing_quote:{total_gbp:(receipt.result.quote as {total_gbp:number}).total_gbp,
           lines:(receipt.result.quote as {lines:Array<{product_id:number;name:string;qty:number;line_total_gbp:number}>}).lines.map(l=>({product_id:l.product_id,name:l.name,quantity:l.qty,total_gbp:l.line_total_gbp}))},
@@ -127,5 +125,8 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
     }
   }
   if(!parts.length)return {ok:false,reason:"The rendered reply is empty"};
-  return {ok:true,draft:parts.join("\n\n"),...(selectedRecord?{booking_record:selectedRecord}:{}),quote_keys:[...used],stock_quotes:[...used].map(key=>stock.get(key)!),commercial_quotes:[...used].flatMap(key=>commercial.has(key)?[commercial.get(key)!]:[]),recommendation_quotes:[...used].flatMap(key=>qualified.has(key)?[qualified.get(key)!]:[])};
+  const draft=parts.join("\n\n"),stock_quotes=[...used].map(key=>stock.get(key)!);
+  const selection=inquiryOffersForText({model_id:"native-render",stage:scope.rentalStage??"INQUIRY",stock:[],stock_quotes,booking_record:selectedRecord},draft,draft);
+  if(selection.supported&&!selection.ok)return {ok:false,reason:"Rendered Native quote blocks are inconsistent or ambiguous"};
+  return {ok:true,draft,...(selectedRecord?{booking_record:selectedRecord}:{}),quote_keys:[...used],stock_quotes,commercial_quotes:[...used].flatMap(key=>commercial.has(key)?[commercial.get(key)!]:[]),recommendation_quotes:[...used].flatMap(key=>qualified.has(key)?[qualified.get(key)!]:[])};
 }

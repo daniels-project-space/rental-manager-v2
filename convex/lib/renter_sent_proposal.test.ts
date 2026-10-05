@@ -66,7 +66,7 @@ describe("owner message proposal archive",()=>{
  it("archives only an actually displayed explicit Native referral action for an empty inquiry",async()=>{
   const f=fixture(),order=f.tables.renter_bot_lab_orders[0];order.items=[];order.changes=[];
   f.conversation.ai_draft_context_key=draftContextKey(null,undefined,order);
-  const text="For 2 days:\n- 1 × Sony FX3: £98\nTotal: £98\n\n"+REFERRAL_RESTORE_OFFER;
+  const text="For 2 days (20 October 2026 to 21 October 2026):\n- 1 × Sony FX3: £98\nTotal: £98\n\n"+REFERRAL_RESTORE_OFFER;
   f.conversation.ai_draft_text=text;f.conversation.ai_draft_evidence={model_id:"native",stage:"INQUIRY",stock:[],stock_quotes:[{quote_key:"selected",referral_code:"ref-code",offer_text:text,start_date:"2026-10-20",end_date:"2026-10-21",items:[{item_id:"fx3",name:"Sony FX3",quantity:1}],listing_quote:{total_gbp:98,lines:[{product_id:123,name:"Sony FX3",quantity:1,total_gbp:98}]}}]};
   expect(await sentAdditionProposals(f.ctx,f.conversation,text)).toMatchObject([{referral_code:"ref-code",base_items:[],items:[{product_id:123,qty:1}],total_gbp:98,additional_cost_gbp:98}]);
   expect(await sentAdditionProposals(f.ctx,f.conversation,"Thanks!\n\n"+text+"\nLet me know.")).toHaveLength(1);
@@ -179,4 +179,20 @@ it("does not archive an exact quote under a different rental request",()=>{
  const f=fixture();const a={kind:"inquiry",origin_message_id:"a"},b={kind:"inquiry",origin_message_id:"b"};
  const quote={quote_key:"native",rental_request:a,new_inquiry:true,start_date:"2026-10-20",end_date:"2026-10-21",items:[{item_id:"lens",name:"Lens",quantity:1}],listing_quote:{total_gbp:50,lines:[{product_id:1,name:"Lens",quantity:1,total_gbp:50}]}};
  expect(sentInquiryOffers({...f.conversation.ai_draft_evidence,rental_request:b,stock_quotes:[quote]},scope)).toEqual([]);
+});
+
+
+describe("human edits around Native financial blocks",()=>{
+ const block="For 3 days (22 October 2026 to 24 October 2026):\n- 1 × Sony 16-35mm: £50\nTotal: £50";
+ for(const path of ["lab","owner"])it(`${path} preserves the quote and hire identity after surrounding prose changes`,async()=>{
+  const f=fixture(),request={kind:"inquiry",origin_message_id:"renter-current"};
+  const quote={quote_key:"native",rental_request:request,new_inquiry:true,offer_text:block,start_date:"2026-10-22",end_date:"2026-10-24",items:[{item_id:"sony16",name:"Sony 16-35mm",quantity:1}],listing_quote:{total_gbp:50,lines:[{product_id:123,name:"Sony 16-35mm",quantity:1,total_gbp:50}]}};
+  f.conversation.ai_draft_text="Here is the quote:\n\n"+block+"\n\nDoes it work for you?";
+  f.conversation.ai_draft_evidence={model_id:"native-test",stage:"CONFIRMED_UPCOMING",stock:[],prices:[],rental_request:request,stock_quotes:[quote]};
+  const text="Thanks for waiting.\n\n"+block+"\n\nWould you like to go ahead?";
+  if(path==="lab")await (appendAssistantMessage as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,run_id:"edited-native"});
+  else await (recordSentReply as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,message_id:"edited-native"});
+  expect(f.tables.hygglo_messages.at(-1).quoted_inquiries).toEqual([{context_key:f.conversation.ai_draft_context_key,epoch:5,quoted_for_message_id:"renter-current",quote}]);
+  expect(f.tables.hygglo_messages.at(-1).rental_request).toEqual(request);expect(f.conversation.active_rental_request).toEqual(request);
+ });
 });

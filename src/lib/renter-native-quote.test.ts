@@ -1,3 +1,4 @@
+import {inquiryOffersForText} from "../../convex/lib/native_inquiry_offer";
 import { REFERRAL_RESTORE_OFFER } from "../../convex/lib/referral_offer";
 import {stockRequestForInquiryQuote} from "../../convex/lib/stock_claims";
 import {describe,it,expect} from "vitest";
@@ -126,7 +127,7 @@ describe("Native inquiry quote rendering",()=>{
   const first=nativeInquiryQuote(fixtures.first,scope)!;
   const rendered=renderNativeQuoteReply({...base,reply_parts:[{type:"quote",quote_key:first.quote_key}]},[receipt(),receipt(fixtures.second)],scope);
   expect(rendered.ok).toBe(true);
-  if(rendered.ok)expect(rendered.stock_quotes).toEqual([{quote_key:first.quote_key,start_date:fixtures.first.start_date,end_date:fixtures.first.end_date,
+  if(rendered.ok)expect(rendered.stock_quotes).toEqual([{quote_key:first.quote_key,offer_text:first.display_text,start_date:fixtures.first.start_date,end_date:fixtures.first.end_date,
     listing_quote:{total_gbp:fixtures.first.quote.total_gbp,lines:fixtures.first.quote.lines.map(l=>({product_id:l.product_id,name:l.name,quantity:l.qty,total_gbp:l.line_total_gbp}))},
     items:fixtures.first.components.map(c=>({item_id:c.item_id,name:c.item_name,quantity:c.requested_units}))}]);
  });
@@ -263,4 +264,40 @@ it("binds exact quote selections to the selected hire, independently from dates 
  expect(renderNativeQuoteReply(parts(quote.quote_key),[receipt(fixtures.first,first)],second).ok).toBe(false);
  const rendered=renderNativeQuoteReply(parts(quote.quote_key),[receipt(fixtures.first,first)],first);
  expect(rendered.ok).toBe(true);if(rendered.ok)expect(rendered.stock_quotes[0].rental_request).toEqual(first.rentalRequest);
+});
+
+
+describe("human review of Native inquiry blocks",()=>{
+ const offer=()=>{
+  const first=nativeInquiryQuote(fixtures.first,scope)!,second=nativeInquiryQuote(fixtures.second,scope)!;
+  const output=renderNativeQuoteReply({...base,reply_parts:[{type:"text",text:"Here are the options:"},{type:"quote",quote_key:first.quote_key},{type:"quote",quote_key:second.quote_key},{type:"text",text:"Would either work?"}]},[receipt(fixtures.first),receipt(fixtures.second)],scope);
+  if(!output.ok)throw new Error(output.reason);
+  return {first,second,saved:output.draft,evidence:{model_id:"captured-native",stage:"INQUIRY",stock:[],stock_quotes:output.stock_quotes}};
+ };
+ it("retains only the option actually left in a human-edited reply",()=>{
+  const f=offer();
+  const selected=inquiryOffersForText(f.evidence,f.saved,`Thanks for waiting.\n\n${f.second.display_text}\n\nWould you like this option?`);
+  expect(selected).toMatchObject({supported:true,ok:true,quotes:[{quote_key:f.second.quote_key}]});
+  expect(selected.quotes).toHaveLength(1);
+ });
+ it("preserves the human's displayed order without implying a selected price",()=>{
+  const f=offer(),selected=inquiryOffersForText(f.evidence,f.saved,`${f.second.display_text}\n\n${f.first.display_text}`);
+  expect(selected.ok).toBe(true);expect(selected.quotes.map(q=>q.quote_key)).toEqual([f.second.quote_key,f.first.quote_key]);
+ });
+ for(const change of ["dates","quantity","price","prefix_price","duplicate","extra_price","metadata"]){
+  it(`cannot reuse Native financial proof after changing ${change}`,()=>{
+   const f=offer();let text=f.first.display_text;
+   if(change==="dates")text=text.replace("20 October","22 October");
+   if(change==="quantity")text=text.replace("1 ×","2 ×");
+   if(change==="price")text=text.replace("£138","£98");
+   if(change==="prefix_price")text+="0";
+   if(change==="duplicate")text+=`\n\n${f.first.display_text}`;
+   if(change==="extra_price")text+="\n\nThe other price is £138.";
+   if(change==="metadata")f.evidence.stock_quotes[0].offer_text="A fake approved financial block";
+   expect(inquiryOffersForText(f.evidence,f.saved,text)).toMatchObject({supported:true,ok:false,quotes:[]});
+  });
+ }
+ it("allows removing all offers without archiving a price that was never sent",()=>{
+  const f=offer();expect(inquiryOffersForText(f.evidence,f.saved,"I can check other suitable options.")).toMatchObject({supported:true,ok:true,quotes:[]});
+ });
 });

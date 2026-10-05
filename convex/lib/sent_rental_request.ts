@@ -1,3 +1,4 @@
+import {inquiryOffersForText} from "./native_inquiry_offer";
 import type {QueryCtx,MutationCtx} from "../_generated/server";
 import type {Doc} from "../_generated/dataModel";
 import {recentThreadMessages} from "./thread_messages";
@@ -14,11 +15,13 @@ export async function validateRentalRequest(ctx:QueryCtx,thread:string,request:R
  return request;
 }
 
-/** Called in the owner-message transaction, while its exact approved draft
- * still exists. Quote-free replies retain lineage as well as priced offers. */
+/** Called in the owner-message transaction while its approved draft still
+ * exists. Exact replies and valid edits around Native blocks retain lineage. */
 export async function recordSentRentalRequest(ctx:MutationCtx,conversation:Doc<"conversations">|null,text:string):Promise<RentalRequest|undefined>{
  const request=conversation?.ai_draft_evidence?.rental_request;
- if(!conversation||!request||!conversation.ai_draft_text||text.trim()!==conversation.ai_draft_text.trim())return;
+ if(!conversation||!request||!conversation.ai_draft_text)return;
+ const selection=inquiryOffersForText(conversation.ai_draft_evidence,conversation.ai_draft_text,text);
+ if(selection.supported?!selection.ok:text.trim()!==conversation.ai_draft_text.trim())return;
  const [latest]=await recentThreadMessages(ctx,conversation.thread_id,1);
  if(latest?.sender!=="renter")return;
  const settings=await ctx.db.query("settings").first();

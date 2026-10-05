@@ -1,3 +1,4 @@
+import {inquiryOffersForText} from "./lib/native_inquiry_offer";
 import {sameRentalRequest} from "./lib/rental_request";
 import {negotiationFromMessages,NEGOTIATION_HISTORY_LIMIT} from "./lib/renter_bot_negotiation";
 import { bookingRecord, hasSingleBookingRecord } from "./lib/booking_record";
@@ -2157,7 +2158,13 @@ export const recheckCopiedDraftStock = internalQuery({
     if ((conv?.account_slug??booking?.account_slug)!==account_slug || !sameDraftApproval(current,draft_approval))
       return {ok:false,reason:"stale_draft"};
     const currentStage=rentalStage(booking,londonToday());
-    const evidence=conv?.ai_draft_evidence;
+    let evidence=conv?.ai_draft_evidence;
+    const selection=inquiryOffersForText(evidence,conv?.ai_draft_text,text);
+    if(selection.supported){
+      if(!selection.ok)return {ok:false,reason:"native_quote_text_unverified"};
+      const keys=new Set(selection.quotes.map(q=>q.quote_key));
+      evidence={...evidence!,stock_quotes:selection.quotes,recommendation_quotes:evidence?.recommendation_quotes?.filter(q=>keys.has(q.quote_key))};
+    }
     if(evidence?.rental_request){
       try{await validateRentalRequest(ctx,thread_id,evidence.rental_request,latest?.sender==="renter"?latest.message_id:undefined);}
       catch{return {ok:false,reason:"rental_request_unverified"};}
@@ -2195,7 +2202,7 @@ export const recheckCopiedDraftStock = internalQuery({
     const inbound=latest?.sender!=="owner"?latest?.body_text??"":"";
     if(!evidence?.stock_request && !evidence?.recommendation_quotes?.length && !evidence?.stock_quotes?.length) {
       if(unsupportedPriceClaims(text,prices,request,inbound,evidence?.booking_record).length)return {ok:false,reason:"price_unverified"};
-      return {ok:unsupportedStockClaims(text,[],request).length===0,reason:"stock_unverified"};
+      return unsupportedStockClaims(text,[],request).length?{ok:false,reason:"stock_unverified"}:{ok:true};
     }
     const sources=await loadStockSources(ctx);
     // Selected Native offers are commitments to a particular physical basket,
@@ -2253,7 +2260,7 @@ export const recheckCopiedDraftStock = internalQuery({
     }
     // Missing legacy scope cannot qualify a stock assertion, but a human's
     // edited reply with no such assertion does not need old stock receipts.
-    if (!evidence?.stock_request) return {ok:unsupportedStockClaims(text,[],request).length===0,reason:"stock_unverified"};
+    if (!evidence?.stock_request) return unsupportedStockClaims(text,[],request).length?{ok:false,reason:"stock_unverified"}:{ok:true};
     const receipts:StockReceipt[]=[];
     const checked=new Set<string>();
     for(const old of evidence.stock) {
@@ -2280,7 +2287,8 @@ export const recheckCopiedDraftStock = internalQuery({
       const item=resolveStockItem(name,sources.items);
       return item.confident&&!!item.match&&(item.match.is_marketing_only===true||item.match.status!=="active"||item.match.qty<=0);
     });
-    return {ok:unsupportedStockClaims(text,receipts,request,excluded,latest?.sender!=="owner" ? latest?.body_text ?? "" : "").length===0,reason:"stock_unverified",checked_at:Date.now()};
+    return unsupportedStockClaims(text,receipts,request,excluded,latest?.sender!=="owner" ? latest?.body_text ?? "" : "").length?
+      {ok:false,reason:"stock_unverified",checked_at:Date.now()}:{ok:true,checked_at:Date.now()};
   },
 });
 

@@ -1,3 +1,4 @@
+import {inquiryOffersForText} from "./native_inquiry_offer";
 import {sentInquiryOffers,type SentInquiryOffer} from "./sent_inquiry_offer";
 import { recommendationRequirementValidator } from "./recommendation_qualification";
 import { REFERRAL_RESTORE_OFFER } from "./referral_offer";
@@ -52,12 +53,11 @@ export function additionProposalsFromEvidence(prices: PriceEvidence[], scope: {
 
 /** Called when an owner message is recorded, before its draft is cleared. */
 export async function sentBookingProposals(ctx: QueryCtx, conversation: Doc<"conversations"> | null, text: string): Promise<{additions:SentAdditionProposal[];dates:SentDateProposal[];replacements:SentReplacementProposal[];inquiries:SentInquiryOffer[]}> {
-  const selectedOffers=conversation?.ai_draft_evidence?.stock_quotes??[];
-  // Operators can edit surrounding prose while the Native financial/action
-  // block remains exact. Changing that block cannot borrow its offer proof.
-  const preservedOffer=selectedOffers.length===1 && !!selectedOffers[0].referral_code &&
-    !!selectedOffers[0].offer_text && text.includes(selectedOffers[0].offer_text);
-  if (!conversation?.ai_draft_text || text.trim() !== conversation.ai_draft_text.trim() && !preservedOffer ||
+  const selection=inquiryOffersForText(conversation?.ai_draft_evidence,conversation?.ai_draft_text,text);
+  const exact=!!conversation?.ai_draft_text&&text.trim()===conversation.ai_draft_text.trim();
+  if(selection.supported&&!selection.ok)return {additions:[],dates:[],replacements:[],inquiries:[]};
+  const selectedOffers=selection.supported?selection.quotes:conversation?.ai_draft_evidence?.stock_quotes??[];
+  if (!conversation?.ai_draft_text || !exact && !(selection.supported&&selection.ok) ||
     !conversation.ai_draft_evidence?.prices?.length && !selectedOffers.length) return {additions:[],dates:[],replacements:[],inquiries:[]};
   const [latest] = await recentThreadMessages(ctx, conversation.thread_id, 1);
   if (latest?.sender !== "renter") return {additions:[],dates:[],replacements:[],inquiries:[]};
@@ -67,7 +67,7 @@ export async function sentBookingProposals(ctx: QueryCtx, conversation: Doc<"con
   const epoch = settings?.draft_epoch ?? 0;
   const approval = currentDraftApproval(conversation, {message_id:latest.message_id, context_key, epoch});
   if(!approval)return {additions:[],dates:[],replacements:[],inquiries:[]};
-  const inquiries=sentInquiryOffers(conversation.ai_draft_evidence!,{context_key,epoch,message_id:approval.message_id});
+  const inquiries=sentInquiryOffers({...conversation.ai_draft_evidence!,stock_quotes:selectedOffers},{context_key,epoch,message_id:approval.message_id});
   if(!order)return {additions:[],dates:[],replacements:[],inquiries};
   const members = (rows:Array<{name:string;quantity:number}>) => {
     const totals=new Map<string,number>();
@@ -75,10 +75,11 @@ export async function sentBookingProposals(ctx: QueryCtx, conversation: Doc<"con
     return JSON.stringify([...totals].sort((a,b)=>a[0].localeCompare(b[0])));
   };
   const currentMembers=members(order.items.map(i=>({name:i.name,quantity:i.qty})));
-  const pendingPrices=(conversation.ai_draft_evidence!.prices??[]).filter(p=>p.proposal && members(p.proposal.base_items)===currentMembers);
+  const amendmentPrices=exact?conversation.ai_draft_evidence!.prices??[]:[];
+  const pendingPrices=amendmentPrices.filter(p=>p.proposal && members(p.proposal.base_items)===currentMembers);
   const total=summarise(order.items,order.start_date,order.end_date).total_gbp;
   const dates:SentDateProposal[]=[];
-  for(const price of conversation.ai_draft_evidence!.prices??[]){const p=price.date_proposal;
+  for(const price of amendmentPrices){const p=price.date_proposal;
     if(!p||price.kind!=="basket"||price.source!=="native_lab_date_proposal"||p.before_context_key!==context_key
       ||p.from_start_date!==order.start_date||p.from_end_date!==order.end_date||total==null||Math.round(total*100)!==Math.round(p.base_total_gbp*100)
       ||!price.start_date||!price.end_date||!price.total_gbp||!Number.isFinite(price.total_gbp)||!price.items||members(price.items)!==currentMembers)continue;
@@ -88,7 +89,7 @@ export async function sentBookingProposals(ctx: QueryCtx, conversation: Doc<"con
     if(!dates.some(d=>JSON.stringify(d)===JSON.stringify(proposal)))dates.push(proposal);
   }
   const additions=additionProposalsFromEvidence(pendingPrices,{message_id:approval.message_id,context_key,epoch});
-  const offers=conversation.ai_draft_evidence!.stock_quotes??[];
+  const offers=selectedOffers;
   if(!order.items.length && !order.changes.length && offers.length===1 && text.includes(REFERRAL_RESTORE_OFFER)) {
     const offer=offers[0],priced=offer.listing_quote;
     if(offer.referral_code && priced?.lines.length && priced.total_gbp>0)additions.push({context_key,epoch,quoted_for_message_id:approval.message_id,
