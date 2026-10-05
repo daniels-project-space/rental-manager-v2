@@ -1,8 +1,18 @@
+import {reviewFullFrameDci4k} from "../admin_verify_camera_capabilities_20261001";
+import {fullFrameDci4kMode} from "./blackmagic_recording_review";
 import { describe, expect, it } from "vitest";
 import { assessCameraRequirements, meetsCameraRequirements, requestedCameraRole, verifiedCameraCapabilities, type CameraCapabilities, type RecordingMode } from "./camera_requirements";
 const full: CameraCapabilities = { role: "interchangeable_lens", sensor_format: "full_frame", native_mount: "L", internal_4k: true };
 const action: CameraCapabilities = { role: "action", sensor_format: "small_sensor", internal_4k: true };
 describe("hard camera requirements before stock ranking", () => {
+  it("qualifies the reviewed Full Frame DCI mode without borrowing UHD, uncropped or supplied-media proof",()=>{
+    const caps={...full,recording_modes:[fullFrameDci4kMode(2)]};
+    expect(assessCameraRequirements(caps,{recording:{resolution:"dci_4k",min_fps:60,internal:true}}).status).toBe("match");
+    for(const recording of [{resolution:"dci_4k" as const,min_fps:60,full_width:true},{resolution:"dci_4k" as const,min_fps:120},{resolution:"uhd_4k" as const,min_fps:60},{resolution:"dci_4k" as const,capture_format:"full_frame" as const},{resolution:"dci_4k" as const,capture_format:"super35" as const}])
+      expect(assessCameraRequirements(caps,{recording}).status).toBe("unknown");
+    expect(assessCameraRequirements(caps,{built_in_nd:true}).status).toBe("unknown");
+    expect(caps.recording_modes[0].conditions.join(" ")).toContain("windowed sensor");
+  });
   it("uses reviewed internal 4K as broad recording proof in either representation",()=>{
     for(const internal of [undefined,true])expect(assessCameraRequirements(full,{recording:{resolution:"4k",...(internal===undefined?{}:{internal})}}).status).toBe("match");
     expect(assessCameraRequirements(full,{internal_4k:true}).status).toBe("match");
@@ -100,4 +110,34 @@ describe("hard camera requirements before stock ranking", () => {
     expect(verifiedCameraCapabilities({ ...reviewed, camera_capabilities: full }, "Actual body")).toBe(null);
     expect(verifiedCameraCapabilities({ ...spec, source: "owner-verified" }, "Another body")).toBe(null);
   });
+});
+
+describe("targeted Full Frame recording source review",()=>{
+ function fixture(){
+  const item={_id:"ff",name_canonical:"BMPCC 6K Full Frame",kind:"camera"};
+  const existing={...full,verified_model:"Blackmagic Cinema Camera 6K",source_url:"https://www.blackmagicdesign.com/products/blackmagiccinemacamera/techspecs",verified_at:1};
+  const spec:any={_id:"spec",item_name_canonical:item.name_canonical,description:"Reviewed exact model",source:"manufacturer-verified",verified_model:existing.verified_model,source_url:existing.source_url,verified_at:1,camera_capabilities:existing};
+  let patches=0;
+  const ctx={db:{query:(table:string)=>({withIndex:()=>({unique:async()=>table==="items"?item:spec})}),patch:async(_id:string,fields:any)=>{patches++;Object.assign(spec,fields);}}};
+  return {ctx,spec,existing,get patches(){return patches;}};
+ }
+ const invoke=(f:any,args:any={})=>(reviewFullFrameDci4k as any)._handler(f.ctx,args);
+ it("preserves the original sensor, ND, provenance and specification record",async()=>{
+  const f=fixture(),before=structuredClone(f.spec);
+  const result=await invoke(f);
+  expect(result.changed).toBe(true);expect(f.patches).toBe(1);
+  const {recording_modes,...unchanged}=f.spec.camera_capabilities;
+  expect(unchanged).toEqual(f.existing);expect(recording_modes).toHaveLength(1);
+  expect({...f.spec,camera_capabilities:before.camera_capabilities}).toEqual(before);
+  expect((await invoke(f)).changed).toBe(false);expect(f.patches).toBe(1);
+ });
+ it("makes dry run read-only and refuses a competing prior mode review",async()=>{
+  const f=fixture();expect((await invoke(f,{dry_run:true})).changed).toBe(false);expect(f.patches).toBe(0);
+  f.spec.camera_capabilities.recording_modes=[{...fullFrameDci4kMode(1),full_width:true}];
+  await expect(invoke(f)).rejects.toThrow("reconciliation");expect(f.patches).toBe(0);
+ });
+ it("fails closed on a different exact-model review",async()=>{
+  const f=fixture();f.spec.verified_model="Blackmagic Pocket Cinema Camera 6K Pro";
+  await expect(invoke(f)).rejects.toThrow("identity");expect(f.patches).toBe(0);
+ });
 });

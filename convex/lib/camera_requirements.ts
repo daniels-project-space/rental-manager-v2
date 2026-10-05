@@ -15,7 +15,7 @@ export function canonicalRecordingResolution(value: RecordingRequirementResoluti
 export type RecordingMode = {
   resolution: RecordingResolution;
   nominal_fps: number[];
-  capture_format: SensorFormat;
+  capture_format?: SensorFormat;
   full_width: boolean;
   internal: boolean;
   conditions: string[];

@@ -1,3 +1,4 @@
+import {fullFrameDci4kMode,FULL_FRAME_RECORDING_SOURCE} from "./lib/blackmagic_recording_review";
 import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { verifiedCameraCapabilities } from "./lib/camera_requirements";
@@ -19,6 +20,7 @@ const profiles: Array<{ name: string; model: string; capabilities: CameraCapabil
 ];
 
 const modeSources = {
+  "Blackmagic Cinema Camera 6K": FULL_FRAME_RECORDING_SOURCE,
   "ILCE-7M5": "https://helpguide.sony.net/ilc/2540/v1/en/contents/0404M_angle_of_view.html",
   "ILME-FX3": "https://helpguide.sony.net/ilc/2210/v1/en/contents/TP1000882803.html",
 };
@@ -28,6 +30,7 @@ const modeSources = {
 function reviewedModes(model: string, reviewedAt: number): RecordingMode[] | undefined {
   const proof = { verified_model: model, source_url: modeSources[model as keyof typeof modeSources], verified_at: reviewedAt };
   if (!proof.source_url) return undefined;
+  if (model === "Blackmagic Cinema Camera 6K") return [fullFrameDci4kMode(reviewedAt)];
   if (model === "ILCE-7M5") return [
     { ...proof, resolution: "uhd_4k", nominal_fps: [24, 25, 30, 50, 60], capture_format: "full_frame", full_width: true, internal: true, conditions: ["APS-C/S35 Shooting Off (or Auto with full-frame lens). At 60p/50p, set 4K angle of view Priority On for full-width recording."] },
     { ...proof, resolution: "uhd_4k", nominal_fps: [100, 120], capture_format: "aps_c", full_width: false, internal: true, conditions: ["4K120p/100p requires APS-C/Super 35 capture with reduced angle of view; cannot supply full-frame/full-width 4K120."] },
@@ -68,6 +71,22 @@ export const reviewFx3Nd=internalMutation({args:{dry_run:v.optional(v.boolean())
  if(previous.built_in_nd===false && previous.built_in_nd_review?.source_url===source_url && previous.built_in_nd_review.verified_model===spec.verified_model)
   return {changed:false,item:item.name_canonical,capabilities:previous};
  const capabilities={...previous,built_in_nd:false,built_in_nd_review:{verified_model:spec.verified_model,source_url,verified_at:Date.now()}};
+ if(!args.dry_run)await ctx.db.patch(spec._id,{camera_capabilities:capabilities});
+ return {changed:!args.dry_run,dry_run:args.dry_run??false,item:item.name_canonical,previous,capabilities};
+}});
+
+/** Extend only the reviewed recording mode, preserving sensor/ND and all
+ * unrelated source reviews. No stock, kit, price or booking writes. */
+export const reviewFullFrameDci4k=internalMutation({args:{dry_run:v.optional(v.boolean())},handler:async(ctx,args)=>{
+ const item=await ctx.db.query("items").withIndex("by_canonical_name",q=>q.eq("name_canonical","BMPCC 6K Full Frame")).unique();
+ if(!item||item.kind!=="camera")throw new Error("Exact Full Frame camera inventory record is required");
+ const spec=await ctx.db.query("item_specs").withIndex("by_item",q=>q.eq("item_id",item._id)).unique();
+ if(!spec||spec.verified_model!=="Blackmagic Cinema Camera 6K"||!verifiedCameraCapabilities(spec,item.name_canonical))throw new Error("Full Frame review identity needs checking");
+ const previous=spec.camera_capabilities!,mode=fullFrameDci4kMode(Date.now());
+ const same=(m:RecordingMode)=>JSON.stringify({...m,verified_at:0})===JSON.stringify({...mode,verified_at:0});
+ if(previous.recording_modes?.some(m=>same(m)&&m.verified_at>=spec.verified_at!))return {changed:false,item:item.name_canonical,capabilities:previous};
+ if(previous.recording_modes?.some(m=>m.resolution==="dci_4k"&&!same(m)))throw new Error("Existing DCI mode review needs reconciliation before replacement");
+ const capabilities={...previous,recording_modes:[...(previous.recording_modes??[]).filter(m=>!same(m)),mode]};
  if(!args.dry_run)await ctx.db.patch(spec._id,{camera_capabilities:capabilities});
  return {changed:!args.dry_run,dry_run:args.dry_run??false,item:item.name_canonical,previous,capabilities};
 }});

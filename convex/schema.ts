@@ -179,7 +179,7 @@ const operationalSchema = defineSchema({
       verified_model: v.optional(v.string()), source_url: v.optional(v.string()), verified_at: v.optional(v.number()),
       recording_modes: v.optional(v.array(v.object({
         resolution: v.union(...RECORDING_MODE_RESOLUTIONS.map(r=>v.literal(r))), nominal_fps: v.array(v.number()),
-        capture_format: v.union(v.literal("full_frame"), v.literal("super35"), v.literal("aps_c"), v.literal("small_sensor")),
+        capture_format: v.optional(v.union(v.literal("full_frame"), v.literal("super35"), v.literal("aps_c"), v.literal("small_sensor"))),
         full_width: v.boolean(), internal: v.boolean(), conditions: v.array(v.string()),
         verified_model: v.string(), source_url: v.string(), verified_at: v.number(),
       }))),
