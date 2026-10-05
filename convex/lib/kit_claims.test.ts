@@ -210,3 +210,15 @@ describe("updated setup refers to the current booking",()=>{
   }
  });
 });
+
+describe("verification questions do not assert supplied contents", () => {
+ const evidence=[{names:["BMPCC 6K Pro"],contents:["5x NP-F570 batteries"]}];
+ const check=(text:string)=>unsupportedKitClaims(text,evidence,["BMPCC 6K Pro"]);
+ it("permits the captured uncertainty about card/SSD contents",()=>{
+  expect(check("Supplied storage isn't confirmed in the inventory record for this listing, so I would need to confirm whether a card/SSD is included with that set.")).toEqual([]);
+ });
+ it("still validates affirmative contents outside the question",()=>{
+  for(const text of ["I confirmed that a card/SSD is included.","I need to confirm whether a card is included, but the kit includes an SSD.","I need to confirm whether a card is included and the kit includes an SSD.","The kit includes an SSD; I need to confirm whether a card is included."])
+   expect(check(text),text).not.toEqual([]);
+ });
+});

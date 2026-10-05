@@ -1,3 +1,4 @@
+import { withoutVerificationQuestions } from "./renter_statement_scope";
 import { renterItemNames } from "./renter_item_names";
 
 export type KitEvidence = { names: string[]; contents: string[]; booked_camera?: boolean; booked_item?: boolean; kind?: string };
@@ -100,7 +101,8 @@ export function unsupportedKitClaims(text: string, evidence: KitEvidence[], init
   const selected = evidence.filter(e => e.names.some(n => initialNames.some(i => normalize(i) === normalize(n))));
   let subject: KitEvidence[] = selected.length === 1 ? selected : [];
   let includedList = false;
-  for (const sentence of text.split(/(?<=[.!?])\s+|\n/)) {
+  for (const originalSentence of text.split(/(?<=[.!?])\s+|\n/)) {
+    const sentence = withoutVerificationQuestions(originalSentence);
     if (!sentence.trim()) continue;
     const named = evidence.filter(e => e.names.some(name => name && namesItem(sentence, name)));
     if (named.length) subject = named;
@@ -135,7 +137,7 @@ export function unsupportedKitClaims(text: string, evidence: KitEvidence[], init
         return !owners.length || !owners.every(e => e.contents.some(entry =>
           componentParts(entry).some(part => pattern.test(part) && supports(claim, details(part, content, pattern, true)))));
       })) {
-        failures.push({ sentence: sentence.trim(), content });
+        failures.push({ sentence: originalSentence.trim(), content });
       }
     }
   }

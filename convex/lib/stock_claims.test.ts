@@ -529,3 +529,15 @@ describe("booking status is not equipment occupancy",()=>{
   expect(unsupportedStockClaims("Your request is not yet booked, and Sony FX3 is unavailable for 2 to 4 October.",[stock],request)).toEqual([]);
  });
 });
+
+describe("booking actions versus occupied equipment", () => {
+ it("does not treat a first-person enquiry action as stock evidence", () => {
+  for (const sentence of ["I haven't changed or booked anything on your enquiry.", "We have not booked your order.", "I have booked your enquiry."])
+   expect(check(sentence, [])).toEqual([]);
+ });
+ it("preserves real stock verdicts alongside booking actions", () => {
+  for (const sentence of ["I haven't changed or booked anything on your enquiry, but Sony FX3 is unavailable.", "Sony FX3 is booked out.", "Sony FX3 is booked for another renter.", "I have booked your order and Sony FX3 is unavailable."])
+   expect(check(sentence, [])).not.toEqual([]);
+  expect(check("I haven't changed or booked anything on your enquiry, but Sony FX3 is unavailable.")).toEqual([]);
+ });
+});

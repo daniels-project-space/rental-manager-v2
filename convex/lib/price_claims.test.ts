@@ -1,3 +1,4 @@
+import calendarRateFixture from "../../src/lib/fixtures/renter-calendar-rate-price-claim.json";
 import {describe,it,expect} from "vitest";
 import {unsupportedPriceClaims,type PriceEvidence} from "./price_claims";
 import {guardDraft} from "./draft_guard";
@@ -377,4 +378,25 @@ describe("item caption and renter budget identity",()=>{
   for(const latest of ["","My budget is £120.","Your rental costs £150."])expect(unsupportedPriceClaims(text,[],scope,latest)).not.toEqual([]);
   for(const changed of ["The total is £150.","The total is your £150 budget.","This fits inside your £150 budget rate."])expect(unsupportedPriceClaims(changed,[],scope,"My budget is £150.")).not.toEqual([]);
  });
+});
+
+const calendarPrices = calendarRateFixture.prices as PriceEvidence[];
+const calendarRequest = calendarRateFixture.request as StockRequest;
+const calendarCheck = (text: string, receipts = calendarPrices) => unsupportedPriceClaims(text, receipts, calendarRequest);
+describe("Native calendar-qualified total followed by a parenthesized daily rate", () => {
+  it("keeps the actual equipment subject in the captured Lab reply", () => {
+    expect(calendarCheck(calendarRateFixture.text)).toEqual([]);
+  });
+  it("still rejects incorrect totals, daily rates, duration and quantity", () => {
+    expect(calendarCheck(calendarRateFixture.text.replace("£70", "£75"))).not.toEqual([]);
+    expect(calendarCheck(calendarRateFixture.text.replace("£35/day", "£30/day"))).not.toEqual([]);
+    expect(calendarCheck(calendarRateFixture.text.replace("20–21 October", "20–22 October"))).not.toEqual([]);
+    expect(calendarCheck(calendarRateFixture.text, calendarPrices.map(p => ({ ...p, quantity: 2 })))).not.toEqual([]);
+  });
+  it("does not discard equipment words in a calendar-qualified label", () => {
+    expect(calendarCheck(calendarRateFixture.text.replace("total for 20–21 October", "total for Pyxis for 20–21 October"))).not.toEqual([]);
+  });
+  it("requires a Native receipt for the recommended body", () => {
+    expect(calendarCheck(calendarRateFixture.text, calendarPrices.filter(p => !p.names.some(n => /6k pro/i.test(n))))).not.toEqual([]);
+  });
 });

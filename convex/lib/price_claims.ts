@@ -152,7 +152,11 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
       const label=segment.replace(/\(\s*$/,"").split(/\b(?:the|your|our|my|an?)\s+/i).at(-1)?.trim()??"";
       const distinct=known.filter((item,index)=>!known.slice(0,index).some(previous=>same(previous.names,item.names)));
       const calendar=claimDateScope(label,request.start_date);
-      const calendarOnly=calendar.matched_text && /^(?:for|on|from)?$/i.test(label.replace(calendar.matched_text,"").trim());
+      // Monetary/calendar labels describe the preceding amount rather than
+      // naming another item. Keep any equipment words outside this grammar:
+      // "total for Pyxis" must still require its own equipment receipt.
+      const monetaryScope=label.replace(calendar.matched_text??"","").trim();
+      const calendarOnly=!!calendar.matched_text && /^(?:(?:total|price|cost|daily\s+rate)\s*)?(?:for|on|from)?$/i.test(monetaryScope);
       const match=priceReference(label,distinct);
       if(!calendarOnly && label && match.confident && match.match)subject=match.match.names;
       else if(!calendarOnly && label && !isGenericItemQuery(label))subject=[norm(label)];

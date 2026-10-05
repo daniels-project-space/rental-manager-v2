@@ -119,3 +119,17 @@ describe("ND stock declines are not camera feature assertions",()=>{
     expect(unsupportedBuiltInNDClaims("Blackmagic 6K Pro has no internal ND.",[ff,pro])).toHaveLength(1);
   });
 });
+
+describe("fronted feature modifiers retain the following camera subject",()=>{
+ const cameras:CameraEvidence[]=[
+  {names:["BMPCC 6K Full Frame"],capabilities:{...evidence[0].capabilities,built_in_nd:false}},
+  {names:["BMPCC 6K Pro"],capabilities:{...evidence[0].capabilities,built_in_nd:true}}];
+ const check=(text:string)=>unsupportedBuiltInNDClaims(text,cameras,["BMPCC 6K Full Frame"]);
+ it("binds the actual fronted ND recommendation to Pro",()=>{
+  expect(check("As a cheaper body-only alternative with built-in ND, I recommend the Blackmagic Pocket Cinema Camera 6K Pro (BMPCC 6K Pro).")).toEqual([]);
+ });
+ it("does not borrow another camera's evidence across independent assertions",()=>{
+  for(const text of ["As BMPCC 6K Full Frame with built-in ND, I recommend BMPCC 6K Pro.","BMPCC 6K Full Frame has built-in ND, BMPCC 6K Pro is cheaper.","As a cheaper body-only alternative with built-in ND, I recommend BMPCC 6K Full Frame.","As a cheaper body-only alternative with built-in ND, I recommend Canon C70.","BMPCC 6K Full Frame has built-in ND, but BMPCC 6K Pro has built-in ND."])
+   expect(check(text),text).not.toEqual([]);
+ });
+});

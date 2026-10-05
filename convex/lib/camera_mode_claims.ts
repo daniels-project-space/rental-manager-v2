@@ -1,3 +1,4 @@
+import { equipmentClaimClauses } from "./renter_statement_scope";
 import { matchesRecordingRequirement, type CameraCapabilities, type RecordingRequirement, type RecordingResolution } from "./camera_requirements";
 
 export type CameraEvidence = { names: string[]; capabilities: CameraCapabilities };
@@ -85,7 +86,7 @@ export function unsupportedBuiltInNDClaims(text: string, evidence: CameraEvidenc
   const failures: string[] = [];
   const initial = evidence.filter(e => e.names.some(n => initialNames.includes(n)));
   let subject = initial.length === 1 ? initial : [];
-  for (const clause of text.replace(/’/g, "'").split(/(?<=[.!?])\s+|\n+|[,;]|\b(?:but|while|whereas)\b/i)) {
+  for (const clause of equipmentClaimClauses(text, part => explicitCameraModel.test(part) || evidence.some(e => e.names.some(n => mentionsCamera(part, n))))) {
     const named = evidence.map(e => ({ e, length: Math.max(0, ...e.names.filter(n => mentionsCamera(clause, n)).map(n => n.length)) })).filter(m => m.length);
     if (named.length) {
       const longest = Math.max(...named.map(m => m.length));
