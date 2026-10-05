@@ -129,6 +129,8 @@ describe("targeted Full Frame recording source review",()=>{
   const {recording_modes,...unchanged}=f.spec.camera_capabilities;
   expect(unchanged).toEqual(f.existing);expect(recording_modes).toHaveLength(1);
   expect({...f.spec,camera_capabilities:before.camera_capabilities}).toEqual(before);
+  // Database serialization can reorder object keys without changing a review.
+  f.spec.camera_capabilities.recording_modes=recording_modes.map((m:any)=>Object.fromEntries(Object.entries(m).sort(([a],[b])=>a.localeCompare(b))));
   expect((await invoke(f)).changed).toBe(false);expect(f.patches).toBe(1);
  });
  it("makes dry run read-only and refuses a competing prior mode review",async()=>{

@@ -83,7 +83,8 @@ export const reviewFullFrameDci4k=internalMutation({args:{dry_run:v.optional(v.b
  const spec=await ctx.db.query("item_specs").withIndex("by_item",q=>q.eq("item_id",item._id)).unique();
  if(!spec||spec.verified_model!=="Blackmagic Cinema Camera 6K"||!verifiedCameraCapabilities(spec,item.name_canonical))throw new Error("Full Frame review identity needs checking");
  const previous=spec.camera_capabilities!,mode=fullFrameDci4kMode(Date.now());
- const same=(m:RecordingMode)=>JSON.stringify({...m,verified_at:0})===JSON.stringify({...mode,verified_at:0});
+ const key=(m:RecordingMode)=>JSON.stringify([m.resolution,m.nominal_fps,m.capture_format??null,m.full_width,m.internal,m.conditions,m.verified_model,m.source_url]);
+ const same=(m:RecordingMode)=>key(m)===key(mode);
  if(previous.recording_modes?.some(m=>same(m)&&m.verified_at>=spec.verified_at!))return {changed:false,item:item.name_canonical,capabilities:previous};
  if(previous.recording_modes?.some(m=>m.resolution==="dci_4k"&&!same(m)))throw new Error("Existing DCI mode review needs reconciliation before replacement");
  const capabilities={...previous,recording_modes:[...(previous.recording_modes??[]).filter(m=>!same(m)),mode]};
