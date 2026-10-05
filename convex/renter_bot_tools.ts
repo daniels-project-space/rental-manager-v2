@@ -1270,6 +1270,12 @@ export const find_owned_alternatives = query({
       const capabilities = verifiedCameraCapabilities(spec, it.name_canonical);
       const lensCapabilities = lensQuery && it.kind === "lens" ? verifiedLensCapabilities(spec,it.name_canonical) : null;
       if (!cameraQuery && lens_mount && !sameMount(it.lens_mount ?? "", lens_mount)) continue;
+      if(lensQuery&&(it.kind!=="lens"||!lensRequirementsSpecified)){rejected.requirements++;continue;}
+      const lensAssessment=lensQuery?assessLensRequirements(lensCapabilities,desiredLensRequirements):null;
+      const cameraAssessment=cameraQuery?assessCameraRequirements(capabilities,requirements,lens_mount):null;
+      // Known incompatibility is decided from the already loaded reviews.
+      // It needs no pricing query and is not a potential budget solution.
+      if(lensAssessment?.status==="mismatch"||cameraAssessment?.status==="mismatch"){rejected.requirements++;continue;}
       const budgetPrice=max_rental_total_gbp!==undefined?await candidatePrice(it):null;
       if(budgetPrice){
         if(budgetPrice.quote&&Math.round(budgetPrice.quote.listed_total_gbp*100)>Math.round(max_rental_total_gbp!*100)){
@@ -1284,20 +1290,13 @@ export const find_owned_alternatives = query({
           budgetPriceReviewNeeded.push({item_id:String(it._id),name:it.name_canonical,product_id:budgetPrice.altPid??null});
         }
       };
-      if (lensQuery) {
-        if (it.kind !== "lens" || !lensRequirementsSpecified) {rejected.requirements++; continue;}
-        const assessment = assessLensRequirements(lensCapabilities, desiredLensRequirements);
-        if (assessment.status !== "match") {
-          if (assessment.status === "unknown") {lensReviewNeeded.push({item_id:String(it._id),name:it.name_canonical,unverified_requirements:assessment.unknown});recordBudgetPriceReview();}
-          rejected.requirements++; continue;
-        }
+      if(lensAssessment?.status==="unknown"){
+        lensReviewNeeded.push({item_id:String(it._id),name:it.name_canonical,unverified_requirements:lensAssessment.unknown});recordBudgetPriceReview();
+        rejected.requirements++;continue;
       }
-      if(cameraQuery) {
-        const assessment=assessCameraRequirements(capabilities,requirements,lens_mount);
-        if(assessment.status!=="match") {
-          if(assessment.status==="unknown"){cameraReviewNeeded.push({item_id:String(it._id),name:it.name_canonical,unverified_requirements:assessment.unknown});recordBudgetPriceReview();}
-          rejected.requirements++;continue;
-        }
+      if(cameraAssessment?.status==="unknown"){
+        cameraReviewNeeded.push({item_id:String(it._id),name:it.name_canonical,unverified_requirements:cameraAssessment.unknown});recordBudgetPriceReview();
+        rejected.requirements++;continue;
       }
       if(budgetPrice&&!budgetPrice.quote){recordBudgetPriceReview();continue;}
 
