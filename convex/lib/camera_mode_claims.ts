@@ -30,6 +30,20 @@ export function unsupportedCameraModeClaims(text: string, evidence: CameraEviden
     const content=cameraClaimContent(sentence,evidence);
     const mode = /\b4k\s*(?:at\s*|up to\s*)?(\d{2,3})(?:\.\d+)?\s*(?:p|fps|frames?\s*(?:per|\/)\s*second)\b|\b4k\b[^.!?]{0,35}?\b(\d{2,3})(?:\.\d+)?\s*(?:fps|p)\b|\b(\d{2,3})(?:\.\d+)?\s*fps\b[^.!?]{0,25}?\b4k\b/gi;
     const claims=[...content.matchAll(mode)].map(match=>({match,fps:Number(match[1]??match[2]??match[3])}));
+    // A parenthetical list of rates immediately after a mode inherits that
+    // mode's format and capture-area qualifiers. Checking only the first
+    // rate would authorize "uncropped 4K30 (and up to 120 fps)" from 30 fps
+    // proof. An aside with its own predicate/format/crop is a separate claim.
+    for(const aside of content.matchAll(/\([^()]*\)/g)) {
+      const rates=[...aside[0].matchAll(/\b(\d{2,3})(?:\.\d+)?\s*(?:fps|p|frames?\s*(?:per|\/)\s*second)\b/gi)];
+      if(!rates.length)continue;
+      const remainder=aside[0].replace(/\b\d{2,3}(?:\.\d+)?\s*(?:fps|p|frames?\s*(?:per|\/)\s*second)\b/gi,"")
+        .replace(/\b(?:and|or|also|up\s+to|at)\b/gi,"").replace(/[\s(),/]/g,"");
+      if(remainder)continue;
+      const governing=claims.filter(c=>c.match.index!+c.match[0].length<=aside.index!&&
+        !content.slice(c.match.index!+c.match[0].length,aside.index).trim()).at(-1);
+      if(governing)for(const rate of rates)claims.push({match:governing.match,fps:Number(rate[1])});
+    }
     // Format proof is still required when no frame rate is stated. Rate claims
     // above are checked separately, so a format-only match cannot weaken them.
     for(const match of content.matchAll(/\b(?:UHD|DCI)\s+4k\b|\b4k\s+(?:UHD|DCI)\b/gi))claims.push({match,fps:NaN});

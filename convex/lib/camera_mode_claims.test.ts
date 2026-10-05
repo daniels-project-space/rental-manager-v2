@@ -8,6 +8,15 @@ const evidence: CameraEvidence[] = [
   { names: ["Sony FX3", "FX3"], capabilities: { role: "interchangeable_lens", sensor_format: "full_frame", internal_4k: true, recording_modes: [mode(60, "full_frame", true), mode(120, "full_frame", false)] } },
 ];
 describe("recording mode claims use exact model and capture area", () => {
+  it("checks every supplemental rate against the governing recording mode",()=>{
+    const reviewed=[{...evidence[0],capabilities:{...evidence[0].capabilities,recording_modes:[mode(30,"full_frame",true),...evidence[0].capabilities.recording_modes!]}}];
+    const saved="Sony A7 V records uncropped internal UHD 4K at 30 fps (and up to 60 fps) across the full sensor width with APS-C/S35 shooting turned off.";
+    expect(unsupportedCameraModeClaims(saved,reviewed)).toEqual([]);
+    expect(unsupportedCameraModeClaims(saved.replace("60 fps","120 fps"),reviewed)).toHaveLength(1);
+    expect(unsupportedCameraModeClaims("Sony A7 V records uncropped UHD 4K30fps (60 fps, 120 fps).",reviewed)).toHaveLength(1);
+    expect(unsupportedCameraModeClaims("Sony A7 V records UHD 4K60fps (and up to 120 fps).",reviewed)).toEqual([]);
+    expect(unsupportedCameraModeClaims("Sony A7 V records uncropped UHD 4K30fps (and up to 60 fps) but Sony FX3 records uncropped UHD 4K120fps.",reviewed)).toHaveLength(1);
+  });
   it("requires reviewed proof for a generic 4K recording assertion without a frame rate",()=>{
     const basic=[{...evidence[1],capabilities:{...evidence[1].capabilities,recording_modes:[]}}];
     expect(unsupportedCameraModeClaims("Canon R5 records 4K internally.",basic)).toHaveLength(1);
