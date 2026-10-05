@@ -9,7 +9,7 @@ import { validateRenterBotOutput } from "../src/lib/renter-bot-output";
 import { describe, expect, it, vi } from "vitest";
 import { setDraftReview, setDraft, threadsNeedingDraft, claimDraftGeneration, releaseDraftGeneration, getDraftApprovalContext, recheckCopiedDraftStock } from "./replyInbox";
 import { generateDraft, sendRenterReply } from "./replyInbox_actions";
-import {performJointStockCheck,check_availability,get_negotiation_stance,get_listing_context,lookup_pricing} from './renter_bot_tools';
+import {performJointStockCheck,check_availability,get_negotiation_stance,get_listing_context,find_owned_alternatives,lookup_pricing} from './renter_bot_tools';
 import { draftContextKey } from "./lib/draft_review";
 import { canonicalGenerationError, generationFailure } from "./lib/canonical_generation_error";
 
@@ -453,6 +453,31 @@ describe("kit owner checks persist through the real review mutation",()=>{
   return {...f,camera,lens,override,check};
  }
  const tasks=(f:Awaited<ReturnType<typeof kit>>)=>[...f.rows.values()].filter(r=>r.table==="renter_bot_owner_checks");
+ it("persists one grouped recommended-kit review without treating an alternative as the current rental",async()=>{
+  const f=await kit();
+  await f.ctx.db.patch(f.camera,{compatibility:{included_with_rental:["1x 1TB SSD"]}});
+  await f.ctx.db.insert("online_listings",{account_slug:"leo",product_id:20,name:"Sony FX3 with 256GB card",description:"Included in this kit: • 1x Sony FX3",daily_price:40});
+  await f.ctx.db.insert("listing_resolution_override",{account_slug:"leo",product_id:20,components:[{item_id:f.camera,qty:1}]});
+  await f.ctx.db.insert("item_specs",{item_name_canonical:"Sony FX3",item_id:f.camera,source:"manufacturer-verified",source_url:"https://manufacturer.example/fx3",verified_model:"Sony FX3",verified_at:1,
+   camera_capabilities:{role:"interchangeable_lens",sensor_format:"full_frame",native_mount:"E",internal_4k:true,verified_model:"Sony FX3",source_url:"https://manufacturer.example/fx3",verified_at:1}});
+  const result=await invoke(find_owned_alternatives,f.ctx,{account_slug:"leo",kind:"camera"});
+  expect(result.owner_check).toMatchObject({kind:"kit_recommendation",candidate_product_ids:[20],start_date:null,end_date:null});
+  const checks=nativeOwnerChecks([{tool:"find_owned_alternatives",call_id:"native-kit-options",result}]);expect(checks).toHaveLength(1);
+  await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:checks});await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:checks});
+  expect(tasks(f)).toHaveLength(1);expect(tasks(f)[0].check.kind).toBe("kit_recommendation");expect(tasks(f)[0].candidate_names).toEqual(["Sony FX3"]);
+  // The current-order mapping guard must still reject a foreign basket line.
+  await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:[{...f.check,product_id:20}]});expect(tasks(f)).toHaveLength(1);
+  expect(await ownerChecksForBot(f.ctx as any,f.args.thread_id,f.args.context_key)).toContainEqual(expect.objectContaining({kind:"kit_recommendation",candidate_product_ids:[20],specification_result_verified:false,customer_input_required:false}));
+ });
+ it("rechecks recommended kit conflicts and rejects marketing or foreign-account candidates",async()=>{
+  for(const invalid of ["resolved","marketing","foreign"]){
+   const f=await kit();await f.ctx.db.patch(f.camera,{compatibility:{included_with_rental:["1x 1TB SSD"]},...(invalid==="marketing"?{is_marketing_only:true}:{})});
+   await f.ctx.db.insert("online_listings",{account_slug:invalid==="foreign"?"other":"leo",product_id:20,name:invalid==="resolved"?"Sony FX3 with 1TB SSD":"Sony FX3 with 256GB card",description:"Included in this kit: • 1x Sony FX3"});
+   await f.ctx.db.insert("listing_resolution_override",{account_slug:invalid==="foreign"?"other":"leo",product_id:20,components:[{item_id:f.camera,qty:1}]});
+   const check={kind:"kit_recommendation" as const,source_call_id:"native-kit-options",candidate_product_ids:[20],start_date:null,end_date:null,quantity:1};
+   await invoke(setDraftReview,f.ctx,{...f.args,owner_checks:[check]});expect(tasks(f)).toEqual([]);
+  }
+ });
  it("keeps a Native owner task for conflicting supplied storage after physical mapping is complete",async()=>{
   const f=await kit();
   await f.ctx.db.patch(f.override,{components:[{item_id:f.camera,qty:1}]});

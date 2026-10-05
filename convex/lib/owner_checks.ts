@@ -11,14 +11,15 @@ export const ownerCheckValidator=v.union(v.object({kind:v.literal("lens_recommen
  candidate_item_ids:v.array(v.id("items")),lens_mount:v.union(v.string(),v.null()),...checkDates}),
  v.object({kind:v.literal("camera_recommendation"),source_call_id:v.string(),requirements:cameraRequirementsValidator,
  candidate_item_ids:v.array(v.id("items")),lens_mount:v.union(v.string(),v.null()),...checkDates}),
- v.object({kind:v.literal("listing_mapping"),source_call_id:v.string(),product_id:v.number(),...checkDates}));
+ v.object({kind:v.literal("listing_mapping"),source_call_id:v.string(),product_id:v.number(),...checkDates}),
+ v.object({kind:v.literal("kit_recommendation"),source_call_id:v.string(),candidate_product_ids:v.array(v.number()),...checkDates}));
 export type OwnerCheck=Infer<typeof ownerCheckValidator>;
 /** Actual Native tool receipts, never free-form model promises. */
 export function nativeOwnerChecks(receipts:Array<{tool:string;call_id:string;result:Record<string,unknown>}>) {
  return receipts.flatMap(r=>{
   if(!r.call_id)return [];
   if(r.tool==="find_owned_alternatives"&&r.result.owner_check)
-   return [{...r.result.owner_check as Extract<OwnerCheck,{kind:"lens_recommendation"|"camera_recommendation"}>,source_call_id:r.call_id}];
+   return [{...r.result.owner_check as Exclude<OwnerCheck,{kind:"listing_mapping"}>,source_call_id:r.call_id}];
   if(r.tool==="get_listing_context"&&Array.isArray(r.result.owner_checks))
    return r.result.owner_checks.filter(c=>c?.kind==="listing_mapping").map(c=>({...c,source_call_id:r.call_id})) as OwnerCheck[];
   return [];
@@ -31,6 +32,7 @@ function requirementScope(value:unknown):unknown {
 }
 function ownerCheckScope(check:OwnerCheck) {
  if(check.kind==="listing_mapping")return [check.kind,check.product_id,check.start_date,check.end_date,check.quantity];
+ if(check.kind==="kit_recommendation")return [check.kind,check.start_date,check.end_date,check.quantity];
  return [check.kind,normalizeMount(check.lens_mount),check.start_date,check.end_date,check.quantity,
   requirementScope(check.requirements)];
 }

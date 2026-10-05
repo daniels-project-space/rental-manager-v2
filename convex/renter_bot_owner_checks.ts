@@ -25,7 +25,8 @@ export async function ownerChecksForBot(ctx:QueryCtx,threadId:string,contextKey:
  ]);
  const tasks=[...pending,...handled];
  return tasks.map(task=>({task_id:task._id,status:task.status,kind:task.check.kind,product_id:task.check.kind==="listing_mapping"?task.check.product_id:null,
-  requirements:task.check.kind==="listing_mapping"?null:task.check.requirements,lens_mount:task.check.kind==="listing_mapping"?null:task.check.lens_mount,
+  candidate_product_ids:task.check.kind==="kit_recommendation"?task.check.candidate_product_ids:null,
+  requirements:"requirements" in task.check?task.check.requirements:null,lens_mount:"lens_mount" in task.check?task.check.lens_mount:null,
   start_date:task.check.start_date,end_date:task.check.end_date,quantity:task.check.quantity,candidate_names:task.candidate_names,
   context_changed:task.source_context_key!==contextKey,source_message_id:task.source_message_id,last_requested_message_id:ownerCheckRequestMessageId(task),
   specification_result_verified:false,customer_input_required:false}));
@@ -50,6 +51,20 @@ export const readinessEvidence=internalQuery({args:{checks:v.array(ownerCheckVal
   return [{subject,source_call_id:check.source_call_id}];
  });
 }});
+/** Recommended kits are candidates, not lines in the current rental.
+ * Recheck actual account ownership and contents; never promote task notes to facts. */
+export async function recommendedKitReviews(ctx:QueryCtx,account:string,productIds:number[],quantity:number,inventory:Doc<"items">[]) {
+ const reviews=[];
+ for(const product_id of [...new Set(productIds)].slice(0,6)) {
+  if(!Number.isInteger(product_id))continue;
+  const physical=await loadListingInventory(ctx,account,product_id,quantity,{items:inventory});
+  if(physical.owned!==true||!physical.complete)continue;
+  const item=listingKitItem(physical,inventory);
+  const kit=await listingKitContext(ctx,account,item,physical.components,inventory);
+  if(kit.contents_review)reviews.push({product_id,name:item?.name_canonical??physical.listing_name!,contents_review:kit.contents_review});
+ }
+ return reviews;
+}
 /** Same transaction as draft/review persistence; Native identities rechecked. */
 export async function persistOwnerChecks(ctx:MutationCtx,a:{thread_id:string;message_id:string;epoch:number;context_key:string;checks:OwnerCheck[]}) {
  if(!a.checks.length)return;
@@ -65,7 +80,13 @@ export async function persistOwnerChecks(ctx:MutationCtx,a:{thread_id:string;mes
   if(!check.source_call_id||!Number.isInteger(check.quantity)||check.quantity<1||check.quantity>20)continue;
   const names:string[]=[];
   let verified:OwnerCheck=check;
-  if(check.kind==="listing_mapping") {
+  if(check.kind==="kit_recommendation") {
+   inventory??=await ctx.db.query("items").collect();
+   const reviews=await recommendedKitReviews(ctx,conv.account_slug,check.candidate_product_ids,check.quantity,inventory);
+   if(!reviews.length)continue;
+   verified={...check,candidate_product_ids:reviews.map(r=>r.product_id)};
+   names.push(...reviews.map(r=>r.name));
+  } else if(check.kind==="listing_mapping") {
    if(booking?.account_slug&&booking.account_slug!==conv.account_slug||check.start_date!==request.start_date||check.end_date!==request.end_date||!request.lines.some(l=>l.product_id===check.product_id&&l.qty===check.quantity))continue;
    inventory??=await ctx.db.query("items").collect();
    const physical=await loadListingInventory(ctx,conv.account_slug,check.product_id,check.quantity,{items:inventory});
@@ -116,14 +137,15 @@ export const list=query({args:{account_slug:v.optional(v.string()),lab_only:v.op
   ? await ctx.db.query("renter_bot_owner_checks").withIndex("by_account_status_thread",q=>q.eq("account_slug",a.account_slug!).eq("status","pending").gte("thread_id","__probe__").lt("thread_id","__probe__\uffff")).paginate(a.paginationOpts)
   : await ctx.db.query("renter_bot_owner_checks").withIndex("by_status_thread",q=>q.eq("status","pending").gte("thread_id","__probe__").lt("thread_id","__probe__\uffff")).paginate(a.paginationOpts)) : a.account_slug ? await ctx.db.query("renter_bot_owner_checks").withIndex("by_account_status",q=>q.eq("account_slug",a.account_slug!).eq("status","pending")).paginate(a.paginationOpts)
   : await ctx.db.query("renter_bot_owner_checks").withIndex("by_status",q=>q.eq("status","pending")).paginate(a.paginationOpts);
- const inventory=result.page.some(t=>t.check.kind==="listing_mapping")?await ctx.db.query("items").collect():undefined;
+ const inventory=result.page.some(t=>t.check.kind==="listing_mapping"||t.check.kind==="kit_recommendation")?await ctx.db.query("items").collect():undefined;
  return {...result,page:await Promise.all(result.page.map(async task=>{
   const booking=await getBotBooking(ctx,task.thread_id),order=await getLabOrder(ctx,task.thread_id);
   const conv=await ctx.db.query("conversations").withIndex("by_thread",q=>q.eq("thread_id",task.thread_id)).first();
   const recent=await recentThreadMessages(ctx,task.thread_id,12),latestRenter=recent.filter(m=>m.sender==="renter").at(-1);
   const physical=task.check.kind==="listing_mapping"&&inventory?await loadListingInventory(ctx,task.account_slug,task.check.product_id,task.check.quantity,{items:inventory}):null;
   const kit=physical&&inventory?await listingKitContext(ctx,task.account_slug,listingKitItem(physical,inventory),physical.components,inventory):null;
-  return {...task,mapping_details:physical?{complete:physical.complete,contents_review:kit?.contents_review??null,missing:physical.coverage?.missing??[],unresolved:[...(physical.coverage?.unresolved??[]),...physical.unresolved_default_adapters]}:null,
+  const recommended_kit_reviews=task.check.kind==="kit_recommendation"&&inventory?await recommendedKitReviews(ctx,task.account_slug,task.check.candidate_product_ids,task.check.quantity,inventory):null;
+  return {...task,recommended_kit_reviews,mapping_details:physical?{complete:physical.complete,contents_review:kit?.contents_review??null,missing:physical.coverage?.missing??[],unresolved:[...(physical.coverage?.unresolved??[]),...physical.unresolved_default_adapters]}:null,
    context_changed:!conv||draftContextKey(booking,conv.inquiry_items,order)!==task.source_context_key,newer_renter_message:latestRenter?.message_id!==ownerCheckRequestMessageId(task),is_lab:task.thread_id.startsWith("__probe__")};
  }))};
 }});

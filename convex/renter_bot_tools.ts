@@ -1278,6 +1278,7 @@ export const find_owned_alternatives = query({
       storageNeedsReview ||= kit.unreconciled_contents.length>0;
       const verified = verifiedItemSpec(spec, it.name_canonical);
       alternatives.push({
+        product_id:altPid??null,
         quote: quote ? { ...quote, start_date, end_date, product_id: altPid, matched_listing: altListing?.name } : null,
         price_tiers: altTiers,
         availability: stock,
@@ -1311,7 +1312,9 @@ export const find_owned_alternatives = query({
       // on every subsequent agent step.
       if (alternatives.length >= 6) break;
     }
-    const ownerCheck=!alternatives.length ? lensQuery && lensRequirementsSpecified && lensReviewNeeded.length ? {
+    const kitReviewProducts=alternatives.filter(a=>a.storage_contents_verification_required&&a.mapping_complete&&typeof a.product_id==="number").map(a=>a.product_id as number);
+    const ownerCheck=kitReviewProducts.length ? {kind:"kit_recommendation" as const,candidate_product_ids:[...new Set(kitReviewProducts)],
+      start_date:start_date??null,end_date:end_date??null,quantity:quantity??1} : !alternatives.length ? lensQuery && lensRequirementsSpecified && lensReviewNeeded.length ? {
       kind:"lens_recommendation" as const,requirements:desiredLensRequirements,candidate_item_ids:lensReviewNeeded.map(i=>i.item_id),lens_mount:lens_mount??null,
       start_date:start_date??null,end_date:end_date??null,quantity:quantity??1,
     } : cameraQuery && hasCameraRequirements(requirements,lens_mount) && cameraReviewNeeded.length ? {
