@@ -13,6 +13,7 @@ import { renterPriceEvidence } from "./renter-price-evidence";
 import type { ToolReceipt } from "./renter-tool-evidence";
 import type { RenterBotOutput } from "./renter-bot-output";
 import { renterItemNames } from "../../convex/lib/renter_item_names";
+import { shortItemName } from "../../convex/lib/item_display_name";
 
 export type NativeQuoteScope={bookingRecord?:NativeBookingRecord;referralContext?:{ok?:boolean;code?:string;already_linked?:boolean;items?:Array<{product_id:number}>};referralContextRevision?:number;threadId:string;accountSlug:string;requestMessageId?:string;rentalRequest?:RentalRequest;rentalStage?:string;minimumRentalThreshold?:number;queryRevision?:()=>number;queryReadRevision?:(value:unknown)=>number|undefined;recommendationRequirements?:RecommendationRequirement[]};
 export type NativeBookingRecord={record_key:string;display_text:string;request_revision:number;record:BookingRecord};
@@ -65,6 +66,34 @@ export function nativeInquiryQuote(value:unknown,scope:NativeQuoteScope,readRevi
   return {quote_key,request_revision:readRevision,...(commercial_context?{commercial_context,commercial_guidance:minimumRentalPrompt(commercial_context)}:{}),display_text};
 }
 
+/** Keep unresolved Native kit facts with the equipment being discussed.
+ * Stock mapping and a valid price cannot settle supplied storage contents. */
+function kitReviewNotices(draft:string,receipts:ToolReceipt[],scope:NativeQuoteScope) {
+ const latest=new Map<string,{name:string;review:boolean}>();
+ for(const receipt of receipts) {
+  const r=receipt.result;
+  if(!receipt.call_id||r.error||r.ok===false||r.account_slug!==scope.accountSlug||r.thread_id!==scope.threadId)continue;
+  const revision=scope.queryReadRevision?.(r);
+  if(revision!==undefined&&scope.queryRevision&&revision!==scope.queryRevision())continue;
+  const recommendations=receipt.tool==="find_owned_alternatives";
+  const rows=recommendations?r.alternatives:receipt.tool==="get_listing_context"?r.items:null;
+  if(!Array.isArray(rows))continue;
+  const check=record(r.owner_check);
+  for(const value of rows) {
+   const item=record(value);if(!item||typeof item.storage_contents_verification_required!=="boolean")continue;
+   const name=recommendations?item.name:item.inventory_name;
+   if(typeof name!=="string"||!name.trim())continue;
+   const eligible=recommendations?item.mapping_complete===true&&check?.kind==="kit_recommendation"&&
+    Array.isArray(check.candidate_product_ids)&&check.candidate_product_ids.includes(item.product_id):
+    item.owned!==false&&Array.isArray(r.owner_checks)&&r.owner_checks.some(c=>record(c)?.kind==="listing_mapping"&&record(c)?.product_id===item.product_id);
+   latest.set(itemIdentity(name)[0],{name,review:item.storage_contents_verification_required&&eligible});
+  }
+ }
+ const text=` ${draft.toLowerCase().replace(/[^a-z0-9]+/g," ").trim()} `;
+ return [...latest.values()].filter(item=>item.review&&itemIdentity(item.name).some(name=>text.includes(` ${name} `)))
+  .map(item=>`The supplied storage for ${shortItemName(item.name)} still needs owner confirmation of its type, capacity and quantity.`)
+  .filter(notice=>!draft.includes(notice));
+}
 /** Render before any guard or persistence. Unknown references, hand-written
  * money in structured prose, and receipts from before a write fail closed. */
 export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolReceipt[],scope:NativeQuoteScope):
@@ -80,7 +109,7 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
     return typeof descriptor?.request_revision==="number" && typeof descriptor.quote_key==="string" &&
       nativeInquiryQuote(quote,scope,descriptor.request_revision)?.quote_key===descriptor.quote_key;
   });
-  const withNextSteps=(draft:string)=>restoredReferral?`${draft}\n\n${FRIEND_BOOKING_NEXT_STEPS}`:draft;
+  const withNativeContext=(draft:string)=>[draft,...kitReviewNotices(draft,receipts,scope),...(restoredReferral?[FRIEND_BOOKING_NEXT_STEPS]:[])].filter(Boolean).join("\n\n");
   const quotes=new Map<string,NativeInquiryQuote>();
   const stock=new Map<string,StockQuoteEvidence>();
   const qualified=new Map<string,RecommendationQuoteEvidence>();
@@ -105,7 +134,7 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
   }
   if(!output.reply_parts?.length) {
     if(receipts.some(r=>r.result.new_inquiry===true||r.tool==="check_basket_availability"&&record(r.result.quote)?.source==="native_inquiry_basket") && monetaryProse.test(output.draft))return {ok:false,reason:"Use the Native quote selection for inquiry prices"};
-    return {ok:true,draft:withNextSteps(output.draft),quote_keys:[],recommendation_quotes:[],stock_quotes:[],commercial_quotes:[]};
+    return {ok:true,draft:withNativeContext(output.draft),quote_keys:[],recommendation_quotes:[],stock_quotes:[],commercial_quotes:[]};
   }
   if(output.draft.trim())return {ok:false,reason:"Structured reply parts cannot be mixed with a second draft"};
   const used=new Set<string>(),parts:string[]=[];
@@ -138,7 +167,7 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
     }
   }
   if(!parts.length)return {ok:false,reason:"The rendered reply is empty"};
-  const draft=withNextSteps(parts.join("\n\n")),stock_quotes=[...used].map(key=>stock.get(key)!);
+  const draft=withNativeContext(parts.join("\n\n")),stock_quotes=[...used].map(key=>stock.get(key)!);
   const selection=inquiryOffersForText({model_id:"native-render",stage:scope.rentalStage??"INQUIRY",stock:[],stock_quotes,booking_record:selectedRecord},draft,draft);
   if(selection.supported&&!selection.ok)return {ok:false,reason:"Rendered Native quote blocks are inconsistent or ambiguous"};
   return {ok:true,draft,...(selectedRecord?{booking_record:selectedRecord}:{}),quote_keys:[...used],stock_quotes,commercial_quotes:[...used].flatMap(key=>commercial.has(key)?[commercial.get(key)!]:[]),recommendation_quotes:[...used].flatMap(key=>qualified.has(key)?[qualified.get(key)!]:[])};

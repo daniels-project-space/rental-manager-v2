@@ -18,6 +18,47 @@ const base:RenterBotOutput={draft:"",intent:"EQUIPMENT_QUESTION",conversation_st
 const clone=()=>structuredClone(fixtures.first);
 const parts=(key=nativeInquiryQuote(fixtures.first,scope)!.quote_key):RenterBotOutput=>({...base,reply_parts:[{type:"text",text:"The R5 kit isn't available, but I can offer this Sony setup:"},{type:"quote",quote_key:key},{type:"text",text:"Would this work for your shoot?"}]});
 describe("Native inquiry quote rendering",()=>{
+ const kitReceipt=(review=true)=>({tool:"find_owned_alternatives",call_id:"native-kit",result:{account_slug:"leo",thread_id:scope.threadId,
+  owner_check:{kind:"kit_recommendation",candidate_product_ids:[10,20]},alternatives:[{name:"BMPCC 6K Pro",product_id:10,mapping_complete:true,storage_contents_verification_required:review},
+   {name:"Sony A7 V",product_id:20,mapping_complete:true,storage_contents_verification_required:true}]}});
+ it("keeps a discussed alternative's unresolved storage visible without changing any price or other candidate",()=>{
+  const evidence=[kitReceipt()],before=structuredClone(evidence);
+  const rendered=renderNativeQuoteReply({...base,draft:"The best fit is the Blackmagic Pocket Cinema Camera 6K Pro. It costs £35/day (£70 total for 2 days)."},evidence,scope);
+  expect(rendered.ok).toBe(true);if(!rendered.ok)return;
+  expect(rendered.draft).toContain("£35/day (£70 total for 2 days)");
+  expect(rendered.draft).toContain("The supplied storage for BMPCC 6K Pro still needs owner confirmation of its type, capacity and quantity.");
+  expect(rendered.draft).not.toContain("Sony A7 V");expect(rendered.quote_keys).toEqual([]);expect(evidence).toEqual(before);
+ });
+ it("ignores foreign, failed, unscoped, unowned and stale kit results",()=>{
+  const draft="Blackmagic Pocket Cinema Camera 6K Pro is one option.";
+  for(const patch of [{account_slug:"other"},{thread_id:"other"},{thread_id:null},{ok:false},{owner_check:null},
+   {alternatives:[{...kitReceipt().result.alternatives[0],mapping_complete:false}]}]) {
+   const receipt=kitReceipt();Object.assign(receipt.result,patch);
+   expect(renderNativeQuoteReply({...base,draft},[receipt],scope)).toMatchObject({ok:true,draft});
+  }
+  expect(renderNativeQuoteReply({...base,draft},[kitReceipt()],{...scope,queryRevision:()=>1,queryReadRevision:()=>0})).toMatchObject({ok:true,draft});
+  expect(renderNativeQuoteReply({...base,draft},[{...kitReceipt(),tool:"knowledge_search"}],scope)).toMatchObject({ok:true,draft});
+  const unowned={tool:"get_listing_context",call_id:"native-unowned",result:{account_slug:"leo",thread_id:scope.threadId,
+   owner_checks:[{kind:"listing_mapping",product_id:10}],items:[{inventory_name:"BMPCC 6K Pro",product_id:10,owned:false,storage_contents_verification_required:true}]}};
+  expect(renderNativeQuoteReply({...base,draft},[unowned],scope)).toMatchObject({ok:true,draft});
+  expect(renderNativeQuoteReply({...base,draft,needs_human:true},[kitReceipt()],scope)).toMatchObject({ok:true,draft:""});
+ });
+ it("uses the latest kit status and does not duplicate an already rendered Native notice",()=>{
+  const draft="BMPCC 6K Pro is one option.";
+  expect(renderNativeQuoteReply({...base,draft},[kitReceipt(),kitReceipt(false)],scope)).toMatchObject({ok:true,draft});
+  const notice="The supplied storage for BMPCC 6K Pro still needs owner confirmation of its type, capacity and quantity.";
+  const rendered=renderNativeQuoteReply({...base,draft:draft+"\n\n"+notice},[kitReceipt(),kitReceipt()],scope);
+  expect(rendered).toMatchObject({ok:true,draft:draft+"\n\n"+notice});
+ });
+ it("retains a current requested kit's unresolved storage alongside a Native financial selection",()=>{
+  const result=clone(),quote=nativeInquiryQuote(result,scope)!;
+  const camera=result.components.find(c=>c.kind==="camera")!;
+  const listing={tool:"get_listing_context",call_id:"native-current-kit",result:{account_slug:"leo",thread_id:scope.threadId,
+   owner_checks:[{kind:"listing_mapping",product_id:10}],items:[{inventory_name:camera.item_name,product_id:10,owned:true,storage_contents_verification_required:true}]}};
+  const rendered=renderNativeQuoteReply(parts(quote.quote_key),[receipt(),listing],scope);
+  expect(rendered.ok).toBe(true);if(!rendered.ok)return;
+  expect(rendered.draft).toContain(quote.display_text);expect(rendered.draft).toContain("still needs owner confirmation");expect(rendered.quote_keys).toEqual([quote.quote_key]);
+ });
  it('requires independent financial selection after a separate-hire availability or recommendation check',()=>{
   const checked=[{tool:'check_availability',call_id:'separate-native-stock',result:{new_inquiry:true,available:true}}];
   const context={...scope,rentalStage:'CONFIRMED_UPCOMING'};

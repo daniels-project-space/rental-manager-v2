@@ -1321,8 +1321,8 @@ export const find_owned_alternatives = query({
       kind:"camera_recommendation" as const,requirements,candidate_item_ids:cameraReviewNeeded.map(i=>i.item_id),lens_mount:lens_mount??null,
       start_date:start_date??null,end_date:end_date??null,quantity:quantity??1,
     } : null : null;
-    void account_slug;
     return {
+      account_slug,thread_id:thread_id??null,
       rental_stage:stage,
       booking_context_required:requiresBookingContext&&booking_use!=="separate",
       current_booking_listings:existingLines,
