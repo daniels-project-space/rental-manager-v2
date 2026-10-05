@@ -15,6 +15,7 @@ import { renterItemNames } from "../../../../convex/lib/renter_item_names";
 import { stockRequestForSeparateCheck, stockRequestForInquiryQuote, type StockRequest } from "../../../../convex/lib/stock_claims";
 import { inclusiveRentalDays, formatGbp } from "../../../../convex/lib/hygglo_pricing";
 import { RENTER_BOT_MODEL_ID } from "@/lib/llm-client";
+import {PRIMARY_RENTAL_REQUEST,type RentalRequest} from "@/../convex/lib/rental_request";
 import { withRenterToolScope } from "@/lib/renter-tool-scope";
 import { recommendationKitEvidence, renterToolReceipts, stockReceipts, successfulGrounding, type ToolReceipt } from "@/lib/renter-tool-evidence";
 import { NextResponse } from "next/server";
@@ -398,6 +399,8 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
   /** Hygglo moderation banner seen in this thread, if any. */
   let platformNotice: string | null = null;
   let requestMessageId: string | undefined;
+  let rentalRequest:RentalRequest=PRIMARY_RENTAL_REQUEST;
+  let rentalRequests:RentalRequest[]=[];
   let ownerCheckContext: unknown[] = [];
   let renterContext:unknown=null;
   let renterCameraIdentityContext:unknown=[];
@@ -405,6 +408,8 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rc: any = await convex.query(api.renter_bot_tools.get_renter_context, { thread_id });
     account_slug = rc?.account_slug ?? "";
+    rentalRequest=rc?.rental_request??PRIMARY_RENTAL_REQUEST;
+    rentalRequests=Array.isArray(rc?.rental_requests)?rc.rental_requests:[];
     ownerCheckContext = Array.isArray(rc?.owner_checks) ? rc.owner_checks : [];
     renterContext={profile:rc?.renter??null,history:rc?.renter_history??null};
     renterCameraIdentityContext=rc?.renter_camera_identities??[];
@@ -465,6 +470,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
   // requested listing + its real availability up front — it must not contradict
   // these). The agent can still call check_location, search_knowledge, etc.
   let groundTruth = `${sensorComparisonInstruction()}\n`;
+  groundTruth += `ACTIVE RENTAL REQUEST: ${JSON.stringify(rentalRequest)}. Earlier Native inquiry roots: ${JSON.stringify(rentalRequests)}. This identifies which hire the discussion currently concerns; it is not booking confirmation or current stock/price proof. An independent inquiry retains its identity through date/equipment/price alternatives. Use select_rental_request before other request tools when starting another hire, returning to the primary booking, or resuming a known inquiry root. Never expose internal message IDs to the renter.\n`;
   groundTruth += `RENTER CAMERA SELF-DESCRIPTION: ${JSON.stringify(renterCameraIdentityContext)}. This comes from explicit renter statements, not lens mounts or supplied contents. An empty list means their body is unknown. Identity alone does not verify camera controls or specifications. Ask a neutral camera-model question when unknown.\n`;
   const marketingItems: string[] = [];
   // Defaults FALSE — this must FAIL CLOSED. It gates pickup-address disclosure
@@ -1209,6 +1215,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
     // above is empty (no linked reservation yet — the common case for a
     // renter's very first "is X available" message, before any order exists)
     // this tool-call signal is the ONLY grounding check available.
+    const renterToolScope={threadId:thread_id,accountSlug:account_slug,requestMessageId,rentalRequest,rentalStage:authoritativeStage,minimumRentalThreshold:commercialContext?.threshold_gbp,queryRevision:querySession.getRevision,recommendationRequirements};
     let usedTools = false;
     let text = "";
     // Quick Reply is an explicit, on-demand OpenRouter/Haiku call with no
@@ -1218,7 +1225,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
         ? await getRenterBotAgentForModel(modelOverride)
         : await getRenterBotAgent();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result: any = await withConvexClientFactory(() => convex, () => withRenterToolScope({ threadId: thread_id, accountSlug: account_slug, requestMessageId, rentalStage:authoritativeStage, minimumRentalThreshold:commercialContext?.threshold_gbp, queryRevision:querySession.getRevision,recommendationRequirements }, () => (agent as any).generate(baseMessages, {
+      const result: any = await withConvexClientFactory(() => convex, () => withRenterToolScope(renterToolScope, () => (agent as any).generate(baseMessages, {
         maxSteps: 10,
         structuredOutput: { schema: RENTER_BOT_OUTPUT_SCHEMA },
         // Root cause found live (2026-08-17): with no cap set, Gemini 3.7
@@ -1326,7 +1333,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
           ];
           const retryAgent = modelOverride ? await getRenterBotAgentForModel(modelOverride) : await getRenterBotAgent();
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const retryResult: any = await withConvexClientFactory(() => convex, () => withRenterToolScope({ threadId: thread_id, accountSlug: account_slug, requestMessageId, rentalStage:authoritativeStage, minimumRentalThreshold:commercialContext?.threshold_gbp, queryRevision:querySession.getRevision,recommendationRequirements }, () => (retryAgent as any).generate(retryMessages, {
+          const retryResult: any = await withConvexClientFactory(() => convex, () => withRenterToolScope(renterToolScope, () => (retryAgent as any).generate(retryMessages, {
             maxSteps: 6,
             structuredOutput: { schema: RENTER_BOT_OUTPUT_SCHEMA },
             modelSettings: { maxOutputTokens: 4096 },
@@ -1350,7 +1357,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       }
     }
 
-    const renderedReply=renderNativeQuoteReply(obj,toolReceipts,{threadId:thread_id,accountSlug:account_slug,requestMessageId,rentalStage:authoritativeStage,queryRevision:querySession.getRevision,recommendationRequirements,bookingRecord:nativeBookingRecordContext,referralContext:nativeReferralContext,referralContextRevision:nativeReferralContextRevision});
+    const renderedReply=renderNativeQuoteReply(obj,toolReceipts,{...renterToolScope,bookingRecord:nativeBookingRecordContext,referralContext:nativeReferralContext,referralContextRevision:nativeReferralContextRevision});
     if(!renderedReply.ok)return NextResponse.json({ok:false,error:"invalid_native_quote_selection",error_code:"invalid_model_output",transient:false}, {status:502});
     obj.draft=renderedReply.draft;
     const diagnosticCandidate = thread_id.startsWith("__probe__") ? obj?.draft ?? "" : undefined;
@@ -1475,6 +1482,7 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       selectedInquiryQuotes:renderedReply.commercial_quotes,
       recommendation_quotes:renderedReply.recommendation_quotes,
       stock_quotes:renderedReply.stock_quotes,
+      rental_request:renterToolScope.rentalRequest,
       owner_checks: nativeOwnerChecks(toolReceipts),
       needs_human: !!obj.needs_human,
       needs_human_reason: obj.needs_human

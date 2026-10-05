@@ -1,7 +1,8 @@
 import { recommendationRequirementsKey, type RecommendationRequirement } from "../../convex/lib/recommendation_qualification";
+import {sameRentalRequest,type RentalRequest} from "../../convex/lib/rental_request";
 import { AsyncLocalStorage } from "node:async_hooks";
 
-export type RenterScope = { threadId: string; accountSlug: string; requestMessageId?: string; bookingWritesAllowed?: boolean; rentalStage?: string; minimumRentalThreshold?:number; queryRevision?:()=>number; recommendationRequirements?:RecommendationRequirement[] };
+export type RenterScope = { threadId: string; accountSlug: string; requestMessageId?: string; rentalRequest?:RentalRequest; bookingWritesAllowed?: boolean; rentalStage?: string; minimumRentalThreshold?:number; queryRevision?:()=>number; recommendationRequirements?:RecommendationRequirement[] };
 const storage = new AsyncLocalStorage<RenterScope>();
 export const withRenterToolScope = <T>(scope: RenterScope, run: () => T): T => storage.run(scope, run);
 export const currentRenterToolScope = () => storage.getStore();
@@ -21,6 +22,10 @@ export function bindRenterToolArgs(functionName: string, args: Record<string, un
   if ("hygglo_order_id" in args) bound.hygglo_order_id = scope.threadId;
   if ("thread_id" in args || ["renter_bot_tools:check_availability","renter_bot_tools:check_basket_availability","renter_bot_tools:find_owned_alternatives"].includes(functionName)) bound.thread_id = scope.threadId;
   if (["renter_bot_lab_order:applyChange", "renter_bot_lab_order:applyAdditionBasket", "renter_bot_lab_order:applyReplacementBasket","renter_bot_lab_order:redeemReferral"].includes(functionName)) bound.request_message_id = scope.requestMessageId ?? "";
+  if (["renter_bot_tools:get_negotiation_stance","renter_bot_tools:select_rental_request"].includes(functionName)) {
+    delete bound.rental_request;
+    if(scope.rentalRequest)bound.rental_request=scope.rentalRequest;
+  }
   return bound;
 }
 
@@ -39,4 +44,13 @@ export function recordRecommendationRequirements(scope:RenterScope|undefined,res
  const next={kind,requirements,native_mount,target_item_id,quantity} as RecommendationRequirement;
  const ledger=scope.recommendationRequirements??(scope.recommendationRequirements=[]);
  if(!ledger.some(c=>recommendationRequirementsKey([c])===recommendationRequirementsKey([next])))ledger.push(structuredClone(next));
+}
+
+/** Only the Native planner result can change this turn's request context.
+ * Hard requirements are local to a hire; switching clears them in place so
+ * drafting, retries and quote rendering continue sharing the same ledger. */
+export function recordRentalRequest(scope:RenterScope|undefined,result:{rental_request:RentalRequest;request_message_id:string}){
+ if(!scope||result.request_message_id!==scope.requestMessageId)throw new Error("Rental request planning is stale or unbound");
+ if(!scope.rentalRequest||!sameRentalRequest(scope.rentalRequest,result.rental_request))scope.recommendationRequirements?.splice(0);
+ scope.rentalRequest=structuredClone(result.rental_request);
 }

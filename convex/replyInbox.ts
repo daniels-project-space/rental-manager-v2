@@ -1,3 +1,4 @@
+import {sameRentalRequest} from "./lib/rental_request";
 import {negotiationFromMessages,NEGOTIATION_HISTORY_LIMIT} from "./lib/renter_bot_negotiation";
 import { bookingRecord, hasSingleBookingRecord } from "./lib/booking_record";
 import {claimsBookingConfirmation,claimsCurrentOwnerApproval,hasPickupDisclosure,pickupPrivacySources,unsupportedBookingDateClaims} from "./lib/booking_reply_claims";
@@ -15,6 +16,7 @@ import type { ConversationStage } from "./lib/renter_bot_intents";
 import { resolveBotRenter } from "./lib/renter_identity";
 import { ownerCheckValidator } from "./lib/owner_checks";
 import { persistOwnerChecks } from "./renter_bot_owner_checks";
+import {recordSentRentalRequest,validateRentalRequest} from "./lib/sent_rental_request";
 import { sentBookingProposals } from "./lib/renter_sent_proposal";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 import { shortListingTitle, shortItemName } from "./lib/item_display_name";
@@ -1702,7 +1704,7 @@ export const getThreadContext = internalQuery({
       currency: reservation?.currency ?? "GBP",
       messages: recent,
       renter_camera_messages: renterMsgs,
-      negotiation:negotiationFromMessages(negotiationMsgs),
+      negotiation:negotiationFromMessages(negotiationMsgs,conv?.active_rental_request),
       last_message_id: latest?.message_id ?? null,
     };
   },
@@ -1941,6 +1943,7 @@ export const recordSentReply = internalMutation({
       .first();
     if (!existingMessage) {
       const proposals = !account_slug || account_slug === conv?.account_slug ? await sentBookingProposals(ctx, conv, text) : {additions:[],dates:[],replacements:[],inquiries:[]};
+      const rental_request=!account_slug||account_slug===conv?.account_slug?await recordSentRentalRequest(ctx,conv,text):undefined;
       const quoted_inquiries=proposals.inquiries,quoted_additions=proposals.additions,quoted_dates=proposals.dates,quoted_replacements=proposals.replacements;
       await ctx.db.insert("hygglo_messages", {
         account_slug: account_slug ?? conv?.account_slug ?? "unknown",
@@ -1952,6 +1955,7 @@ export const recordSentReply = internalMutation({
         hygglo_sent_at: now,
         fetched_at: now,
         raw: "manual_send_optimistic",
+        ...(rental_request?{rental_request}:{}),
         ...(quoted_inquiries.length ? {quoted_inquiries} : {}), ...(quoted_additions.length ? {quoted_additions} : {}), ...(quoted_dates.length ? {quoted_dates} : {}), ...(quoted_replacements.length ? {quoted_replacements} : {}),
       });
     }
@@ -2154,6 +2158,11 @@ export const recheckCopiedDraftStock = internalQuery({
       return {ok:false,reason:"stale_draft"};
     const currentStage=rentalStage(booking,londonToday());
     const evidence=conv?.ai_draft_evidence;
+    if(evidence?.rental_request){
+      try{await validateRentalRequest(ctx,thread_id,evidence.rental_request,latest?.sender==="renter"?latest.message_id:undefined);}
+      catch{return {ok:false,reason:"rental_request_unverified"};}
+      if(evidence.stock_quotes?.some(q=>q.rental_request&&!sameRentalRequest(q.rental_request,evidence.rental_request!)))return {ok:false,reason:"rental_request_unverified"};
+    }
     const newInquiry=evidence?.stock_quotes?.some(q=>q.new_inquiry)||evidence?.stock.some(r=>r.new_inquiry);
     if(unsupportedRenterCameraClaims(text,cameraMessages.filter(message=>message.sender!=="owner").map(message=>message.body_text)).length)
       return {ok:false,reason:"renter_camera_identity_unverified"};

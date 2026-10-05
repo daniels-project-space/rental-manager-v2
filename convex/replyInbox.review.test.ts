@@ -630,3 +630,29 @@ it('retains the latest Native alternative group without treating its last option
  expect(result).toMatchObject({lastPriceOfferedGbp:null,lastInquiryOffer:null,lastInquiryOptions:options,objectionCount:1,stance:'HOLD_FIRM'});
  expect(negotiationFromMessages([{sender:'owner',body_text:'Two options',quoted_inquiries:options},{sender:'owner',body_text:'Chosen exact Native offer',quoted_inquiries:[options[0]]}])).toMatchObject({lastPriceOfferedGbp:50,lastInquiryOffer:options[0]});
 });
+
+
+describe("negotiation rental request identity",()=>{
+ const first={kind:"inquiry",origin_message_id:"new-hire"} as const;
+ const next={kind:"inquiry",origin_message_id:"later-hire"} as const;
+ const primary={kind:"primary"} as const;
+ const history:any[]=[
+  {message_id:"old",sender:"renter",body_text:"Too expensive"},
+  {message_id:"old2",sender:"renter",body_text:"Any discount?"},
+  {message_id:"new-hire",sender:"renter",body_text:"A separate hire please. Any discount?",rental_request:first},
+  {sender:"owner",body_text:"Here are the options",rental_request:first},
+  {sender:"renter",body_text:"Could we change dates?",rental_request:first},
+  {sender:"owner",body_text:"Updated dates",rental_request:first},
+  {sender:"renter",body_text:"Any discount?"},
+ ];
+ it("keeps date and equipment alternatives in the same hire without inheriting older objections",()=>{
+  expect(negotiationFromMessages(history)).toMatchObject({objectionCount:2,stance:"OFFER_ALTERNATIVES",threadObjectionCount:4,rentalRequest:first});
+ });
+ it("starts a later hire at its actual inbound anchor before a reply is sent",()=>{
+  const messages=[...history,{message_id:"later-hire",sender:"renter",body_text:"For another shoot, any discount?"}];
+  expect((negotiationFromMessages as any)(messages,next)).toMatchObject({objectionCount:1,stance:"HOLD_FIRM",threadObjectionCount:5,rentalRequest:next});
+ });
+ it("can return to primary booking history without importing independent hire objections",()=>{
+  expect((negotiationFromMessages as any)([...history,{sender:"renter",body_text:"Back to my original booking, any discount?"}],primary)).toMatchObject({objectionCount:3,threadObjectionCount:5,rentalRequest:primary});
+ });
+});

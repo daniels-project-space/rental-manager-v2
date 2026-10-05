@@ -1,3 +1,4 @@
+import {sameRentalRequest} from "./rental_request";
 import {v,type Infer} from 'convex/values';
 import {stockQuoteEvidenceValidator,type DraftEvidence} from './renter_draft_evidence';
 /** Historical offer proof only; not booking consent or current stock authority. */
@@ -7,6 +8,7 @@ export function sentInquiryOffers(evidence:DraftEvidence,scope:{context_key:stri
  const quotes=evidence.stock_quotes??[];
  if(!quotes.length||new Set(quotes.map(quote=>quote.quote_key)).size!==quotes.length)return [];
  for(const quote of quotes){
+ if(quote.rental_request&&(!evidence.rental_request||!sameRentalRequest(quote.rental_request,evidence.rental_request)))return [];
  const priced=quote.listing_quote;
  if(evidence.stage!=='INQUIRY'&&!quote.new_inquiry)return [];
  if(!quote.quote_key||!priced||!Number.isFinite(priced.total_gbp)||priced.total_gbp<=0||!priced.lines.length||!quote.items.length)return [];

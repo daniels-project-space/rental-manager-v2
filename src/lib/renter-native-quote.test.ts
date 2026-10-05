@@ -253,3 +253,14 @@ it("renders an unconfirmed replacement total while rejecting a conflicting Nativ
  expect(quote).not.toBeNull();expect(renderNativeQuoteReply(parts(quote.quote_key),[selected],scope).ok).toBe(true);
  expect(nativeInquiryQuote({...result,rental_stage:"CONFIRMED_UPCOMING"},scope)).toBeNull();
 });
+
+
+it("binds exact quote selections to the selected hire, independently from dates and price",()=>{
+ const first={...scope,rentalRequest:{kind:"inquiry" as const,origin_message_id:"first-hire"}};
+ const second={...scope,rentalRequest:{kind:"inquiry" as const,origin_message_id:"next-hire"}};
+ const quote=nativeInquiryQuote(fixtures.first,first)!;
+ expect(nativeInquiryQuote(fixtures.first,second)!.quote_key).not.toBe(quote.quote_key);
+ expect(renderNativeQuoteReply(parts(quote.quote_key),[receipt(fixtures.first,first)],second).ok).toBe(false);
+ const rendered=renderNativeQuoteReply(parts(quote.quote_key),[receipt(fixtures.first,first)],first);
+ expect(rendered.ok).toBe(true);if(rendered.ok)expect(rendered.stock_quotes[0].rental_request).toEqual(first.rentalRequest);
+});

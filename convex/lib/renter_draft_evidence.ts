@@ -1,3 +1,4 @@
+import {rentalRequestValidator} from "./rental_request";
 import { v, type Infer } from "convex/values";
 import { recommendationRequirementValidator } from "./recommendation_qualification";
 import { bookingRecordValidator } from "./booking_record";
@@ -12,6 +13,7 @@ export type RecommendationQuoteEvidence=Infer<typeof recommendationQuoteEvidence
 
 export const stockQuoteEvidenceValidator=v.object({
   quote_key:v.string(),start_date:v.string(),end_date:v.string(),
+  rental_request:v.optional(rentalRequestValidator),
   new_inquiry:v.optional(v.literal(true)),
   referral_code:v.optional(v.string()),offer_text:v.optional(v.string()),
   // Optional for schema compatibility; old drafts are invalidated on release.
@@ -21,6 +23,7 @@ export const stockQuoteEvidenceValidator=v.object({
 export type StockQuoteEvidence=Infer<typeof stockQuoteEvidenceValidator>;
 
 export const draftEvidenceValidator = v.object({
+  rental_request:v.optional(rentalRequestValidator),
   booking_record:v.optional(bookingRecordValidator),
   stock_quotes:v.optional(v.array(stockQuoteEvidenceValidator)),
   model_id: v.string(),

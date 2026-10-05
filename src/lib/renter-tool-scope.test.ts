@@ -79,3 +79,16 @@ it("keeps Native requirements across weaker searches without trusting caller mut
  recordRecommendationRequirements(other,{kind:"lens",lens_requirements:{focus_mode:"autofocus"},required_native_mount:"E",requested_quantity:1});
  expect(other.recommendationRequirements).toHaveLength(1);expect(scope.recommendationRequirements).toHaveLength(1);
 });
+
+
+it("binds negotiation and planning to the trusted hire and clears requirements only on a request switch",async()=>{
+ const {recordRentalRequest}=await import("./renter-tool-scope");
+ const request={kind:"inquiry" as const,origin_message_id:"first"};
+ const scope:import("./renter-tool-scope").RenterScope={threadId:"native",accountSlug:"leo",requestMessageId:"current",rentalRequest:request,recommendationRequirements:[{kind:"lens",quantity:1,requirements:{focus_mode:"manual_focus"}}]};
+ for(const fn of ["renter_bot_tools:get_negotiation_stance","renter_bot_tools:select_rental_request"])
+  expect(bindRenterToolArgs(fn,{thread_id:"foreign",rental_request:{kind:"inquiry",origin_message_id:"fabricated"}},scope)).toMatchObject({thread_id:"native",rental_request:request});
+ const ledger=scope.recommendationRequirements;
+ recordRentalRequest(scope,{rental_request:request,request_message_id:"current"});expect(ledger).toHaveLength(1);
+ expect(()=>recordRentalRequest(scope,{rental_request:{kind:"primary"},request_message_id:"stale"})).toThrow("stale");expect(ledger).toHaveLength(1);
+ recordRentalRequest(scope,{rental_request:{kind:"primary"},request_message_id:"current"});expect(ledger).toHaveLength(0);expect(scope.recommendationRequirements).toBe(ledger);
+});

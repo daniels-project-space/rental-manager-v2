@@ -1,3 +1,4 @@
+import type {RentalRequest} from "../../convex/lib/rental_request";
 import { bookingRecordText, type BookingRecord } from "../../convex/lib/booking_record";
 import { REFERRAL_RESTORE_OFFER } from "../../convex/lib/referral_offer";
 import {isClosedRentalStage} from "../../convex/lib/rental_stage";
@@ -12,7 +13,7 @@ import type { RenterBotOutput } from "./renter-bot-output";
 import { renterItemNames } from "../../convex/lib/renter_item_names";
 import { shortItemName } from "../../convex/lib/item_display_name";
 
-export type NativeQuoteScope={bookingRecord?:NativeBookingRecord;referralContext?:{ok?:boolean;code?:string;already_linked?:boolean;items?:Array<{product_id:number}>};referralContextRevision?:number;threadId:string;accountSlug:string;requestMessageId?:string;rentalStage?:string;minimumRentalThreshold?:number;queryRevision?:()=>number;recommendationRequirements?:RecommendationRequirement[]};
+export type NativeQuoteScope={bookingRecord?:NativeBookingRecord;referralContext?:{ok?:boolean;code?:string;already_linked?:boolean;items?:Array<{product_id:number}>};referralContextRevision?:number;threadId:string;accountSlug:string;requestMessageId?:string;rentalRequest?:RentalRequest;rentalStage?:string;minimumRentalThreshold?:number;queryRevision?:()=>number;recommendationRequirements?:RecommendationRequirement[]};
 export type NativeBookingRecord={record_key:string;display_text:string;request_revision:number;record:BookingRecord};
 export function nativeBookingRecord(record:BookingRecord|null|undefined,scope:NativeQuoteScope):NativeBookingRecord|null {
  const revision=scope.queryRevision?.();
@@ -56,7 +57,7 @@ export function nativeInquiryQuote(value:unknown,scope:NativeQuoteScope,readRevi
   if(lines.some(l=>!l || typeof l.name!=="string" || /[\r\n]/.test(l.name) || !Number.isInteger(l.qty) || (l.qty as number)<1 || (l.qty as number)>20 ||
     !physical.some(c=>c!.requested_units===l.qty&&itemIdentity(c!.item_name as string).some(n=>itemIdentity(l.name as string).includes(n))) ||
     !prices.some(p=>p.kind==="rental"&&p.call_id===`native-render:line:${l.product_id}`&&p.quantity===l.qty&&p.total_gbp===l.line_total_gbp)))return null;
-  const quote_key=`inquiry_${createHash("sha256").update(JSON.stringify([scope.threadId,scope.accountSlug,scope.requestMessageId??"",readRevision,requirementsKey,result.physical_identity_key,total.start_date,total.end_date,
+  const quote_key=`inquiry_${createHash("sha256").update(JSON.stringify([scope.threadId,scope.accountSlug,scope.requestMessageId??"",scope.rentalRequest??null,readRevision,requirementsKey,result.physical_identity_key,total.start_date,total.end_date,
     lines.map(l=>[l!.product_id,l!.name,l!.qty,l!.line_total_gbp]),total.total_gbp])).digest("hex").slice(0,32)}`;
   const period=total.start_date===total.end_date?date(total.start_date):`${date(total.start_date)} to ${date(total.end_date)}`;
   const rows=lines.map(l=>`- ${l!.qty} × ${shortItemName(l!.name as string)}: ${money(l!.line_total_gbp as number)}`);
@@ -79,7 +80,7 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
     const quote=nativeInquiryQuote(receipt.result,scope,descriptor.request_revision);
     if(quote && descriptor.quote_key===quote.quote_key){
       quotes.set(quote.quote_key,quote);
-      stock.set(quote.quote_key,{quote_key:quote.quote_key,start_date:receipt.result.start_date as string,end_date:receipt.result.end_date as string,
+      stock.set(quote.quote_key,{quote_key:quote.quote_key,...(scope.rentalRequest?{rental_request:structuredClone(scope.rentalRequest)}:{}),start_date:receipt.result.start_date as string,end_date:receipt.result.end_date as string,
         ...(isClosedRentalStage(scope.rentalStage)||receipt.result.new_inquiry===true?{new_inquiry:true as const}:{}),
         listing_quote:{total_gbp:(receipt.result.quote as {total_gbp:number}).total_gbp,
           lines:(receipt.result.quote as {lines:Array<{product_id:number;name:string;qty:number;line_total_gbp:number}>}).lines.map(l=>({product_id:l.product_id,name:l.name,quantity:l.qty,total_gbp:l.line_total_gbp}))},

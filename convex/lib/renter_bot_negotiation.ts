@@ -1,3 +1,4 @@
+import {PRIMARY_RENTAL_REQUEST,sameRentalRequest,type RentalRequest} from "./rental_request";
 /**
  * V1 negotiation strategy — pure-function port.
  *
@@ -44,17 +45,24 @@ export interface NegotiationOutput {
 
 /** Same bounded Native history for drafting and the Mastra tool. */
 export const NEGOTIATION_HISTORY_LIMIT=50;
-export function negotiationFromMessages(messages:Array<{sender:string;body_text:string;quoted_inquiries?:SentInquiryOffer[]}>) {
-  const renterMessages=messages.filter(message=>message.sender==="renter").map(message=>message.body_text);
-  // Native owner-message evidence describes the historical offered amount;
-  // its dates and request context remain attached. It never grants current
-  // price/stock authority or approval to create a booking.
-  const latestOptions=messages.filter(message=>message.sender==="owner"&&message.quoted_inquiries?.length).at(-1)?.quoted_inquiries??[];
-  // Multiple verified alternatives are history, not a selected price. Preserve
-  // their terms together without arbitrarily using the last option.
+export function negotiationFromMessages(messages:Array<{message_id?:string;sender:string;body_text:string;rental_request?:RentalRequest;quoted_inquiries?:SentInquiryOffer[]}>,selected?:RentalRequest) {
+  const request=selected??messages.filter(m=>m.sender==="owner"&&m.rental_request).at(-1)?.rental_request??PRIMARY_RENTAL_REQUEST;
+  // Tagged renter turns are authoritative. Untagged legacy history belongs to
+  // the primary booking; newer unsent turns inherit the last served request.
+  let active:RentalRequest=request.kind==="inquiry"&&!messages.some(m=>m.message_id===request.origin_message_id||m.rental_request)?request:PRIMARY_RENTAL_REQUEST;
+  const scoped=messages.filter((message,index)=>{
+    if(message.rental_request)active=message.rental_request;
+    else if(request.kind==="inquiry"&&message.message_id===request.origin_message_id)active=request;
+    const current=message.sender==="renter"&&index===messages.length-1&&!message.rental_request?request:active;
+    return sameRentalRequest(current,request);
+  });
+  const renterMessages=scoped.filter(message=>message.sender==="renter").map(message=>message.body_text);
+  const latestOptions=scoped.filter(message=>message.sender==="owner"&&message.quoted_inquiries?.length).at(-1)?.quoted_inquiries??[];
   const latestOffer=latestOptions.length===1?latestOptions[0]:null;
   return {...computeNegotiationStance({latestMessage:renterMessages.at(-1)??"",priorRenterMessages:renterMessages.slice(0,-1),
-    lastPriceOfferedGbp:latestOffer?.quote.listing_quote?.total_gbp??null}),lastInquiryOffer:latestOffer,...(latestOptions.length>1?{lastInquiryOptions:latestOptions}:{})};
+    lastPriceOfferedGbp:latestOffer?.quote.listing_quote?.total_gbp??null}),rentalRequest:request,
+    threadObjectionCount:countObjections(messages.filter(m=>m.sender==="renter").map(m=>m.body_text)),
+    lastInquiryOffer:latestOffer,...(latestOptions.length>1?{lastInquiryOptions:latestOptions}:{})};
 }
 
 // Price objections require price language; another hire or a delivery request

@@ -1,3 +1,4 @@
+import {rentalRequestValidator} from "./lib/rental_request";
 import {sentInquiryOfferValidator} from "./lib/sent_inquiry_offer";
 import { RECORDING_MODE_RESOLUTIONS } from "./lib/camera_requirements";
 import {sentReplacementProposalValidator} from "./lib/renter_replacement_proposal";
@@ -763,6 +764,7 @@ const operationalSchema = defineSchema({
     // raised on the draft (auto-fixed leaks + items flagged for owner review).
     ai_draft_confidence: v.optional(v.number()),
     ai_draft_evidence: v.optional(draftEvidenceValidator),
+    active_rental_request:v.optional(rentalRequestValidator),
     ai_draft_review: v.optional(draftReviewValidator),
     ai_draft_flags: v.optional(
       v.array(
@@ -959,6 +961,7 @@ const operationalSchema = defineSchema({
     hygglo_sent_at: v.optional(v.number()),
     fetched_at: v.number(),
     raw: v.optional(v.string()),
+    rental_request:v.optional(rentalRequestValidator),
     quoted_inquiries:v.optional(v.array(sentInquiryOfferValidator)),
     quoted_additions: v.optional(v.array(sentAdditionProposalValidator)),
     quoted_replacements:v.optional(v.array(sentReplacementProposalValidator)),

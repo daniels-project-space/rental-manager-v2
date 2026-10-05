@@ -1,3 +1,4 @@
+import {sentInquiryOffers} from "./sent_inquiry_offer";
 import {sentBookingProposals} from "./renter_sent_proposal";
 import { REFERRAL_RESTORE_OFFER } from "./referral_offer";
 import { describe, expect, it } from "vitest";
@@ -142,4 +143,40 @@ describe("ordinary Native inquiry offer history",()=>{
    expect((await sentBookingProposals(f.ctx,f.conversation,text)).inquiries).toEqual([]);
   }
  });
+});
+
+
+describe("served rental request lineage",()=>{
+ for(const path of ["lab","owner"])it(`${path} persists quote-free replies and their real inbound root`,async()=>{
+  const f=fixture(),request={kind:"inquiry",origin_message_id:"renter-current"};
+  f.conversation.ai_draft_text="I can check suitable options for that shoot.";
+  f.conversation.ai_draft_evidence={model_id:"test",stage:"CONFIRMED_UPCOMING",stock:[],rental_request:request};
+  const text=f.conversation.ai_draft_text;
+  if(path==="lab")await (appendAssistantMessage as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,run_id:"request"});
+  else await (recordSentReply as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,message_id:"request-owner"});
+  expect(f.conversation.active_rental_request).toEqual(request);
+  expect(f.tables.hygglo_messages[0].rental_request).toEqual(request);
+  expect(f.tables.hygglo_messages.at(-1).rental_request).toEqual(request);
+  expect(f.tables.hygglo_messages.at(-1).quoted_inquiries).toBeUndefined();
+ });
+ it("does not move request lineage for a changed reply or stale approval",async()=>{
+  for(const stale of [true,false]){
+   const f=fixture();f.conversation.ai_draft_evidence.rental_request={kind:"inquiry",origin_message_id:"renter-current"};
+   if(stale)f.conversation.ai_draft_epoch=4;
+   await (appendAssistantMessage as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text:stale?f.conversation.ai_draft_text:"A different reply",run_id:"unapproved-request"});
+   expect(f.conversation.active_rental_request).toBeUndefined();
+   expect(f.tables.hygglo_messages[0].rental_request).toBeUndefined();
+  }
+ });
+ it("rejects a fabricated or foreign request origin atomically",async()=>{
+  const f=fixture();f.conversation.ai_draft_evidence.rental_request={kind:"inquiry",origin_message_id:"foreign-renter"};
+  await expect((appendAssistantMessage as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text:f.conversation.ai_draft_text,run_id:"bad-root"})).rejects.toThrow("origin");
+  expect(f.conversation.active_rental_request).toBeUndefined();expect(f.tables.hygglo_messages).toHaveLength(1);
+ });
+});
+
+it("does not archive an exact quote under a different rental request",()=>{
+ const f=fixture();const a={kind:"inquiry",origin_message_id:"a"},b={kind:"inquiry",origin_message_id:"b"};
+ const quote={quote_key:"native",rental_request:a,new_inquiry:true,start_date:"2026-10-20",end_date:"2026-10-21",items:[{item_id:"lens",name:"Lens",quantity:1}],listing_quote:{total_gbp:50,lines:[{product_id:1,name:"Lens",quantity:1,total_gbp:50}]}};
+ expect(sentInquiryOffers({...f.conversation.ai_draft_evidence,rental_request:b,stock_quotes:[quote]},scope)).toEqual([]);
 });

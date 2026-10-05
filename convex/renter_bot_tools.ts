@@ -1,3 +1,5 @@
+import {PRIMARY_RENTAL_REQUEST,rentalRequestValidator} from "./lib/rental_request";
+import {validateRentalRequest} from "./lib/sent_rental_request";
 import { referralContext } from "./lib/referral_context";
 import { qualifyRecommendationBasket, recommendationRequirementValidator, type RecommendationRequirement } from "./lib/recommendation_qualification";
 import {cameraRequirementsValidator} from "./lib/camera_requirement_validator";
@@ -101,6 +103,8 @@ export const get_renter_context = query({
       renter_camera_identities: renterCameraIdentities(recentMsgs.filter(message=>message.sender!=="owner").map(message=>message.body_text)),
       renter_history:await renterHistory(ctx,profile,thread_id,londonToday()),
       owner_checks: ownerChecks,
+      rental_request:conversation?.active_rental_request??PRIMARY_RENTAL_REQUEST,
+      rental_requests:[...new Map(recentMsgs.flatMap(m=>m.rental_request?.kind==="inquiry"?[[m.rental_request.origin_message_id,m.rental_request] as const]:[])).values()],
       conversation_stage: stage,
       rental_stage: rentalStage(reservation, londonToday()),
       last_message_id: recentMsgs.at(-1)?.message_id ?? null,
@@ -918,13 +922,31 @@ export const get_negotiation_stance = query({
     thread_id: v.string(),
     // Compatibility with older clients; Native history is the authority.
     latest_message: v.optional(v.string()),
+    rental_request:v.optional(rentalRequestValidator),
   },
-  handler: async (ctx, { thread_id }) => {
+  handler: async (ctx, { thread_id,rental_request }) => {
     const all = await recentThreadMessages(ctx, thread_id, NEGOTIATION_HISTORY_LIMIT);
-    return negotiationFromMessages(all);
+    const conversation=await ctx.db.query("conversations").withIndex("by_thread",q=>q.eq("thread_id",thread_id)).first();
+    const request=await validateRentalRequest(ctx,thread_id,rental_request??conversation?.active_rental_request??PRIMARY_RENTAL_REQUEST,all.at(-1)?.sender==="renter"?all.at(-1)?.message_id:undefined);
+    return negotiationFromMessages(all,request);
   },
 });
 
+
+/** Read-only request planning. A new hire is anchored by Native, never by
+ * client-supplied dates, amounts, quote keys or a fabricated message id. */
+export const select_rental_request=query({
+ args:{thread_id:v.string(),intent:v.union(v.literal("continue"),v.literal("new"),v.literal("primary"),v.literal("resume")),origin_message_id:v.optional(v.string()),rental_request:v.optional(rentalRequestValidator)},
+ handler:async(ctx,{thread_id,intent,origin_message_id,rental_request})=>{
+  const conversation=await ctx.db.query("conversations").withIndex("by_thread",q=>q.eq("thread_id",thread_id)).first();
+  if(!conversation)throw new Error("Rental conversation not found");
+  const messages=await recentThreadMessages(ctx,thread_id,NEGOTIATION_HISTORY_LIMIT),latest=messages.at(-1);
+  if(latest?.sender!=="renter")throw new Error("Request planning requires a current renter message");
+  const selected=intent==="primary"?PRIMARY_RENTAL_REQUEST:intent==="new"?{kind:"inquiry" as const,origin_message_id:latest.message_id}:intent==="resume"?{kind:"inquiry" as const,origin_message_id:origin_message_id??""}:rental_request??conversation.active_rental_request??PRIMARY_RENTAL_REQUEST;
+  const request=await validateRentalRequest(ctx,thread_id,selected,intent==="resume"?undefined:latest.message_id);
+  return {rental_request:request,negotiation:negotiationFromMessages(messages,request),request_message_id:latest.message_id,context_only:true};
+ }
+});
 
 // ── Tool: check_location (delivery distance, db-cinema-v2 method) ──────────────
 // Geocode the renter's postcode + this account's hub via postcodes.io, haversine

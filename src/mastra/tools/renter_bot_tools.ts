@@ -18,7 +18,7 @@ import { RECORDING_REQUIREMENT_RESOLUTIONS, canonicalRecordingResolution } from 
  */
 import "server-only";
 
-import { recordRecommendationRequirements } from "@/lib/renter-tool-scope";
+import { recordRentalRequest,recordRecommendationRequirements } from "@/lib/renter-tool-scope";
 import { nativeInquiryQuote, nativeBookingRecord } from "@/lib/renter-native-quote";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
@@ -247,6 +247,18 @@ export const searchKnowledgeTool = createTool({
 });
 
 // ── Tool 6: get_negotiation_stance ────────────────────────────
+
+export const selectRentalRequestTool=createTool({
+ id:"select_rental_request",
+ description:"Select which hire this renter turn concerns. Call once BEFORE specification searches, availability, quotes or negotiation when the renter starts another independent hire, returns to the original booking, or resumes an earlier inquiry. new starts at the actual current renter message; primary returns to the original booking; resume requires an earlier Native origin_message_id; continue preserves the current inquiry. Changing dates, equipment, quantity or discussing cheaper alternatives within the same hire is continue, NEVER new. This read-only tool returns the correct request negotiation state. It never books, edits, cancels, verifies or grants a discount. Stock must still be checked for the exact requested basket. Do not create a new request merely to reset objections.",
+ inputSchema:z.object({thread_id:z.string(),intent:z.enum(["continue","new","primary","resume"]),origin_message_id:z.string().optional()}),
+ outputSchema:z.unknown(),
+ execute:async(input)=>{
+  const result=await convex().query(anyApi.renter_bot_tools.select_rental_request,input);
+  recordRentalRequest(currentRenterToolScope(),result);
+  return result;
+ }
+});
 
 export const getNegotiationStanceTool = createTool({
   id: "get_negotiation_stance",
@@ -596,6 +608,7 @@ export const RENTER_BOT_TOOLS = {
   check_basket_availability: checkBasketAvailabilityTool,
   search_knowledge: searchKnowledgeTool,
   get_negotiation_stance: getNegotiationStanceTool,
+  select_rental_request:selectRentalRequestTool,
   get_template: getTemplateTool,
   check_vacation: checkVacationTool,
   get_active_vacations: getActiveVacationsTool,
