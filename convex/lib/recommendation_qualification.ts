@@ -36,7 +36,14 @@ export function basketSpecificationOwnerChecks(requirements:RecommendationRequir
     candidate_item_ids:[item.item_id as Id<"items">],lens_mount:requirement.native_mount??null,...dates,quantity:item.quantity});
   }
  }
- return checks;
+ const grouped=new Map<string,typeof checks[number]>();
+ for(const check of checks){
+  const key=JSON.stringify(canonical({...check,candidate_item_ids:undefined}));
+  const existing=grouped.get(key);
+  if(existing)existing.candidate_item_ids=[...new Set([...existing.candidate_item_ids,...check.candidate_item_ids])];
+  else grouped.set(key,check);
+ }
+ return [...grouped.values()];
 }
 /** Individual capabilities do not prove a usable camera/lens pair. Check the
  * selected physical set even when a search omitted mount or lens coverage. */

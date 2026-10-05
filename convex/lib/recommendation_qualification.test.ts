@@ -1,9 +1,17 @@
 import {describe,it,expect} from "vitest";
-import {qualifyRecommendationBasket,recommendationRequirementsKey,type QualificationItem,type RecommendationRequirement} from "./recommendation_qualification";
+import {basketSpecificationOwnerChecks,qualifyRecommendationBasket,recommendationRequirementsKey,type QualificationItem,type RecommendationRequirement} from "./recommendation_qualification";
 const source_url="https://manufacturer.example/body",verified_at=2,verified_model="body";
 const item:QualificationItem={item_id:"body",name:"Body",kind:"camera",quantity:1,spec:{item_name_canonical:"Body",description:"Reviewed body",source:"manufacturer-verified",source_url,verified_at,verified_model,camera_capabilities:{role:"interchangeable_lens",sensor_format:"full_frame",native_mount:"E",internal_4k:true,source_url,verified_at,verified_model,recording_modes:[{resolution:"uhd_4k",nominal_fps:[60],capture_format:"full_frame",full_width:true,internal:true,conditions:[],source_url,verified_at,verified_model}]}}};
 const requirement:Extract<RecommendationRequirement,{kind:"camera"}>={kind:"camera",native_mount:"E",quantity:1,requirements:{recording:{resolution:"uhd_4k",min_fps:60,capture_format:"full_frame",full_width:true,internal:true}}};
 describe("Native basket technical qualification",()=>{
+ it("groups missing lens facts so one durable scope retains all affected physical lenses",()=>{
+  const lens:QualificationItem={item_id:"lens-a",name:"Lens A",kind:"lens",quantity:1,native_mount:"E",spec:null};
+  const dates={start_date:"2026-10-20",end_date:"2026-10-21"};
+  const checks=basketSpecificationOwnerChecks([], [{...item,native_mount:"E"},lens,{...lens,item_id:"lens-b"}],dates);
+  expect(checks).toEqual([{kind:"lens_recommendation",requirements:{coverage:"full_frame"},candidate_item_ids:["lens-a","lens-b"],lens_mount:null,...dates,quantity:1}]);
+  const separate=basketSpecificationOwnerChecks([], [{...item,native_mount:"E"},lens,{...lens,item_id:"lens-b",quantity:2}],dates);
+  expect(separate).toHaveLength(2);expect(separate.map(c=>c.quantity)).toEqual([1,2]);
+ });
  it("requires the selected physical item to supply the requested mode",()=>{
   expect(qualifyRecommendationBasket([requirement],[item])).toMatchObject({verified:true,groups:[{qualified_units:1}]});
   expect(qualifyRecommendationBasket([{...requirement,requirements:{recording:{...requirement.requirements.recording!,resolution:"dci_4k"}}}],[item])).toMatchObject({verified:false,groups:[{candidates:[{status:"unknown"}]}]});
