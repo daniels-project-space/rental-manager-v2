@@ -2200,8 +2200,12 @@ export const recheckCopiedDraftStock = internalQuery({
     }
     // Human wording edits cannot borrow technical facts from a previous draft.
     // Reuse the generation validators with current exact catalogue reviews.
+    const currentSpecs=new Map<string,Promise<Doc<"item_specs">[]>>();
     if(equipmentClaimsNeedProfiles(text)) {
       const [items,specs]=await Promise.all([ctx.db.query("items").collect(),ctx.db.query("item_specs").collect()]);
+      const byItem=new Map<string,Doc<"item_specs">[]>();
+      for(const spec of specs){const key=String(spec.item_id);byItem.set(key,[...(byItem.get(key)??[]),spec]);}
+      for(const item of items)currentSpecs.set(String(item._id),Promise.resolve(byItem.get(String(item._id))??[]));
       const profiles=equipmentClaimProfiles(items,specs),initial=stockRequestForInquiryQuote(request,evidence?.stock_quotes??[]).items.map(i=>i.name);
       if(unsupportedCameraModeClaims(text,profiles.cameras).length || unsupportedBuiltInNDClaims(text,profiles.cameras,initial).length ||
         unsupportedLensFocusClaims(text,profiles.lenses,initial,profiles.cameras.flatMap(e=>e.names)).length)return {ok:false,reason:"technical_claims_unverified"};
@@ -2251,7 +2255,6 @@ export const recheckCopiedDraftStock = internalQuery({
       prices.push(...renterPriceEvidence([{tool:"check_basket_availability",call_id:`send-quote:${quote.quote_key}`,result:fresh}],[],thread_id));
     }
     if(unsupportedPriceClaims(text,prices,request,inbound,evidence?.booking_record).length)return {ok:false,reason:"price_unverified"};
-    const currentSpecs=new Map<string,Promise<Doc<"item_specs">[]>>();
     // A copied recommendation must still qualify even when its prose says
     // only "this setup". Reuse the initial Native criteria and physical IDs;
     // an old model claim or old review is never current technical proof.
@@ -2291,7 +2294,15 @@ export const recheckCopiedDraftStock = internalQuery({
       const item=resolveStockItem(old.item,sources.items);
       if(!item.confident||!item.match)continue;
       const fresh=stockForRentalItem(sources,item.match,{item_name:old.item,start_date:old.start_date,end_date:old.end_date,quantity:old.quantity,thread_id:old.new_inquiry?"":thread_id});
-      receipts.push({item:old.item,start_date:old.start_date,end_date:old.end_date,quantity:old.quantity,
+      let identity_names:string[]|undefined;
+      if(["camera","camera_body","lens"].includes(item.match.kind??"")) {
+        const id=String(item.match._id);
+        let read=currentSpecs.get(id);
+        if(!read){read=ctx.db.query("item_specs").withIndex("by_item",q=>q.eq("item_id",item.match!._id)).collect();currentSpecs.set(id,read);}
+        const profiles=equipmentClaimProfiles([item.match],await read);
+        identity_names=profiles.lenses[0]?.names??profiles.cameras[0]?.names;
+      }
+      receipts.push({item:old.item,start_date:old.start_date,end_date:old.end_date,quantity:old.quantity,identity_names,
         available:fresh.available,free_units:fresh.free_units,checked_at:fresh.checked_at,kind:item.match.kind,owned:fresh.owned,basket,call_id:`send-recheck:${receipts.length}`});
     }
     const excluded=(evidence.rental_eligibility?.ineligible_items??[]).filter(name=>{
