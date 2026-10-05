@@ -19,7 +19,7 @@ import { RENTER_BOT_MODEL_ID } from "@/lib/llm-client";
 import {PRIMARY_RENTAL_REQUEST,type RentalRequest} from "@/../convex/lib/rental_request";
 import { withRenterToolScope } from "@/lib/renter-tool-scope";
 import { checkBasketAvailabilityTool } from "@/mastra/tools/renter_bot_tools";
-import { recommendationKitEvidence, renterToolReceipts, stockReceipts, successfulGrounding, type ToolReceipt } from "@/lib/renter-tool-evidence";
+import { availabilityComponentReceipts, recommendationKitEvidence, renterToolReceipts, stockReceipts, successfulGrounding, type ToolReceipt } from "@/lib/renter-tool-evidence";
 import { NextResponse } from "next/server";
 import { normalizeClaimedFacts } from "../../../../convex/lib/renter_draft_evidence";
 import { harvestToolKitItems, harvestToolPrices } from "../../../lib/harvest-tool-prices";
@@ -1191,7 +1191,8 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
     try {
       const result=await withConvexClientFactory(()=>convex,()=>withRenterToolScope(renterToolScope,()=>checkBasketAvailabilityTool.execute!(currentInquiryBasket!,{})));
       if(!result||typeof result!=="object"||"error" in result)throw new Error("Basket tool did not return evidence");
-      toolReceipts.push({tool:"check_basket_availability",call_id:"prefetch:current-inquiry-basket",result:result as Record<string,unknown>});
+      const receipt:ToolReceipt={tool:"check_basket_availability",call_id:"prefetch:current-inquiry-basket",result:result as Record<string,unknown>};
+      toolReceipts.push(receipt,...availabilityComponentReceipts(receipt));
       groundTruth+=`CURRENT INQUIRY — NATIVE JOINT BASKET RESULT:\n${JSON.stringify(result)}\nThis replaces separate current-item price and availability checks. available proves stock only; technical_qualification is the setup verdict. Use renter_quote.quote_key in a quote reply_part for its price. renter_quote:null means there is no qualified offer: answer verified individual facts, explain the unresolved kit check naturally, and leave the supplied owner_checks for owner review. Do not ask the renter to verify our kit facts or promise that the unverified setup works.\n`;
     }catch {
       groundTruth+="CURRENT INQUIRY BASKET CHECK FAILED: price, joint availability and setup readiness remain unverified. Call check_basket_availability before offering the current basket.\n";

@@ -2,6 +2,18 @@ import { renterItemNames, reviewedLensNames } from "../../convex/lib/renter_item
 /** Independent receipts from tool RESULTS, never the model's arguments or prose. */
 export type ToolReceipt = { tool: string; call_id: string; result: Record<string, unknown> };
 
+/** A Native basket has the same physical receipts whether Mastra or server
+ * hydration invoked the tool. Never substitute its aggregate commercial name. */
+export function availabilityComponentReceipts(receipt:ToolReceipt):ToolReceipt[] {
+ const {tool,call_id,result}=receipt;
+ if(result.error||result.ok===false||!["check_availability","check_basket_availability"].includes(tool)||!Array.isArray(result.components))return [];
+ return result.components.flatMap(raw=>{
+  if(!raw||typeof raw!=="object"||Array.isArray(raw))return [];
+  const component=raw as Record<string,unknown>;
+  return [{tool:"check_availability",call_id:`${call_id}:component:${String(component.item_id??component.item_name)}`,result:component}];
+ });
+}
+
 /** Only server-returned recommendation contents can qualify an alternative's kit. */
 export function recommendationKitEvidence(receipts: ToolReceipt[]) {
   const evidence: Array<{ names: string[]; contents: string[]; kind?: string }> = [];
@@ -59,11 +71,7 @@ export function renterToolReceipts(steps: unknown): ToolReceipt[] {
         result.required_accessory_quotes.forEach((quote, i) => visit({toolName:"lookup_pricing",toolCallId:`${String(payload.toolCallId ?? "unknown")}:required-accessory:${i}`,result:quote}));
       if (!result.error && result.ok !== false && result.found !== false)
         receipts.push({ tool: payload.toolName, call_id: String(payload.toolCallId ?? "unknown"), result });
-      if (!result.error && result.ok !== false && ["check_availability","check_basket_availability"].includes(String(payload.toolName)) && Array.isArray(result.components)) {
-        for (const component of result.components) {
-          if (component && typeof component === "object") receipts.push({ tool: "check_availability", call_id: `${String(payload.toolCallId ?? "unknown")}:component:${String(component.item_id ?? component.item_name)}`, result: component });
-        }
-      }
+      receipts.push(...availabilityComponentReceipts({tool:payload.toolName,call_id:String(payload.toolCallId??"unknown"),result}));
       if ((["modify_booking","quote_booking_addition","quote_booking_replacement","quote_booking_dates"].includes(payload.toolName)) && result.ok === true && result.stock_receipt && typeof result.stock_receipt === "object")
         receipts.push({ tool: "check_availability", call_id: `${String(payload.toolCallId ?? "unknown")}:mutation-stock`, result: result.stock_receipt as Record<string, unknown> });
       // A rejected amendment can still carry a genuine negative calendar

@@ -6,9 +6,10 @@ import pairedNative from "./fixtures/renter-sales-paired-native.json";
 import {unsupportedPriceClaims,type PriceEvidence} from "../../convex/lib/price_claims";
 import {renterPriceEvidence} from "./renter-price-evidence";
 import { describe, expect, it } from "vitest";
-import { recommendationKitEvidence, renterToolReceipts, stockReceipts, successfulGrounding } from "./renter-tool-evidence";
+import { availabilityComponentReceipts, recommendationKitEvidence, renterToolReceipts, stockReceipts, successfulGrounding } from "./renter-tool-evidence";
 import { normalizeClaimedFacts } from "../../convex/lib/renter_draft_evidence";
-import { unsupportedStockClaims } from "../../convex/lib/stock_claims";
+import { unsupportedStockClaims,type StockReceipt } from "../../convex/lib/stock_claims";
+import currentInquiry from "./fixtures/renter-current-inquiry-basket-stock.json";
 import mismatch from "./fixtures/renter-product-name-mismatch.json";
 
 describe("untrusted claimed-fact diagnostics", () => {
@@ -25,6 +26,22 @@ describe("untrusted claimed-fact diagnostics", () => {
 });
 
 const stock = { available: true, owned: true, item_name: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04", requested_units: 1, free_units: 1, checked_at: 12345 };
+it("uses identical Native physical stock proof for server hydration and Mastra without qualifying the kit",()=>{
+ const parent={tool:"check_basket_availability",call_id:"captured-current-inquiry",result:currentInquiry.native};
+ const hydrated=[parent,...availabilityComponentReceipts(parent)];
+ expect(hydrated).toEqual(renterToolReceipts([{toolName:parent.tool,toolCallId:parent.call_id,result:parent.result}]));
+ expect(stockReceipts([parent])).toEqual([]);expect(parent.result.technical_qualification.verified).toBe(false);
+ const proof=stockReceipts(hydrated).map(({result:r,call_id})=>({...r,item:r.item_name,quantity:r.requested_units,call_id})) as unknown as StockReceipt[];
+ expect(proof).toHaveLength(4);
+ const check=(receipts=proof)=>unsupportedStockClaims(currentInquiry.candidate,receipts,currentInquiry.request);
+ expect(check()).toEqual([]);
+ expect(check(proof.filter(r=>r.item!=="Canon EF 24-105mm f4"))).not.toEqual([]);
+ expect(check(proof.map(r=>r.item==="NP-F570 batteries"?{...r,quantity:4}:r))).not.toEqual([]);
+ expect(check(proof.map(r=>({...r,start_date:"2026-10-22",end_date:"2026-10-23"})))).not.toEqual([]);
+ expect(check(proof.map(r=>r.item==="Canon EF 24-105mm f4"?{...r,available:false}:r))).not.toEqual([]);
+ expect(availabilityComponentReceipts({...parent,result:{...parent.result,ok:false}})).toEqual([]);
+ expect(availabilityComponentReceipts({...parent,tool:"search_knowledge"})).toEqual([]);
+});
 it("rejects the real Native product-ID/name mismatch instead of harvesting its aggregate echo",()=>{
  const harvested=stockReceipts(renterToolReceipts([{toolName:"check_availability",toolCallId:"captured-native-mismatch",result:mismatch}]));
  expect(harvested.map(r=>r.result.item_name)).not.toContain("Sony FX3");
