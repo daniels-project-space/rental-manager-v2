@@ -50,6 +50,7 @@ import { rentalStage,isClosedRentalStage } from "./lib/rental_stage";
 import { londonToday } from "./lib/effectiveDates";
 import { chronologicalThreadMessages, recentThreadMessages } from "./lib/thread_messages";
 import { negotiationFromMessages } from "./lib/renter_bot_negotiation";
+import { rentalRequestContext, rentalRequestHistory } from "./lib/rental_request_history";
 import { sameMount, bestMatch, rankByName, substitutionScore, exactTitleMatch } from "./lib/item_name_match";
 import { tierRateForDays, describeTiers, rentalQuote, type PriceTier } from "./lib/hygglo_pricing";
 
@@ -105,7 +106,7 @@ export const get_renter_context = query({
       renter_history:await renterHistory(ctx,profile,thread_id,londonToday()),
       owner_checks: ownerChecks,
       rental_request:conversation?.active_rental_request??PRIMARY_RENTAL_REQUEST,
-      rental_requests:[...new Map(allMsgs.flatMap(m=>m.rental_request?.kind==="inquiry"?[[m.rental_request.origin_message_id,m.rental_request] as const]:[])).values()],
+      rental_requests:rentalRequestHistory(allMsgs),
       conversation_stage: stage,
       rental_stage: rentalStage(reservation, londonToday()),
       last_message_id: recentMsgs.at(-1)?.message_id ?? null,
@@ -945,7 +946,7 @@ export const select_rental_request=query({
   if(latest?.sender!=="renter")throw new Error("Request planning requires a current renter message");
   const selected=intent==="primary"?PRIMARY_RENTAL_REQUEST:intent==="new"?{kind:"inquiry" as const,origin_message_id:latest.message_id}:intent==="resume"?{kind:"inquiry" as const,origin_message_id:origin_message_id??""}:rental_request??conversation.active_rental_request??PRIMARY_RENTAL_REQUEST;
   const request=await validateRentalRequest(ctx,thread_id,selected,intent==="resume"?undefined:latest.message_id);
-  return {rental_request:request,negotiation:negotiationFromMessages(messages,request),request_message_id:latest.message_id,context_only:true};
+  return {rental_request:request,request_context:rentalRequestContext(messages,request),negotiation:negotiationFromMessages(messages,request),request_message_id:latest.message_id,context_only:true};
  }
 });
 

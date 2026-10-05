@@ -1,4 +1,5 @@
 import {computeNegotiationStance,negotiationFromMessages} from "./lib/renter_bot_negotiation";
+import {rentalRequestContext,rentalRequestHistory} from "./lib/rental_request_history";
 import type {Id} from "./_generated/dataModel";
 import {handle as handleOwnerCheck, ownerChecksForBot } from "./renter_bot_owner_checks";
 import {ownerCheckScopeKey, nativeOwnerChecks } from "./lib/owner_checks";
@@ -34,6 +35,34 @@ function database() {
   return { ctx: { db }, rows };
 }
 const invoke = (fn: any, ctx: any, args: any) => fn._handler(ctx, args);
+describe("Native earlier hire descriptions",()=>{
+ const request={kind:"inquiry",origin_message_id:"landscape-hire"} as const;
+ const origin={message_id:request.origin_message_id,sender:"renter",rental_request:request,body_text:"Sony 16-35mm for landscapes on 22 to 24 October.",hygglo_sent_at:1};
+ it("describes the actual served renter origin after its prose leaves the chat window",()=>{
+  const messages=[origin,...Array.from({length:60},(_,i)=>({message_id:`later-${i}`,sender:"owner",body_text:"Collection can wait for confirmation."}))];
+  expect(rentalRequestHistory(messages)).toEqual([{...request,history:{context_only:true,original_request_text:origin.body_text,original_request_text_truncated:false,original_request_at:1,latest_offered_options:[]}}]);
+ });
+ it("retains exact last offered dates and listing members without minting financial or stock proof",()=>{
+  const quote={quote_key:"old-native",rental_request:request,start_date:"2099-10-22",end_date:"2099-10-24",items:[],listing_quote:{total_gbp:50,lines:[{product_id:123,name:"Sony lens",quantity:1,total_gbp:50}]}};
+  const owner=(q:any)=>({message_id:"owner",sender:"owner",rental_request:request,body_text:"Here is the offer.",quoted_inquiries:[{context_key:"old-context",epoch:1,quoted_for_message_id:origin.message_id,quote:q}]});
+  const updated={...quote,end_date:"2099-10-28",listing_quote:{...quote.listing_quote,total_gbp:100}};
+  const history=rentalRequestHistory([origin,owner(quote),owner(updated)])[0].history;
+  expect(history.latest_offered_options).toEqual([{start_date:"2099-10-22",end_date:"2099-10-28",items:[{product_id:123,name:"Sony lens",quantity:1}]}]);
+  expect(history).not.toHaveProperty("quote_key");expect(history.latest_offered_options[0]).not.toHaveProperty("total_gbp");
+  const foreign={...quote,rental_request:{kind:"inquiry",origin_message_id:"different-hire"}};
+  expect(rentalRequestHistory([origin,owner(quote),owner(foreign)])[0].history.latest_offered_options[0].end_date).toBe("2099-10-24");
+ });
+ it("does not invent earlier hires from an owner tag, a mismatched origin, or untagged renter prose",()=>{
+  expect(rentalRequestHistory([{...origin,sender:"owner"},{...origin,message_id:"other"},{...origin,rental_request:undefined}])).toEqual([]);
+ });
+ it("marks bounded historical excerpts rather than pretending the whole request was supplied",()=>{
+  const text="Sony lens. ".repeat(100),history=rentalRequestHistory([{...origin,body_text:text}])[0].history;
+  expect(history.original_request_text).toBe(text.slice(0,512));expect(history.original_request_text_truncated).toBe(true);
+  expect(rentalRequestContext([{...origin,body_text:text}],request)?.original_request_text).toBe(text);
+  expect(rentalRequestContext([origin],{kind:"primary"})).toBeNull();
+  expect(rentalRequestContext([{...origin,sender:"owner"}],request)).toBeNull();
+ });
+});
 describe("copied bot replies use current Native stock before send",()=>{
  async function stockDraft() {
   const f=await setup();await f.ctx.db.patch(f.convId,{account_slug:"leo"});
