@@ -228,3 +228,17 @@ describe("verification questions do not assert supplied contents", () => {
    expect(check(text),text).not.toEqual([]);
  });
 });
+
+describe("included components do not take ownership of their parent kit",()=>{
+ const camera={names:renterItemNames("BMPCC 6K Full Frame"),contents:["1TB CFexpress Type B card","5x NP-F570 batteries","Canon EF 24-105mm f4","EF to L mount adapter"]};
+ const components=[{names:["Canon EF 24-105mm f4"],contents:[]},{names:["EF to L mount"],contents:[]},{names:["NP-F570 batteries"],contents:[]}];
+ const text="Yes, the Blackmagic 6K Full Frame can record DCI 4K internally at up to 60 fps in Blackmagic RAW using the windowed sensor crop.\n\nFor media, the kit includes a 1TB CFexpress Type B card, along with 5x NP-F570 batteries, the Canon EF 24-105mm f/4 lens, and the EF to L mount adapter.";
+ it("uses the named camera's contents across the generic kit sentence",()=>{
+  expect(unsupportedKitClaims(text,[camera,...components])).toEqual([]);
+  expect(unsupportedKitClaims(text.replace("5x NP-F570","6x NP-F570"),[camera,...components])).not.toEqual([]);
+  expect(unsupportedKitClaims(text,[{...camera,contents:camera.contents.filter(c=>!c.includes("CFexpress"))},...components])).not.toEqual([]);
+ });
+ it("does not lend the camera contents to a separately named lens",()=>{
+  expect(unsupportedKitClaims("Blackmagic 6K Full Frame is the camera. Canon EF 24-105mm f4 includes a 1TB CFexpress Type B card.",[camera,...components])).not.toEqual([]);
+ });
+});

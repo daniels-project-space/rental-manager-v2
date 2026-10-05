@@ -109,9 +109,12 @@ export function unsupportedKitClaims(text: string, evidence: KitEvidence[], init
   for (const originalSentence of text.split(/(?<=[.!?])\s+|\n/)) {
     const sentence = withoutVerificationQuestions(originalSentence);
     if (!sentence.trim()) continue;
-    const named = evidence.filter(e => e.names.some(name => name && namesItem(sentence, name)));
-    if (named.length) subject = named;
     const match = /\b(?:comes with|ships with|bundled with|includes?|included)\b/i.exec(sentence);
+    // Included objects cannot replace the owner of an active contents claim.
+    // A generic "the kit includes ..." retains its preceding camera subject.
+    const ownerText=match&&match[0].toLowerCase()!=="included" ? sentence.slice(0,match.index) : sentence;
+    const named = evidence.filter(e => e.names.some(name => name && namesItem(ownerText, name)));
+    if (named.length) subject = named;
     const bullet = includedList && /^\s*(?:[-•*]\s+|\d+\s*[x×]\s+)/i.test(sentence);
     if (!match && !bullet) { includedList = false; continue; }
     if (/\b(?:does not|doesn't|not|without)\s+(?:come|ship|include)/i.test(sentence)) { includedList = false; continue; }
