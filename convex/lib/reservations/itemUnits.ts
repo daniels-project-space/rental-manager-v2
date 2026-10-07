@@ -155,3 +155,32 @@ export function websiteDayIntervals(r: ResolvableRes & {pickup_time?:string;retu
   }
   return result;
 }
+
+/** Display saved website periods without filling gaps or borrowing another item's clock.
+ * The original reservation ID is retained for every operation; periodKey is display-only.
+ */
+export function websiteCalendarPeriods<T extends ResolvableRes & {
+  start_date?: string; end_date?: string; pickup_date?: string; return_date?: string;
+  pickup_time?: string; return_time?: string;
+}>(r: T, itemId?: string): Array<T & { site_period_key?: string }> {
+  if (r.account_slug !== "dbcinema_web" || r.site_item_windows === undefined) return [r];
+  const groups = new Map<string, NonNullable<ResolvableRes["site_item_windows"]>>();
+  for (const w of r.site_item_windows) {
+    if (itemId !== undefined && String(w.item_id) !== itemId) continue;
+    const start = new Date(w.start).toISOString().slice(0, 10);
+    const end = new Date(w.end).toISOString().slice(0, 10);
+    const pickup = w.pickupTime === undefined ? r.pickup_time : w.pickupTime;
+    const ret = w.returnTime === undefined ? r.return_time : w.returnTime;
+    const key = JSON.stringify([start, end, pickup ?? null, ret ?? null]);
+    const rows = groups.get(key) ?? []; rows.push(w); groups.set(key, rows);
+  }
+  return [...groups].map(([key, windows]) => {
+    const w = windows[0];
+    const start = new Date(w.start).toISOString().slice(0, 10);
+    const end = new Date(w.end).toISOString().slice(0, 10);
+    return { ...r, site_period_key: key, site_item_windows: windows,
+      start_date: start, pickup_date: start, end_date: end, return_date: end,
+      pickup_time: (w.pickupTime === undefined ? r.pickup_time : w.pickupTime) ?? undefined,
+      return_time: (w.returnTime === undefined ? r.return_time : w.returnTime) ?? undefined };
+  });
+}

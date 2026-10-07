@@ -9,7 +9,7 @@ import {
   renterPeriodGroupIds,
   type ReservationRow,
 } from "./lib/reservations/predicates";
-import { websiteDayIntervals, reservationItemUnits, buildProductIndexMap, buildOverrideMap, isStandardAccessory } from "./lib/reservations/itemUnits";
+import { websiteCalendarPeriods, websiteDayIntervals, reservationItemUnits, buildProductIndexMap, buildOverrideMap, isStandardAccessory } from "./lib/reservations/itemUnits";
 import {
   isTrackableLine,
   lineResolvesToSomething,
@@ -480,6 +480,8 @@ export async function computeStripLive(
       };
     }) as typeof reservations;
 
+    const calendarReservations = mergedReservations.flatMap(r => websiteCalendarPeriods(r));
+
     // Renter lookups
     const renterIds = [
       ...new Set(
@@ -705,7 +707,7 @@ export async function computeStripLive(
       // the set to a single tile. Legacy path kept for rows w/o hygglo_items.
       {
         const hy = buildHyggloListingTiles(r as Parameters<typeof buildHyggloListingTiles>[0], bankByProductStrip);
-        if (hy.length > 0) {
+        if (hy.length > 0 && !(r.account_slug === "dbcinema_web" && r.site_item_windows !== undefined)) {
           return hy.map((t) => ({
             itemId: t.productId != null ? `pid:${t.productId}` : null,
             name: t.name,
@@ -730,7 +732,7 @@ export async function computeStripLive(
             imageByResItemStrip.get(`${String(r._id)}#${id}`) ??
             resFallbackImg.get(String(r._id)) ??
             null;
-          const key = img ?? `n:${id}`;
+          const key = r.account_slug === "dbcinema_web" ? `n:${id}` : img ?? `n:${id}`;
           if (seen.has(key)) continue;
           seen.add(key);
           out.push({ itemId: id, name: shortItemName(inv?.name_canonical ?? "item"), imageUrl: img, qty, resolved: true });
@@ -743,7 +745,7 @@ export async function computeStripLive(
         // photo isn't already shown, using its raw name + own account-correct
         // image. Image-keyed dedup means a set listing (components share the
         // listing photo) is NOT duplicated.
-        for (const h of (((r as { hygglo_items?: Array<{ name?: string; product_id?: number; image_url?: string; qty?: number }> }).hygglo_items) ?? [])) {
+        for (const h of (r.account_slug === "dbcinema_web" && r.site_item_windows !== undefined ? [] : ((r as { hygglo_items?: Array<{ name?: string; product_id?: number; image_url?: string; qty?: number }> }).hygglo_items) ?? [])) {
           const himg =
             (typeof h.product_id === "number" ? bankByProductStrip.get(`${acct}#${h.product_id}`) : undefined) ??
             (h.image_url && !h.image_url.includes("example.com") ? h.image_url : null);
@@ -753,6 +755,8 @@ export async function computeStripLive(
         }
         if (out.length > 0) return out;
       }
+
+      if (r.account_slug === "dbcinema_web" && r.site_item_windows !== undefined) return [];
 
       // Fallback: raw Hygglo strings + fuzzy image lookup. These titles can be
       // SEO-slop multi-item descriptions; we keep them so the booking still
@@ -847,6 +851,7 @@ export async function computeStripLive(
       // Saves ~250 bytes per chip × ~5 chips/day × 7 days = ~9KB per response.
       return {
         reservationId: r._id,
+        periodKey: (r as { site_period_key?: string }).site_period_key ?? null,
         kind,
         items,
         renterName,
@@ -881,11 +886,11 @@ export async function computeStripLive(
       // Same-day rentals have two distinct handovers. Show both events so the
       // scheduled return cannot disappear from the day's return category.
       // Placement follows the negotiated dates in each direction.
-      const pickups = mergedReservations
+      const pickups = calendarReservations
         .filter((r) => displayPickupDate(r) === date)
         .map((r) => buildChip(r, "pickup"));
 
-      const returns = mergedReservations
+      const returns = calendarReservations
         .filter((r) => effectiveReturnDate(r) === date)
         .map((r) => buildChip(r, "return"));
 
@@ -893,16 +898,16 @@ export async function computeStripLive(
       // Uses effective pickup + return dates so AI-negotiated rentals stay
       // "away" between the negotiated days instead of the raw Hygglo dates.
       const dayIds = new Set([
-        ...pickups.map((p) => p.reservationId),
-        ...returns.map((r) => r.reservationId),
+        ...pickups.map((p) => `${p.reservationId}:${p.periodKey ?? ""}`),
+        ...returns.map((r) => `${r.reservationId}:${r.periodKey ?? ""}`),
       ]);
-      const away = mergedReservations
+      const away = calendarReservations
         .filter((r) => {
           const pick = displayPickupDate(r);
           if (!pick) return false;
           const ret = effectiveReturnDate(r);
           if (!ret) return false;
-          return pick < date && ret > date && !dayIds.has(r._id);
+          return pick < date && ret > date && !dayIds.has(`${r._id}:${r.site_period_key ?? ""}`);
         })
         .map((r) => buildChip(r, "away"));
 
@@ -922,7 +927,7 @@ export async function computeStripLive(
           status: h.status,
         }));
 
-      return { date, pickups, returns, away, holds: dayHolds };
+      return { calendarWindowVersion: 2 as const, date, pickups, returns, away, holds: dayHolds };
     });
 }
 
@@ -946,7 +951,7 @@ export const getCalendarStrip = query({
       // Cast the stored v.any() payload back to the live compute's exact type
       // (returning `any` from one branch would widen the whole query return
       // type to `any`). Same pattern as getWeeklyCalendar.
-      if (mv && mv.anchor === startDate && mv.days === days)
+      if (mv && mv.anchor === startDate && mv.days === days && Array.isArray(mv.payload) && mv.payload.every((d: { calendarWindowVersion?: number }) => d.calendarWindowVersion === 2))
         return mv.payload as Awaited<ReturnType<typeof computeStripLive>>;
     }
     return computeStripLive(ctx, { accountSlug, startDate, days });
@@ -1315,9 +1320,11 @@ export async function computeWeeklyLive(
     }
 
     return {
+      calendarWindowVersion: 2 as const,
       days: dates.map((date) => ({
         date,
         reservations: reservations
+          .flatMap(r => websiteCalendarPeriods(r))
           .filter((r) => {
             const pick = displayPickupDate(r);
             if (!pick) return false;
@@ -1336,9 +1343,15 @@ export async function computeWeeklyLive(
               net_to_owner_gbp?: number | null;
               renter_name?: string | null;
             };
-            const itemNames = resolvedNamesByResW.get(String(r._id)) ?? (r.items ?? []).map((i) => i.item_name);
+            const physical = r.account_slug === "dbcinema_web" && r.site_item_windows !== undefined;
+            const physicalItems = [...reservationItemUnits(r, productIndexW, overrideMapW, allItemsWeekly)]
+              .map(([id, qty]) => ({ inv: itemByIdW.get(id), qty }))
+              .filter(({ inv }) => inv && !isStandardAccessory(inv.kind, inv.name_canonical))
+              .map(({ inv, qty }) => ({ name: shortItemName(inv.name_canonical), qty,
+                imageUrl: imageForItem(inv.name_canonical, ((r as { image_hints?: WeeklyImageHint[] }).image_hints) ?? [], r) }));
+            const itemNames = physical ? physicalItems.map(i => i.name + (i.qty > 1 ? " ×" + i.qty : "")) : resolvedNamesByResW.get(String(r._id)) ?? (r.items ?? []).map((i) => i.item_name);
             const hintsForR = ((r as { image_hints?: WeeklyImageHint[] }).image_hints) ?? [];
-            const items = (r.items ?? []).map((i) => ({
+            const items = physical ? physicalItems : (r.items ?? []).map((i) => ({
               name: i.item_name,
               imageUrl: imageForItem(i.item_name, hintsForR),
               qty: i.qty ?? 1,
@@ -1350,6 +1363,7 @@ export async function computeWeeklyLive(
             const isAwayDay = effPick < date && (effRet ?? "") > date;
             return {
               reservationId: r._id,
+              periodKey: r.site_period_key ?? null,
               itemNames,
               items,
               accountSlug: r.account_slug,
@@ -1410,7 +1424,7 @@ export const getWeeklyCalendar = query({
       // type — otherwise returning `any` from one branch widens the whole
       // query's inferred return type to `any` and the frontend's typed
       // `data.days.map(...)` breaks (noImplicitAny).
-      if (mv && mv.anchor === weekStartDate)
+      if (mv && mv.anchor === weekStartDate && mv.payload?.calendarWindowVersion === 2)
         return mv.payload as Awaited<ReturnType<typeof computeWeeklyLive>>;
     }
     return computeWeeklyLive(ctx, { accountSlug, weekStartDate });
@@ -1641,7 +1655,7 @@ export const getGanttWeek = query({
       }
 
       const rowImage = ((iDoc && iDoc._id) ? imageByItemId.get(String(iDoc._id)) : null) ?? resolvedImageUrl;
-      const blocks = matchingRes.map((r) => {
+      const blocks = matchingRes.flatMap(original => websiteCalendarPeriods(original, iDoc?._id ? String(iDoc._id) : undefined).map((r) => {
         const rType = r as {
           pickup_time?: string | null;
           return_time?: string | null;
@@ -1658,7 +1672,8 @@ export const getGanttWeek = query({
           reservation_id: r._id,
           // ALL Hygglo listings on this booking (each own image) — the frontend
           // renders these as the booking's thumbnails so the whole set shows.
-          set_tiles: setTilesByRes.get(String(r._id)) ?? null,
+          set_tiles: r.site_period_key ? null : setTilesByRes.get(String(r._id)) ?? null,
+          qty: r.site_period_key && iDoc?._id ? reservationItemUnits(r, productIndexG, overrideMapG).get(String(iDoc._id)) ?? 1 : 1,
           // Per-reservation account-correct image first; then THIS reservation's
           // own photo; only then the row image (global imageByItemId can bleed a
           // different account when an item is shared, e.g. a diogo bar showing a
@@ -1667,7 +1682,7 @@ export const getGanttWeek = query({
             ((iDoc && iDoc._id) ? imageByResItem.get(`${String(r._id)}#${String(iDoc._id)}`) : null) ??
             reservationOwnImage(r as Parameters<typeof reservationOwnImage>[0]) ??
             rowImage,
-          logical_group_id: ganttGroupIds.get(r._id) ?? r._id,
+          logical_group_id: r.site_period_key ? `${r._id}:${r.site_period_key}` : ganttGroupIds.get(r._id) ?? r._id,
           start_date: effPick || r.start_date,
           end_date: r.end_date,
           return_date: (r as { return_date?: string | null }).return_date ?? r.end_date ?? null,
@@ -1694,7 +1709,7 @@ export const getGanttWeek = query({
             rType.return_time,
           ),
         };
-      });
+      }));
 
       return {
         item_id: (iDoc?._id ?? null) as string | null,

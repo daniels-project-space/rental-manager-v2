@@ -16,6 +16,7 @@ import {
 // ---------------------------------------------------------------------------
 interface Block {
   reservation_id: string;
+  qty?: number;
   start_date: string | undefined;
   end_date: string | undefined;
   /**
@@ -261,10 +262,10 @@ function groupByReservation(items: GanttItem[], weekStart: string, xAt: (dayFloa
         }
       } else {
         const img = block.image_url ?? item.image_url;
-        const key = img ?? `n:${item.item_name}`;
+        const key = block.account_slug === "dbcinema_web" ? `n:${item.item_name}|${img ?? ""}` : img ?? `n:${item.item_name}`;
         if (!g.shown.has(key)) {
           g.shown.add(key);
-          g.items.push({ name: item.item_name, image: img ?? null });
+          g.items.push({ name: item.item_name + ((block.qty ?? 1) > 1 ? ` ×${block.qty}` : ""), image: img ?? null });
         }
       }
     }
@@ -684,7 +685,7 @@ const BAR_HEIGHT = 28; // fixed bar height, vertically centered in the row
 export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug, focusedReservationId }: Props): React.ReactElement | null {
   const [weekStart, setWeekStart] = useState<string>(() => weekStartIso ?? viewAnchor());
   const [selectedBlock, setSelectedBlock] = useState<{ block: Block; items: ResItem[]; accent: string } | null>(null);
-  // live progress map: reservation_id → computed progress
+  // Live progress per logical calendar period.
   const [liveProgress, setLiveProgress] = useState<Record<string, number>>({});
   // Current instant — ticks every minute so the red "now" line sweeps the day.
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -773,7 +774,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
           const end = isoToDate((block.return_date ?? block.end_date) as string).getTime() + 86400000; // inclusive
           const total = end - start;
           if (total > 0) {
-            map[block.reservation_id] = Math.min(100, Math.round(((now - start) / total) * 100));
+            map[block.logical_group_id ?? block.reservation_id] = Math.min(100, Math.round(((now - start) / total) * 100));
           }
         }
       }
@@ -867,7 +868,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
   const matchedInv = searching ? searchResult?.items ?? [] : [];
   const relatedResIds = searching ? new Set(searchResult?.reservationIds ?? []) : null;
   const visibleResRows = relatedResIds
-    ? resRows.filter((r) => relatedResIds.has(r.reservationId))
+    ? resRows.filter((r) => r.sourceReservationIds.some(id => relatedResIds.has(id)))
     : resRows;
   const searchLoading = searching && searchResult === undefined;
 

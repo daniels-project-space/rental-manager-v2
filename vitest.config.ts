@@ -24,6 +24,7 @@ export default defineConfig({
     include: [
       "convex/lib/finance/*.test.ts",
       "convex/finance.test.ts",
+      "convex/calendar.website-windows.test.ts",
       "convex/invoices.test.ts",
       "convex/lib/item_technical_context.test.ts",
       "convex/lib/renter_camera_identity.test.ts",
