@@ -17,6 +17,33 @@ import { draftReviewValidator } from "./lib/draft_review_validator";
 // (renters, reservations, conversations, rules, denial_records).
 // MASTER SAFETY RAIL: settings.ALLOW_HYGGLO_SEND must remain false.
 const operationalSchema = defineSchema({
+  finance_snapshots: defineTable({
+    month: v.string(), revision: v.number(), revenue: v.number(), expenses: v.number(), profit: v.number(),
+    daniel_bps: v.number(), daniel: v.number(), leo: v.number(), source_revenue: v.number(),
+    expense_ids: v.array(v.id("finance_entries")), note: v.string(), created_at: v.number(), actor: v.string(),
+  }).index("by_month", ["month"]),
+  finance_entries: defineTable({
+    kind: v.union(v.literal("expense"), v.literal("withdrawal"), v.literal("settlement")),
+    month: v.string(), person: v.optional(v.union(v.literal("Daniel"), v.literal("Leo"))),
+    amount: v.number(), label: v.string(), recurring: v.boolean(), end_month: v.optional(v.string()),
+    voided: v.boolean(), created_at: v.number(), updated_at: v.number(),
+  }).index("by_month", ["month"]),
+  finance_audit: defineTable({
+    target: v.string(), operation: v.string(), before: v.optional(v.any()), after: v.any(),
+    reason: v.string(), actor: v.string(), created_at: v.number(),
+  }).index("by_created", ["created_at"]),
+  invoice_archive: defineTable({
+    account_slug: v.string(), source_id: v.string(), title: v.string(), date: v.string(), price_label: v.string(),
+    status: v.string(), attempts: v.number(), lease_until: v.number(), next_retry: v.number(),
+    pdf_id: v.optional(v.id("_storage")), text_id: v.optional(v.id("_storage")), sha256: v.optional(v.string()),
+    text: v.optional(v.string()), amounts: v.optional(v.object({
+      revenue: v.optional(v.number()), lender_fee: v.optional(v.number()), renter_fee: v.optional(v.number()),
+      payout: v.optional(v.number()), currency: v.string(),
+    })), error: v.optional(v.string()), created_at: v.number(), updated_at: v.number(),
+  }).index("by_source", ["account_slug", "source_id"]).index("by_status_retry", ["status", "next_retry"])
+    .index("by_date", ["date"]),
+  invoice_sync_log: defineTable({ account_slug: v.string(), message: v.string(), count: v.number(), created_at: v.number() })
+    .index("by_created", ["created_at"]),
   // App owner identity is independent of rental accounts and renter verification.
   owner_access: defineTable({
     auth_user_id: v.string(),
@@ -603,6 +630,7 @@ const operationalSchema = defineSchema({
     .index("by_hygglo_user_id", ["hygglo_user_id"])
     .index("by_account_slug", ["account_slug"])
     .index("by_start_date", ["start_date"])
+    .index("by_pickup_date", ["pickup_date"])
     .index("by_v1_rental_id", ["v1_rental_id"])
     .index("by_hygglo_order_id", ["hygglo_order_id"])
     // Reply Inbox (2026-06-22): cheap lookup of pending REQUESTs awaiting the

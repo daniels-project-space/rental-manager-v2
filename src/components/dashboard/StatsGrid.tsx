@@ -41,7 +41,7 @@ import OutOfStockDrawer from "./stat-cards/OutOfStockDrawer";
 import VacationDrawer from "./stat-cards/VacationDrawer";
 import SellRecoDrawer from "./stat-cards/SellRecoDrawer";
 import InventoryWorthDrawer from "./stat-cards/InventoryWorthDrawer";
-import TaxDrawer from "./stat-cards/TaxDrawer";
+import { TaxToolsOverlay } from "./TaxSummary";
 import BusinessIntelDrawer from "./stat-cards/BusinessIntelDrawer";
 import { CriticalAlerts } from "./CriticalAlerts";
 import { CategoryVolumePieBody } from "./CategoryVolumePie";
@@ -174,6 +174,7 @@ export function StatsGrid() {
   // full-screen modal board (2-col card grid). Scoped to insurance only; all
   // other stat cards keep the inline ExpandableStatCard expand behaviour.
   const [insuranceModalOpen, setInsuranceModalOpen] = useState(false);
+  const [taxModalOpen, setTaxModalOpen] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -640,11 +641,11 @@ export function StatsGrid() {
           value={data.tax.years.length > 0 ? fmtGbp(data.tax.years[0].estimated_tax) : "—"}
           valueColor="red"
           accentColor="red"
-          subtitle={data.tax.years.length > 0 ? `${data.tax.years[0].year}` : "pending"}
-          isExpanded={expandedId === "tax"}
-          onToggle={() => toggle("tax")}
+          subtitle="Tax summary & invoice archive"
+          isExpanded={false}
+          onToggle={() => setTaxModalOpen(true)}
         >
-          <TaxDrawer data={data.tax} />
+          {null}
         </ExpandableStatCard>
       ),
       business_intel: (
@@ -761,6 +762,7 @@ export function StatsGrid() {
       {/* Insurance Claims full-screen modal board — opened from the insurance
           stat card. Rendered at grid level so it overlays the whole dashboard.
           Uses rawData.insurance directly (insurance needs no rentals merge). */}
+      {taxModalOpen && <TaxToolsOverlay onClose={() => setTaxModalOpen(false)} />}
       {insuranceModalOpen && (rawData as any)?.insurance && (
         <InsuranceClaimsModal
           data={(rawData as any).insurance}

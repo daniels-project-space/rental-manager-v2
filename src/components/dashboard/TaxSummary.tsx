@@ -1,4 +1,6 @@
 "use client";
+import { Modal } from "@/components/ui/Modal";
+import { InvoiceArchive } from "./finance/InvoiceArchive";
 
 import { useMemo, useState } from "react";
 import { useQuery, useConvex } from "convex/react";
@@ -99,7 +101,12 @@ function downloadCsv(filename: string, csv: string) {
 function MonthlyBars({
   monthly,
 }: {
-  monthly: Array<{ monthLabel: string; grossGbp: number; netGbp: number; count: number }>;
+  monthly: Array<{
+    monthLabel: string;
+    grossGbp: number;
+    netGbp: number;
+    count: number;
+  }>;
 }) {
   const max = Math.max(1, ...monthly.map((m) => m.grossGbp));
   return (
@@ -167,7 +174,7 @@ function StatRow({
 
 // ── Main ────────────────────────────────────────────────────────────────────
 
-export function TaxSummary() {
+export function TaxSummaryContent() {
   const convex = useConvex();
   const availableYears = useQuery(api.tax.listAvailableTaxYears, { count: 4 });
   const [startYear, setStartYear] = useState<number | null>(null);
@@ -175,7 +182,7 @@ export function TaxSummary() {
 
   // Default to the most recent year as soon as the list loads.
   const effectiveStartYear =
-    startYear ?? (availableYears?.[0]?.startYear ?? null);
+    startYear ?? availableYears?.[0]?.startYear ?? null;
 
   const data = useQuery(
     api.tax.getTaxYearSummary,
@@ -223,7 +230,9 @@ export function TaxSummary() {
       {/* Header */}
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div>
-          <div className="text-sm font-semibold text-[#e4e6eb]">Tax Summary</div>
+          <div className="text-sm font-semibold text-[#e4e6eb]">
+            Tax Summary
+          </div>
           <div className="text-[11px] text-[#8b8fa3]">
             Accountant-ready · UK tax year · pickup-date basis · consolidated
           </div>
@@ -237,7 +246,9 @@ export function TaxSummary() {
                 onClick={() => setStartYear(y.startYear)}
                 className="text-xs px-2.5 py-1 rounded-md transition-colors"
                 style={{
-                  background: active ? "rgba(34,197,94,0.16)" : "rgba(255,255,255,0.04)",
+                  background: active
+                    ? "rgba(34,197,94,0.16)"
+                    : "rgba(255,255,255,0.04)",
                   color: active ? "#22c55e" : "#c9cdd5",
                   border: active
                     ? "1px solid rgba(34,197,94,0.4)"
@@ -265,7 +276,10 @@ export function TaxSummary() {
             className="space-y-1.5 mb-3 pb-3"
             style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
           >
-            <StatRow label="Gross income" value={fmtGbp(data.summary.grossGbp)} />
+            <StatRow
+              label="Gross income"
+              value={fmtGbp(data.summary.grossGbp)}
+            />
             <StatRow
               label="Platform fees (Hygglo)"
               value={fmtGbp(-data.summary.platformFeeGbp)}
@@ -286,7 +300,8 @@ export function TaxSummary() {
 
           <div className="flex items-center justify-between text-[11px] text-[#8b8fa3] mb-1">
             <span>
-              {data.totalTransactions} transactions · {data.activeMonths} active months
+              {data.totalTransactions} transactions · {data.activeMonths} active
+              months
             </span>
             {data.reconciliationDriftGbp !== 0 && (
               <span
@@ -314,7 +329,9 @@ export function TaxSummary() {
                     color: "#c9cdd5",
                   }}
                 >
-                  <span className="font-semibold text-[#e4e6eb]">{a.account}</span>{" "}
+                  <span className="font-semibold text-[#e4e6eb]">
+                    {a.account}
+                  </span>{" "}
                   {fmtGbp(a.grossGbp)} gross · {a.count} tx
                 </span>
               ))}
@@ -329,40 +346,55 @@ export function TaxSummary() {
               {data.flags.refundCandidateCount > 0 && (
                 <div
                   className="px-2 py-1 rounded"
-                  style={{ background: "rgba(245,158,11,0.08)", color: "#fbbf24" }}
+                  style={{
+                    background: "rgba(245,158,11,0.08)",
+                    color: "#fbbf24",
+                  }}
                 >
                   {data.flags.refundCandidateCount} cancelled/obsolete rental
-                  {data.flags.refundCandidateCount === 1 ? "" : "s"} with payments —{" "}
-                  {fmtGbp(data.flags.refundCandidateGbp)} in possible refunds to chase
+                  {data.flags.refundCandidateCount === 1 ? "" : "s"} with
+                  payments — {fmtGbp(data.flags.refundCandidateGbp)} in possible
+                  refunds to chase
                 </div>
               )}
               {data.flags.missingFeeCount > 0 && (
                 <div
                   className="px-2 py-1 rounded"
-                  style={{ background: "rgba(245,158,11,0.08)", color: "#fbbf24" }}
+                  style={{
+                    background: "rgba(245,158,11,0.08)",
+                    color: "#fbbf24",
+                  }}
                 >
                   {data.flags.missingFeeCount} transaction
-                  {data.flags.missingFeeCount === 1 ? "" : "s"} missing platform_fee —
-                  verify before filing
+                  {data.flags.missingFeeCount === 1 ? "" : "s"} missing
+                  platform_fee — verify before filing
                 </div>
               )}
               {data.flags.vatStatus === "approaching" && (
                 <div
                   className="px-2 py-1 rounded"
-                  style={{ background: "rgba(245,158,11,0.12)", color: "#fbbf24" }}
+                  style={{
+                    background: "rgba(245,158,11,0.12)",
+                    color: "#fbbf24",
+                  }}
                 >
-                  ⚠ Approaching the £{(data.flags.vatThresholdGbp / 1000).toFixed(0)}k
-                  VAT threshold — register if you expect to cross it in any 12-month
+                  ⚠ Approaching the £
+                  {(data.flags.vatThresholdGbp / 1000).toFixed(0)}k VAT
+                  threshold — register if you expect to cross it in any 12-month
                   window
                 </div>
               )}
               {data.flags.vatStatus === "over" && (
                 <div
                   className="px-2 py-1 rounded font-semibold"
-                  style={{ background: "rgba(239,68,68,0.16)", color: "#f87171" }}
+                  style={{
+                    background: "rgba(239,68,68,0.16)",
+                    color: "#f87171",
+                  }}
                 >
-                  ⚠ Over the £{(data.flags.vatThresholdGbp / 1000).toFixed(0)}k VAT
-                  threshold — VAT registration required within 30 days of crossing
+                  ⚠ Over the £{(data.flags.vatThresholdGbp / 1000).toFixed(0)}k
+                  VAT threshold — VAT registration required within 30 days of
+                  crossing
                 </div>
               )}
             </div>
@@ -400,5 +432,57 @@ export function TaxSummary() {
         </>
       )}
     </Card>
+  );
+}
+
+export function TaxToolsOverlay({ onClose }: { onClose: () => void }) {
+  const [tab, setTab] = useState<"tax" | "invoices">("tax");
+  return (
+    <Modal width="max-w-6xl" onClose={onClose}>
+      <div
+        className="max-h-[85dvh] overflow-y-auto pr-2"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Taxes and invoice archive"
+      >
+        <div className="flex justify-between mb-4">
+          <h2 className="text-xl font-semibold">Taxes & Invoice Archive</h2>
+          <button aria-label="Close taxes" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+        <div className="flex gap-3 mb-5" role="tablist" aria-label="Tax tools">
+          {(["tax", "invoices"] as const).map((t) => (
+            <button
+              key={t}
+              role="tab"
+              aria-selected={tab === t}
+              onClick={() => setTab(t)}
+              className={`rounded-lg px-4 py-2 ${tab === t ? "bg-white/15" : "bg-white/5"}`}
+            >
+              {t === "tax" ? "Tax summary" : "Invoice archive"}
+            </button>
+          ))}
+        </div>
+        {tab === "tax" ? <TaxSummaryContent /> : <InvoiceArchive />}
+      </div>
+    </Modal>
+  );
+}
+export function TaxSummary() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        className="w-full rounded-xl border border-white/10 bg-white/5 p-5 text-left hover:bg-white/10"
+      >
+        <span className="font-semibold">Taxes & Invoice Archive ↗</span>
+        <p className="text-sm text-white/50 mt-1">
+          Tax-year summary, original PDFs, account tags and actual Hygglo fees.
+        </p>
+      </button>
+      {open && <TaxToolsOverlay onClose={() => setOpen(false)} />}
+    </>
   );
 }

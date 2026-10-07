@@ -8,6 +8,9 @@
  * @module
  */
 
+import type * as finance from "../finance.js";
+import type * as invoices from "../invoices.js";
+import type * as invoice_sync from "../invoice_sync.js";
 import type * as account_state from "../account_state.js";
 import type * as accounts from "../accounts.js";
 import type * as admin_backfill_weekly_metrics from "../admin_backfill_weekly_metrics.js";
@@ -753,6 +756,9 @@ declare const fullApi: ApiFromModules<{
   sync_account_profiles: typeof sync_account_profiles;
   sync_dbcinema_web: typeof sync_dbcinema_web;
   sync_state: typeof sync_state;
+  finance: typeof finance;
+  invoices: typeof invoices;
+  invoice_sync: typeof invoice_sync;
   tax: typeof tax;
   telegram_inbound: typeof telegram_inbound;
   todos: typeof todos;
