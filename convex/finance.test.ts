@@ -3,7 +3,8 @@ vi.mock("./auth", () => ({
   authComponent: { safeGetAuthUser: vi.fn(async () => ({ _id: "owner" })) },
 }));
 import { freeze, overview, saveEntry } from "./finance";
-import { list, retry, ingest, claim, finish } from "./invoices";
+import { list, retry, ingest, claim, finish, fail, stats } from "./invoices";
+import { backfill, verify, deactivate } from "./invoice_stats";
 function database(seed: Record<string, any[]> = {}) {
   const tables: Record<string, any[]> = structuredClone({
     owner_access: [{ auth_user_id: "owner" }],
@@ -56,6 +57,10 @@ function database(seed: Record<string, any[]> = {}) {
           collect: async () => rows,
           take: async (n: number) => rows.slice(0, n),
           unique: async () => rows[0] ?? null,
+          paginate: async ({ cursor, numItems }: { cursor: string | null; numItems: number }) => {
+            const offset = Number(cursor ?? 0);
+            return { page: rows.slice(offset, offset + numItems), continueCursor: String(offset + numItems), isDone: offset + numItems >= rows.length };
+          },
         };
         return chain;
       },
@@ -241,6 +246,7 @@ describe("invoice durability", () => {
     const { ctx, tables } = database({
       invoice_archive: Array.from({ length: 4 }, (_, i) => ({
         _id: `invoice-${i}`,
+        account_slug: "leo",
         status: "queued",
         next_retry: 0,
         attempts: 0,
@@ -276,5 +282,70 @@ describe("invoice durability", () => {
       pdf_id: "pdf-real",
       error: "Needs review",
     });
+  });
+});
+
+describe("incremental invoice totals", () => {
+  const archived = (id: string, extra: Record<string, unknown> = {}) => ({
+    _id: id, account_slug: "leo", source_id: id, title: "Invoice", date: "2026-10-01", price_label: "£10",
+    status: "ready", attempts: 1, next_retry: 0, lease_until: 0, pdf_id: `pdf-${id}`,
+    amounts: { currency: "GBP", revenue: 10.01, lender_fee: 2.03, payout: 7.98 }, ...extra,
+  });
+
+  it("matches the original calculation and stops reading the archive only after verification", async () => {
+    const { ctx, tables } = database({ invoice_archive: [
+      archived("a"), archived("b", { account_slug: "dbcinema", amounts: { currency: "GBP", revenue: 0, payout: 0 } }),
+      archived("c", { status: "review" }), archived("d", { amounts: { currency: "USD", revenue: 500 } }),
+      archived("e", { pdf_id: undefined }), archived("f", { status: "queued" }),
+    ] });
+    const original = await invoke(stats, ctx, {});
+    expect(await invoke(backfill, ctx, {})).toMatchObject({ complete: true, processed: 6 });
+    expect(tables.invoice_stats_state[0].verified).toBeUndefined();
+    expect(await invoke(stats, ctx, {})).toEqual(original);
+    expect(await invoke(verify, ctx, {})).toMatchObject({ equal: true, invoices: 6 });
+    const reads = vi.spyOn(ctx.db, "query");
+    expect(await invoke(stats, ctx, {})).toEqual(original);
+    expect(reads.mock.calls.map(args => args[0])).not.toContain("invoice_archive");
+    expect(await invoke(backfill, ctx, {})).toMatchObject({ complete: true, processed: 0 });
+    await invoke(deactivate, ctx, {});
+    reads.mockClear();
+    expect(await invoke(stats, ctx, {})).toEqual(original);
+    expect(reads.mock.calls.map(args => args[0])).toContain("invoice_archive");
+  });
+
+  it("is correct when live transitions interleave with paginated backfill and retries", async () => {
+    const rows = Array.from({ length: 103 }, (_, i) => archived(`i-${i}`, {
+      status: "queued", pdf_id: undefined, amounts: undefined,
+    }));
+    const { ctx, tables } = database({ invoice_archive: rows });
+    expect(await invoke(backfill, ctx, {})).toMatchObject({ complete: false, processed: 100 });
+    const leases = await invoke(claim, ctx, {});
+    await invoke(finish, ctx, { id: leases[0]._id, lease: leases[0].lease_until, pdf: "pdf", text: "text", sha: "hash",
+      verified: true, amounts: { currency: "GBP", revenue: 48.01, lender_fee: 10.01, payout: 38 } });
+    await invoke(fail, ctx, { id: leases[1]._id, lease: leases[1].lease_until, message: "Transient" });
+    // Insert after the first page, while the backfill is still incomplete.
+    await invoke(ingest, ctx, { account: "dbcinema", rows: [{ id: "new", title: "New", date: "2026-10-07", price: "£5" }] });
+    const before = await invoke(stats, ctx, {});
+    expect(await invoke(backfill, ctx, {})).toMatchObject({ complete: true, processed: 4 });
+    expect(await invoke(verify, ctx, {})).toMatchObject({ equal: true, invoices: 104 });
+    expect(await invoke(stats, ctx, {})).toEqual(before);
+    expect(tables.invoice_stats_ledger).toHaveLength(104);
+    await invoke(retry, ctx, { id: leases[0]._id });
+    const result = await invoke(stats, ctx, {});
+    expect(result.groups.leo).toMatchObject({ count: 103, ready: 0, queued: 103, revenue: 0, revenueKnown: 0, payout: 0 });
+    expect(await invoke(verify, ctx, {})).toMatchObject({ equal: true });
+    // Stale completion must not change totals or replace the current lease.
+    await invoke(finish, ctx, { id: leases[0]._id, lease: leases[0].lease_until, pdf: "stale", text: "stale-text", sha: "old",
+      verified: true, amounts: { currency: "GBP", revenue: 999 } });
+    expect(await invoke(stats, ctx, {})).toEqual(result);
+  });
+
+  it("fails closed to the original scan when the verification detects a mismatch", async () => {
+    const { ctx, tables } = database({ invoice_archive: [archived("a")] });
+    await invoke(backfill, ctx, {});
+    tables.invoice_stats_groups[0].totals.revenue += 1;
+    expect(await invoke(verify, ctx, {})).toMatchObject({ equal: false, mismatches: ["leo:revenue"] });
+    expect(tables.invoice_stats_state[0].verified).toBe(false);
+    expect((await invoke(stats, ctx, {})).groups.leo.revenue).toBe(10.01);
   });
 });
