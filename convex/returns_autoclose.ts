@@ -151,6 +151,8 @@ async function finalizeReservationClose(
     return { closed: "skipped", reviewed: "n/a", messaged: "n/a" };
   }
 
+  if(r.account_slug === "dbcinema_web")return {closed:"failed",reviewed:"n/a",messaged:"n/a",error:"Website rentals require the website security settlement flow"};
+
   // Open-case: disputed/damage return — never close/rate/text here.
   if (r.case_open) {
     return {

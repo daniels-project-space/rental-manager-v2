@@ -425,6 +425,11 @@ export const markReturned = mutation({
       : null;
     const res = await ctx.db.get(reservationId);
     if (!res) throw new Error("Reservation not found");
+    if (res.account_slug === "dbcinema_web") throw Error("Use the website item inspection and security settlement flow for this rental");
+    for (const memberId of memberIds ?? []) {
+      const member = await ctx.db.get(memberId);
+      if (member?.account_slug === "dbcinema_web") throw Error("Website rentals require their own security settlement");
+    }
     // Double-click / re-submit: the reservation is already completed. This is a
     // benign no-op, NOT an error — return early so the UI doesn't surface a
     // scary "Already returned" banner. Genuine bad-input/not-found throws below

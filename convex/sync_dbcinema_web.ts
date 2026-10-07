@@ -346,6 +346,7 @@ export const upsertSiteBookingsBatch = internalMutation({
         obsolete_reason: status === "cancelled" ? "renter_cancelled" : undefined,
         source_filter: "dbcinema_web_site",
         booking_status: b.status,
+        platform_close_pending:false,
         site_revision: b.revision ?? 0,
         site_item_windows,
       };
