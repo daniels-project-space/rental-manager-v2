@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { reservationItemUnits, type OverrideMap } from "./itemUnits";
+import { websiteDayIntervals, reservationItemUnits, type OverrideMap } from "./itemUnits";
 import { withDefaultAdapters } from "../default_adapter_units";
 const overrides: OverrideMap = new Map([
   ["leo#1", [{ item_id: "camera", qty: 2 }, { item_id: "lens", qty: 2 }]],
@@ -53,4 +53,17 @@ it("sums shared supplied batteries and separately booked extras across logical l
  const inventory=[{_id:"pro",name_canonical:"Pro",kind:"camera",supplied_stock:[{item_id:"b",qty:5,source:"kit"}]},{_id:"ff",name_canonical:"Full Frame",kind:"camera",supplied_stock:[{item_id:"b",qty:5,source:"kit"}]},{_id:"b",name_canonical:"NP-F570 batteries",kind:"power",unit_kind:"unit",track_independent_stock:true}];
  const mapping:OverrideMap=new Map([["leo#1",[{item_id:"pro",qty:1},{item_id:"b",qty:5}]],["leo#2",[{item_id:"ff",qty:1}]],["leo#3",[{item_id:"b",qty:3}]]]);
  expect(reservationItemUnits({account_slug:"leo",hygglo_items:[{product_id:1},{product_id:2},{product_id:3}]},new Map(),mapping,inventory).get("b")).toBe(13);
+});
+
+describe("website item calendar intervals",()=>{
+ const day=(n:number)=>Date.UTC(2035,0,n);
+ const r={site_item_windows:[{item_id:"camera",qty:3,start:day(1),end:day(2)},{item_id:"camera",qty:3,start:day(4),end:day(5)}],pickup_time:"10:00",return_time:"17:00"};
+ it("leaves the gap free and applies the return buffer on the actual item date",()=>{
+  expect(websiteDayIntervals(r,"2035-01-03")).toEqual([]);
+  expect(websiteDayIntervals(r,"2035-01-01")).toEqual([{id:"camera",a:"10:00",b:"24:00",qty:3}]);
+  expect(websiteDayIntervals(r,"2035-01-02")).toEqual([{id:"camera",a:"00:00",b:"18:00",qty:3}]);
+ });
+ it("carries a late return buffer into the next day",()=>{
+  expect(websiteDayIntervals({...r,return_time:"23:30"},"2035-01-03")).toEqual([{id:"camera",a:"00:00",b:"00:30",qty:3}]);
+ });
 });

@@ -125,6 +125,23 @@ export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources
     // The requesting booking already occupies its units; it must not block itself.
     if (request.thread_id && r.hygglo_order_id === request.thread_id) continue;
     if (!r.start_date || !r.end_date) continue;
+    if (r.account_slug === "dbcinema_web" && r.site_item_windows !== undefined) {
+      const windows = r.site_item_windows.filter(w => String(w.item_id) === String(item._id));
+      const latestEnd = Math.max(...windows.map(w=>w.end));
+      for (const w of windows) {
+        const pickup = new Date(w.start).toISOString().slice(0,10);
+        const agreedReturn = new Date(w.end).toISOString().slice(0,10);
+        // Only the last allocation can be overdue; extending older extension
+        // rows as well would count the same bodies twice.
+        const ret = w.end === latestEnd ? effEnd({end_date:agreedReturn,return_date:agreedReturn,status:r.status,order_step:r.order_step},today) : agreedReturn;
+        const returnTime = ret > agreedReturn ? undefined : r.return_time;
+        const end = returnTime && /^([01]\d|2[0-3]):[0-5]\d$/.test(returnTime)
+          ? new Date(Date.parse(`${ret}T${returnTime}:00Z`) + 3600000).toISOString().slice(0,16)
+          : `${shiftStockDate(ret,1)}T00:00`;
+        occupancy.push({start:`${pickup}T${r.pickup_time ?? "00:00"}`,end,qty:w.qty,renter_name:r.renter_name,order_id:r.hygglo_order_id});
+      }
+      continue;
+    }
     const units = reservationItemUnits(r, sources.productIndex, sources.overrides, sources.items);
     const qty = units.get(String(item._id)) ?? 0;
     if (qty <= 0) continue;

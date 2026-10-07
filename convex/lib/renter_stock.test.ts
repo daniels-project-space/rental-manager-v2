@@ -95,3 +95,14 @@ describe("shared kit stock across separate reservations", () => {
     expect(check([reservation("a",1),reservation("b",1,{hygglo_items:[{product_id:1,qty:2}]})]).free_units).toBe(0);
   });
 });
+
+describe("website physical allocation dates in real quoting",()=>{
+ it("quotes the gap as free and each separate extension as three bodies",()=>{
+  const item={_id:"camera",name_canonical:"FX3",status:"active",qty:3};
+  const day=(n:number)=>Date.UTC(2035,0,n);
+  const sources={items:[item],productIndex:new Map(),overrides:new Map(),claims:[],blackouts:[],vacations:[],reservations:[{account_slug:"dbcinema_web",hygglo_order_id:"web",status:"confirmed",start_date:"2035-01-01",end_date:"2035-01-05",site_item_windows:[{item_id:"camera",qty:3,start:day(1),end:day(2)},{item_id:"camera",qty:3,start:day(4),end:day(5)}]}]};
+  const quote=(date:string)=>stockForItem(sources as any,item as any,{item_name:"FX3",start_date:date,end_date:date});
+  expect(quote("2035-01-01").free_units).toBe(0);expect(quote("2035-01-03").free_units).toBe(3);expect(quote("2035-01-04").free_units).toBe(0);
+  expect(stockForItem(sources as any,item as any,{item_name:"FX3",start_date:"2035-01-01",end_date:"2035-01-05",thread_id:"web"}).free_units).toBe(3);
+ });
+});

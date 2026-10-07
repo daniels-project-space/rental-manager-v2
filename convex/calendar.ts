@@ -9,7 +9,7 @@ import {
   renterPeriodGroupIds,
   type ReservationRow,
 } from "./lib/reservations/predicates";
-import { reservationItemUnits, buildProductIndexMap, buildOverrideMap, isStandardAccessory } from "./lib/reservations/itemUnits";
+import { websiteDayIntervals, reservationItemUnits, buildProductIndexMap, buildOverrideMap, isStandardAccessory } from "./lib/reservations/itemUnits";
 import {
   isTrackableLine,
   lineResolvesToSomething,
@@ -1865,6 +1865,15 @@ export const searchCalendarInventory = query({
     // reads "0 free" by date is in fact free FROM a mid-day return time.
     const intervals = new Map<string, Array<{ a: string; b: string; qty: number }>>();
     for (const r of confirmed) {
+      if(r.account_slug === "dbcinema_web" && r.site_item_windows !== undefined) {
+        for(const date of dates)for(const iv of websiteDayIntervals(r,date)) {
+          if(!matchedById.has(iv.id))continue;
+          const key=`${iv.id}|${date}`,list=intervals.get(key)??[];
+          list.push({a:iv.a,b:iv.b,qty:iv.qty});intervals.set(key,list);
+          commit.set(key,(commit.get(key)??0)+iv.qty);
+        }
+        continue;
+      }
       const effPick = displayPickupDate(r) || r.start_date;
       const effRet = (r.return_date ?? r.end_date) ?? effPick;
       if (!effPick || !effRet) continue;

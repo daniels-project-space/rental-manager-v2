@@ -137,3 +137,19 @@ export function websiteWindowUnits(windows: NonNullable<ResolvableRes["site_item
   }
   return result;
 }
+
+/** Local booking-clock intervals for the calendar, including the standard return buffer. */
+export function websiteDayIntervals(r: ResolvableRes & {pickup_time?:string;return_time?:string}, date: string) {
+  const dayStart=Date.parse(`${date}T00:00:00Z`),dayEnd=dayStart+86400000;
+  const result:Array<{id:string;a:string;b:string;qty:number}>=[];
+  for(const w of r.site_item_windows ?? []) {
+    const pickup=new Date(w.start).toISOString().slice(0,10),ret=new Date(w.end).toISOString().slice(0,10);
+    const start=Date.parse(`${pickup}T${r.pickup_time || "00:00"}:00Z`);
+    const end=r.return_time ? Date.parse(`${ret}T${r.return_time}:00Z`)+3600000 : Date.parse(`${ret}T00:00:00Z`)+86400000;
+    if(start>=dayEnd || end<=dayStart)continue;
+    const a=start<=dayStart?"00:00":new Date(start).toISOString().slice(11,16);
+    const b=end>=dayEnd?"24:00":new Date(end).toISOString().slice(11,16);
+    result.push({id:String(w.item_id),a,b,qty:w.qty});
+  }
+  return result;
+}
