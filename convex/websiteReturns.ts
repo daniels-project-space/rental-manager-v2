@@ -1,9 +1,6 @@
 import { action, internalQuery, requireOwner } from "./owner_functions";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
-import { makeFunctionReference } from "convex/server";
-import type { Id } from "./_generated/dataModel";
-const linkRef=makeFunctionReference<"query",{reservationId:Id<"reservations">},{bookingId:string}>("websiteReturns:link");
 
 const inspectionItem = v.object({key:v.string(),condition:v.union(v.literal("good"),v.literal("issue")),details:v.string(),openCase:v.boolean()});
 export const link = internalQuery({args:{reservationId:v.id("reservations")},handler:async(ctx,args)=>{
@@ -22,7 +19,7 @@ async function websiteCall(type:"query"|"action"|"mutation",path:string,args:Rec
 }
 export const preview = action({args:{reservationId:v.id("reservations"),actualReturnedAt:v.optional(v.number())},handler:async(ctx,args):Promise<any>=>{
  await requireOwner(ctx,true);
- const {bookingId}=await ctx.runQuery(linkRef,{reservationId:args.reservationId});
+ const {bookingId}=await ctx.runQuery(internal.websiteReturns.link,{reservationId:args.reservationId});
  const data=await websiteCall("query","returnInspections:context",{bookingId,...(args.actualReturnedAt!==undefined?{actualReturnedAt:args.actualReturnedAt}:{})});
  return {...data,executionEnabled:process.env.ALLOW_WEBSITE_RETURN_WRITES==="true"};
 } });
@@ -30,14 +27,14 @@ export const preview = action({args:{reservationId:v.id("reservations"),actualRe
 export const review = action({args:{reservationId:v.id("reservations"),actualReturnedAt:v.number(),damageKept:v.number(),damageNote:v.optional(v.string()),chargeLate:v.boolean(),lateWaiverReason:v.optional(v.string()),inspection:v.optional(v.array(inspectionItem))},handler:async(ctx,args):Promise<any>=>{
  await requireOwner(ctx,true);
  const {reservationId,...decision}=args;
- const {bookingId}=await ctx.runQuery(linkRef,{reservationId});
+ const {bookingId}=await ctx.runQuery(internal.websiteReturns.link,{reservationId});
  return websiteCall("action","checkout:previewReturned",{bookingId,...decision});
 } });
 export const settle = action({args:{reservationId:v.id("reservations"),actualReturnedAt:v.number(),damageKept:v.number(),damageNote:v.optional(v.string()),chargeLate:v.boolean(),lateWaiverReason:v.optional(v.string()),inspection:v.optional(v.array(inspectionItem))},handler:async(ctx,args):Promise<any>=>{
  await requireOwner(ctx,true);
  if(process.env.ALLOW_WEBSITE_RETURN_WRITES!=="true")throw Error("Website return settlement is not enabled yet");
  const {reservationId,...decision}=args;
- const {bookingId}=await ctx.runQuery(linkRef,{reservationId});
+ const {bookingId}=await ctx.runQuery(internal.websiteReturns.link,{reservationId});
  const context=await websiteCall("query","returnInspections:context",{bookingId});
  if(!["confirmed","active","returned"].includes(context.status))throw Error("The website rental is not available for return");
  if(!args.inspection && !context.returnDecision)throw Error("Inspect every item before settlement");
@@ -52,7 +49,6 @@ export const settle = action({args:{reservationId:v.id("reservations"),actualRet
  return {...result,syncPending};
 } });
 
-const caseLinkRef = makeFunctionReference<"query", {claimId:Id<"insurance_claims">}, {bookingId:string;caseId:string}>("websiteReturns:caseLink");
 export const caseLink = internalQuery({args:{claimId:v.id("insurance_claims")},handler:async(ctx,args)=>{
  const claim=await ctx.db.get(args.claimId);
  if(!claim || claim.account_slug!=="dbcinema_web" || !claim.site_case_id || !claim.site_booking_id || !claim.reservation_id)throw Error("Select a linked website return case");
@@ -65,7 +61,7 @@ export const closeDamageCase = action({args:{claimId:v.id("insurance_claims"),re
  await requireOwner(ctx,true);
  if(process.env.ALLOW_WEBSITE_RETURN_WRITES!=="true")throw Error("Website case resolution is not enabled yet");
  if(args.resolution.trim().length<10)throw Error("Record how the case was resolved.");
- const binding=await ctx.runQuery(caseLinkRef,{claimId:args.claimId});
+ const binding=await ctx.runQuery(internal.websiteReturns.caseLink,{claimId:args.claimId});
  await websiteCall("mutation","returnInspections:closeCase",{...binding,resolution:args.resolution});
  let syncPending=false;
  try {
