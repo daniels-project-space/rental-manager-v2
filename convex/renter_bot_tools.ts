@@ -90,6 +90,11 @@ export const get_renter_context = query({
 
     const request=await validateRentalRequest(ctx,thread_id,rental_request??conversation?.active_rental_request??PRIMARY_RENTAL_REQUEST,recentMsgs.at(-1)?.sender==="renter"?recentMsgs.at(-1)?.message_id:undefined);
     const activeStage=requestRentalStage(request,reservation,londonToday());
+    // Retain the primary enquiry's saved sales progress, without inheriting
+    // operational booking permissions or progress from a separate request.
+    const savedSalesStage = !reservation && request.kind === "primary" &&
+      ["INQUIRY", "INTERESTED", "READY_TO_BOOK"].includes(conversation?.conversation_stage ?? "")
+      ? conversation!.conversation_stage! : activeStage.stage;
 
     const ownerChecks=await ownerChecksForBot(ctx,thread_id,draftContextKey(reservation,conversation?.inquiry_items,await getLabOrder(ctx,thread_id)));
 
@@ -107,7 +112,7 @@ export const get_renter_context = query({
       rental_request:request,
       active_request_stage:activeStage,
       rental_requests:rentalRequestHistory(allMsgs),
-      conversation_stage: activeStage.stage,
+      conversation_stage: savedSalesStage,
       rental_stage: rentalStage(reservation, londonToday()),
       last_message_id: recentMsgs.at(-1)?.message_id ?? null,
       last_messages: recentMsgs.slice(-12)
