@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./auth",()=>({authComponent:{safeGetAuthUser:vi.fn(async()=>({_id:'owner'}))}}));
 import { getFunctionName } from "convex/server";
-import { preview,settle,link } from "./websiteReturns";
+import { preview,review,settle,link } from "./websiteReturns";
 import { markReturned } from "./reservations";
 const invoke=(f:any,ctx:any,args:any)=>f._handler(ctx,args);
 const args={reservationId:'reservation-1',actualReturnedAt:Date.now(),damageKept:0,chargeLate:true,inspection:[{key:'camera:1',condition:'good',details:'',openCase:false}]};
@@ -13,6 +13,7 @@ function context(){
 function transport(failure?:string){return vi.fn(async(_url:any,options:any)=>{
  const request=JSON.parse(options.body);expect(request.args.token).toBe('private-server-token');
  if(request.path==='returnInspections:context')return {ok:true,json:async()=>({status:'success',value:{status:'active',returnDecision:null,items:[{key:'camera:1'}]}})};
+ if(request.path==='checkout:previewReturned'){expect(request.args.bookingId).toBe('website-booking');return {ok:true,json:async()=>({status:'success',value:{draft:true,financial:{depositRefund:40,holdRelease:80},email:{to:'client@example.invalid'},pdf:{base64:'JVBERi0=',filename:'draft.pdf'}}})};}
  if(request.path==='checkout:markReturned'){
   if(failure==='settlement')return {ok:false,json:async()=>({status:'error',errorMessage:'Saved decision conflicts'})};
   expect(request.args.bookingId).toBe('website-booking');expect(request.args.inspection).toEqual(args.inspection);return {ok:true,json:async()=>({status:'success',value:{ok:true,released:40,kept:0,lateAmount:0}})};
@@ -31,6 +32,13 @@ describe('real website return bridge actions',()=>{
   vi.stubEnv('ALLOW_WEBSITE_RETURN_WRITES','false');const {ctx}=context();const fetch=transport();vi.stubGlobal('fetch',fetch);
   const data=await invoke(preview,ctx,{reservationId:args.reservationId});expect(data.executionEnabled).toBe(false);expect(JSON.stringify(data)).not.toContain('private-server-token');
   await expect(invoke(settle,ctx,args)).rejects.toThrow('not enabled');expect(fetch).toHaveBeenCalledTimes(1);expect(ctx.runMutation).not.toHaveBeenCalled();
+ });
+ it('allows owner review while financial execution is disabled and derives the booking server-side',async()=>{
+  vi.stubEnv('ALLOW_WEBSITE_RETURN_WRITES','false');const {ctx}=context();const fetch=transport();vi.stubGlobal('fetch',fetch);
+  const data=await invoke(review,ctx,args);expect(data.draft).toBe(true);expect(JSON.stringify(data)).not.toContain('private-server-token');expect(ctx.runMutation).not.toHaveBeenCalled();expect(fetch).toHaveBeenCalledTimes(1);expect(JSON.parse(fetch.mock.calls[0][1].body).path).toBe('checkout:previewReturned');
+ });
+ it('blocks review without the genuine owner session',async()=>{
+  const {ctx}=context();ctx.auth.getUserIdentity.mockResolvedValue(null);const fetch=transport();vi.stubGlobal('fetch',fetch);await expect(invoke(review,ctx,args)).rejects.toThrow('OWNER_AUTH_REQUIRED');expect(fetch).not.toHaveBeenCalled();
  });
  it('redacts the server connection secret from validation errors',async()=>{
   const {ctx}=context();vi.stubGlobal('fetch',vi.fn(async()=>({ok:false,json:async()=>({status:'error',errorMessage:'Invalid arguments token private-server-token'})})));

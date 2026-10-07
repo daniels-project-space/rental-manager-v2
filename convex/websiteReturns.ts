@@ -26,6 +26,13 @@ export const preview = action({args:{reservationId:v.id("reservations"),actualRe
  const data=await websiteCall("query","returnInspections:context",{bookingId,...(args.actualReturnedAt!==undefined?{actualReturnedAt:args.actualReturnedAt}:{})});
  return {...data,executionEnabled:process.env.ALLOW_WEBSITE_RETURN_WRITES==="true"};
 } });
+/** Read current provider balances and render a draft statement; no settlement writes. */
+export const review = action({args:{reservationId:v.id("reservations"),actualReturnedAt:v.number(),damageKept:v.number(),damageNote:v.optional(v.string()),chargeLate:v.boolean(),lateWaiverReason:v.optional(v.string()),inspection:v.optional(v.array(inspectionItem))},handler:async(ctx,args):Promise<any>=>{
+ await requireOwner(ctx,true);
+ const {reservationId,...decision}=args;
+ const {bookingId}=await ctx.runQuery(linkRef,{reservationId});
+ return websiteCall("action","checkout:previewReturned",{bookingId,...decision});
+} });
 export const settle = action({args:{reservationId:v.id("reservations"),actualReturnedAt:v.number(),damageKept:v.number(),damageNote:v.optional(v.string()),chargeLate:v.boolean(),lateWaiverReason:v.optional(v.string()),inspection:v.optional(v.array(inspectionItem))},handler:async(ctx,args):Promise<any>=>{
  await requireOwner(ctx,true);
  if(process.env.ALLOW_WEBSITE_RETURN_WRITES!=="true")throw Error("Website return settlement is not enabled yet");
