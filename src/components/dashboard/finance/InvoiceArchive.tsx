@@ -7,8 +7,9 @@ import {
   useQuery,
 } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
+import { FinanceAccessGate } from "./FinanceAccessGate";
 import { money } from "./BusinessPayoutCalculator";
-export function InvoiceArchive() {
+function InvoiceArchiveContent() {
   const { results, status, loadMore } = usePaginatedQuery(
     api.invoices.list,
     {},
@@ -289,5 +290,13 @@ export function InvoiceArchive() {
         </div>
       </details>
     </div>
+  );
+}
+
+export function InvoiceArchive() {
+  return (
+    <FinanceAccessGate>
+      <InvoiceArchiveContent />
+    </FinanceAccessGate>
   );
 }
