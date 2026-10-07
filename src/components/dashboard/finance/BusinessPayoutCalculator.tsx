@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
+import { FinanceAccessGate } from "./FinanceAccessGate";
 import { Modal } from "@/components/ui/Modal";
 import type { Doc } from "../../../../convex/_generated/dataModel";
 export const money = (p: number) =>
@@ -525,7 +526,9 @@ export function BusinessPayoutCalculator() {
                 ✕
               </button>
             </div>
-            <PayoutContent />
+            <FinanceAccessGate>
+              <PayoutContent />
+            </FinanceAccessGate>
           </div>
         </Modal>
       )}
