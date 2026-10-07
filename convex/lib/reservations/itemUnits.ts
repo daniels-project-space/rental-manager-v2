@@ -6,6 +6,7 @@ type HItem = { name?: string; product_id?: number; qty?: number };
 
 export type ResolvableRes = {
   account_slug?: string;
+  site_item_windows?: Array<{item_id: string; qty: number; start: number; end: number}>;
   expanded_items?: XItem[] | null;
   resolved_items?: XItem[] | null;
   hygglo_items?: HItem[] | null;
@@ -63,8 +64,10 @@ export function reservationItemUnits(
   productIndex: Map<string, string>,
   overrideMap?: OverrideMap,
   inventory: AdapterInventoryItem[] = [],
+  date?: string,
 ): Map<string, number> {
   const slug = r.account_slug ?? "";
+  if (slug === "dbcinema_web" && r.site_item_windows !== undefined) return websiteWindowUnits(r.site_item_windows, date);
 
   // 0a. Fully-overridden reservation → the override IS the answer.
   if (overrideMap && (r.hygglo_items?.length ?? 0) > 0) {
@@ -116,4 +119,21 @@ export function isStandardAccessory(kind: string | undefined, name: string | und
   if (k === "storage_card" || k === "media") return true;
   if (k === "power" && /batter/i.test(name ?? "")) return true;
   return false;
+}
+
+/** The saved website allocation is authoritative; extensions do not multiply bodies. */
+export function websiteWindowUnits(windows: NonNullable<ResolvableRes["site_item_windows"]>, date?: string): Map<string, number> {
+  const perItem = new Map<string, Array<{start: string; end: string; qty: number}>>();
+  for (const w of windows) {
+    const start = new Date(w.start).toISOString().slice(0, 10), end = new Date(w.end).toISOString().slice(0, 10);
+    if (date && (date < start || date > end)) continue;
+    const rows = perItem.get(String(w.item_id)) ?? []; rows.push({start, end, qty:w.qty}); perItem.set(String(w.item_id),rows);
+  }
+  const result = new Map<string,number>();
+  for (const [id,rows] of perItem) {
+    if (date) { result.set(id,rows.reduce((n,w)=>n+w.qty,0)); continue; }
+    const starts = [...new Set(rows.map(w=>w.start))];
+    result.set(id, Math.max(...starts.map(day=>rows.filter(w=>w.start<=day && w.end>=day).reduce((n,w)=>n+w.qty,0))));
+  }
+  return result;
 }

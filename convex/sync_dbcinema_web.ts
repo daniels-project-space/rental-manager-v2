@@ -29,6 +29,7 @@ import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
 import { computePollHash } from "./hygglo";
 import { queueNotificationEvents } from "./notifications";
+import { websiteWindowUnits } from "./lib/reservations/itemUnits";
 import { buildConfirmedBookingNotificationCopy } from "./lib/notification_events";
 
 const upsertBatchRef = internal.sync_dbcinema_web.upsertSiteBookingsBatch;
@@ -61,6 +62,7 @@ type SiteBooking = {
   currency: string;
   createdAt: number;
   lineItems: SiteLine[];
+  physicalReservations?: Array<{rmv2ItemId: string | null; hyggloProductId?: number | null; qty: number; start: number; end: number}>;
 };
 
 export const syncDbcinemaWeb = internalAction({
@@ -249,6 +251,23 @@ export const upsertSiteBookingsBatch = internalMutation({
           else byProduct.set(u.hyggloProductId, { name: head.name, image_url: head.image_url, qty: u.qty });
         }
       }
+      let site_item_windows: Array<{item_id: Id<"items">; qty:number; start:number; end:number}> | undefined;
+      if (b.physicalReservations !== undefined) {
+        if (!Array.isArray(b.physicalReservations)) throw Error("Invalid website physical reservation ledger");
+        site_item_windows = b.physicalReservations.map(w => {
+          if (!w.rmv2ItemId || !itemById.has(w.rmv2ItemId)) throw Error("Website equipment needs a canonical master inventory mapping");
+          if (!Number.isSafeInteger(w.qty) || w.qty <= 0 || !Number.isFinite(w.start) || !Number.isFinite(w.end) || w.end < w.start) throw Error("Invalid website equipment window");
+          return { item_id: w.rmv2ItemId as Id<"items">, qty:w.qty, start:w.start, end:w.end };
+        });
+        byItem.clear();
+        byProduct.clear();
+        for (const [id,qty] of websiteWindowUnits(site_item_windows)) {
+          const canonical = describe(id as Id<"items">,qty);
+          byItem.set(id,{item_id:canonical.item_id,name:canonical.name,qty,image_url:canonical.image_url});
+          const pid = b.physicalReservations.find(w => w.rmv2ItemId === id)?.hyggloProductId;
+          if (typeof pid === "number") byProduct.set(pid,{name:canonical.name,qty,image_url:canonical.image_url});
+        }
+      }
       const hygglo_items = [...byProduct.entries()].map(([product_id, p]) => ({
         product_id,
         name: p.name,
@@ -328,6 +347,7 @@ export const upsertSiteBookingsBatch = internalMutation({
         source_filter: "dbcinema_web_site",
         booking_status: b.status,
         site_revision: b.revision ?? 0,
+        site_item_windows,
       };
       fields.pickup_time = b.pickupTime || undefined;
       fields.return_time = b.returnTime || undefined;

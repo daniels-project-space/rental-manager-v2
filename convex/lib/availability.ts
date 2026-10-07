@@ -74,7 +74,8 @@ export function bookedUnitsOnDate(rows: ResRow[], itemId: Id<"items">, date: str
     const effPick = r.pickup_date ?? r.start_date;
     const effRet = r.return_date ?? r.end_date;
     if (!effPick || !effRet || date < effPick || date > effRet) continue;
-    if (allocation) {n += reservationItemUnits(r,allocation.productIndex,allocation.overrides,allocation.inventory).get(String(itemId)) ?? 0;continue;}
+    if (allocation) {n += reservationItemUnits(r,allocation.productIndex,allocation.overrides,allocation.inventory,date).get(String(itemId)) ?? 0;continue;}
+    if (r.account_slug === "dbcinema_web" && r.site_item_windows !== undefined) { n += reservationItemUnits(r,new Map(),undefined,[],date).get(String(itemId)) ?? 0; continue; }
     const src = (r.expanded_items && r.expanded_items.length ? r.expanded_items : r.resolved_items) ?? [];
     for (const x of src) if (x.item_id === itemId) n += (x.qty ?? 1);
   }

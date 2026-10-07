@@ -1,6 +1,8 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 vi.mock("./hygglo", () => ({ computePollHash: (s: string) => s }));
 vi.mock("./notifications", () => ({ queueNotificationEvents: vi.fn(async () => 1) }));
+import { bookedUnitsOnDate } from "./lib/availability";
+import { reservationItemUnits } from "./lib/reservations/itemUnits";
 import { queueNotificationEvents } from "./notifications";
 import { syncDbcinemaWeb, upsertSiteBookingsBatch } from "./sync_dbcinema_web";
 const invoke = (f: any, ctx: any, args: any) => f._handler(ctx, args);
@@ -40,6 +42,19 @@ describe('real website reservation sync handlers',()=>{
  it('clears obsolete image hints instead of retaining unrelated equipment photos',async()=>{
   const {ctx,rows}=database();await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking()],reconcile:false});const row=[...rows.values()].find(r=>r.table==='reservations');await ctx.db.patch(row._id,{image_hints:[{url:'wrong'}],photos_urls:['wrong'],order_step:'DELIVERED'});
   await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({revision:2})],reconcile:false});expect(rows.get(row._id)).toMatchObject({image_hints:[],photos_urls:[],order_step:undefined});
+ });
+ it('uses the saved physical stock ledger and each item date rather than current listing decomposition',async()=>{
+  const {ctx,rows}=database();const id=await ctx.db.insert('items',{name_canonical:'Sony FX3',image_url:'https://example.invalid/fx3.png'});
+  const day=(n:number)=>Date.UTC(2035,0,n);
+  const physicalReservations=[{rmv2ItemId:id,hyggloProductId:42,qty:3,start:day(1),end:day(2)},{rmv2ItemId:id,hyggloProductId:42,qty:3,start:day(4),end:day(5)}];
+  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({end:day(5),physicalReservations})],reconcile:false});
+  const row=[...rows.values()].find(r=>r.table==='reservations');expect(row.expanded_items).toEqual([{item_id:id,item_name_canonical:'Sony FX3',qty:3}]);
+  expect(row.site_item_windows).toHaveLength(2);expect(row.photos_urls).toEqual(['https://example.invalid/fx3.png']);expect(row.hygglo_items[0]).toMatchObject({qty:3,product_id:42});
+  expect(bookedUnitsOnDate([row] as any,id as any,'2035-01-01')).toBe(3);expect(bookedUnitsOnDate([row] as any,id as any,'2035-01-03')).toBe(0);expect(bookedUnitsOnDate([row] as any,id as any,'2035-01-04')).toBe(3);
+  expect(reservationItemUnits(row,new Map()).get(id)).toBe(3);
+  expect(bookedUnitsOnDate([row] as any,id as any,'2035-01-03',{productIndex:new Map(),overrides:new Map(),inventory:[]})).toBe(0);
+  await expect(invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({revision:2,physicalReservations:[{...physicalReservations[0],rmv2ItemId:'missing'}]})],reconcile:false})).rejects.toThrow('canonical master inventory mapping');
+  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({revision:3,physicalReservations:[]})],reconcile:false});expect(reservationItemUnits([...rows.values()].find(r=>r.table==='reservations'),new Map()).size).toBe(0);
  });
  it('fetches beyond 1000 rentals without reconciling partial pages',async()=>{
   vi.stubEnv('DBCINEMA_CONVEX_URL','https://store.example.invalid');vi.stubEnv('DBCINEMA_ADMIN_TOKEN','fixture');let page=0;
