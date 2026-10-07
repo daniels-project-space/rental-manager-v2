@@ -147,6 +147,8 @@ export default defineConfig({
       "src/lib/booking-time-extraction.test.ts",
       "src/lib/calendar-bar-geometry.test.ts",
       "src/lib/revenue/leo-takeover.test.ts",
+      "src/lib/revenue/account-breakdown.test.ts",
+      "convex/revenue.web.test.ts",
       "src/lib/item-resolution.test.ts",
       "src/lib/quiet-hours.test.ts",
       "src/lib/pickup-hours.test.ts",

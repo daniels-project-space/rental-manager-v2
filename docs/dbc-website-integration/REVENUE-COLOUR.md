@@ -1,0 +1,13 @@
+# Website revenue account separation
+
+DB Cinema Web (`dbcinema_web`) already has the emerald `#10b981` account theme and matching dense-calendar tokens. The lifetime chart previously merged website rentals into DB Cinema's historical/current blue bucket, and its hourly snapshot repeated the merge. The source now provides a separate `dbcinemaWebOrganic` series and `byAccount.dbcinema_web` field, with emerald bars, lines, gradient and an independent legend toggle.
+
+Historical website income is derived only from actual website reservations; it never uses migrated Hygglo historical columns. Current-month income continues to use the canonical `realisedMonthRevenue` computation. Overall totals, cumulative values and realised-month summaries include the website series once. Future paid commitments remain in the existing future bucket; pending-verification/cancelled rows do not become realised current-month income. The hourly chart refresh preserves account filters.
+
+A separated snapshot declares `accountBreakdownVersion: 2`. The lifetime query refuses older blended materialized payloads. At production rollout, refresh `mv/lifetime_revenue.refresh` under its normal owner/internal authorization so all four account snapshots and the aggregate are warm. Until refreshed, the query uses its existing full-history fallback. No live snapshot was overwritten for this change.
+
+Validation:
+
+- Eleven focused checks exercise the actual lifetime handler, account-scoped totals, historical/current separation, duplicate website rows, cancellation/pending exclusions, future commitments, old-cache rejection/new-cache reuse, historical import isolation and chart snapshot filtering, plus existing takeover calculations. Two website logical-group checks also pass.
+- `npm run build:next` and TypeScript pass. Native Chromium runs the actual LifetimeRevenue component against isolated readonly fixtures: emerald bars/lines/legend, independent toggle (£660 → £540 → £660), 1440×950 desktop and 390×844 mobile with no page overflow. Screenshots were inspected at `/root/dbc-web-revenue-review/{desktop-bars,desktop-lines,mobile-lines}.png`. Fixture amounts are not production figures.
+- General repository checks are not green: mirror sync cannot open the already-absent `src/mastra/data/constants.ts`; the pattern ratchet flags a commented cron cadence and reservation scans in `diag_conv_levers.ts`, `diag_grounding_gap.ts` and `mv/item_pairings.ts`. Those sources and check scripts match HEAD and were not changed by this work. The baseline was not relaxed. This change remains local source; production alias/API/cache acceptance remains outstanding.
