@@ -1,5 +1,5 @@
 "use node";
-import { action, internalAction } from "./owner_functions";
+import { action, internalAction, requireOwner } from "./owner_functions";
 import { internal } from "./_generated/api";
 import {
   getAccountCredentials,
@@ -77,6 +77,7 @@ export const discover = internalAction({
 export const syncNow = action({
   args: {},
   handler: async (ctx) => {
+    await requireOwner(ctx, true);
     await ctx.scheduler.runAfter(0, internal.invoice_sync.discover, {});
     return { queued: true };
   },

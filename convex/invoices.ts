@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
 import {
+  requireOwner,
   query,
   mutation,
   internalQuery,
@@ -10,6 +11,7 @@ import { internal } from "./_generated/api";
 export const list = query({
   args: { paginationOpts: paginationOptsValidator },
   handler: async (ctx, args) => {
+    await requireOwner(ctx, true);
     const result = await ctx.db
       .query("invoice_archive")
       .withIndex("by_date")
@@ -30,6 +32,7 @@ export const list = query({
 export const stats = query({
   args: {},
   handler: async (ctx) => {
+    await requireOwner(ctx, true);
     const rows = await ctx.db.query("invoice_archive").collect();
     const groups: Record<
       string,
@@ -99,6 +102,7 @@ export const stats = query({
 export const retry = mutation({
   args: { id: v.id("invoice_archive") },
   handler: async (ctx, { id }) => {
+    await requireOwner(ctx, true);
     const row = await ctx.db.get(id);
     if (!row) throw Error("Invoice missing");
     if (row.status === "downloading" && row.lease_until > Date.now())

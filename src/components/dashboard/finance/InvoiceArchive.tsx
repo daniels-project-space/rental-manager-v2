@@ -162,15 +162,27 @@ export function InvoiceArchive() {
                     >
                       View PDF
                     </button>
-                    <a
+                    <button
                       className="underline"
-                      href={r.pdfUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      download={`${r.account_slug}-${r.source_id}.pdf`}
+                      disabled={busy}
+                      onClick={() =>
+                        void run(async () => {
+                          const response = await fetch(r.pdfUrl!);
+                          if (!response.ok) throw Error("PDF download failed");
+                          const blob = await response.blob();
+                          const url = URL.createObjectURL(blob);
+                          const link = document.createElement("a");
+                          link.href = url;
+                          link.download = `${r.account_slug}-${r.source_id}.pdf`;
+                          document.body.appendChild(link);
+                          link.click();
+                          link.remove();
+                          setTimeout(() => URL.revokeObjectURL(url), 1000);
+                        }, "Original PDF downloaded.")
+                      }
                     >
                       Download PDF
-                    </a>
+                    </button>
                   </>
                 )}
                 {r.textUrl && (

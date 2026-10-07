@@ -1,12 +1,22 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-vi.mock("./auth", () => ({ authComponent: { safeGetAuthUser: vi.fn() } }));
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("./auth", () => ({
+  authComponent: { safeGetAuthUser: vi.fn(async () => ({ _id: "owner" })) },
+}));
 import { freeze, overview, saveEntry } from "./finance";
 import { list, retry, ingest, claim, finish } from "./invoices";
 function database(seed: Record<string, any[]> = {}) {
-  const tables: Record<string, any[]> = structuredClone(seed);
+  const tables: Record<string, any[]> = structuredClone({
+    owner_access: [{ auth_user_id: "owner" }],
+    ...seed,
+  });
   let counter = 0;
   const ctx: any = {
-    auth: { getUserIdentity: async () => ({ subject: "owner" }) },
+    auth: {
+      getUserIdentity: async () => ({
+        subject: "owner",
+        issuer: "https://owner.convex.site",
+      }),
+    },
     storage: {
       delete: vi.fn(),
       getUrl: vi.fn(async (id) => `https://storage.example/${id}`),
@@ -42,6 +52,7 @@ function database(seed: Record<string, any[]> = {}) {
             if (direction === "desc") rows.reverse();
             return chain;
           },
+          first: async () => rows[0] ?? null,
           collect: async () => rows,
           take: async (n: number) => rows.slice(0, n),
           unique: async () => rows[0] ?? null,
@@ -75,6 +86,9 @@ function database(seed: Record<string, any[]> = {}) {
   return { ctx, tables };
 }
 const invoke = (fn: any, ctx: any, args: any) => fn._handler(ctx, args);
+beforeEach(() => {
+  vi.stubEnv("CONVEX_SITE_URL", "https://owner.convex.site");
+});
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
@@ -98,6 +112,14 @@ describe("real finance registrations", () => {
       await expect(
         invoke(fn, { auth: { getUserIdentity: async () => null } }, {}),
       ).rejects.toThrow("OWNER_AUTH_REQUIRED");
+  });
+  it("keeps finance private when the global owner gate is disabled", async () => {
+    vi.stubEnv("OWNER_AUTH_REQUIRED", "false");
+    for (const fn of [freeze, overview, saveEntry, list, retry]) {
+      await expect(
+        invoke(fn, { auth: { getUserIdentity: async () => null } }, {}),
+      ).rejects.toThrow("OWNER_AUTH_REQUIRED");
+    }
   });
   it("uses canonical revenue plus claims and refreezes without double counting", async () => {
     vi.stubEnv("OWNER_AUTH_REQUIRED", "false");

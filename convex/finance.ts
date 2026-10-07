@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query, mutation } from "./owner_functions";
+import { query, mutation, requireOwner } from "./owner_functions";
 import { realisedMonthRevenue } from "./lib/reservations/monthRevenue";
 import { allocate, balances, pence, validMonth } from "./lib/finance/payouts";
 import type { QueryCtx } from "./_generated/server";
@@ -45,6 +45,7 @@ function expensesFor(entries: Doc<"finance_entries">[], month: string) {
 export const overview = query({
   args: { month: v.string() },
   handler: async (ctx, { month }) => {
+    await requireOwner(ctx, true);
     validMonth(month);
     const [source, entries, snapshots, audit] = await Promise.all([
       monthSource(ctx, month),
@@ -113,6 +114,7 @@ export const freeze = mutation({
     expectedRevision: v.number(),
   },
   handler: async (ctx, args) => {
+    await requireOwner(ctx, true);
     validMonth(args.month);
     if (!args.note.trim()) throw Error("Add a snapshot note");
     const rows = await ctx.db
@@ -179,6 +181,7 @@ export const saveEntry = mutation({
     reason: v.string(),
   },
   handler: async (ctx, args) => {
+    await requireOwner(ctx, true);
     validMonth(args.month);
     if (args.endMonth) {
       validMonth(args.endMonth);
