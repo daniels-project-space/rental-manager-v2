@@ -1,0 +1,54 @@
+import { describe, expect, it, vi, afterEach } from "vitest";
+vi.mock("./hygglo", () => ({ computePollHash: (s: string) => s }));
+vi.mock("./notifications", () => ({ queueNotificationEvents: vi.fn(async () => 1) }));
+import { queueNotificationEvents } from "./notifications";
+import { syncDbcinemaWeb, upsertSiteBookingsBatch } from "./sync_dbcinema_web";
+const invoke = (f: any, ctx: any, args: any) => f._handler(ctx, args);
+function database() {
+ const rows = new Map<string, any>(); let serial=0;
+ const db = {
+  insert: async (table:string,value:any) => {const id=`${table}:${++serial}`;rows.set(id,{...value,_id:id,table});return id},
+  patch: async (id:string,value:any) => { rows.set(id,{...rows.get(id),...value}) },
+  query: (table:string) => {
+   const equalities: Array<[string,any]>=[];
+   const q:any={withIndex: (_:string, select:any) => {const selector:any={eq:(k:string,v:any)=>{equalities.push([k,v]);return selector}};select(selector);return q}, collect:async()=>[...rows.values()].filter(r=>r.table===table && equalities.every(([k,v])=>r[k]===v)),first:async()=>(await q.collect())[0]??null};return q;
+  },
+ };
+ return {ctx:{db,scheduler:{runAfter:vi.fn()}},rows};
+}
+const booking=(extra:any={})=>({id:'web-rental-1',revision:1,status:'confirmed',customerName:'Alex',customerEmail:'test@example.invalid',fulfilment:'collection',pickupTime:'10:30',returnTime:'17:00',start:Date.UTC(2035,0,1),end:Date.UTC(2035,0,2),subtotal:100,discount:10,deliveryFee:0,depositAmount:20,total:110,currency:'GBP',createdAt:1,lineItems:[{title:'Camera',qty:1,units:[]}],...extra});
+afterEach(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs();vi.clearAllMocks()});
+describe('real website reservation sync handlers',()=>{
+ it('emits one upcoming confirmation and preserves times, then ignores repeat and stale updates',async()=>{
+  const {ctx,rows}=database();const b=booking();
+  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[b],reconcile:false});
+  expect(queueNotificationEvents).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(queueNotificationEvents).mock.calls[0][1][0]).toMatchObject({thread_id:b.id,account_slug:'dbcinema_web',url:'https://dbcinemarentals.com/admin?rental=web-rental-1#messages'});
+  const row=()=>[...rows.values()].find(r=>r.table==='reservations');expect(row()).toMatchObject({pickup_time:'10:30',return_time:'17:00',status:'confirmed'});
+  expect(await invoke(upsertSiteBookingsBatch,ctx,{bookings:[b],reconcile:false})).toMatchObject({upserted:0,skipped:1});
+  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({revision:2,status:'returned',pickupTime:null,returnTime:null})],reconcile:false});
+  expect(row()).toMatchObject({status:'completed',site_revision:2,order_step:'REVIEWED'});expect(row().pickup_time).toBeUndefined();
+  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[b],reconcile:false});expect(row().status).toBe('completed');expect(queueNotificationEvents).toHaveBeenCalledTimes(1);
+ });
+ it('imports history quietly and cancels only explicitly identified bookings',async()=>{
+  const {ctx,rows}=database();await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({start:1,end:86400001}),booking({id:'other'})],reconcile:false});
+  expect(queueNotificationEvents).toHaveBeenCalledTimes(1);
+  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[],reconcile:false});expect([...rows.values()].filter(r=>r.table==='reservations'&&r.status==='confirmed')).toHaveLength(2);
+  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({revision:2,status:'cancelled'})],reconcile:false});
+  expect([...rows.values()].find(r=>r.hygglo_order_id==='web-rental-1')).toMatchObject({status:'cancelled',is_obsolete:true,order_step:undefined});expect([...rows.values()].find(r=>r.hygglo_order_id==='other').status).toBe('confirmed');
+ });
+ it('clears obsolete image hints instead of retaining unrelated equipment photos',async()=>{
+  const {ctx,rows}=database();await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking()],reconcile:false});const row=[...rows.values()].find(r=>r.table==='reservations');await ctx.db.patch(row._id,{image_hints:[{url:'wrong'}],photos_urls:['wrong'],order_step:'DELIVERED'});
+  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({revision:2})],reconcile:false});expect(rows.get(row._id)).toMatchObject({image_hints:[],photos_urls:[],order_step:undefined});
+ });
+ it('fetches beyond 1000 rentals without reconciling partial pages',async()=>{
+  vi.stubEnv('DBCINEMA_CONVEX_URL','https://store.example.invalid');vi.stubEnv('DBCINEMA_ADMIN_TOKEN','fixture');let page=0;
+  vi.stubGlobal('fetch',vi.fn(async(_url,options)=>{const req=JSON.parse(options.body);expect(req.path).toBe('rmv2_sync:forRmv2SyncPage');expect(req.args.paginationOpts.cursor).toBe(page?String(page):null);page++;return {ok:true,json:async()=>({status:'success',value:{authorized:true,bookings:Array.from({length:100},(_,i)=>booking({id:`${page}-${i}`})),isDone:page===12,continueCursor:String(page)}})}}));
+  const ctx={runMutation:vi.fn(async(_ref,args)=>{expect(args.reconcile).toBe(false);return {upserted:args.bookings.length,mapped_units:0,unmapped_units:0}})};
+  expect(await invoke(syncDbcinemaWeb,ctx,{})).toMatchObject({ok:true,upserted:1200});expect(ctx.runMutation).toHaveBeenCalledTimes(12);
+ });
+ it('stops on a stalled cursor without any absence cancellation',async()=>{
+  vi.stubEnv('DBCINEMA_CONVEX_URL','https://store.example.invalid');vi.stubEnv('DBCINEMA_ADMIN_TOKEN','fixture');vi.stubGlobal('fetch',vi.fn(async()=>({ok:true,json:async()=>({status:'success',value:{authorized:true,bookings:[],isDone:false,continueCursor:'same'}})})));
+  const ctx={runMutation:vi.fn(async(_ref,args)=>{expect(args.reconcile).toBe(false);return {upserted:0,mapped_units:0,unmapped_units:0}})};expect(await invoke(syncDbcinemaWeb,ctx,{})).toMatchObject({ok:false,reason:'invalid_cursor'});expect(ctx.runMutation).toHaveBeenCalledTimes(2);
+ });
+});

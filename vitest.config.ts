@@ -73,6 +73,7 @@ export default defineConfig({
       "convex/lib/camera_sensor_comparisons.test.ts",
       "convex/lib/push_registration.test.ts",
       "convex/notifications.push.test.ts",
+      "convex/sync_dbcinema_web.test.ts",
       "src/lib/push-service-worker.test.ts",
       "convex/lib/lab_lifecycle.test.ts",
       "convex/lib/item_display_name.test.ts",

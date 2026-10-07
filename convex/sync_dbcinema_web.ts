@@ -8,7 +8,7 @@
  * pushes Hygglo availability DOWN into the storefront.
  *
  *   syncDbcinemaWeb (internalAction) — fetches the storefront's bookings feed
- *     (rmv2_sync:forRmv2Sync, token-guarded) over Convex's HTTP query API and
+ *     (rmv2_sync:forRmv2SyncPage, token-guarded) over Convex's HTTP query API and
  *     hands them to the upsert mutation.
  *   upsertSiteBookingsBatch (internalMutation) — maps each booking's decomposed
  *     Hygglo product IDs to RMv2 items (via the dbcinema hygglo_product_index),
@@ -28,6 +28,8 @@ import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
 import { computePollHash } from "./hygglo";
+import { queueNotificationEvents } from "./notifications";
+import { buildConfirmedBookingNotificationCopy } from "./lib/notification_events";
 
 const upsertBatchRef = internal.sync_dbcinema_web.upsertSiteBookingsBatch;
 // This scheduled refresh is an action, as declared by its native registration.
@@ -42,6 +44,7 @@ type SiteUnit = { hyggloProductId: number; qty: number };
 type SiteLine = { title: string; qty: number; start: number; end: number; units: SiteUnit[] };
 type SiteBooking = {
   id: string;
+  revision?: number;
   status: string;
   customerName: string | null;
   customerEmail: string | null;
@@ -69,33 +72,38 @@ export const syncDbcinemaWeb = internalAction({
       console.error("[dbcinema_web sync] missing DBCINEMA_CONVEX_URL / DBCINEMA_ADMIN_TOKEN");
       return { ok: false, reason: "missing_config" };
     }
-    let payload: { authorized?: boolean; bookings?: SiteBooking[] };
+    let cursor: string | null = null;
+    let upserted = 0, mapped_units = 0, unmapped_units = 0;
     try {
-      const resp = await fetch(`${url.replace(/\/$/, "")}/api/query`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          path: "rmv2_sync:forRmv2Sync",
-          args: { token },
-          format: "json",
-        }),
-      });
-      const json = (await resp.json()) as { status?: string; value?: unknown; errorMessage?: string };
-      if (json.status !== "success") {
-        console.error("[dbcinema_web sync] storefront query failed:", json.errorMessage ?? json.status);
-        return { ok: false, reason: "query_failed" };
+      for (let page = 0; page < 100; page++) {
+        const resp = await fetch(`${url.replace(/\/$/, "")}/api/query`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            path: "rmv2_sync:forRmv2SyncPage",
+            args: { token, paginationOpts: { cursor, numItems: 100 } },
+            format: "json",
+          }),
+          signal: AbortSignal.timeout(20000),
+        });
+        const json = (await resp.json()) as { status?: string; value?: unknown; errorMessage?: string };
+        if (json.status !== "success") {
+          console.error("[dbcinema_web sync] storefront query failed:", json.errorMessage ?? json.status);
+          return { ok: false, reason: "query_failed" };
+        }
+        const payload = json.value as { authorized?: boolean; bookings?: SiteBooking[]; isDone?: boolean; continueCursor?: string };
+        if (!resp.ok || !payload?.authorized || !Array.isArray(payload.bookings) || typeof payload.isDone !== "boolean") return { ok: false, reason: "invalid_feed" };
+        const res = await ctx.runMutation(upsertBatchRef, { bookings: payload.bookings, reconcile: false });
+        upserted += res.upserted; mapped_units += res.mapped_units; unmapped_units += res.unmapped_units;
+        if (payload.isDone) return { ok: true, upserted, mapped_units, unmapped_units };
+        if (!payload.continueCursor || payload.continueCursor === cursor) return { ok: false, reason: "invalid_cursor" };
+        cursor = payload.continueCursor;
       }
-      payload = json.value as { authorized?: boolean; bookings?: SiteBooking[] };
+      return { ok: false, reason: "page_limit" };
     } catch (err) {
       console.error("[dbcinema_web sync] fetch error:", err instanceof Error ? err.message : err);
       return { ok: false, reason: "fetch_error" };
     }
-    if (!payload?.authorized) return { ok: false, reason: "unauthorized" };
-    const bookings = Array.isArray(payload.bookings) ? payload.bookings : [];
-    const res = await ctx.runMutation(upsertBatchRef, {
-      bookings: bookings as unknown[],
-    });
-    return { ok: true, ...res };
   },
 });
 
@@ -121,7 +129,7 @@ const SITE_STATUS_MAP: Record<string, "confirmed" | "completed" | "cancelled"> =
 export const upsertSiteBookingsBatch = internalMutation({
   // reconcile: when false, SKIP the "cancel anything missing from the feed"
   // sweep. The event-driven webhook pushes ONE booking, so reconciling against
-  // it would cancel every other web reservation. Bulk poll omits it → true.
+  // it would cancel every other web reservation. Paged pulls also pass false; cancellations arrive as explicit records.
   args: { bookings: v.array(v.any()), reconcile: v.optional(v.boolean()) },
   handler: async (ctx, { bookings, reconcile }) => {
     // Ensure the account row exists so the switcher pill + avatar render.
@@ -192,7 +200,8 @@ export const upsertSiteBookingsBatch = internalMutation({
 
     for (const raw of bookings as SiteBooking[]) {
       const b = raw;
-      if (!b || !b.id || !b.start || !b.end) continue;
+      if (!b || !b.id || !Number.isFinite(b.start) || !Number.isFinite(b.end) || b.end < b.start) continue;
+      if (b.revision !== undefined && (!Number.isSafeInteger(b.revision) || b.revision < 0)) throw Error("Invalid website rental revision");
       // status → RMv2 status + order_step (so due-returns / Return Hub / the
       // ongoing-vs-upcoming split treat web rentals like Hygglo ones).
       // Unknown / non-actionable (pending_payment) → skip, never default.
@@ -301,9 +310,9 @@ export const upsertSiteBookingsBatch = internalMutation({
         items: itemsDisplay,
         resolved_items,
         expanded_items,
-        ...(photos_urls.length > 0 ? { photos_urls } : {}),
-        ...(hygglo_items.length > 0 ? { hygglo_items } : {}),
-        ...(order_step ? { order_step } : {}),
+        photos_urls,
+        hygglo_items,
+        order_step,
         gross_paid_gbp: gross,
         net_to_owner_gbp: net,
         platform_fee_gbp: 0,
@@ -315,12 +324,13 @@ export const upsertSiteBookingsBatch = internalMutation({
         // sweep below produces, or the two paths would disagree about whether a
         // cancelled web rental is obsolete.
         is_obsolete: status === "cancelled",
-        ...(status === "cancelled" ? { obsolete_reason: "renter_cancelled" } : {}),
+        obsolete_reason: status === "cancelled" ? "renter_cancelled" : undefined,
         source_filter: "dbcinema_web_site",
         booking_status: b.status,
+        site_revision: b.revision ?? 0,
       };
-      if (b.pickupTime) fields.pickup_time = b.pickupTime;
-      if (b.returnTime) fields.return_time = b.returnTime;
+      fields.pickup_time = b.pickupTime || undefined;
+      fields.return_time = b.returnTime || undefined;
 
       // ── Conditional write — same diff gate as hygglo.ts upsertOrderImpl ─────
       // This cron re-upserts every booking every 30 min; a ctx.db.patch creates
@@ -339,24 +349,32 @@ export const upsertSiteBookingsBatch = internalMutation({
         .collect();
       const mine = existing.find((r) => r.account_slug === WEB_SLUG);
       if (mine) {
+        if ((b.revision ?? 0) < (mine.site_revision ?? 0)) { skipped++; continue; }
         if ((mine as { poll_hash?: string }).poll_hash === newPollHash) {
           skipped++;
           continue;
         }
         await ctx.db.patch(mine._id, {
           ...fields,
-          ...(image_hints.length > 0 ? { image_hints } : {}),
+          image_hints,
           last_polled_at: Date.now(),
           poll_hash: newPollHash,
         });
       } else {
         await ctx.db.insert("reservations", {
           ...fields,
-          ...(image_hints.length > 0 ? { image_hints } : {}),
+          image_hints,
           last_polled_at: Date.now(),
           poll_hash: newPollHash,
           created_at: Date.now(),
         } as never);
+      }
+      // Notify new/upcoming confirmations, never a historical import or a repeat poll.
+      const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+      if (status === "confirmed" && startISO >= today && (!mine || mine.status !== "confirmed")) {
+        const copy_data = { renter_name: b.customerName ?? undefined, item_name: itemsDisplay[0]?.item_name, gross, net, currency: b.currency ?? "GBP" };
+        const copy = buildConfirmedBookingNotificationCopy({ renterName: copy_data.renter_name, itemName: copy_data.item_name, gross, net, currency: copy_data.currency, accountSlug: WEB_SLUG });
+        await queueNotificationEvents(ctx, [{ type: "booking_confirmed", thread_id: b.id, account_slug: WEB_SLUG, title: copy.title, body: `Website · ${copy.body}`, copy_data, url: `https://dbcinemarentals.com/admin?rental=${encodeURIComponent(b.id)}#messages` }]);
       }
       upserted++;
     }

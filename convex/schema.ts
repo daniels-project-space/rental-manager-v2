@@ -476,6 +476,7 @@ const operationalSchema = defineSchema({
      *  hint so future runs can re-link without refetching the order. */
     hygglo_user_id: v.optional(v.string()),
     booking_status: v.optional(v.string()),         // raw Hygglo booking status (e.g. "pending_review", "confirmed")
+    site_revision: v.optional(v.number()), // monotonically ordered website updates
     /** Reply Inbox (2026-06-22): true when Hygglo's order `actions` map currently
      *  offers accept/deny — i.e. the request is awaiting MY approval (the trigger
      *  shown atop the messages board). Authoritative source for the Approve/Decline
