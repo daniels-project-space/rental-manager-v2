@@ -8,6 +8,7 @@ import {
   internalMutation,
 } from "./owner_functions";
 import { internal } from "./_generated/api";
+import { patchInvoice, readInvoiceGroups, recordInvoiceStats } from "./lib/invoice_stats";
 export const list = query({
   args: { paginationOpts: paginationOptsValidator },
   handler: async (ctx, args) => {
@@ -33,7 +34,8 @@ export const stats = query({
   args: {},
   handler: async (ctx) => {
     await requireOwner(ctx, true);
-    const rows = await ctx.db.query("invoice_archive").collect();
+    const cachedGroups = await readInvoiceGroups(ctx);
+    const rows = cachedGroups ? [] : await ctx.db.query("invoice_archive").collect();
     const groups: Record<
       string,
       {
@@ -51,7 +53,7 @@ export const stats = query({
         renterKnown: number;
         payoutKnown: number;
       }
-    > = {};
+    > = cachedGroups ?? {};
     for (const r of rows) {
       const key = r.account_slug;
       const g = (groups[key] ??= {
@@ -107,7 +109,7 @@ export const retry = mutation({
     if (!row) throw Error("Invoice missing");
     if (row.status === "downloading" && row.lease_until > Date.now())
       throw Error("Download in progress");
-    await ctx.db.patch(id, {
+    await patchInvoice(ctx, id, {
       status: "queued",
       attempts: 0,
       next_retry: 0,
@@ -144,7 +146,7 @@ export const ingest = internalMutation({
         )
         .unique();
       if (!found) {
-        await ctx.db.insert("invoice_archive", {
+        const id = await ctx.db.insert("invoice_archive", {
           account_slug: args.account,
           source_id: row.id,
           title: row.title,
@@ -157,6 +159,9 @@ export const ingest = internalMutation({
           created_at: Date.now(),
           updated_at: Date.now(),
         });
+        const inserted = await ctx.db.get(id);
+        if (!inserted) throw new Error("Inserted invoice missing");
+        await recordInvoiceStats(ctx, inserted);
         added++;
       }
     }
@@ -184,7 +189,7 @@ export const claim = internalMutation({
       .withIndex("by_status_retry", (q) => q.eq("status", "downloading"))
       .take(20))
       if (r.lease_until < now)
-        await ctx.db.patch(r._id, { status: "queued", next_retry: now });
+        await patchInvoice(ctx, r._id, { status: "queued", next_retry: now });
     const rows = await ctx.db
       .query("invoice_archive")
       .withIndex("by_status_retry", (q) =>
@@ -192,7 +197,7 @@ export const claim = internalMutation({
       )
       .take(3);
     for (const row of rows)
-      await ctx.db.patch(row._id, {
+      await patchInvoice(ctx, row._id, {
         status: "downloading",
         attempts: row.attempts + 1,
         lease_until: now + 180000,
@@ -235,7 +240,7 @@ export const finish = internalMutation({
     }
     if (row.pdf_id) await ctx.storage.delete(row.pdf_id);
     if (row.text_id) await ctx.storage.delete(row.text_id);
-    await ctx.db.patch(args.id, {
+    await patchInvoice(ctx, args.id, {
       status: args.verified ? "ready" : "review",
       pdf_id: args.pdf,
       text_id: args.text,
@@ -252,7 +257,7 @@ export const fail = internalMutation({
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.id);
     if (!row || row.lease_until !== args.lease) return;
-    await ctx.db.patch(args.id, {
+    await patchInvoice(ctx, args.id, {
       status: row.attempts >= 5 ? "failed" : "queued",
       error: args.message,
       next_retry: Date.now() + Math.min(3600000, 60000 * 2 ** row.attempts),
