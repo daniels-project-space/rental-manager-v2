@@ -25,6 +25,7 @@ export default defineConfig({
       "convex/lib/finance/*.test.ts",
       "convex/finance.test.ts",
       "convex/invoices.test.ts",
+      "convex/reconcile_usage.test.ts",
       "convex/lib/item_technical_context.test.ts",
       "convex/lib/renter_camera_identity.test.ts",
       "convex/lib/booking_record.test.ts",

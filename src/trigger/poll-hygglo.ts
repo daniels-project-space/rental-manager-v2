@@ -538,6 +538,124 @@ export const pollHyggloInbox = schedules.task({
       return reconItemsRawShared;
     };
 
+    const reconciliationSlugs: string[] = [];
+    const reconcileAccountHolds = async (
+      accountSlug: string,
+      reconReservationsRaw: FunctionReturnType<typeof api.reservations.listForReconcile>,
+    ) => {
+      try {
+        const reconItemsRaw = await getReconItemsRaw();
+
+        // Convex rows use optional account_slug; ReservationInput requires it — filter nulls.
+        // Also coerce undefined date fields to null (ReservationInput uses string | null).
+        //
+        // pickup_at / return_at overrides: when extract_booking_times has
+        // determined that the renter agreed to pick up the evening BEFORE
+        // or return the morning AFTER the booking window, we feed those
+        // offset dates through to reconcile-holds so the calendar shows
+        // the gear out across the full real window — not just the
+        // listing's nominal start_date/end_date.
+        const dateAtMs = (d?: string): number | undefined => {
+          if (!d) return undefined;
+          const parsed = Date.parse(d + "T00:00:00Z");
+          return Number.isNaN(parsed) ? undefined : parsed;
+        };
+        const reconReservations = reconReservationsRaw
+          .filter((r) => r.account_slug != null)
+          .map((r) => {
+            const startStr = r.start_date ?? undefined;
+            const endStr = r.end_date ?? undefined;
+            const pickupStr = (r as { pickup_date?: string }).pickup_date;
+            const returnStr = (r as { return_date?: string }).return_date;
+            // Only override when the offset actually extends the hold —
+            // earlier pickup or later return. Equal or invalid offsets
+            // fall back to the booking window (no-op).
+            const pickup_at =
+              pickupStr && startStr && pickupStr < startStr
+                ? dateAtMs(pickupStr)
+                : undefined;
+            const return_at =
+              returnStr && endStr && returnStr > endStr
+                ? dateAtMs(returnStr)
+                : undefined;
+            return {
+              ...r,
+              _id: r._id as string,
+              account_slug: r.account_slug as string,
+              start_date: r.start_date ?? null,
+              end_date: r.end_date ?? null,
+              ...(pickup_at !== undefined && { pickup_at }),
+              ...(return_at !== undefined && { return_at }),
+            };
+          });
+
+        const reconItems = reconItemsRaw.map((i) => ({
+          ...i,
+          _id: i._id as string,
+        }));
+
+        // Deterministic product_id → item maps. Without these reconcile
+        // falls back to LLM/name matching, which mis-mapped rented gear and
+        // left other rented gear with no hold at all (reading as available
+        // to the renter bot). See docs/inventory-linkage-audit-2026-08-18.md.
+        const maps = await convex.query(api.calendar.getResolutionMaps, {
+          account_slug: accountSlug,
+        });
+        const productIndex = new Map(
+          maps.index.map((r) => [`${accountSlug}#${r.product_id}`, r.item_id]),
+        );
+        const bundleOverrides = new Map(
+          maps.overrides.map((r) => [`${accountSlug}#${r.product_id}`, r.components]),
+        );
+
+        const result = computeHoldsForReservations({
+          reservations: reconReservations,
+          items: reconItems,
+          today: new Date(),
+          forwardCapDays: 180,
+          productIndex,
+          bundleOverrides,
+        });
+
+        // An unresolved line is rented stock that nothing is holding — it
+        // reads as AVAILABLE and can be double-booked. Never let this be
+        // silent; silence is why it went unnoticed for three months.
+        if (result.unresolvedLines.length > 0) {
+          logger.error(
+            `[reconcile] UNRESOLVED account=${accountSlug} count=${result.unresolvedLines.length} — these rented items have NO hold and read as available`,
+            {
+              lines: result.unresolvedLines.map(
+                (l) => `pid=${l.product_id ?? "none"} "${l.title.slice(0, 60)}"`,
+              ),
+            },
+          );
+        }
+        logger.log(
+          `[reconcile] account=${accountSlug} deterministic=${result.stats.resolved_by_product_id} legacyFallback=${result.stats.fell_back_to_legacy} unresolved=${result.unresolvedLines.length}`,
+        );
+
+        if (result.holds.length > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const upsertResult = await convex.mutation(api.calendar.upsertHoldsBatch, { holds: result.holds as any });
+          logger.log(`[reconcile] account=${accountSlug} upserted=${upsertResult.inserted}+${upsertResult.updated} skipped=${upsertResult.skipped}`);
+        }
+
+        if (result.deleteReservationIds.length > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const delResult = await convex.mutation(api.calendar.deleteStaleHolds, { reservation_ids: result.deleteReservationIds as any });
+          logger.log(`[reconcile] account=${accountSlug} deleted_stale=${delResult.deleted}`);
+        }
+
+        if (result.unmatchedItemNames.length > 0) {
+          logger.warn(`[reconcile] account=${accountSlug} unmatched=${result.unmatchedItemNames.length}: ${result.unmatchedItemNames.slice(0, 10).join(", ")}`);
+        }
+
+        logger.log(`[reconcile] account=${accountSlug} stats: ${JSON.stringify(result.stats)}`);
+      } catch (reconErr) {
+        // Reconciliation failure is non-fatal — Hygglo fetch + reservation upsert succeeded
+        logger.error(`[reconcile] account=${accountSlug} failed (non-fatal): ${reconErr instanceof Error ? reconErr.message : String(reconErr)}`);
+      }
+    };
     try {
       for (const account of accounts) {
         if (!account.email || !account.password) {
@@ -917,123 +1035,7 @@ export const pollHyggloInbox = schedules.task({
               console.error(`[poll-hygglo] account_state.upsert (success) failed for ${account.slug}:`, asErr);
             }
           }
-
-          // ── Hold reconciliation (Wave 2 T5) ──────────────────
-          if (isFullPoll) try {
-            const [reconReservationsRaw, reconItemsRaw] = await Promise.all([
-              convex.query(api.reservations.listForReconcile, { account_slug: account.slug }),
-              getReconItemsRaw(),
-            ]);
-
-            // Convex rows use optional account_slug; ReservationInput requires it — filter nulls.
-            // Also coerce undefined date fields to null (ReservationInput uses string | null).
-            //
-            // pickup_at / return_at overrides: when extract_booking_times has
-            // determined that the renter agreed to pick up the evening BEFORE
-            // or return the morning AFTER the booking window, we feed those
-            // offset dates through to reconcile-holds so the calendar shows
-            // the gear out across the full real window — not just the
-            // listing's nominal start_date/end_date.
-            const dateAtMs = (d?: string): number | undefined => {
-              if (!d) return undefined;
-              const parsed = Date.parse(d + "T00:00:00Z");
-              return Number.isNaN(parsed) ? undefined : parsed;
-            };
-            const reconReservations = reconReservationsRaw
-              .filter((r) => r.account_slug != null)
-              .map((r) => {
-                const startStr = r.start_date ?? undefined;
-                const endStr = r.end_date ?? undefined;
-                const pickupStr = (r as { pickup_date?: string }).pickup_date;
-                const returnStr = (r as { return_date?: string }).return_date;
-                // Only override when the offset actually extends the hold —
-                // earlier pickup or later return. Equal or invalid offsets
-                // fall back to the booking window (no-op).
-                const pickup_at =
-                  pickupStr && startStr && pickupStr < startStr
-                    ? dateAtMs(pickupStr)
-                    : undefined;
-                const return_at =
-                  returnStr && endStr && returnStr > endStr
-                    ? dateAtMs(returnStr)
-                    : undefined;
-                return {
-                  ...r,
-                  _id: r._id as string,
-                  account_slug: r.account_slug as string,
-                  start_date: r.start_date ?? null,
-                  end_date: r.end_date ?? null,
-                  ...(pickup_at !== undefined && { pickup_at }),
-                  ...(return_at !== undefined && { return_at }),
-                };
-              });
-
-            const reconItems = reconItemsRaw.map((i) => ({
-              ...i,
-              _id: i._id as string,
-            }));
-
-            // Deterministic product_id → item maps. Without these reconcile
-            // falls back to LLM/name matching, which mis-mapped rented gear and
-            // left other rented gear with no hold at all (reading as available
-            // to the renter bot). See docs/inventory-linkage-audit-2026-08-18.md.
-            const maps = await convex.query(api.calendar.getResolutionMaps, {
-              account_slug: account.slug,
-            });
-            const productIndex = new Map(
-              maps.index.map((r) => [`${account.slug}#${r.product_id}`, r.item_id]),
-            );
-            const bundleOverrides = new Map(
-              maps.overrides.map((r) => [`${account.slug}#${r.product_id}`, r.components]),
-            );
-
-            const result = computeHoldsForReservations({
-              reservations: reconReservations,
-              items: reconItems,
-              today: new Date(),
-              forwardCapDays: 180,
-              productIndex,
-              bundleOverrides,
-            });
-
-            // An unresolved line is rented stock that nothing is holding — it
-            // reads as AVAILABLE and can be double-booked. Never let this be
-            // silent; silence is why it went unnoticed for three months.
-            if (result.unresolvedLines.length > 0) {
-              logger.error(
-                `[reconcile] UNRESOLVED account=${account.slug} count=${result.unresolvedLines.length} — these rented items have NO hold and read as available`,
-                {
-                  lines: result.unresolvedLines.map(
-                    (l) => `pid=${l.product_id ?? "none"} "${l.title.slice(0, 60)}"`,
-                  ),
-                },
-              );
-            }
-            logger.log(
-              `[reconcile] account=${account.slug} deterministic=${result.stats.resolved_by_product_id} legacyFallback=${result.stats.fell_back_to_legacy} unresolved=${result.unresolvedLines.length}`,
-            );
-
-            if (result.holds.length > 0) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const upsertResult = await convex.mutation(api.calendar.upsertHoldsBatch, { holds: result.holds as any });
-              logger.log(`[reconcile] account=${account.slug} upserted=${upsertResult.inserted}+${upsertResult.updated} skipped=${upsertResult.skipped}`);
-            }
-
-            if (result.deleteReservationIds.length > 0) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const delResult = await convex.mutation(api.calendar.deleteStaleHolds, { reservation_ids: result.deleteReservationIds as any });
-              logger.log(`[reconcile] account=${account.slug} deleted_stale=${delResult.deleted}`);
-            }
-
-            if (result.unmatchedItemNames.length > 0) {
-              logger.warn(`[reconcile] account=${account.slug} unmatched=${result.unmatchedItemNames.length}: ${result.unmatchedItemNames.slice(0, 10).join(", ")}`);
-            }
-
-            logger.log(`[reconcile] account=${account.slug} stats: ${JSON.stringify(result.stats)}`);
-          } catch (reconErr) {
-            // Reconciliation failure is non-fatal — Hygglo fetch + reservation upsert succeeded
-            logger.error(`[reconcile] account=${account.slug} failed (non-fatal): ${reconErr instanceof Error ? reconErr.message : String(reconErr)}`);
-          }
+          if (isFullPoll) reconciliationSlugs.push(account.slug);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           console.error(`[poll-hygglo] ${account.slug} failed: ${msg}`);
@@ -1055,6 +1057,27 @@ export const pollHyggloInbox = schedules.task({
               console.error(`[poll-hygglo] account_state.upsert (failure) failed for ${account.slug}:`, asErr);
             }
           }
+        }
+      }
+
+      // Reconcile from a single snapshot AFTER every successful account's
+      // upserts, so later accounts never consume a pre-poll reservation view.
+      // The old per-account query remains a recovery path if batching fails.
+      if (isFullPoll) {
+        const successfulSlugs = reconciliationSlugs;
+        let batch: FunctionReturnType<typeof api.reconciliation.listBatch> | null = null;
+        if (successfulSlugs.length) try {
+          batch = await convex.query(api.reconciliation.listBatch, { account_slugs: successfulSlugs });
+          logger.log(`[reconcile] strategy=${batch.strategy} accounts=${batch.groups.length}`);
+        } catch (error) {
+          logger.warn(`[reconcile] batch unavailable; retaining per-account recovery: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        for (const slug of successfulSlugs) try {
+          const rows = batch?.groups.find(group => group.account_slug === slug)?.reservations ??
+            await convex.query(api.reservations.listForReconcile, { account_slug: slug });
+          await reconcileAccountHolds(slug, rows);
+        } catch (error) {
+          logger.error(`[reconcile] account=${slug} read failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`);
         }
       }
 

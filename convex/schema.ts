@@ -12,6 +12,7 @@ import { sentDateProposalValidator } from "./lib/renter_date_proposal";
 import { sentAdditionProposalValidator } from "./lib/renter_sent_proposal";
 import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
 import { draftReviewValidator } from "./lib/draft_review_validator";
+import { invoiceStatsValidator } from "./lib/invoice_stats_fields";
 
 // Phase 1.A schema. Tables with `Empty in this phase` are scaffolding for later phases
 // (renters, reservations, conversations, rules, denial_records).
@@ -42,6 +43,12 @@ const operationalSchema = defineSchema({
     })), error: v.optional(v.string()), created_at: v.number(), updated_at: v.number(),
   }).index("by_source", ["account_slug", "source_id"]).index("by_status_retry", ["status", "next_retry"])
     .index("by_date", ["date"]),
+  invoice_stats_groups: defineTable({ account_slug: v.string(), totals: invoiceStatsValidator })
+    .index("by_account", ["account_slug"]),
+  invoice_stats_ledger: defineTable({ invoice_id: v.id("invoice_archive"), account_slug: v.string(), contribution: invoiceStatsValidator })
+    .index("by_invoice", ["invoice_id"]),
+  invoice_stats_state: defineTable({ version: v.string(), cursor: v.string(), complete: v.boolean(), verified: v.optional(v.boolean()) })
+    .index("by_version", ["version"]),
   invoice_sync_log: defineTable({ account_slug: v.string(), message: v.string(), count: v.number(), created_at: v.number() })
     .index("by_created", ["created_at"]),
   // App owner identity is independent of rental accounts and renter verification.
@@ -672,7 +679,9 @@ const operationalSchema = defineSchema({
     // derive forward-looking holds). Composite index lets it scope to
     // account + recent start_date in one indexed range.
     .index("by_account_start", ["account_slug", "start_date"])
-    .index("by_account_end", ["account_slug", "end_date"]),
+    .index("by_account_end", ["account_slug", "end_date"])
+    .index("by_account_obsolete_end", ["account_slug", "is_obsolete", "end_date"])
+    .index("by_account_obsolete_return", ["account_slug", "is_obsolete", "return_date"]),
 
   // ── Layer B (2026-05-19) — qty-drift safety net ────────────────────────
   // Nightly audit (convex/audit_qty_drift.ts) detects reservations whose
