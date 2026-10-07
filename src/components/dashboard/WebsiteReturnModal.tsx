@@ -8,6 +8,7 @@ const previewRef=makeFunctionReference<"action",{reservationId:Id<"reservations"
 const settleRef=makeFunctionReference<"action",{reservationId:Id<"reservations">;actualReturnedAt:number;damageKept:number;damageNote?:string;chargeLate:boolean;lateWaiverReason?:string;inspection?:Inspection[]},any>("websiteReturns:settle");
 const localDate=(at:number)=>new Date(at-new Date(at).getTimezoneOffset()*60000).toISOString().slice(0,16);
 const money=(n:number)=>new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP"}).format(n);
+const emailLabel=(status:string|null)=>({pending:"Queued for delivery",sending:"Sending",sent:"Sent",failed:"Delivery failed — automatic retry pending"}[status??""]??"Delivery status not yet available");
 const holdLabel=(status:string|null)=>({requires_capture:"Held, not charged",held:"Held, not charged",authorized:"Held, not charged",released:"Released",captured:"Captured",pending:"Awaiting authorisation",failed:"Authorisation failed"}[status??""]??(status?.replaceAll("_"," ")||"Status unavailable"));
 export function WebsiteReturnModal({reservationId,onClose}:{reservationId:Id<"reservations">;onClose:()=>void}) {
  const preview=useAction(previewRef),settle=useAction(settleRef),dialog=useRef<HTMLDialogElement>(null);
@@ -32,6 +33,12 @@ export function WebsiteReturnModal({reservationId,onClose}:{reservationId:Id<"re
  const security=(data?.depositAmount??0)+(data?.depositHoldAmount??0);
  const complete=legacyResume||!!data?.items.length&&data.items.every((i:any)=>{const v=items[i.key];return v&&(v.condition==="good"||v.details.trim().length>=10)});
  const valid=!!data&&["confirmed","active","returned"].includes(data.status)&&complete&&Number.isFinite(at)&&at<=Date.now()+60000&&Number.isFinite(amount)&&amount>=0&&amount<=security&&(!amount||note.trim().length>=10)&&(!amount||Object.values(items).some(i=>i.condition==="issue")||legacyResume)&&(chargeLate||!data?.lateQuote?.amount||waiver.trim().length>=5);
+ useEffect(()=>{
+  if(!result)return;
+  let active=true;
+  preview({reservationId}).then(context=>{if(active)setData(context)}).catch(()=>{});
+  return()=>{active=false};
+ },[result,reservationId,preview]);
  const update=(key:string,change:Partial<Inspection>)=>setItems(current=>({...current,[key]:{...(current[key]??{key,condition:"good" as const,details:"",openCase:false}),...change}}));
  async function finish(){if(!valid||busy||!data?.executionEnabled)return;setBusy(true);setError("");try{setResult(await settle({reservationId,actualReturnedAt:at,damageKept:amount,damageNote:note||undefined,chargeLate,lateWaiverReason:waiver||undefined,...(!legacyResume?{inspection:data.items.map((i:any)=>items[i.key])}:{})}));}catch(e){setError(e instanceof Error?e.message:"Settlement failed. Reload before retrying.");try{const current=await preview({reservationId});setData(current);if(current.returnDecision){const saved=current.returnDecision;setAt(saved.actualReturnedAt);setDate(localDate(saved.actualReturnedAt));setDamage(String(saved.damageKept));setNote(saved.damageNote??"");setChargeLate(saved.chargeLate);setWaiver(saved.lateWaiverReason??"");setItems(Object.fromEntries((saved.inspection??[]).map((i:Inspection)=>[i.key,i])));}}catch{}}finally{setBusy(false)}}
  return <dialog ref={dialog} onCancel={e=>{if(busy)e.preventDefault();else onClose()}} className="m-auto w-[min(920px,calc(100vw-24px))] max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-[#17191f] p-0 text-[#e9e9ef] backdrop:bg-black/70">
@@ -39,7 +46,7 @@ export function WebsiteReturnModal({reservationId,onClose}:{reservationId:Id<"re
   <div className="space-y-5 p-6">
    {error&&<p role="alert" className="rounded-lg border border-red-400/30 bg-red-400/10 p-3 text-sm text-red-200">{error}</p>}
    {!data&&<p>{loading?"Loading saved equipment and payment details…":"Inspection is unavailable. Close and reopen to retry."}</p>}
-   {result?<div className="space-y-3"><h3 className="text-lg">Return settlement completed</h3><p>Refunded security: {money(result.released)} · Retained: {money(result.kept)} · Late rental charge: {money(result.lateAmount)}</p><p className="text-sm text-[#9296a6]">The website issues the itemised settlement statement and renter email. {result.syncPending?"Rental Manager is awaiting the automatic status update.":"The rental is completed in Rental Manager."}</p><button onClick={onClose} className="rounded-lg bg-[#c29b76] px-5 py-3 text-black">Done</button></div>:data&&<>
+   {result?<div className="space-y-3"><h3 className="text-lg">Return settlement completed</h3><p>Refunded security: {money(result.released)} · Retained: {money(result.kept)} · Late rental assessed, not yet collected: {money(result.lateAmount)}</p><p className="text-sm text-[#9296a6]">Return statement email: {emailLabel(data?.settlementEmailStatus??null)}. {result.syncPending?"Rental Manager is awaiting the automatic status update.":"The rental is completed in Rental Manager."}</p><button onClick={onClose} className="rounded-lg bg-[#c29b76] px-5 py-3 text-black">Done</button></div>:data&&<>
     {!data.executionEnabled&&<p className="rounded-lg border border-amber-400/30 p-3 text-sm text-amber-200">Inspection preview is available. Website settlement is awaiting rollout approval.</p>}
     {data.status==="returned"&&<p className="text-sm text-emerald-300">This rental is already returned. Resume only if the saved security settlement still needs completion.</p>}
     {data.legacy&&<p className="text-xs text-[#9296a6]">This older rental uses booked listing items because it has no physical equipment ledger.</p>}

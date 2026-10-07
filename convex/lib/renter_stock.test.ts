@@ -106,3 +106,35 @@ describe("website physical allocation dates in real quoting",()=>{
   expect(stockForItem(sources as any,item as any,{item_name:"FX3",start_date:"2035-01-01",end_date:"2035-01-05",thread_id:"web"}).free_units).toBe(3);
  });
 });
+
+
+describe("saved website clocks in actual quoting",()=>{
+ const item={_id:"camera",name_canonical:"FX3",status:"active",qty:1};
+ const window={item_id:"camera",qty:1,start:Date.UTC(2035,0,1),end:Date.UTC(2035,0,2),pickupTime:"09:00",returnTime:"12:00"};
+ const quote=(saved:any,start_date:string,pickup_time:string,return_time?:string)=>{
+  const reservation={account_slug:"dbcinema_web",hygglo_order_id:"web",status:"confirmed",start_date:"2035-01-01",end_date:"2035-01-02",pickup_time:"06:00",return_time:"22:00",site_item_windows:[saved]};
+  const sources={items:[item],productIndex:new Map(),overrides:new Map(),claims:[],blackouts:[],vacations:[],reservations:[reservation]};
+  return stockForItem(sources as any,item as any,{item_name:"FX3",start_date,end_date:start_date,pickup_time,return_time});
+ };
+ it("allows the next handover only after the saved window's buffered return",()=>{
+  expect(quote(window,"2035-01-02","12:59").available).toBe(false);
+  expect(quote(window,"2035-01-02","13:00").available).toBe(true);
+ });
+ it("uses the saved pickup instead of an unrelated booking clock",()=>{
+  expect(quote(window,"2035-01-01","07:00","08:59").available).toBe(true);
+  expect(quote(window,"2035-01-01","08:00","09:01").available).toBe(false);
+ });
+ it("keeps an explicitly undefined return unavailable for its whole return day",()=>{
+  expect(quote({...window,returnTime:null},"2035-01-02","23:59").available).toBe(false);
+  expect(quote({...window,returnTime:null},"2035-01-03","00:00").available).toBe(true);
+ });
+ it("inherits booking clocks only for older windows without those fields",()=>{
+  const {pickupTime,returnTime,...legacy}=window;
+  expect(quote(legacy,"2035-01-02","13:00").available).toBe(false);
+  expect(quote(legacy,"2035-01-02","23:00").available).toBe(true);
+ });
+ it("carries late buffered returns into the next day",()=>{
+  expect(quote({...window,returnTime:"23:30"},"2035-01-03","00:29").available).toBe(false);
+  expect(quote({...window,returnTime:"23:30"},"2035-01-03","00:30").available).toBe(true);
+ });
+});

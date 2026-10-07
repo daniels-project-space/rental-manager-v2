@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./auth", () => ({ authComponent: { safeGetAuthUser: vi.fn(async () => null) } }));
-import { computeStripLive, computeWeeklyLive, getGanttWeek, getCalendarStrip, getWeeklyCalendar } from "./calendar";
+import { computeStripLive, computeWeeklyLive, getGanttWeek, getCalendarStrip, getWeeklyCalendar, getItemAvailabilityForChat } from "./calendar";
 import { websiteCalendarPeriods } from "./lib/reservations/itemUnits";
 const ms = (day: string) => Date.parse(`${day}T00:00:00Z`);
 const window = (id: string, start: string, end: string, clock: string | null, qty = 1) => ({ item_id: id, start: ms(start), end: ms(end), qty, pickupTime: "09:00", returnTime: clock });
 const booking = { _id: "web-rental", _creationTime: 1, account_slug: "dbcinema_web", hygglo_order_id: "paid-web-rental", status: "confirmed", order_step: "DELIVERED", start_date: "2026-10-05", end_date: "2026-10-11", pickup_time: "08:00", return_time: "22:00", renter_name: "Client", gross_paid_gbp: 99,
   items: [{item_name: "Entire kit",qty: 1}], hygglo_items:[{name:"Entire kit",product_id:42}],
   site_item_windows: [window("camera", "2026-10-05", "2026-10-06", "12:00", 2), window("lens", "2026-10-05", "2026-10-06", "12:00"), window("camera", "2026-10-09", "2026-10-11", null), window("lens", "2026-10-09", "2026-10-11", "19:00")] };
-const inventory = [{_id:"camera",name_canonical:"Sony FX3",kind:"camera",image_url:"https://images.example/camera.png"},{_id:"lens",name_canonical:"Canon 50mm",kind:"lens",image_url:"https://images.example/lens.png"}];
+const inventory = [{_id:"camera",name_canonical:"Sony FX3",kind:"camera",status:"active",qty:1,image_url:"https://images.example/camera.png"},{_id:"lens",name_canonical:"Canon 50mm",kind:"lens",status:"active",qty:1,image_url:"https://images.example/lens.png"}];
 function context(rows: any[] = [booking], cache?: any) {
  const tables: Record<string, any[]> = {reservations: rows, items: inventory, mv_calendar: cache ? [{key:Array.isArray(cache)?"strip:all":"weekly:all",anchor:"2026-10-05",days:7,payload:cache}] : []};
  return {db:{get: async () => null,query:(table:string)=>{
@@ -51,6 +51,14 @@ describe("saved website calendar windows",()=>{
   const cache=[{calendarWindowVersion:2,date:"2026-10-05",pickups:[],returns:[],away:[],holds:[]}];
   expect(await (getCalendarStrip as any)._handler(context([booking],cache),{accountSlug:null,startDate:"2026-10-05",days:7})).toEqual(cache);
   const weekly={calendarWindowVersion:2,days:[]};expect(await (getWeeklyCalendar as any)._handler(context([booking],weekly),{accountSlug:null,weekStartDate:"2026-10-05"})).toEqual(weekly);
+ });
+ it("chat availability reports the real gap and only upcoming physical periods",async()=>{
+  const result=await (getItemAvailabilityForChat as any)._handler(context(),{query:"FX3",horizonDays:5,accountSlug:"leo"});
+  expect(result.items).toHaveLength(1);const camera=result.items[0];
+  expect(camera.free_today).toBe(true);expect(camera.free_units_today).toBe(1);expect(camera.next_free_date).toBe("2026-10-07");
+  expect(camera.upcoming_bookings).toEqual([{renter:"Client",pickup:"2026-10-09 09:00",return:"2026-10-11",qty:1,account:"dbcinema_web"}]);
+  const lens=await (getItemAvailabilityForChat as any)._handler(context(),{query:"Canon",horizonDays:5});
+  expect(lens.items[0].upcoming_bookings[0].return).toBe("2026-10-11 19:00");
  });
  it("ignores pre-window calendar caches",async()=>{
   const args={accountSlug:null,startDate:"2026-10-05",days:7};

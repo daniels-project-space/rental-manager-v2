@@ -134,11 +134,12 @@ export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources
         // Only the last allocation can be overdue; extending older extension
         // rows as well would count the same bodies twice.
         const ret = w.end === latestEnd ? effEnd({end_date:agreedReturn,return_date:agreedReturn,status:r.status,order_step:r.order_step},today) : agreedReturn;
-        const returnTime = ret > agreedReturn ? undefined : r.return_time;
+        const pickupTime = w.pickupTime === undefined ? r.pickup_time : w.pickupTime;
+        const returnTime = ret > agreedReturn ? undefined : w.returnTime === undefined ? r.return_time : w.returnTime;
         const end = returnTime && /^([01]\d|2[0-3]):[0-5]\d$/.test(returnTime)
           ? new Date(Date.parse(`${ret}T${returnTime}:00Z`) + 3600000).toISOString().slice(0,16)
           : `${shiftStockDate(ret,1)}T00:00`;
-        occupancy.push({start:`${pickup}T${r.pickup_time ?? "00:00"}`,end,qty:w.qty,renter_name:r.renter_name,order_id:r.hygglo_order_id});
+        occupancy.push({start:`${pickup}T${pickupTime ?? "00:00"}`,end,qty:w.qty,renter_name:r.renter_name,order_id:r.hygglo_order_id});
       }
       continue;
     }

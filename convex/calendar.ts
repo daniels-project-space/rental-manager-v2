@@ -2148,7 +2148,7 @@ export const getItemAvailabilityForChat = query({
     const commit = new Map<string, number>();
     type Bk = { renter: string; pickup: string; return: string; qty: number; account?: string };
     const bookingsByItem = new Map<string, Bk[]>();
-    for (const r of confirmed) {
+    for (const r of confirmed.flatMap(row => websiteCalendarPeriods(row))) {
       const effPick = displayPickupDate(r as ReservationRow) || r.start_date;
       const effRet = (r.return_date ?? r.end_date) ?? effPick;
       if (!effPick || !effRet) continue;
