@@ -1,3 +1,4 @@
+import { BusinessPayoutCalculator } from "@/components/dashboard/finance/BusinessPayoutCalculator";
 import type { ComponentType } from "react";
 import { StatsGrid } from "@/components/dashboard/StatsGrid";
 import { LifetimeRevenue } from "@/components/dashboard/LifetimeRevenue";
@@ -50,7 +51,8 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
   { id: "reply-inbox",        label: "Quick Reply",            component: ReplyInbox },
   { id: "lifetime",            label: "Lifetime Revenue",       component: LifetimeRevenue },
   { id: "earnings-chart",      label: "Earnings Chart",         component: EarningsChart },
-  { id: "tax-summary",         label: "Tax Summary",            component: TaxSummary },
+  { id: "tax-summary",         label: "Taxes & Invoice Archive", component: TaxSummary },
+  { id: "business-payout-calculator", label: "Business Payout Calculator", component: BusinessPayoutCalculator },
   { id: "live-activity",       label: "Live Activity",          component: LiveActivity },
   { id: "calendar-strip",      label: "Calendar Strip",         component: CalendarStrip },
   { id: "item-availability",   label: "Item Availability",      component: ItemAvailabilityCalendar },

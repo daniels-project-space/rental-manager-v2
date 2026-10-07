@@ -478,4 +478,7 @@ crons.interval(
   {},
 );
 
+// Read-only invoice discovery and bounded, retryable PDF backfill. No rental messaging or payment execution.
+crons.daily("invoice archive discovery", { hourUTC: 5, minuteUTC: 35 }, internal.invoice_sync.discover, {});
+crons.interval("invoice archive retries", { minutes: 5 }, internal.invoice_sync.drain, {});
 export default crons;

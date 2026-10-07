@@ -6,7 +6,7 @@
     "dev": "next dev",
     "dev:convex": "convex dev",
     "build:next": "next build",
-    "build": "convex deploy --check-build-environment=disable --cmd 'next build'",
+    "build": "node scripts/build-with-convex.mjs",
     "start": "next start",
     "lint": "eslint",
     "trigger:dev": "trigger.dev dev",
@@ -59,7 +59,8 @@
     "web-push": "^3.6.7",
     "zod": "^3.25.76",
     "@convex-dev/better-auth": "0.12.5",
-    "better-auth": "1.6.15"
+    "better-auth": "1.6.15",
+    "pdf-parse": "2.4.5"
   },
   "optionalDependencies": {
     "@img/sharp-libvips-linux-arm64": "^1.2.0",
