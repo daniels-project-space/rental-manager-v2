@@ -67,3 +67,13 @@ describe('real website reservation sync handlers',()=>{
   const ctx={runMutation:vi.fn(async(_ref,args)=>{expect(args.reconcile).toBe(false);return {upserted:0,mapped_units:0,unmapped_units:0}})};expect(await invoke(syncDbcinemaWeb,ctx,{})).toMatchObject({ok:false,reason:'invalid_cursor'});expect(ctx.runMutation).toHaveBeenCalledTimes(2);
  });
 });
+
+it('persists individual equipment clocks and refuses malformed times before changing saved stock',async()=>{
+ const {ctx,rows}=database();const id=await ctx.db.insert('items',{name_canonical:'Sony FX3'});const start=Date.UTC(2035,0,1),end=Date.UTC(2035,0,2);
+ const windows=[{rmv2ItemId:id,qty:1,start,end,pickupTime:'10:00',returnTime:'12:00'},{rmv2ItemId:id,qty:1,start:start+3*86400000,end:end+3*86400000,pickupTime:null,returnTime:null}];
+ await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({physicalReservations:windows})],reconcile:false});
+ const saved=[...rows.values()].find(r=>r.table==='reservations');expect(saved.site_item_windows.map((w:any)=>[w.pickupTime,w.returnTime])).toEqual([['10:00','12:00'],[null,null]]);
+ const previous=JSON.stringify(saved.site_item_windows);
+ for(const returnTime of ['25:00','9am','12:99'])await expect(invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({revision:2,physicalReservations:[{...windows[0],returnTime}]})],reconcile:false})).rejects.toThrow('Invalid website equipment time');
+ expect(JSON.stringify(rows.get(saved._id).site_item_windows)).toBe(previous);
+});

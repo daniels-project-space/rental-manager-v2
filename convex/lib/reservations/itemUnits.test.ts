@@ -67,3 +67,22 @@ describe("website item calendar intervals",()=>{
   expect(websiteDayIntervals({...r,return_time:"23:30"},"2035-01-03")).toEqual([{id:"camera",a:"00:00",b:"00:30",qty:3}]);
  });
 });
+
+describe("saved website per-item clocks", () => {
+  const start = Date.UTC(2035, 0, 1), end = Date.UTC(2035, 0, 2);
+  const base = {pickup_time:"10:00",return_time:"19:00"};
+  it("releases separate items after their own agreed return and buffer", () => {
+    const site_item_windows = [{item_id:"camera",qty:1,start,end,returnTime:"12:00"},{item_id:"lens",qty:2,start,end,returnTime:"19:00"}];
+    expect(websiteDayIntervals({...base,site_item_windows},"2035-01-02")).toEqual([{id:"camera",a:"00:00",b:"13:00",qty:1},{id:"lens",a:"00:00",b:"20:00",qty:2}]);
+  });
+  it("keeps explicitly unagreed slots for the whole day rather than inheriting another item", () => {
+    expect(websiteDayIntervals({...base,site_item_windows:[{item_id:"camera",qty:1,start,end,returnTime:null}]},"2035-01-02")).toEqual([{id:"camera",a:"00:00",b:"24:00",qty:1}]);
+  });
+  it("uses per-window pickup clocks and preserves legacy fallback", () => {
+    expect(websiteDayIntervals({...base,site_item_windows:[{item_id:"camera",qty:1,start,end,pickupTime:"12:00"}]},"2035-01-01")[0].a).toBe("12:00");
+    expect(websiteDayIntervals({...base,site_item_windows:[{item_id:"camera",qty:1,start,end}]},"2035-01-02")[0].b).toBe("20:00");
+  });
+  it("carries an individual late return buffer into the following day", () => {
+    expect(websiteDayIntervals({...base,site_item_windows:[{item_id:"camera",qty:1,start,end,returnTime:"23:30"}]},"2035-01-03")).toEqual([{id:"camera",a:"00:00",b:"00:30",qty:1}]);
+  });
+});

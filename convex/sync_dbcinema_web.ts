@@ -62,7 +62,7 @@ type SiteBooking = {
   currency: string;
   createdAt: number;
   lineItems: SiteLine[];
-  physicalReservations?: Array<{rmv2ItemId: string | null; hyggloProductId?: number | null; qty: number; start: number; end: number}>;
+  physicalReservations?: Array<{rmv2ItemId: string | null; hyggloProductId?: number | null; qty: number; start: number; end: number; pickupTime?: string | null; returnTime?: string | null}>;
 };
 
 export const syncDbcinemaWeb = internalAction({
@@ -251,13 +251,14 @@ export const upsertSiteBookingsBatch = internalMutation({
           else byProduct.set(u.hyggloProductId, { name: head.name, image_url: head.image_url, qty: u.qty });
         }
       }
-      let site_item_windows: Array<{item_id: Id<"items">; qty:number; start:number; end:number}> | undefined;
+      let site_item_windows: Array<{item_id: Id<"items">; qty:number; start:number; end:number; pickupTime?:string|null; returnTime?:string|null}> | undefined;
       if (b.physicalReservations !== undefined) {
         if (!Array.isArray(b.physicalReservations)) throw Error("Invalid website physical reservation ledger");
         site_item_windows = b.physicalReservations.map(w => {
           if (!w.rmv2ItemId || !itemById.has(w.rmv2ItemId)) throw Error("Website equipment needs a canonical master inventory mapping");
           if (!Number.isSafeInteger(w.qty) || w.qty <= 0 || !Number.isFinite(w.start) || !Number.isFinite(w.end) || w.end < w.start) throw Error("Invalid website equipment window");
-          return { item_id: w.rmv2ItemId as Id<"items">, qty:w.qty, start:w.start, end:w.end };
+          for (const time of [w.pickupTime, w.returnTime]) if (time != null && (typeof time !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time))) throw Error("Invalid website equipment time");
+          return { item_id: w.rmv2ItemId as Id<"items">, qty:w.qty, start:w.start, end:w.end, ...(w.pickupTime !== undefined ? {pickupTime:w.pickupTime} : {}), ...(w.returnTime !== undefined ? {returnTime:w.returnTime} : {}) };
         });
         byItem.clear();
         byProduct.clear();

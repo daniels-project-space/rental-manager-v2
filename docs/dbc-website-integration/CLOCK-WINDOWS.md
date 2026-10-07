@@ -1,0 +1,11 @@
+# Saved equipment clocks across the website bridge
+
+The DB Cinema feed's physical reservation projection now carries the booking pickup clock and the agreed return clock for the corresponding listing/date allocation. Matching uses the persisted listing identity and return endpoint, not the latest catalogue's kit contents. Different listing windows retain different deadlines after an approved extension. Explicitly unagreed return slots stay null. When an old/ambiguous physical allocation cannot be matched reliably, its return day stays occupied in full; overlapping candidate deadlines use the latest agreed clock.
+
+Rental Manager saves these optional clocks in `site_item_windows`. Incoming non-null times must be valid HH:MM values; malformed windows fail before replacing saved stock. The entire write-set is hashed, so existing same-revision bookings update when the newly projected clocks arrive. Old windows without clock fields retain their prior booking-wide fallback. A null field explicitly suppresses that fallback.
+
+The timed inventory-calendar search uses each saved window's own pickup/return, its quantity and the existing one-hour return buffer. The buffer can carry into the next date. Date-level full-cart stock remains conservative for the complete hire day; this change does not relax the website's transactional stock checks or allow same-day overlapping rentals.
+
+Validation: actual DB Cinema physical-feed and rental-extension/payment handlers pass their focused checks. Twenty-seven manager sync/item-window/calendar-geometry checks pass, including per-item return times, explicit nulls, legacy fallback, different pickup clocks, overnight carry and invalid-time preservation of existing stock. Both TypeScript checks pass. Production builds pass. These are local source/fixture checks, not deployed cross-app acceptance.
+
+Remaining: booking-centric strip/weekly/fullscreen Gantt views and other timed quoting consumers must be checked against these separate physical windows; some still derive a booking-wide span. Native UI and production feed/stock/calendar acceptance are still outstanding. Deploy both compatible bridge halves together and verify the production DB binding before enabling/claiming live integration. No RM backend or production website deployment occurred for this change.

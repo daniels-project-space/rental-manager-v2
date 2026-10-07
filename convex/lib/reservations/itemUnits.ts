@@ -6,7 +6,7 @@ type HItem = { name?: string; product_id?: number; qty?: number };
 
 export type ResolvableRes = {
   account_slug?: string;
-  site_item_windows?: Array<{item_id: string; qty: number; start: number; end: number}>;
+  site_item_windows?: Array<{item_id: string; qty: number; start: number; end: number; pickupTime?: string | null; returnTime?: string | null}>;
   expanded_items?: XItem[] | null;
   resolved_items?: XItem[] | null;
   hygglo_items?: HItem[] | null;
@@ -144,8 +144,10 @@ export function websiteDayIntervals(r: ResolvableRes & {pickup_time?:string;retu
   const result:Array<{id:string;a:string;b:string;qty:number}>=[];
   for(const w of r.site_item_windows ?? []) {
     const pickup=new Date(w.start).toISOString().slice(0,10),ret=new Date(w.end).toISOString().slice(0,10);
-    const start=Date.parse(`${pickup}T${r.pickup_time || "00:00"}:00Z`);
-    const end=r.return_time ? Date.parse(`${ret}T${r.return_time}:00Z`)+3600000 : Date.parse(`${ret}T00:00:00Z`)+86400000;
+    const pickupTime=w.pickupTime === undefined ? r.pickup_time : w.pickupTime;
+    const returnTime=w.returnTime === undefined ? r.return_time : w.returnTime;
+    const start=Date.parse(`${pickup}T${pickupTime || "00:00"}:00Z`);
+    const end=returnTime ? Date.parse(`${ret}T${returnTime}:00Z`)+3600000 : Date.parse(`${ret}T00:00:00Z`)+86400000;
     if(start>=dayEnd || end<=dayStart)continue;
     const a=start<=dayStart?"00:00":new Date(start).toISOString().slice(11,16);
     const b=end>=dayEnd?"24:00":new Date(end).toISOString().slice(11,16);

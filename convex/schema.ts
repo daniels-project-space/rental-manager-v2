@@ -477,7 +477,7 @@ const operationalSchema = defineSchema({
     hygglo_user_id: v.optional(v.string()),
     booking_status: v.optional(v.string()),         // raw Hygglo booking status (e.g. "pending_review", "confirmed")
     site_revision: v.optional(v.number()), // monotonically ordered website updates
-    site_item_windows: v.optional(v.array(v.object({ item_id: v.id("items"), qty: v.number(), start: v.number(), end: v.number() }))), // saved per-component hire periods
+    site_item_windows: v.optional(v.array(v.object({ item_id: v.id("items"), qty: v.number(), start: v.number(), end: v.number(), pickupTime: v.optional(v.union(v.string(), v.null())), returnTime: v.optional(v.union(v.string(), v.null())) }))), // saved per-component hire periods and agreed clocks
     /** Reply Inbox (2026-06-22): true when Hygglo's order `actions` map currently
      *  offers accept/deny — i.e. the request is awaiting MY approval (the trigger
      *  shown atop the messages board). Authoritative source for the Approve/Decline
