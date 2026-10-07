@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./auth",()=>({authComponent:{safeGetAuthUser:vi.fn(async()=>({_id:'owner'}))}}));
 import { getFunctionName } from "convex/server";
-import { preview,review,settle,link } from "./websiteReturns";
+import { preview,review,settle,link,caseLink,closeDamageCase } from "./websiteReturns";
 import { markReturned } from "./reservations";
 const invoke=(f:any,ctx:any,args:any)=>f._handler(ctx,args);
 const args={reservationId:'reservation-1',actualReturnedAt:Date.now(),damageKept:0,chargeLate:true,inspection:[{key:'camera:1',condition:'good',details:'',openCase:false}]};
@@ -57,4 +57,13 @@ describe('real website return bridge actions',()=>{
  it('rejects foreign or cancelled reservations and prevents the generic Hygglo mutation from marking website rentals complete',async()=>{
   const {ctx,row,queryCtx}=context();await expect(invoke(markReturned,{...ctx,...queryCtx},{reservationId:args.reservationId,condition:'good'})).rejects.toThrow('website item inspection');row.account_slug='leo';await expect(invoke(link,queryCtx,{reservationId:args.reservationId})).rejects.toThrow('Select a DB Cinema');row.account_slug='dbcinema_web';row.status='cancelled';await expect(invoke(link,queryCtx,{reservationId:args.reservationId})).rejects.toThrow('cancelled');
  });
+});
+
+describe('website case resolution bridge',()=>{
+ function caseContext(){const {ctx,row}=context();const claim={account_slug:'dbcinema_web',site_case_id:'source-case',site_booking_id:row.hygglo_order_id,reservation_id:row._id};ctx.runQuery.mockImplementation(async(ref:any,params:any)=>getFunctionName(ref)==='owner_access:get'?{auth_user_id:'owner'}:invoke(caseLink,{db:{get:async(id:string)=>id==='claim-1'?claim:row}},params));return {ctx,row,claim}}
+ const decision={claimId:'claim-1',resolution:'Repair completed and evidence reviewed.'};
+ it('requires both the genuine owner and explicit write gate',async()=>{const {ctx}=caseContext();const fetch=vi.fn();vi.stubGlobal('fetch',fetch);ctx.auth.getUserIdentity.mockResolvedValue(null);await expect(invoke(closeDamageCase,ctx,decision)).rejects.toThrow('OWNER_AUTH_REQUIRED');ctx.auth.getUserIdentity.mockResolvedValue({subject:'owner',issuer:'https://owner.convex.site'});vi.stubEnv('ALLOW_WEBSITE_RETURN_WRITES','false');await expect(invoke(closeDamageCase,ctx,decision)).rejects.toThrow('not enabled');expect(fetch).not.toHaveBeenCalled()});
+ it('binds closure to the source rental and refreshes only after confirmation',async()=>{const {ctx}=caseContext();vi.stubGlobal('fetch',vi.fn(async(url:any,options:any)=>{const req=JSON.parse(options.body);expect(req.args.token).toBe('private-server-token');if(req.path==='returnInspections:closeCase'){expect(url).toContain('/api/mutation');expect(req.args).toMatchObject({bookingId:'website-booking',caseId:'source-case',resolution:decision.resolution});return {ok:true,json:async()=>({status:'success',value:null})}}return {ok:true,json:async()=>({status:'success',value:{id:'website-booking',damageCases:[{id:'source-case',status:'closed'}]}})}}));expect(await invoke(closeDamageCase,ctx,decision)).toEqual({ok:true,syncPending:false});expect(ctx.runMutation).toHaveBeenCalledTimes(1)});
+ it('reports confirmed source closure separately from interrupted refresh',async()=>{const {ctx}=caseContext();vi.stubGlobal('fetch',vi.fn(async(_url:any,options:any)=>{if(JSON.parse(options.body).path==='returnInspections:closeCase')return {ok:true,json:async()=>({status:'success',value:null})};throw Error('offline')}));expect(await invoke(closeDamageCase,ctx,decision)).toEqual({ok:true,syncPending:true});expect(ctx.runMutation).not.toHaveBeenCalled()});
+ it('rejects tampered rental bindings and failed source writes without importing a closure',async()=>{const {ctx,row}=caseContext();const fetch=vi.fn();vi.stubGlobal('fetch',fetch);row.hygglo_order_id='other';await expect(invoke(closeDamageCase,ctx,decision)).rejects.toThrow('binding mismatch');expect(fetch).not.toHaveBeenCalled();row.hygglo_order_id='website-booking';vi.stubGlobal('fetch',vi.fn(async()=>({ok:false,json:async()=>({status:'error',errorMessage:'source rejected'})})));await expect(invoke(closeDamageCase,ctx,decision)).rejects.toThrow('source rejected');expect(ctx.runMutation).not.toHaveBeenCalled()});
 });

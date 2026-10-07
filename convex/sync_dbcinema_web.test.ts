@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 vi.mock("./hygglo", () => ({ computePollHash: (s: string) => s }));
 vi.mock("./notifications", () => ({ queueNotificationEvents: vi.fn(async () => 1) }));
-import { bookedUnitsOnDate } from "./lib/availability";
+import { bookedUnitsOnDate, repairHeldUnits } from "./lib/availability";
 import { reservationItemUnits } from "./lib/reservations/itemUnits";
 import { queueNotificationEvents } from "./notifications";
 import { syncDbcinemaWeb, upsertSiteBookingsBatch } from "./sync_dbcinema_web";
@@ -76,4 +76,31 @@ it('persists individual equipment clocks and refuses malformed times before chan
  const previous=JSON.stringify(saved.site_item_windows);
  for(const returnTime of ['25:00','9am','12:99'])await expect(invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({revision:2,physicalReservations:[{...windows[0],returnTime}]})],reconcile:false})).rejects.toThrow('Invalid website equipment time');
  expect(JSON.stringify(rows.get(saved._id).site_item_windows)).toBe(previous);
+});
+
+it('imports source damage cases exactly once and preserves assessed payouts across website revisions',async()=>{
+ vi.stubEnv('OWNER_AUTH_REQUIRED','true');
+ const {ctx,rows}=database();const c={id:'source-case-1',itemKey:'unit:0',title:'Sony FX3 · unit 1',details:'Damaged casing with photographs',status:'open',openedAt:2000,closedAt:null,resolution:null,customerAccountId:'web-customer',rmv2ItemId:null as string | null};
+ const itemId=await ctx.db.insert('items',{name_canonical:'Sony FX3'});c.rmv2ItemId=itemId;
+ const b=booking({status:'returned',damageCases:[c]});await invoke(upsertSiteBookingsBatch,ctx,{bookings:[b],reconcile:false});
+ const claim=()=>[...rows.values()].find(r=>r.table==='insurance_claims');expect(claim()).toMatchObject({site_case_id:c.id,site_booking_id:b.id,site_customer_account_id:'web-customer',description:c.details,item_name_canonical:c.title,amount_gbp:0,status:'open',stage:'case_opened'});
+ expect(claim().repair_item_ids).toEqual([itemId]);expect(repairHeldUnits([claim()] as any,itemId as any)).toBe(0);
+ const reservation=[...rows.values()].find(r=>r.table==='reservations');expect(claim().reservation_id).toBe(reservation._id);expect(reservation.net_to_owner_gbp).toBe(90);
+ await ctx.db.patch(claim()._id,{amount_gbp:250,stage:'quote_received',payout_amount_gbp:150,description:'Operator added repair quotation.'});
+ await invoke(upsertSiteBookingsBatch,ctx,{bookings:[b],reconcile:false});expect([...rows.values()].filter(r=>r.table==='insurance_claims')).toHaveLength(1);expect(repairHeldUnits([claim()] as any,itemId as any)).toBe(1);
+ const closed={...c,status:'closed',closedAt:3000,resolution:'Repair complete and case resolved.'};await invoke(upsertSiteBookingsBatch,ctx,{bookings:[{...b,revision:2,damageCases:[closed]}],reconcile:false});expect(claim()).toMatchObject({site_case_status:'closed',site_case_resolution:closed.resolution,stage:'quote_received',amount_gbp:250,payout_amount_gbp:150,description:'Operator added repair quotation.'});
+ await invoke(upsertSiteBookingsBatch,ctx,{bookings:[b],reconcile:false});expect(claim().site_case_status).toBe('closed');
+ await invoke(upsertSiteBookingsBatch,ctx,{bookings:[{...b,revision:3}],reconcile:false});expect(claim().site_case_status).toBe('closed');
+});
+it('rejects duplicate or misbound cases rather than moving evidence to another rental',async()=>{
+ vi.stubEnv('OWNER_AUTH_REQUIRED','true');
+ const {ctx}=database();const c={id:'source-case',itemKey:'legacy:0',title:'Lens',details:'Scratched coating',status:'open',openedAt:2000,closedAt:null,resolution:null,customerAccountId:null,rmv2ItemId:null};
+ await expect(invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({damageCases:[c,c]})],reconcile:false})).rejects.toThrow('Invalid website damage cases');
+ await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({damageCases:[c]})],reconcile:false});
+ await expect(invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({id:'other-booking',damageCases:[c]})],reconcile:false})).rejects.toThrow('binding mismatch');
+});
+
+it('blocks private case import until public manager queries enforce owner access',async()=>{
+ vi.stubEnv('OWNER_AUTH_REQUIRED','false');const {ctx,rows}=database();const c={id:'private-case',itemKey:'unit:0',title:'Camera',details:'Private customer evidence',status:'open',openedAt:2000,closedAt:null,resolution:null,customerAccountId:'private-account',rmv2ItemId:null};
+ await expect(invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({damageCases:[c]})],reconcile:false})).rejects.toThrow('enforced owner authentication');expect([...rows.values()].filter(r=>r.table==='insurance_claims')).toHaveLength(0);
 });

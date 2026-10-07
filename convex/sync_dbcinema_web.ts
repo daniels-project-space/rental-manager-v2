@@ -23,6 +23,7 @@
  *   DBCINEMA_CONVEX_URL   (e.g. https://veracious-wombat-196.convex.cloud)
  *   DBCINEMA_ADMIN_TOKEN  (the storefront's ADMIN_TOKEN)
  */
+import { syncWebsiteCases, validateWebsiteCases } from "./lib/websiteCases";
 import { internalAction, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
@@ -62,6 +63,7 @@ type SiteBooking = {
   currency: string;
   createdAt: number;
   lineItems: SiteLine[];
+  damageCases?: import("./lib/websiteCases").WebsiteCase[];
   physicalReservations?: Array<{rmv2ItemId: string | null; hyggloProductId?: number | null; qty: number; start: number; end: number; pickupTime?: string | null; returnTime?: string | null}>;
 };
 
@@ -212,6 +214,7 @@ export const upsertSiteBookingsBatch = internalMutation({
         skipped++;
         continue;
       }
+      if (b.damageCases !== undefined) validateWebsiteCases(b.damageCases);
       const startISO = new Date(b.start).toISOString().slice(0, 10);
       const endISO = new Date(b.end).toISOString().slice(0, 10);
       const order_step =
@@ -363,13 +366,14 @@ export const upsertSiteBookingsBatch = internalMutation({
       // already in the hash) plus a volatile captured_at — and skip the row
       // entirely when unchanged. last_polled_at + poll_hash only advance when
       // the row is new or something actually changed (2026-07-12).
-      const newPollHash = computePollHash(JSON.stringify(fields));
+      const newPollHash = computePollHash(JSON.stringify({ ...fields, ...(b.damageCases !== undefined ? { damageCases: b.damageCases } : {}) }));
 
       const existing = await ctx.db
         .query("reservations")
         .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", b.id))
         .collect();
       const mine = existing.find((r) => r.account_slug === WEB_SLUG);
+      let reservationId = mine?._id;
       if (mine) {
         if ((b.revision ?? 0) < (mine.site_revision ?? 0)) { skipped++; continue; }
         if ((mine as { poll_hash?: string }).poll_hash === newPollHash) {
@@ -383,7 +387,7 @@ export const upsertSiteBookingsBatch = internalMutation({
           poll_hash: newPollHash,
         });
       } else {
-        await ctx.db.insert("reservations", {
+        reservationId = await ctx.db.insert("reservations", {
           ...fields,
           image_hints,
           last_polled_at: Date.now(),
@@ -391,6 +395,7 @@ export const upsertSiteBookingsBatch = internalMutation({
           created_at: Date.now(),
         } as never);
       }
+      await syncWebsiteCases(ctx, b, reservationId, itemById);
       // Notify new/upcoming confirmations, never a historical import or a repeat poll.
       const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
       if (status === "confirmed" && startISO >= today && (!mine || mine.status !== "confirmed")) {

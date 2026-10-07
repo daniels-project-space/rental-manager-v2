@@ -1,3 +1,4 @@
+import { websiteCaseView } from "./lib/websiteCases";
 import { mutation, query } from "./owner_functions";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
@@ -33,6 +34,7 @@ export const list = query({
       : await ctx.db.query("insurance_claims").withIndex("by_claim_date").order("desc").take(50);
     return rows.map((r) => ({
       id: r._id,
+      ...websiteCaseView(r),
       accountSlug: r.account_slug,
       itemNameCanonical: r.item_name_canonical,
       renterName: r.renter_name ?? null,
@@ -104,6 +106,7 @@ export const openCaseFromReservation = mutation({
   handler: async (ctx, { reservationId, memberIds, projected_value_gbp, description, repair_item_ids }) => {
     const res = await ctx.db.get(reservationId);
     if (!res) throw new Error("Reservation not found");
+    if (res.account_slug === "dbcinema_web") throw Error("Open website cases through the individual return inspection.");
     // Keep only ids that actually resolve to an `items` doc; drop the rest so a
     // stray reservation-derived id can't poison the claim write.
     let repairItemIds: Id<"items">[] | undefined;
@@ -257,6 +260,8 @@ export const creditToRevenue = mutation({
 export const remove = mutation({
   args: { id: v.id("insurance_claims") },
   handler: async (ctx, { id }) => {
+    const record = await ctx.db.get(id);
+    if (record?.site_case_id) throw Error("Website return cases are retained for audit. Resolve the source case instead of deleting it.");
     // Release any rentals this case pulled out of the Return Hub.
     const linked = (await ctx.db.query("reservations").collect()).filter( // check-patterns:ok — rare operator action; case_id has no index
       (r) => (r as { case_id?: string }).case_id === (id as string),

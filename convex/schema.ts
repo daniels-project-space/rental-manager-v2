@@ -1026,11 +1026,20 @@ const operationalSchema = defineSchema({
     renter_id: v.optional(v.id("renters")),
     renter_name: v.optional(v.string()),
     opened_from: v.optional(v.string()),       // "return_hub" | "manual"
+    site_case_id: v.optional(v.string()),
+    site_booking_id: v.optional(v.string()),
+    site_customer_account_id: v.optional(v.string()),
+    site_item_key: v.optional(v.string()),
+    site_case_status: v.optional(v.union(v.literal("open"), v.literal("closed"))),
+    site_case_resolution: v.optional(v.string()),
+    site_case_closed_at: v.optional(v.number()),
+    site_case_revision: v.optional(v.number()),
     // Items physically OUT ON REPAIR for this case — reduce effective stock
     // until the case is closed (terminal stage).
     repair_item_ids: v.optional(v.array(v.id("items"))),
   }).index("by_account", ["account_slug"])
-    .index("by_claim_date", ["claim_date"]),
+    .index("by_claim_date", ["claim_date"])
+    .index("by_site_case", ["site_case_id"]),
 
   // ── Conflict dismissals — per-event flags so an owner can suppress
   // a known double-booking from the banner. Keyed by a hash of item_id +

@@ -1,5 +1,6 @@
 "use client";
 
+import { WebsiteCaseControl, type WebsiteCaseInfo } from "./WebsiteCaseControl";
 import { useMutation } from "convex/react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../../../convex/_generated/api";
@@ -17,6 +18,7 @@ type Stage =
   | "denied";
 
 interface Claim {
+  websiteCase?: WebsiteCaseInfo;
   id: string;
   accountSlug: string | null;
   itemNameCanonical: string | null;
@@ -61,6 +63,7 @@ const STAGE_SHORT: Record<Stage, string> = {
 };
 
 const ACCOUNT_PILL: Record<string, { bg: string; text: string }> = {
+  dbcinema_web: { bg: "bg-emerald-900/60 border border-emerald-500/30", text: "text-emerald-200" },
   dbcinema: { bg: "bg-blue-900/60 border border-blue-500/30", text: "text-blue-200" },
   leo:      { bg: "bg-purple-900/60 border border-purple-500/30", text: "text-purple-200" },
   diogo:    { bg: "bg-orange-900/60 border border-orange-500/30", text: "text-orange-200" },
@@ -415,6 +418,8 @@ function ClaimCard({
         </div>
       )}
 
+      {claim.websiteCase && <WebsiteCaseControl key={claim.id} claimId={claim.id} info={claim.websiteCase} />}
+
       {/* Pipeline */}
       <PipelineBar stage={stage} />
 
@@ -483,7 +488,7 @@ function ClaimCard({
           </button>
           <div className="flex-1" />
           <button onClick={onEdit} className="text-[#8b8fa3] hover:text-[#e4e6eb] text-sm px-1.5" title="Edit fields">✎</button>
-          <button onClick={onDelete} className="text-[#8b8fa3] hover:text-[#ef4444] text-sm px-1.5" title="Delete">✕</button>
+          <button disabled={!!claim.websiteCase} onClick={onDelete} className="text-[#8b8fa3] hover:text-[#ef4444] text-sm px-1.5" title={claim.websiteCase ? "Website cases are retained for audit; resolve the source case" : "Delete"}>✕</button>
         </div>
       )}
 
@@ -509,7 +514,7 @@ function ClaimCard({
           </button>
           <div className="flex-1" />
           <button onClick={onEdit} className="text-[#8b8fa3] hover:text-[#e4e6eb] text-sm px-1.5" title="Edit fields">✎</button>
-          <button onClick={onDelete} className="text-[#8b8fa3] hover:text-[#ef4444] text-sm px-1.5" title="Delete">✕</button>
+          <button disabled={!!claim.websiteCase} onClick={onDelete} className="text-[#8b8fa3] hover:text-[#ef4444] text-sm px-1.5" title={claim.websiteCase ? "Website cases are retained for audit; resolve the source case" : "Delete"}>✕</button>
         </div>
       )}
     </div>
