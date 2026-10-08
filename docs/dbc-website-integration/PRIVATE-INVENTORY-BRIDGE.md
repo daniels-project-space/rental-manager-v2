@@ -8,4 +8,4 @@ Actual route/service tests exercise all four counterparts under enabled owner en
 
 Publish this compatible manager endpoint first, correct existing synchronization credentials/target pairing and register the owner before enforcing owner auth, then publish and verify the website consumer. A frontend preview does not publish the backends. Canonical kit mapping, live freshness and a shared atomic reservation claim remain original requirements.
 
-Validation: 139 test files / 2144 passing tests (14 existing skips), TypeScript, Next build, owner-boundary and HTTP-client audits pass. Both project graphs are updated. Hosted source-matched validation is pending. No production backend or gate changes were made.
+Validation: 139 test files / 2144 passing tests (14 existing skips), TypeScript, Next build, owner-boundary and HTTP-client audits pass. Both project graphs are updated. Hosted CI 37727933455 for 7ee2b86 and website CI 37727932219 for b51284f are terminal SUCCESS. Matching previews dpl_4pEcukwBHwXSXsWXSRNwx7CywCFB and dpl_6t3zghdUNDMU8V6kGwFYrSYkhmey are READY. Live backend acceptance remains pending. No production backend or gate changes were made.
