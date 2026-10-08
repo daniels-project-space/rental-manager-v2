@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 vi.mock("./auth",()=>({authComponent:{safeGetAuthUser:vi.fn(async()=>({_id:'owner'}))}}));
 import { getFunctionName } from "convex/server";
 import { binding, context, refresh } from "./websiteVerification";
-import { adminPatchRichFieldsByHyggloId } from "./reservations";
+import { adminPatchRichFieldsByHyggloId, adminSetStatus, adminMarkUnreturned } from "./reservations";
 const invoke=(f:any,ctx:any,args:any)=>f._handler(ctx,args);
 const args={reservationId:'reservation-1'};
 function fixture(){
@@ -32,4 +32,9 @@ it('rejects cross-booking source data and sanitizes provider errors',async()=>{
 });
 it('blocks website approval and handover overrides without writing any row',async()=>{
  const {ctx}=fixture();for(const fields of [{order_step:'DELIVERED'},{order_step:'VERIFIED'},{booking_status:'active'}])await expect(invoke(adminPatchRichFieldsByHyggloId,ctx,{hygglo_order_id:'website-booking',...fields})).rejects.toThrow('must be managed in DB Cinema');expect(ctx.db.patch).not.toHaveBeenCalled();
+});
+
+it('blocks manual website status and return restoration overrides',async()=>{
+ const {ctx,row}=fixture();await expect(invoke(adminSetStatus,ctx,{reservation_id:row._id,new_status:'active',reason:'local override'})).rejects.toThrow('must be managed in DB Cinema');
+ row.status='completed';await expect(invoke(adminMarkUnreturned,ctx,{reservationId:row._id})).rejects.toThrow('must be managed in DB Cinema');expect(ctx.db.patch).not.toHaveBeenCalled();
 });

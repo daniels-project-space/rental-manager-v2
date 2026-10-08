@@ -562,6 +562,7 @@ export const adminMarkUnreturned = mutation({
     const restoreOne = async (id: Id<"reservations">) => {
       const r = await ctx.db.get(id);
       if (!r) return false;
+      if (r.account_slug === "dbcinema_web") throw Error("Website rental status must be managed in DB Cinema Rentals");
       // Only un-complete a completed row; leave anything else untouched so this
       // is a safe no-op on already-restored / never-completed members.
       if (r.status !== "completed") return false;
@@ -985,6 +986,7 @@ export const adminSetStatus = mutation({
   handler: async (ctx, { reservation_id, new_status, reason }) => {
     const existing = await ctx.db.get(reservation_id);
     if (!existing) throw new Error(`Reservation ${reservation_id} not found`);
+    if (existing.account_slug === "dbcinema_web") throw Error("Website rental status must be managed in DB Cinema Rentals");
     const prev = existing.status;
     if (prev === new_status) return { reservation_id, prev, new_status, reason, skipped: true };
     await ctx.db.patch(reservation_id, { status: new_status });
