@@ -15,7 +15,8 @@ type Stage =
   | "quote_received"
   | "payout_confirmation"
   | "added_to_revenue"
-  | "denied";
+  | "denied"
+  | "closed";
 
 interface Claim {
   websiteCase?: WebsiteCaseInfo;
@@ -61,6 +62,7 @@ const STAGE_LABEL: Record<Stage, string> = {
   payout_confirmation: "Payout confirmation",
   added_to_revenue: "Credited to month",
   denied: "Denied",
+  closed: "Closed",
 };
 
 const STAGE_SHORT: Record<Stage, string> = {
@@ -70,6 +72,7 @@ const STAGE_SHORT: Record<Stage, string> = {
   payout_confirmation: "Payout",
   added_to_revenue: "Credited",
   denied: "Denied",
+  closed: "Closed",
 };
 
 const ACCOUNT_PILL: Record<string, { bg: string; text: string }> = {
@@ -125,7 +128,7 @@ export default function InsuranceClaimsDrawer({ data }: Props) {
   const visible = data.claims.filter((c) => {
     if (filter === "credited") return c.stage === "added_to_revenue";
     if (filter === "all") return true;
-    return c.stage !== "added_to_revenue" && c.stage !== "denied"; // active
+    return c.stage !== "added_to_revenue" && c.stage !== "denied" && c.stage !== "closed"; // active
   });
 
   function clearError(id: string) {
@@ -299,7 +302,7 @@ function ClaimCard({
   onCreditConfirm: (month: string, payout: number) => Promise<void> | void;
 }) {
   const stage = (claim.stage ?? "case_opened") as Stage;
-  const terminal = stage === "added_to_revenue" || stage === "denied";
+  const terminal = stage === "added_to_revenue" || stage === "denied" || stage === "closed";
   const accPill = claim.accountSlug ? (ACCOUNT_PILL[claim.accountSlug] ?? { bg: "bg-slate-800 border border-slate-700", text: "text-slate-300" }) : null;
 
   return (
@@ -438,6 +441,7 @@ function ClaimCard({
 }
 
 function PipelineBar({ stage }: { stage: Stage }) {
+  if (stage === "closed") return <div className="text-xs text-slate-300">Closed — no money recorded</div>;
   if (stage === "denied") {
     return (
       <div className="flex items-center gap-1.5 text-[10px]" style={{ color: "#fca5a5" }}>

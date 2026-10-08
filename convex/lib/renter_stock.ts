@@ -2,10 +2,9 @@ import type { QueryCtx } from "../_generated/server";
 import type { Doc } from "../_generated/dataModel";
 import { bestMatch } from "./item_name_match";
 import { claimHoldsStock } from "./availability";
-import { effStart, effEnd } from "./double_booking";
+import { effStart } from "./double_booking";
 import { dedupByLogicalRental } from "./reservations/predicates";
 import { buildOverrideMap, buildProductIndexMap, reservationItemUnits } from "./reservations/itemUnits";
-import { londonToday } from "./effectiveDates";
 import { defaultAdapterUnits } from "./default_adapter_units";
 
 export type StockRequest = {
@@ -118,38 +117,31 @@ export function resolveStockItem(name: string, items: Doc<"items">[]) {
   return bestMatch(name, items, (i) => i.name_canonical, (i) => i.aliases ?? []);
 }
 
-/** Live quotes cannot promise a return date once delivered gear is overdue.
- * Clip its unresolved occupancy to the requested horizon; never rewrite the
- * rental's planned dates or the historical revenue/display calculations. */
-function quotationEnd(r: Parameters<typeof effEnd>[0], today: string, horizon: string): string {
-  const agreed = r.return_date && r.return_date > r.end_date ? r.return_date : r.end_date;
-  if (r.order_step === "DELIVERED" && (r.status === "confirmed" || r.status === "ongoing") && agreed < today) {
-    return validIsoDate(horizon) && horizon > today ? horizon : today;
-  }
-  return effEnd(r, today);
+/** Forecast availability ends at the agreed rental/return date. An overdue
+ * custody flag stays on the rental but does not silently extend its booking. */
+function quotationEnd(r: {end_date:string;return_date?:string|null}) {
+  return r.return_date && r.return_date > r.end_date ? r.return_date : r.end_date;
 }
 
 /** Shared physical occupancy, including extensions, per-item windows and
- * overdue custody. Callers may project it without exposing renter identities. */
+ * agreed return windows. Callers project it without exposing renter identities. */
 export function stockOccupancyForItem(sources: Awaited<ReturnType<typeof loadStockSources>>, item: Doc<"items">, request: StockRequest) {
-  const today = londonToday();
   const occupancy: Occupancy[] = [];
   for (const r of sources.reservations) {
-    if (r.is_obsolete || r.order_step === "RETURNED" || r.order_step === "REVIEWED") continue;
+    // RETURNED is Hygglo's next-to-do step: the kit is still with its renter.
+    // REVIEWED means return is complete, including while a review is pending.
+    if (r.is_obsolete || r.order_step === "REVIEWED" || r.status === "completed") continue;
     // The requesting booking already occupies its units; it must not block itself.
     if (request.thread_id && r.hygglo_order_id === request.thread_id) continue;
     if (!r.start_date || !r.end_date) continue;
     if (r.account_slug === "dbcinema_web" && r.site_item_windows !== undefined) {
       const windows = r.site_item_windows.filter(w => String(w.item_id) === String(item._id));
-      const latestEnd = Math.max(...windows.map(w=>w.end));
       for (const w of windows) {
         const pickup = new Date(w.start).toISOString().slice(0,10);
         const agreedReturn = new Date(w.end).toISOString().slice(0,10);
-        // Only the last allocation can be overdue; extending older extension
-        // rows as well would count the same bodies twice.
-        const ret = w.end === latestEnd ? quotationEnd({end_date:agreedReturn,return_date:agreedReturn,status:r.status,order_step:r.order_step},today,request.end_date) : agreedReturn;
+        const ret = agreedReturn;
         const pickupTime = w.pickupTime === undefined ? r.pickup_time : w.pickupTime;
-        const returnTime = ret > agreedReturn ? undefined : w.returnTime === undefined ? r.return_time : w.returnTime;
+        const returnTime = w.returnTime === undefined ? r.return_time : w.returnTime;
         const end = returnTime && /^([01]\d|2[0-3]):[0-5]\d$/.test(returnTime)
           ? new Date(Date.parse(`${ret}T${returnTime}:00Z`) + 3600000).toISOString().slice(0,16)
           : `${shiftStockDate(ret,1)}T00:00`;
@@ -161,8 +153,8 @@ export function stockOccupancyForItem(sources: Awaited<ReturnType<typeof loadSto
     const qty = units.get(String(item._id)) ?? 0;
     if (qty <= 0) continue;
     const pickup = effStart({ start_date: r.start_date, pickup_date: r.pickup_date });
-    const ret = quotationEnd({ end_date: r.end_date, return_date: r.return_date, status: r.status, order_step: r.order_step }, today,request.end_date);
-    const returnTime = ret > (r.return_date ?? r.end_date) ? undefined : r.return_time;
+    const ret = quotationEnd({ end_date: r.end_date, return_date: r.return_date });
+    const returnTime = r.return_time;
     let end = `${shiftStockDate(ret, 1)}T00:00`;
     if (returnTime && /^([01]\d|2[0-3]):[0-5]\d$/.test(returnTime)) {
       // The buffer carries into the following date instead of wrapping to 00:xx.

@@ -266,6 +266,7 @@ type ClaimRowLite = WebsiteCaseRow & {
 function buildInsuranceCard(claimRows: ClaimRowLite[]) {
   const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10);
   const claimStage = (c: { stage?: string; status?: string }): string => {
+    if (c.status === "closed" || c.stage === "closed") return "closed";
     if (c.stage) return c.stage;
     if (c.status === "denied") return "denied";
     if (c.status === "settled" || c.status === "added_to_revenue") return "added_to_revenue";
@@ -278,7 +279,7 @@ function buildInsuranceCard(claimRows: ClaimRowLite[]) {
   let deniedCountYTD = 0;
   for (const c of claimRows) {
     const st = claimStage(c);
-    if (st !== "added_to_revenue" && st !== "denied") { openCount++; openAmount += c.amount_gbp; continue; }
+    if (st !== "added_to_revenue" && st !== "denied" && st !== "closed") { openCount++; openAmount += c.amount_gbp; continue; }
     if (c.claim_date >= yearStart) {
       if (st === "added_to_revenue") { settledCountYTD++; settledAmountYTD += (c.payout_amount_gbp ?? c.amount_gbp); }
       else if (st === "denied") { deniedCountYTD++; }

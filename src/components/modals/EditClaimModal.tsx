@@ -7,6 +7,7 @@ import { Modal } from "@/components/ui/Modal";
 
 const CLAIM_STATUSES = [
   { value: "open", label: "Open" },
+  { value: "closed", label: "Closed — no money recorded" },
   { value: "settled", label: "Settled" },
   { value: "denied", label: "Denied" },
 ] as const;
