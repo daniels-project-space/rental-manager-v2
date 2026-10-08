@@ -1,4 +1,4 @@
-import {londonStockInstant,londonStockLabel,TURNAROUND_BUFFER_MS,TURNAROUND_BUFFER_MINUTES} from "../confirmed_schedule";
+import {londonStockInstant,londonStockLabel,bufferedStockEnd,TURNAROUND_BUFFER_MS,TURNAROUND_BUFFER_MINUTES} from "../confirmed_schedule";
 import type { Id } from "../../_generated/dataModel";
 import { withDefaultAdapters, type AdapterInventoryItem } from "../default_adapter_units";
 
@@ -9,7 +9,7 @@ export type ResolvableRes = {
   account_slug?: string;
   pickup_time?:string;
   return_time?:string;
-  site_item_windows?: Array<{item_id: string; qty: number; start: number; end: number; pickupTime?: string | null; returnTime?: string | null; endExclusive?: boolean; stockWindowVersion?:number; turnaroundBufferMinutes?:number}>;
+  site_item_windows?: Array<{item_id: string; qty: number; start: number; end: number; pickupTime?: string | null; returnTime?: string | null; endExclusive?: boolean; stockWindowVersion?:number; turnaroundBufferMinutes?:number; pickupDate?:string; returnDate?:string}>;
   expanded_items?: XItem[] | null;
   resolved_items?: XItem[] | null;
   hygglo_items?: HItem[] | null;
@@ -183,8 +183,14 @@ export function websiteDayIntervals(r: ResolvableRes & {pickup_time?:string;retu
     const {start:pickup,end:ret}=websiteWindowDates(w);
     const pickupTime=w.pickupTime === undefined ? r.pickup_time : w.pickupTime;
     const returnTime=w.returnTime === undefined ? r.return_time : w.returnTime;
-    const start=w.endExclusive===true&&w.stockWindowVersion===2 ? Date.parse(londonStockLabel(w.start)+":00Z") : Date.parse(`${pickup}T${pickupTime || "00:00"}:00Z`);
-    const end=w.endExclusive===true&&w.stockWindowVersion===2 ? Date.parse(londonStockLabel(w.end+(TURNAROUND_BUFFER_MINUTES-(w.turnaroundBufferMinutes??0))*60_000)+":00Z") : returnTime ? Date.parse(`${ret}T${returnTime}:00Z`)+TURNAROUND_BUFFER_MS : Date.parse(`${ret}T00:00:00Z`)+86400000+TURNAROUND_BUFFER_MS;
+    const exact=w.endExclusive===true&&w.stockWindowVersion===2;
+    const actualEnd=returnTime?`${ret}T${returnTime}`:new Date(Date.parse(ret+"T12:00Z")+86400000).toISOString().slice(0,10)+"T00:00";
+    const startInstant=exact?w.start:londonStockInstant(`${pickup}T${pickupTime || "00:00"}`,"start");
+    const endInstant=exact?w.end+(TURNAROUND_BUFFER_MINUTES-(w.turnaroundBufferMinutes??0))*60_000:bufferedStockEnd(actualEnd).endInstant;
+    // Calendar widths use civil labels only after elapsed UTC turnaround.
+    // In spring 00:30+one elapsed hour is02:30, never the missing01:30.
+    let start=Date.parse(londonStockLabel(startInstant)+":00Z"),end=Date.parse(londonStockLabel(endInstant)+":00Z");
+    if(end<=start&&endInstant>startInstant){start=Date.parse(londonStockLabel(startInstant).slice(0,10)+"T00:00Z");end=Date.parse(londonStockLabel(endInstant).slice(0,10)+"T00:00Z")+86400000;}
     if(start>=dayEnd || end<=dayStart)continue;
     const a=start<=dayStart?"00:00":new Date(start).toISOString().slice(11,16);
     const b=end>=dayEnd?"24:00":new Date(end).toISOString().slice(11,16);
@@ -223,6 +229,6 @@ export function websiteCalendarPeriods<T extends ResolvableRes & {
 /** v2 endpoints are genuine UTC instants; an unknown return occupies through
  * the final local day, so midnight-exclusive belongs to the preceding day. */
 function websiteWindowDates(w:NonNullable<ResolvableRes["site_item_windows"]>[number]){
- if(w.endExclusive===true&&w.stockWindowVersion===2)return {start:londonStockLabel(w.start).slice(0,10),end:londonStockLabel(w.end-(w.turnaroundBufferMinutes??0)*60_000-(w.returnTime==null?1:0)).slice(0,10)};
+ if(w.endExclusive===true&&w.stockWindowVersion===2)return {start:w.pickupDate??londonStockLabel(w.start).slice(0,10),end:w.returnDate??londonStockLabel(w.end-(w.turnaroundBufferMinutes??0)*60_000-(w.returnTime==null?1:0)).slice(0,10)};
  return {start:new Date(w.start).toISOString().slice(0,10),end:new Date(w.end).toISOString().slice(0,10)};
 }

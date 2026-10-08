@@ -120,3 +120,12 @@ describe("exact website UTC allocation projection",()=>{
  it("preserves actual displayed return clock and date separately from occupied turnaround",()=>{const p=websiteCalendarPeriods({account_slug:"dbcinema_web",end_date:"2026-10-09",return_time:"12:00",site_item_windows:[first]})[0];expect(p.return_time).toBe("12:00");expect(p.end_date).toBe("2026-10-09");});
  it("shows an unknown midnight-exclusive return on its occupied final day",()=>{const w={...first,returnTime:null,end:Date.UTC(2026,9,10,0)};expect(websiteCalendarPeriods({account_slug:"dbcinema_web",end_date:"2026-10-09",site_item_windows:[w]})[0].end_date).toBe("2026-10-09");expect(websiteWindowUnits([w],"2026-10-10").get("body")).toBe(1);});
 });
+
+describe("legacy calendar elapsed turnaround across London DST",()=>{
+ const window=(date:string)=>({item_id:"body",qty:1,start:Date.parse(date+"T00:00Z"),end:Date.parse(date+"T00:00Z")});
+ it("shows02:30 after an actual00:30 spring return plus one elapsed hour",()=>expect(websiteDayIntervals({site_item_windows:[window("2026-03-29")],pickup_time:"00:00",return_time:"00:30"},"2026-03-29")).toEqual([{id:"body",a:"00:00",b:"02:30",qty:1}]));
+ it("uses the later ambiguous autumn return before adding one elapsed hour",()=>expect(websiteDayIntervals({site_item_windows:[window("2026-10-25")],pickup_time:"00:00",return_time:"01:30"},"2026-10-25")).toEqual([{id:"body",a:"00:00",b:"02:30",qty:1}]));
+ it("carries an unknown full-day spring boundary through the clock jump conservatively",()=>expect(websiteDayIntervals({site_item_windows:[window("2026-03-28")]},"2026-03-29")).toEqual([{id:"body",a:"00:00",b:"02:00",qty:1}]));
+});
+
+ it("uses signed display dates without narrowing conservative occupied UTC bounds",()=>{const w={item_id:"body",qty:1,start:Date.UTC(2026,9,8,23),end:Date.UTC(2026,9,11,0),pickupDate:"2026-10-09",returnDate:"2026-10-10",pickupTime:"09:00",returnTime:"18:00",endExclusive:true,stockWindowVersion:2,turnaroundBufferMinutes:60};const p=websiteCalendarPeriods({account_slug:"dbcinema_web",start_date:"2026-10-09",end_date:"2026-10-10",return_time:"18:00",site_item_windows:[w]})[0];expect(p.start_date).toBe("2026-10-09");expect(p.end_date).toBe("2026-10-10");expect(p.return_time).toBe("18:00");expect(websiteDayIntervals({site_item_windows:[w]},"2026-10-11")).toEqual([{id:"body",a:"00:00",b:"01:00",qty:1}]);});
