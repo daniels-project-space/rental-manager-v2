@@ -1512,3 +1512,7 @@ export const __service_markPlatformClosed = internalMutationOf(markPlatformClose
 
 // Privileged caller counterpart; shares the original handler and validators.
 export const __service_markReturned = internalMutationOf(markReturned);
+
+/** Privileged reads used only after storefront service authentication. */
+export const __service_listActiveForStorefront = internalQueryOf(listActiveForStorefront);
+export const __service_listDemandForStorefront = internalQueryOf(listForReconcile);

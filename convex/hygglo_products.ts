@@ -15,7 +15,7 @@
  * inventory row; otherwise `isMarketingOnly: true`.
  */
 
-import { mutation, query } from "./owner_functions";
+import { mutation, query, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
 
 // ── Shared arg validators (mirror the schema field shapes) ────────────────
@@ -152,3 +152,6 @@ export const getByMasterItem = query({
       .collect();
   },
 });
+
+/** Privileged read used only after storefront service authentication. */
+export const __service_listForStorefront = internalQueryOf(list);

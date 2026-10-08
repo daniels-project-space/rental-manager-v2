@@ -1117,3 +1117,6 @@ export const __service_getSellRecommendations = internalQueryOf(getSellRecommend
 
 // Privileged caller counterpart; shares the original handler and validators.
 export const __service_getPriceRecommendations = internalQueryOf(getPriceRecommendations);
+
+/** Privileged read used only after storefront service authentication. */
+export const __service_listForStorefront = internalQueryOf(listForReconcile);
