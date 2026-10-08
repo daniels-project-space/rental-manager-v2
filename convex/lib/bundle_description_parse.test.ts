@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { resolveBundleMapping } from "./bundle_mapping";
 import { resolveListingComponents } from "./listing_inventory";
+import cameraSpacing from "../fixtures/sony-camera-model-spacing.json";
 import supportDescriptions from "../fixtures/bundled-support-accessories.json";
 import fullDescriptions from "../fixtures/full-description-boundaries.json";
 import { extractComponents } from "./bundle_description_parse";
@@ -275,5 +276,28 @@ describe("bundled hardware listing safety", () => {
   });
   it("does not suppress an unknown named mounting bracket", () => {
     expect(resolveBundleMapping("Included in this kit:\n- 1x Sony camera mounting bracket",[]).unmatched).toEqual(["1x Sony camera mounting bracket"]);
+  });
+});
+
+
+describe("equivalent Sony camera model spacing", () => {
+  const fx3={_id:"fx3",name_canonical:"Sony FX3",kind:"camera_body",qty:2,status:"active",is_marketing_only:false};
+  const fx30={_id:"fx30",name_canonical:"Sony FX30",kind:"camera_body",qty:1,status:"active",is_marketing_only:false};
+  it("recognizes Sony fx 3 from the actual complete source description", () => {
+    const r=resolveBundleMapping(cameraSpacing["1048271"],[fx3,fx30]);
+    expect(r.components.find(c=>c.item_id==="fx3")?.qty).toBe(1);
+    expect(r.unmatched).not.toContain("1x Sony fx 3");
+  });
+  it("preserves model digits and real requested quantities", () => {
+    const r=resolveBundleMapping("Included in this kit:\n- 2x Sony fx 3\n- 1x Sony FX30",[fx3,fx30]);
+    expect(r.components.map(c=>({id:c.item_id,qty:c.qty}))).toEqual([{id:"fx3",qty:2},{id:"fx30",qty:1}]);
+  });
+  it("does not map FX30 or FX6 to FX3 when their physical pools do not exist", () => {
+    expect(resolveBundleMapping("Included in this kit:\n- 1x Sony fx 30\n- 1x Sony FX6",[fx3]).unmatched).toEqual(["1x Sony fx 30","1x Sony FX6"]);
+  });
+  it("preserves the marketing blocker for a real advertised different model", () => {
+    const r=resolveListingComponents([fx3,{...fx30,is_marketing_only:true}] as any,[{item_id:"fx3",qty:1}],undefined,1,"Included in this kit:\n- 1x Sony fx 30");
+    expect(r.owned).toBe(false);
+    expect(r.ownership_blockers[0]?.reason).toBe("marketing_only");
   });
 });
