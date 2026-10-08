@@ -411,6 +411,9 @@ const operationalSchema = defineSchema({
     )),
     pickup_time: v.optional(v.string()),           // "HH:MM" — LLM-extracted from owner-renter chat
     return_time: v.optional(v.string()),           // "HH:MM"
+    pickup_time_provenance: v.optional(v.object({source:v.union(v.literal("agreed_chat"),v.literal("provider_booking"),v.literal("website_contract")),date:v.string(),time:v.string(),confirmedAt:v.number(),evidenceHash:v.optional(v.string())})),
+    return_time_provenance: v.optional(v.object({source:v.union(v.literal("agreed_chat"),v.literal("provider_booking"),v.literal("website_contract")),date:v.string(),time:v.string(),confirmedAt:v.number(),evidenceHash:v.optional(v.string())})),
+
     return_date: v.optional(v.string()),           // ISO date — may differ from end_date (e.g. morning after)
     pickup_method: v.optional(v.string()),         // "delivery" | "collection" | "unknown"
     return_method: v.optional(v.string()),
@@ -486,7 +489,7 @@ const operationalSchema = defineSchema({
     booking_status: v.optional(v.string()),         // raw Hygglo booking status (e.g. "pending_review", "confirmed")
     site_revision: v.optional(v.number()), // monotonically ordered website updates
     site_verification: v.optional(websiteVerificationValidator),
-    site_item_windows: v.optional(v.array(v.object({ item_id: v.id("items"), qty: v.number(), start: v.number(), end: v.number(), pickupTime: v.optional(v.union(v.string(), v.null())), returnTime: v.optional(v.union(v.string(), v.null())) }))), // saved per-component hire periods and agreed clocks
+    site_item_windows: v.optional(v.array(v.object({ item_id: v.id("items"), qty: v.number(), start: v.number(), end: v.number(), endExclusive:v.optional(v.boolean()),stockWindowVersion:v.optional(v.number()), pickupTime: v.optional(v.union(v.string(), v.null())), returnTime: v.optional(v.union(v.string(), v.null())) }))), // saved per-component hire periods and agreed clocks
     /** Reply Inbox (2026-06-22): true when Hygglo's order `actions` map currently
      *  offers accept/deny — i.e. the request is awaiting MY approval (the trigger
      *  shown atop the messages board). Authoritative source for the Approve/Decline

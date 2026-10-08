@@ -304,6 +304,7 @@ export interface ReservationUpsertArgs {
   renter_name?: string;
   hygglo_user_id?: string;
   booking_status?: string;
+  booking_times_source?: "provider_booking";
   pickup_time?: string;
   return_time?: string;
   pickup_method?: string;
@@ -336,6 +337,7 @@ export interface ReservationPayload {
   renter_name?: string;
   hygglo_user_id?: string;
   booking_status?: string;
+  booking_times_source?: "provider_booking";
   pickup_time?: string;
   return_time?: string;
   pickup_method?: string;

@@ -157,6 +157,7 @@ type OrderReservationPayload = {
   /** Raw Hygglo booking status (e.g. "pending_review") extracted from detail.booking.status. */
   booking_status?: string;
   /** Calendar UI fields — extracted from detail.booking.* and detail.* */
+  booking_times_source?: "provider_booking";
   pickup_time?: string;
   return_time?: string;
   pickup_method?: string;
@@ -313,6 +314,7 @@ async function scrapeAccountViaCore(
     renter_name: r.renter_name,
     hygglo_user_id: r.hygglo_user_id,
     booking_status: r.booking_status,
+    booking_times_source: r.booking_times_source,
     pickup_time: r.pickup_time,
     return_time: r.return_time,
     pickup_method: r.pickup_method,
@@ -822,7 +824,8 @@ export const pollHyggloInbox = schedules.task({
                 renter_name: payload.renter_name,
                 hygglo_user_id: payload.hygglo_user_id,
                 booking_status: payload.booking_status,
-                pickup_time: payload.pickup_time,
+                booking_times_source: payload.booking_times_source,
+      pickup_time: payload.pickup_time,
                 return_time: payload.return_time,
                 pickup_method: payload.pickup_method,
                 return_method: payload.return_method,

@@ -366,6 +366,7 @@ export function orderToReservation(
     renter_name: otherPartName || undefined,
     hygglo_user_id: otherPartUserId,
     booking_status: bookingStatus,
+    booking_times_source: "provider_booking",
     pickup_time,
     return_time,
     pickup_method,

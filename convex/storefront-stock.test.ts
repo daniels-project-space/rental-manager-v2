@@ -7,7 +7,8 @@ import {update as updateClaim, list as listClaims, advanceStage as advanceClaim}
 import {repairHeldUnits} from "./lib/availability";
 import {loadStockSources,stockForItem} from "./lib/renter_stock";
 import {getFunctionName} from "convex/server";
-const ms=(date:string)=>Date.parse(date+"Z");
+import {londonStockInstant} from "./lib/confirmed_schedule";
+const ms=(date:string)=>londonStockInstant(date,"end");
 function fixture(){
  const items:any[]=[{_id:"body",name_canonical:"Sony FX3",kind:"camera_body",status:"active",is_marketing_only:false,qty:3}];
  const tables:any={items,reservations:[],hygglo_product_index:[],listing_resolution_override:[],insurance_claims:[],owner_unavailability:[],vacation_periods:[]};
@@ -40,8 +41,8 @@ describe("actual private shared-stock snapshot",()=>{
   const f=fixture();f.tables.insurance_claims=[{stage:"in_for_repair",status:"open",repair_item_ids:["body","body"],description:"PRIVATE CASE"},{stage:"added_to_revenue",status:"settled",repair_item_ids:["body"]}];f.tables.owner_unavailability=[{item_id:"body",start_date:"2027-01-01",end_date:"2027-01-02",reason:"PRIVATE REASON"},{item_id:"unrelated",start_date:"2027-02-01",end_date:"2027-02-02"}];f.tables.vacation_periods=[{is_active:true,start_date:"2027-03-01",end_date:"2027-03-02"},{is_active:false,start_date:"2027-04-01",end_date:"2027-04-02"}];
   const result=await f.run(),windows=result.units[0].windows;expect(windows.find((w:any)=>w.start===ms("2027-01-01T00:00"))?.qty).toBe(5);expect(windows.find((w:any)=>w.start===ms("2027-03-01T00:00"))?.qty).toBe(5);expect(windows.some((w:any)=>w.start===ms("2027-02-01T00:00")||w.start===ms("2027-04-01T00:00"))).toBe(false);expect(JSON.stringify(result)).not.toContain("PRIVATE");
  });
- it("preserves the manager booking/pickup start and a return buffer crossing midnight",async()=>{
-  const f=fixture();f.tables.reservations=[f.rental({pickup_date:"2027-01-02",pickup_time:"10:00",return_date:"2027-01-04",return_time:"23:30"})];const result=await f.run();expect(result.units[0].windows).toEqual([{start:ms("2027-01-01T10:00"),end:ms("2027-01-05T00:30"),qty:1}]);
+ it("preserves independently confirmed dates and releases at the exact return",async()=>{
+  const f=fixture();f.tables.reservations=[f.rental({pickup_date:"2027-01-01",pickup_time:"10:00",return_date:"2027-01-04",return_time:"23:30",pickup_time_provenance:{source:"agreed_chat",date:"2027-01-01",time:"10:00",confirmedAt:1},return_time_provenance:{source:"agreed_chat",date:"2027-01-04",time:"23:30",confirmedAt:1}})];const result=await f.run();expect(result.units[0].windows).toEqual([{start:ms("2027-01-01T10:00"),end:ms("2027-01-04T23:30"),qty:1}]);
  });
  it("rejects malformed occupied quantities instead of dropping their constraints",async()=>{
   const f=fixture();f.tables.reservations=[f.rental({resolved_items:[{item_id:"body",qty:1.5}]})];await expect(f.run()).rejects.toThrow("Invalid shared occupancy");
@@ -54,7 +55,7 @@ describe("actual private shared-stock snapshot",()=>{
   f.tables.reservations[0].hygglo_items.reverse();expect((await f.run()).units).toEqual(result.units);
  });
  it("dispatches the real internal snapshot behind the registered fixed read-only route",async()=>{
-  vi.stubEnv("DBCINEMA_WEBHOOK_SECRET","shared-fixture-service");const f=fixture();const ctx={runQuery:async(ref:any,args:any)=>{expect(getFunctionName(ref)).toBe("items:__service_sharedStockForStorefront");expect(args).toEqual({});return (snapshot as any)._handler({db:f.db},args)}};const req=(args:any)=>new Request("https://fixture.convex.site/dbcinema/storefront-read",{method:"POST",headers:{"x-dbcinema-sync-token":"shared-fixture-service"},body:JSON.stringify({path:"items:sharedStockForStorefront",args})});const response=await (storefrontRead as any)._handler(ctx,req({}));expect(response.status).toBe(200);expect((await response.json()).value[0]).toMatchObject({version:1,units:[{masterItemId:"body",quantityOwned:3}]});expect((await (storefrontRead as any)._handler(ctx,req({account_slug:"other"}))).status).toBe(400);
+  vi.stubEnv("DBCINEMA_WEBHOOK_SECRET","shared-fixture-service");const f=fixture();const ctx={runQuery:async(ref:any,args:any)=>{expect(getFunctionName(ref)).toBe("items:__service_sharedStockForStorefront");expect(args).toEqual({});return (snapshot as any)._handler({db:f.db},args)}};const req=(args:any)=>new Request("https://fixture.convex.site/dbcinema/storefront-read",{method:"POST",headers:{"x-dbcinema-sync-token":"shared-fixture-service"},body:JSON.stringify({path:"items:sharedStockForStorefront",args})});const response=await (storefrontRead as any)._handler(ctx,req({}));expect(response.status).toBe(200);expect((await response.json()).value[0]).toMatchObject({version:2,units:[{masterItemId:"body",quantityOwned:3}]});expect((await (storefrontRead as any)._handler(ctx,req({account_slug:"other"}))).status).toBe(400);
  });
 });
 

@@ -116,9 +116,9 @@ describe("saved website clocks in actual quoting",()=>{
   const sources={items:[item],productIndex:new Map(),overrides:new Map(),claims:[],blackouts:[],vacations:[],reservations:[reservation]};
   return stockForItem(sources as any,item as any,{item_name:"FX3",start_date,end_date:start_date,pickup_time,return_time});
  };
- it("allows the next handover only after the saved window's buffered return",()=>{
-  expect(quote(window,"2035-01-02","12:59").available).toBe(false);
-  expect(quote(window,"2035-01-02","13:00").available).toBe(true);
+ it("allows the next handover only after the saved confirmed return",()=>{
+  expect(quote(window,"2035-01-02","11:59").available).toBe(false);
+  expect(quote(window,"2035-01-02","12:00").available).toBe(true);
  });
  it("uses the saved pickup instead of an unrelated booking clock",()=>{
   expect(quote(window,"2035-01-01","07:00","08:59").available).toBe(true);
@@ -133,9 +133,9 @@ describe("saved website clocks in actual quoting",()=>{
   expect(quote(legacy,"2035-01-02","13:00").available).toBe(false);
   expect(quote(legacy,"2035-01-02","23:00").available).toBe(true);
  });
- it("carries late buffered returns into the next day",()=>{
-  expect(quote({...window,returnTime:"23:30"},"2035-01-03","00:29").available).toBe(false);
-  expect(quote({...window,returnTime:"23:30"},"2035-01-03","00:30").available).toBe(true);
+ it("releases exactly at a late confirmed return without inventing a buffer",()=>{
+  expect(quote({...window,returnTime:"23:30"},"2035-01-02","23:29").available).toBe(false);
+  expect(quote({...window,returnTime:"23:30"},"2035-01-02","23:30").available).toBe(true);
  });
 });
 

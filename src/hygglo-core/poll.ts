@@ -584,6 +584,7 @@ export async function corePoll(
       renter_name: payload.renter_name,
       hygglo_user_id: payload.hygglo_user_id,
       booking_status: payload.booking_status,
+      booking_times_source: payload.booking_times_source,
       pickup_time: payload.pickup_time,
       return_time: payload.return_time,
       pickup_method: payload.pickup_method,
