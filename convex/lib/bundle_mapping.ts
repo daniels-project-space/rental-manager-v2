@@ -6,6 +6,9 @@ type Inventory = { _id: unknown; name_canonical: string; kind?: string; qty?: nu
 const mountTokens = new Set(["ef", "l", "rf", "e", "pl", "mount"]);
 const tokens = (text: string) => (text.toLowerCase().replace(/\bg\s*-?\s*master\b/g, "gm").match(/[a-z0-9]+/g) ?? [])
   .map(token => token.length > 3 && token.endsWith("s") ? token.slice(0, -1) : token);
+// Whole generic supplied hardware lines do not describe independent rentals.
+// Named or explicitly tracked matching pools still participate in coverage.
+const bundledHardware = /^(?:(?:mounting\s+)?(?:clamps?|clips?|brackets?)|antennas?|side\s+handles?|barn\s+doors?|soft\s+diffusion(?:\s+sheets?)?|power\s+adapters?|charging\s+cases?)$/i;
 const incidental = /\b(?:batter(?:y|ies)|chargers?|cables?|carrying (?:bag|case)|uv\s+filters?|(?:camera )?cage|(?:sd|memory) cards?|(?:cfexpress|sdxc|sdhc)\b[^.;]{0,50}\bcard|ssds?|\d+\s*(?:tb|gb)\s+(?:card|media))\b/i;
 
 /** Contents identity and stated quantities, independently of whether we own them. */
@@ -22,7 +25,8 @@ export function resolveBundleMapping(description: string, items: Inventory[]) {
     // Generic bundled accessories must not become battery-pack rentals.
     // Named independently tracked pools still participate in kit coverage.
     const majorEquipment = /\b(?:camera(?!\s+(?:batter|cage))|bmpcc|blackmagic|fx\d|a7\w*|gimbal|lens(?:es)?|tripod|mic(?:rophone)?|rig|monitor|lights?|led)\b/i;
-    const incidentalComponent = incidental.test(component.name) && !majorEquipment.test(component.name);
+    const genericHardware = bundledHardware.test(component.name);
+    const incidentalComponent = genericHardware || incidental.test(component.name) && !majorEquipment.test(component.name);
     const name = component.name.replace(/\bdzo(?:film)?\b/gi, "DZOFilm");
     const lineTokens = new Set(tokens(name));
     const explicitMount = name.match(/\bCanon\s+(EF|RF)\b|\b(EF|RF|PL|E|L)[ -]?mount\b/i);
@@ -48,7 +52,9 @@ export function resolveBundleMapping(description: string, items: Inventory[]) {
         const all = tokens(alias);
         const stripped = all.filter(token => !mountTokens.has(token));
         const required = stripped.length >= 2 ? stripped : all;
-        if (required.length < 2 || !required.every(token => lineTokens.has(token))) continue;
+        const exactTrackedHardware = genericHardware && item.track_independent_stock === true &&
+          tokens(alias).join(" ") === tokens(name).join(" ");
+        if ((!exactTrackedHardware && required.length < 2) || !required.every(token => lineTokens.has(token))) continue;
         if (required.length > specificity) { picked = item; specificity = required.length; ambiguous = false; }
         else if (required.length === specificity && picked?._id !== item._id) ambiguous = true;
       }
