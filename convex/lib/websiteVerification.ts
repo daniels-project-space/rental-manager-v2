@@ -28,3 +28,10 @@ export function parseWebsiteVerification(raw: unknown): WebsiteVerification | un
 export function websiteVerificationLabel(snapshot: Pick<WebsiteVerification, "approved"> | null | undefined): string {
   return snapshot?.approved ? "Approved · ready for collection" : "Paid · awaiting verification";
 }
+
+/** Legacy dashboard readers must not expose the private provider/account trace. */
+export function withoutWebsiteVerification<T extends { site_verification?: unknown }>(row: T): Omit<T, "site_verification"> {
+  const copy = { ...row };
+  delete copy.site_verification;
+  return copy;
+}

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 vi.mock("./auth",()=>({authComponent:{safeGetAuthUser:vi.fn(async()=>({_id:'owner'}))}}));
 import { getFunctionName } from "convex/server";
 import { binding, context, refresh } from "./websiteVerification";
-import { adminPatchRichFieldsByHyggloId, adminSetStatus, adminMarkUnreturned } from "./reservations";
+import { adminPatchRichFieldsByHyggloId, adminSetStatus, adminMarkUnreturned, getByHygglo, listPendingWithoutDecision } from "./reservations";
 const invoke=(f:any,ctx:any,args:any)=>f._handler(ctx,args);
 const args={reservationId:'reservation-1'};
 function fixture(){
@@ -37,4 +37,12 @@ it('blocks website approval and handover overrides without writing any row',asyn
 it('blocks manual website status and return restoration overrides',async()=>{
  const {ctx,row}=fixture();await expect(invoke(adminSetStatus,ctx,{reservation_id:row._id,new_status:'active',reason:'local override'})).rejects.toThrow('must be managed in DB Cinema');
  row.status='completed';await expect(invoke(adminMarkUnreturned,ctx,{reservationId:row._id})).rejects.toThrow('must be managed in DB Cinema');expect(ctx.db.patch).not.toHaveBeenCalled();
+});
+
+it('legacy raw getters retain rental data but omit private verification traces even with the global owner gate off',async()=>{
+ const {ctx,row}=fixture();row.site_verification={accountId:'private-account',sessionId:'private-provider-session',approved:true};row.items=[{item_id:'camera',qty:2}];
+ const q:any={withIndex:()=>q,collect:async()=>[row],first:async()=>null,order:()=>q,take:async()=>[row]};ctx.db.query=(table:string)=>table==='owner_access'?{first:async()=>({auth_user_id:'owner'})}:q;
+ const rental=await invoke(getByHygglo,ctx,{hygglo_order_id:row.hygglo_order_id});expect(rental).toMatchObject({_id:row._id,items:row.items});expect(rental).not.toHaveProperty('site_verification');
+ const pending=await invoke(listPendingWithoutDecision,ctx,{});expect(pending).toHaveLength(1);expect(pending[0]).not.toHaveProperty('site_verification');expect(row.site_verification.sessionId).toBe('private-provider-session');
+ expect((await invoke(context,ctx,args)).verification).toEqual(row.site_verification);
 });
