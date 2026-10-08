@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { resolveBundleMapping } from "./bundle_mapping";
+import fullDescriptions from "../fixtures/full-description-boundaries.json";
 import { extractComponents } from "./bundle_description_parse";
 
 /**
@@ -191,4 +192,35 @@ it("does not allocate a gimbal twice when its named carry case is also supplied"
  const inventory=[{_id:"fx3",name_canonical:"Sony FX3",kind:"camera"},{_id:"rs3",name_canonical:"DJI RS3 Pro gimbal",kind:"gimbal"}];
  expect(resolveBundleMapping(description,inventory)).toMatchObject({components:[{item_id:"fx3",qty:1},{item_id:"rs3",qty:1}],unmatched:[]});
  expect(extractComponents("Included in this rental: • Sony FX3 with DJI RS 3 Pro carry case").components).toHaveLength(1);
+});
+
+
+describe("full retained provider descriptions", () => {
+  it.each(["881269", "1039965", "875984"] as const)("does not invent a contents heading from the optional-item footer in %s", id => {
+    expect(extractComponents(fullDescriptions[id]).hasContentsSection).toBe(false);
+  });
+  it.each(["981778", "955170", "869038", "823200"] as const)("excludes catalogue and picture prose after the actual contents in %s", id => {
+    const rows=names(fullDescriptions[id]);
+    expect(rows.some(name=>/we (?:also offer|offer a variety)|what you see|weekend hires|drones|sliders \(motorized/i.test(name))).toBe(false);
+  });
+  it("retains true quantities on hyphen bullets after preserving newlines", () => {
+    const rows=extractComponents(fullDescriptions["869038"]).components;
+    expect(rows.find(c=>/GVM RGB/i.test(c.name))?.qty).toBe(2);
+    expect(rows.some(c=>/^\d+x\s/.test(c.name))).toBe(false);
+  });
+  it.each(["1103081", "1097753"] as const)("excludes a protective case/pouch without excluding the real equipment in %s", id => {
+    const rows=names(fullDescriptions[id]);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.some(name=>/^protective case/i.test(name))).toBe(false);
+  });
+  it("preserves the first Camera contents and removes the singular Lens heading", () => {
+    const rows=names(fullDescriptions["1122877"]);
+    expect(rows.some(name=>/Sony A7 V/.test(name))).toBe(true);
+    expect(rows.some(name=>/16-35mm/.test(name))).toBe(true);
+    expect(rows.some(name=>/^Lens:$/i.test(name))).toBe(false);
+  });
+  it("still retains independently rented camera, lens and support equipment", () => {
+    const rows=names("Included in this kit:\n- 1x Sony A7S III\n- 2x Sony 24-70mm GM lenses\n- 1x tripod\nWe also offer:\n- Drone");
+    expect(rows).toEqual(["Sony A7S III", "Sony 24-70mm GM lenses", "tripod"]);
+  });
 });

@@ -24,7 +24,7 @@ const PROTECTIVE_PACKAGING_RE = /^(?:(?:front(?:\s+and\s+rear)?|rear)\s+)?(?:len
 /** A model-specific carry case is still a case, not a second copy of that
  * model. Mixed equipment lines must remain visible to identity review. */
 function isProtectivePackaging(name:string):boolean {
-  return PROTECTIVE_PACKAGING_RE.test(name) || /^(?:protective\s+)?(?:lens\s+)?pouches?$/i.test(name) ||
+  return PROTECTIVE_PACKAGING_RE.test(name) || /^(?:protective\s+)?(?:lens\s+)?(?:pouches?|cases?(?:\/pouch)?)$/i.test(name) ||
     /\bcarry(?:ing)?\s+(?:case|bag)\s*$/i.test(name) && !/\b(?:with|and|plus)\b|[+]/i.test(name);
 }
 
@@ -43,14 +43,14 @@ export function extractComponents(desc: string): {
   // intro sentence parsed as a component is how "I'm offering a
   // comprehensive, ready-to-shoot cinema kit" became a PL-to-EF mount.
   const START_RE =
-    /(?:included in th(?:is|e)(?:(?!\b\d{1,2}\s*x\b)[^:])*|in th(?:is|e) (?:kit|rental|bundle|package)|(?:what(?:'|)s|whats) included|(?:this |the )?(?:kit|package|bundle|rental) includes|you (?:get|receive)|contents)\s*:?(.*)$/i;
+    /(?:included in th(?:is|e)(?:(?!\b\d{1,2}\s*x\b)[^:*])*|in th(?:is|e) (?:kit|rental|bundle|package)\s*:|(?:what(?:'|)s|whats) included|(?:this |the )?(?:kit|package|bundle|rental) includes|you (?:get|receive)|contents)\s*:?(.*)$/i;
   // A formal contents heading later in the description is more authoritative
   // than an introductory "this rental includes" followed by feature prose.
-  const m = clean.match(/(?:included in th(?:is|e)(?:(?!\b\d{1,2}\s*x\b)[^:])*|(?:what(?:'|)s|whats) included|contents)\s*:?(.*)$/i) ?? clean.match(START_RE);
+  const m = clean.match(/(?:included in th(?:is|e)(?:(?!\b\d{1,2}\s*x\b)[^:*])*|(?:what(?:'|)s|whats) included|contents)\s*:?(.*)$/i) ?? clean.match(START_RE);
   let body = m ? m[1] : clean;
   // Everything after "About this ..." is marketing prose, not contents.
   body = body.split(
-    /\bAbout (?:th(?:is|e)|us|me)\b|\(\s*No batteries or special cables required\b|\bA quick note\b|\bPlease(?: kindly)? note\b|\bI do my best\b|\busually available\b/i,
+    /\bAbout (?:th(?:is|e)|us|me)\b|\bWe (?:also offer|offer a variety)\b|\bWhat you see on the picture\b|\(\s*No batteries or special cables required\b|\bA quick note\b|\bPlease(?: kindly)? note\b|\bI do my best\b|\busually available\b/i,
   )[0];
   // STOP AT THE ADD-ON SECTION. Several listings follow the kit list with a
   // long menu of PAID extras ("Direct Add-on Upgrades:", "ADD-ONS"). Those are
@@ -64,8 +64,8 @@ export function extractComponents(desc: string): {
     /\bDirect Add-?on\b|\bAdd-?on direct\b|\bAdd-?ons?\s*:|\bADD-?ONS\b|\bOptional (?:extras?|add-?ons?|upgrades?)\b|\bUpgrades?\s*:|\bI also have\b/i,
   )[0];
   // Section labels ("Camera:", "Lenses (Anamorphic):", "Media:") are headings.
-  body = body.replace(/(?:\b\d{1,2}\s*x?\s+)?\b(cameras?|lenses?|media|audio|support|accessories|lighting|power)\s*\([^)]*\)\s*:/gi, " ");
-  body = body.replace(/(?:\b\d{1,2}\s*x?\s+)?\b(cameras?|lenses?|media|audio|support|accessories|lighting|power)\s*:/gi, " ");
+  body = body.replace(/(?:\b\d{1,2}\s*x?\s+)?\b(cameras?|lens(?:es)?|media|audio|support|accessories|lighting|power)\s*\([^)]*\)\s*:/gi, " ");
+  body = body.replace(/(?:\b\d{1,2}\s*x?\s+)?\b(cameras?|lens(?:es)?|media|audio|support|accessories|lighting|power)\s*:/gi, " ");
 
   // Common misspellings in the real listings — normalise BEFORE matching, so a
   // genuinely-owned component isn't dropped for a typo. Live: "1x 24-105mm f4
@@ -120,7 +120,7 @@ export function extractComponents(desc: string): {
       : body.split(/(?=(?<![\d.])\b\d{1,2}\s*x?\s+(?!(?:tb|gb|mb|mm|k)\b)[A-Za-z])/i);
   const out: Array<{ qty: number; name: string }> = [];
   for (const raw of parts) {
-    const p = raw.trim().replace(/^(?:my|a|an|the)\s+/i, "");
+    const p = raw.trim().replace(/^[-]\s*/, "").replace(/^(?:my|a|an|the)\s+/i, "");
     if (!p) continue;
     // Quantity is OPTIONAL on a bullet: diogo writes both "1x Blackmagic
     // Pocket Cinema Camera 6K Pro" and "My Blackmagic Pocket Cinema Camera
