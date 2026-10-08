@@ -927,11 +927,17 @@ export const listActiveForStorefront = query({
   args: { account_slug: v.string() },
   handler: async (ctx, { account_slug }) => {
     const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
-    const rows = await ctx.db
+    const dated = await ctx.db
       .query("reservations")
       .withIndex("by_account_end", (q) =>
         q.eq("account_slug", account_slug).gte("end_date", yesterday))
       .collect();
+    // Custody does not end because a scheduled return date passed. Keep older
+    // DELIVERED equipment in the stock feed until an actual return is recorded.
+    const delivered = (await ctx.db.query("reservations")
+      .withIndex("by_account_order_step", q => q.eq("account_slug", account_slug).eq("order_step", "DELIVERED")).collect())
+      .filter(r => r.account_slug === account_slug && r.status === "confirmed" && !r.is_obsolete);
+    const rows = [...new Map([...dated, ...delivered].map(r => [r._id, r])).values()];
     return rows.map((r) => ({
       _id: r._id,
       hygglo_order_id: r.hygglo_order_id,

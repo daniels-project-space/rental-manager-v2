@@ -682,6 +682,7 @@ const operationalSchema = defineSchema({
     // account + recent start_date in one indexed range.
     .index("by_account_start", ["account_slug", "start_date"])
     .index("by_account_end", ["account_slug", "end_date"])
+    .index("by_account_order_step", ["account_slug", "order_step"])
     .index("by_account_obsolete_end", ["account_slug", "is_obsolete", "end_date"])
     .index("by_account_obsolete_return", ["account_slug", "is_obsolete", "return_date"]),
 
