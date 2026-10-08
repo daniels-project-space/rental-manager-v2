@@ -11,8 +11,9 @@
  * Queries + the upsert mutation live here (V8 runtime); the rescan ACTION (which
  * calls Hygglo) lives in online_listings_actions.ts ("use node").
  */
-import { query, internalMutation, internalQueryOf } from "./owner_functions";
+import { query, internalMutation, internalQuery, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
+import { retainedListingDescription } from "./lib/listing_description";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 
 /** All cached listings for one account, newest-name-first is not important —
@@ -104,7 +105,7 @@ export const setDescription = internalMutation({
         q.eq("account_slug", account_slug).eq("product_id", product_id),
       )
       .unique();
-    // 2500, not 600. Measured 2026-08-22: ALL 38 of diogo's Blackmagic
+    // Retain complete bounded descriptions. Measured 2026-08-22: all 38 diogo Blackmagic
     // descriptions sat at exactly 600 chars — every one truncated by this cap.
     // Diogo's listings carry the most detailed kit lists we have ("In this
     // kit: * 1x Blackmagic Pocket Cinema Camera 6K Pro * 5x Batteries * 1x 2TB
@@ -116,10 +117,22 @@ export const setDescription = internalMutation({
     // where the text is USED (the draft route truncates before injecting),
     // not where it is stored — destroying the data on the way in is not a
     // token optimisation, it is data loss.
-    if (row) await ctx.db.patch(row._id, { description: description.slice(0, 2500) });
+    const retained=retainedListingDescription(description);
+    if (row && row.description !== retained) {
+      await ctx.db.patch(row._id, { description: retained });
+      await ctx.db.insert("audit_log",{table_name:"online_listings",actor:"provider-sync",op:"update",count:1,source_file:"online_listings.setDescription",
+        note:JSON.stringify({account_slug,product_id,previousLength:row.description?.length??0,retainedLength:retained.length}),ts:Date.now()});
+    }
     return { ok: !!row };
   },
 });
+
+/** One account has at most the provider's bounded catalogue (~400 here).
+ * This indexed read runs only on an explicit rescan, not reactive checkout. */
+export const descriptionRepairCandidates=internalQuery({args:{account_slug:v.string()},handler:async(ctx,{account_slug})=>{
+  const rows=await ctx.db.query("online_listings").withIndex("by_account",q=>q.eq("account_slug",account_slug)).take(1000);
+  return rows.filter(r=>!r.description||[600,2500].includes(r.description.length)).slice(0,8).map(r=>r.product_id);
+}});
 
 /** Last-rescan metadata per account (for the Settings button caption). */
 export const syncMeta = query({

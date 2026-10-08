@@ -30,6 +30,7 @@ import { unsupportedCatalogueReadinessClaims } from "./lib/catalogue_readiness";
  */
 import { action, internalAction, internalActionOf } from "./owner_functions";
 import { v } from "convex/values";
+import { HYGGLO_API_VERSION } from "../src/hygglo-core/auth";
 import { normalizeClaimedFacts, type DraftEvidence } from "./lib/renter_draft_evidence";
 import { internal } from "./_generated/api";
 import { getActionLlmModel } from "./item_resolver";
@@ -321,20 +322,20 @@ export const generateDraft = action({
           account_slug: c.account_slug,
           product_ids: c.listing_product_ids,
         })) as ListingFact[];
-        const missing = listingFacts.filter((f) => !f.description);
+        const missing = listingFacts.filter((f) => !f.description || f.description.length === 600 || f.description.length === 2500);
         if (missing.length) {
           const creds = await getAccountCredentials(c.account_slug);
           const token = await getHyggloAccessToken({ ...creds, accountSlug: c.account_slug });
           for (const f of missing) {
             try {
-              const res = await fetch(`${HYGGLO_API_BASE}/v2/my/products/${f.product_id}`, {
+              const res = await fetch(`${HYGGLO_API_BASE}/${HYGGLO_API_VERSION}/my/products/${f.product_id}`, {
                 headers: hyggloAuthHeaders(token),
               });
               if (!res.ok) continue;
               const p = (await res.json()) as { description?: string };
-              const desc = (p.description ?? "").replace(/\s+/g, " ").trim();
+              const desc = (p.description ?? "").trim();
               if (desc) {
-                f.description = desc.slice(0, 600);
+                f.description = desc.replace(/\s+/g, " ").slice(0, 600);
                 await ctx.runMutation(internal.online_listings.setDescription, {
                   account_slug: c.account_slug,
                   product_id: f.product_id,
