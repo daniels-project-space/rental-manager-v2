@@ -729,6 +729,7 @@ const upsertOrderArgsFields = {
   /** Raw Hygglo booking status (e.g. "pending_review", "confirmed"). */
   booking_status: v.optional(v.string()),
   /** Pickup/return time strings ("HH:MM") from booking detail. */
+  booking_times_source: v.optional(v.literal("provider_booking")),
   pickup_time: v.optional(v.string()),
   return_time: v.optional(v.string()),
   /** Pickup/return method ("delivery" | "self_pickup" | etc). */
@@ -1049,6 +1050,8 @@ async function upsertOrderImpl(
     ...(resolved_renter_id !== undefined && { renter_id: resolved_renter_id }),
     booking_status: args.booking_status,
     ...(pickup_time !== undefined && { pickup_time }),
+    ...(args.booking_times_source === "provider_booking" && args.booking_status === "confirmed" && pickup_time && /^([01]\d|2[0-3]):[0-5]\d$/.test(pickup_time) && {pickup_time_provenance:{source:"provider_booking" as const,date:args.start_date,time:pickup_time,confirmedAt:existing?.pickup_time_provenance?.source==="provider_booking" && existing.pickup_time_provenance.date===args.start_date && existing.pickup_time_provenance.time===pickup_time ? existing.pickup_time_provenance.confirmedAt : now}}),
+    ...(args.booking_times_source === "provider_booking" && args.booking_status === "confirmed" && return_time && /^([01]\d|2[0-3]):[0-5]\d$/.test(return_time) && {return_time_provenance:{source:"provider_booking" as const,date:args.end_date,time:return_time,confirmedAt:existing?.return_time_provenance?.source==="provider_booking" && existing.return_time_provenance.date===args.end_date && existing.return_time_provenance.time===return_time ? existing.return_time_provenance.confirmedAt : now}}),
     ...(return_time !== undefined && { return_time }),
     ...(pickup_method !== undefined && { pickup_method }),
     ...(return_method !== undefined && { return_method }),

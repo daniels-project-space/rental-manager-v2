@@ -150,7 +150,7 @@ INSTRUCTIONS:
 - Find the LAST pickup and return times agreed or confirmed by both parties; later corrections replace earlier proposals.
 - A renter's time counts as agreed when the owner/bot confirms or acknowledges it.
 - Pickup and return are separate. If one agreed time explicitly covers both, use it for both.
-- Convert natural time language: morning = 10:00, evening = 19:00, noon = 12:00. Preserve exact stated minutes.
+- Never invent a clock for morning, afternoon, evening, during the day, or an unacknowledged proposal: return null. Literal noon/midday means 12:00 and midnight means 00:00. Preserve exact stated minutes.
 - Convert 7pm to 19:00, 10am to 10:00 and 6.30pm to 18:30.
 - If AM/PM is absent, infer only from clear rental context. If ambiguous, say so in notes and use LOW confidence.
 - Ignore arrival ETAs and journey updates such as "I'll be there at 20:32" or "10 mins away" unless they explicitly renegotiate the rental handoff time.

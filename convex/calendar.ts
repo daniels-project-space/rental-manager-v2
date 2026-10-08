@@ -1,10 +1,11 @@
+import { confirmedClock } from "./lib/confirmed_schedule";
 import { shortItemName } from "./lib/item_display_name";
 import { mutation, query, type QueryCtx } from "./owner_functions";
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import {
   isConfirmedWithDates,
-  dedupByLogicalRental,
+  dedupByLogicalRental as deduplicateRentals,
   logicalGroupIds,
   renterPeriodGroupIds,
   type ReservationRow,
@@ -32,6 +33,17 @@ import {
   londonToday,
 } from "./lib/effectiveDates";
 import { buildRenterDisplayNameMap, getRenterDisplayName } from "./lib/renterLookup";
+
+/** Calendar precision follows the same independently confirmed schedule as stock. */
+function dedupByLogicalRental<T extends ReservationRow>(rows:T[]):T[]{
+ return deduplicateRentals(rows).map(row=>{
+  const r=row as T & Partial<Doc<"reservations">>;
+  if(r.account_slug==="dbcinema_web")return row;
+  const pickupDate=r.pickup_date??r.start_date??"",returnDate=r.return_date??r.end_date??"";
+  const pickup=confirmedClock(r,"pickup",pickupDate),returned=confirmedClock(r,"return",returnDate);
+  return {...row,pickup_date:pickup?pickupDate:r.start_date,return_date:returned?returnDate:r.end_date,pickup_time:pickup,return_time:returned};
+ });
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -445,8 +457,10 @@ export async function computeStripLive(
       const byReturnDesc = members
         .slice()
         .sort((a, b) => compareReturnMoment(b, a));
-      const pickTime = sorted.find((m) => m.pickup_time)?.pickup_time ?? startM.pickup_time;
-      const retTime = byReturnDesc.find((m) => m.return_time)?.return_time ?? endM.return_time;
+      const pickMember = sorted.find((m) => m.pickup_time) ?? startM;
+      const pickTime = pickMember.pickup_time;
+      const retMember = byReturnDesc.find((m) => m.return_time) ?? endM;
+      const retTime = retMember.return_time;
       // Delivery wins so a planned delivery never gets hidden by a collection
       // member (the grouping guard already keeps conflicting methods apart, but
       // unknown+delivery can still merge — surface the delivery).
@@ -464,7 +478,9 @@ export async function computeStripLive(
         return_date: displayReturnDate(endM),
         end_date: endM.end_date,
         pickup_time: pickTime,
+        pickup_time_provenance: pickMember.pickup_time_provenance,
         return_time: retTime,
+        return_time_provenance: retMember.return_time_provenance,
         pickup_method: pickMethod,
         return_method: retMethod,
         items: combine("items"),
@@ -869,8 +885,8 @@ export async function computeStripLive(
         pickupDate: displayPickupDate(r) || (r.start_date ?? null),
         endDate: r.end_date ?? null,
         returnDate: (r as { return_date?: string | null }).return_date ?? r.end_date ?? null,
-        pickupTime: rType.pickup_time ?? null,
-        returnTime: rType.return_time ?? null,
+        pickupTime: confirmedClock(r,"pickup",r.pickup_date??r.start_date??"") ?? null,
+        returnTime: confirmedClock(r,"return",r.return_date??r.end_date??"") ?? null,
         pickupMethod: rType.pickup_method ?? null,
         returnMethod: rType.return_method ?? null,
         grossPaidGbp: rType.gross_paid_gbp ?? null,
@@ -927,7 +943,7 @@ export async function computeStripLive(
           status: h.status,
         }));
 
-      return { calendarWindowVersion: 2 as const, date, pickups, returns, away, holds: dayHolds };
+      return { calendarWindowVersion: 3 as const, date, pickups, returns, away, holds: dayHolds };
     });
 }
 
@@ -951,7 +967,7 @@ export const getCalendarStrip = query({
       // Cast the stored v.any() payload back to the live compute's exact type
       // (returning `any` from one branch would widen the whole query return
       // type to `any`). Same pattern as getWeeklyCalendar.
-      if (mv && mv.anchor === startDate && mv.days === days && Array.isArray(mv.payload) && mv.payload.every((d: { calendarWindowVersion?: number }) => d.calendarWindowVersion === 2))
+      if (mv && mv.anchor === startDate && mv.days === days && Array.isArray(mv.payload) && mv.payload.every((d: { calendarWindowVersion?: number }) => d.calendarWindowVersion === 3))
         return mv.payload as Awaited<ReturnType<typeof computeStripLive>>;
     }
     return computeStripLive(ctx, { accountSlug, startDate, days });
@@ -1320,7 +1336,7 @@ export async function computeWeeklyLive(
     }
 
     return {
-      calendarWindowVersion: 2 as const,
+      calendarWindowVersion: 3 as const,
       days: dates.map((date) => ({
         date,
         reservations: reservations
@@ -1374,8 +1390,8 @@ export async function computeWeeklyLive(
               renterName:
                 rType.renter_name ??
                 (r.renter_id ? renterMap.get(r.renter_id as string) ?? "?" : "?"),
-              pickupTime: rType.pickup_time ?? null,
-              returnTime: rType.return_time ?? null,
+              pickupTime: confirmedClock(r,"pickup",r.pickup_date??r.start_date??"") ?? null,
+              returnTime: confirmedClock(r,"return",r.return_date??r.end_date??"") ?? null,
               pickupMethod: rType.pickup_method ?? null,
               returnMethod: rType.return_method ?? null,
               notes: rType.notes ?? null,
@@ -1424,7 +1440,7 @@ export const getWeeklyCalendar = query({
       // type — otherwise returning `any` from one branch widens the whole
       // query's inferred return type to `any` and the frontend's typed
       // `data.days.map(...)` breaks (noImplicitAny).
-      if (mv && mv.anchor === weekStartDate && mv.payload?.calendarWindowVersion === 2)
+      if (mv && mv.anchor === weekStartDate && mv.payload?.calendarWindowVersion === 3)
         return mv.payload as Awaited<ReturnType<typeof computeWeeklyLive>>;
     }
     return computeWeeklyLive(ctx, { accountSlug, weekStartDate });
@@ -1699,8 +1715,8 @@ export const getGanttWeek = query({
           account_slug: (r as { account_slug?: string | null }).account_slug ?? null,
           order_step: rType.order_step ?? null,
           site_verification: r.account_slug === "dbcinema_web" && r.site_verification ? { approved: r.site_verification.approved, status: r.site_verification.status } : null,
-          pickup_time: rType.pickup_time ?? null,
-          return_time: rType.return_time ?? null,
+          pickup_time: confirmedClock(r,"pickup",r.pickup_date??r.start_date??"") ?? null,
+          return_time: confirmedClock(r,"return",r.return_date??r.end_date??"") ?? null,
           pickup_method: rType.pickup_method ?? null,
           return_method: rType.return_method ?? null,
           progress_percent: chipProgress(

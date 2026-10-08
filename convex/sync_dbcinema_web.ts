@@ -66,7 +66,7 @@ type SiteBooking = {
   createdAt: number;
   lineItems: SiteLine[];
   damageCases?: import("./lib/websiteCases").WebsiteCase[];
-  physicalReservations?: Array<{rmv2ItemId: string | null; hyggloProductId?: number | null; qty: number; start: number; end: number; pickupTime?: string | null; returnTime?: string | null}>;
+  physicalReservations?: Array<{rmv2ItemId: string | null; hyggloProductId?: number | null; qty: number; start: number; end: number; pickupTime?: string | null; returnTime?: string | null; endExclusive?: boolean; stockWindowVersion?: number; turnaroundBufferMinutes?:number; pickupDate?:string; returnDate?:string}>;
 };
 
 export const syncDbcinemaWeb = internalAction({
@@ -259,18 +259,22 @@ export const upsertSiteBookingsBatch = internalMutation({
           else byProduct.set(u.hyggloProductId, { name: head.name, image_url: head.image_url, qty: u.qty });
         }
       }
-      let site_item_windows: Array<{item_id: Id<"items">; qty:number; start:number; end:number; pickupTime?:string|null; returnTime?:string|null}> | undefined;
+      let site_item_windows: Array<{item_id: Id<"items">; qty:number; start:number; end:number; pickupTime?:string|null; returnTime?:string|null; endExclusive?:boolean; stockWindowVersion?:number; turnaroundBufferMinutes?:number; pickupDate?:string; returnDate?:string}> | undefined;
       if (b.physicalReservations !== undefined) {
         if (!Array.isArray(b.physicalReservations)) throw Error("Invalid website physical reservation ledger");
         site_item_windows = b.physicalReservations.map(w => {
           if (!w.rmv2ItemId || !itemById.has(w.rmv2ItemId)) throw Error("Website equipment needs a canonical master inventory mapping");
           if (!Number.isSafeInteger(w.qty) || w.qty <= 0 || !Number.isFinite(w.start) || !Number.isFinite(w.end) || w.end < w.start) throw Error("Invalid website equipment window");
           for (const time of [w.pickupTime, w.returnTime]) if (time != null && (typeof time !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time))) throw Error("Invalid website equipment time");
-          return { item_id: w.rmv2ItemId as Id<"items">, qty:w.qty, start:w.start, end:w.end, ...(w.pickupTime !== undefined ? {pickupTime:w.pickupTime} : {}), ...(w.returnTime !== undefined ? {returnTime:w.returnTime} : {}) };
+          for(const date of [w.pickupDate,w.returnDate])if(date!==undefined&&(typeof date!=="string"||!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date+"T00:00:00Z"))||new Date(date+"T00:00:00Z").toISOString().slice(0,10)!==date))throw Error("Invalid website equipment date");
+          if(w.pickupDate&&w.returnDate&&w.returnDate<w.pickupDate)throw Error("Invalid website equipment date order");
+          if(w.turnaroundBufferMinutes!==undefined&&w.turnaroundBufferMinutes!==0&&w.turnaroundBufferMinutes!==60)throw Error("Invalid website turnaround buffer");
+          if(w.endExclusive===true && (w.stockWindowVersion!==2 || w.end<=w.start))throw Error("Invalid exact website stock window");
+          return { ...(w.endExclusive===true?{endExclusive:true,stockWindowVersion:2,...(w.turnaroundBufferMinutes!==undefined?{turnaroundBufferMinutes:w.turnaroundBufferMinutes}:{})}:{}), ...(w.pickupDate!==undefined?{pickupDate:w.pickupDate}:{}),...(w.returnDate!==undefined?{returnDate:w.returnDate}:{}), item_id: w.rmv2ItemId as Id<"items">, qty:w.qty, start:w.start, end:w.end, ...(w.pickupTime !== undefined ? {pickupTime:w.pickupTime} : {}), ...(w.returnTime !== undefined ? {returnTime:w.returnTime} : {}) };
         });
         byItem.clear();
         byProduct.clear();
-        for (const [id,qty] of websiteWindowUnits(site_item_windows)) {
+        for (const [id,qty] of websiteWindowUnits(site_item_windows,undefined,{pickupTime:b.pickupTime,returnTime:b.returnTime})) {
           const canonical = describe(id as Id<"items">,qty);
           byItem.set(id,{item_id:canonical.item_id,name:canonical.name,qty,image_url:canonical.image_url});
           const pid = b.physicalReservations.find(w => w.rmv2ItemId === id)?.hyggloProductId;

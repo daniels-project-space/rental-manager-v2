@@ -1,23 +1,22 @@
 import { stockOccupancyForItem, type Occupancy, type loadStockSources } from "./renter_stock";
 import { repairHeldUnits } from "./availability";
 
-// Stock quotes compare London date/time labels. Encode those same wall-clock
-// coordinates for the storefront's full-day requests, not calendar timestamps.
+import { londonStockInstant,TURNAROUND_BUFFER_MINUTES } from "./confirmed_schedule";
 const coordinate = (value:string) => Date.parse(value+"Z");
 const from = "0001-01-01", through = "9999-12-30";
 
 /** Sparse, disjoint occupancy windows. Same-kit extensions use their maximum
  * units, matching stockWindowPeak; independent rentals still add together. */
 export function stockWindows(occupancy:Occupancy[]) {
-  const events = new Map<string,{id:number;group:string;qty:number;add:boolean}[]>();
+  const events = new Map<number,{id:number;group:string;qty:number;add:boolean}[]>();
   occupancy.forEach((row,id) => {
     if (row.end <= row.start || !Number.isSafeInteger(row.qty) || row.qty < 1) throw Error("Invalid shared occupancy");
     const group=row.extension_key ?? `independent:${id}`;
-    for(const [at,add] of [[row.start,true],[row.end,false]] as const) {
+    for(const [at,add] of [[row.startInstant??londonStockInstant(row.start,"start"),true],[row.endInstant??londonStockInstant(row.end,"end"),false]] as const) {
       const values=events.get(at)??[];values.push({id,group,qty:row.qty,add});events.set(at,values);
     }
   });
-  const groups=new Map<string,Map<number,number>>(), points=[...events.keys()].sort();
+  const groups=new Map<string,Map<number,number>>(), points=[...events.keys()].sort((a,b)=>a-b);
   const windows:{start:number;end:number;qty:number}[]=[];
   for(let i=0;i<points.length-1;i++) {
     for(const event of events.get(points[i])!) {
@@ -27,7 +26,7 @@ export function stockWindows(occupancy:Occupancy[]) {
     }
     const qty=[...groups.values()].reduce((sum,members)=>sum+Math.max(...members.values()),0);
     if(!qty)continue;
-    const start=coordinate(points[i]),end=coordinate(points[i+1]);
+    const start=points[i],end=points[i+1];
     if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||end<=start)throw Error("Invalid shared stock dates");
     const prior=windows.at(-1);
     if(prior?.end===start&&prior.qty===qty)prior.end=end;else windows.push({start,end,qty});
@@ -39,7 +38,7 @@ export function sharedStockSnapshot(sources:Awaited<ReturnType<typeof loadStockS
   // Website bookings already occupy the website ledger. Importing their
   // manager copies would count the same physical allocation twice.
   const upstream={...sources,reservations:sources.reservations.filter(r=>r.account_slug!=="dbcinema_web")};
-  return {version:1,checkedAt,units:sources.items.map(item=> {
+  return {version:2,turnaroundBufferMinutes:TURNAROUND_BUFFER_MINUTES,checkedAt,units:sources.items.map(item=> {
     const active=item.status==="active"&&item.is_marketing_only===false;
     const quantityOwned=active&&Number.isSafeInteger(item.qty)&&item.qty>=0?item.qty:0;
     const occupancy=stockOccupancyForItem(upstream,item,{item_name:item.name_canonical,start_date:from,end_date:through});

@@ -48,9 +48,9 @@ describe("saved website calendar windows",()=>{
   expect(days[2].returns).toHaveLength(1);expect(days[2].away).toHaveLength(1);expect(days[2].away[0].items[0].itemId).toBe("lens");
  });
  it("reuses compatible period-aware caches",async()=>{
-  const cache=[{calendarWindowVersion:2,date:"2026-10-05",pickups:[],returns:[],away:[],holds:[]}];
+  const cache=[{calendarWindowVersion:3,date:"2026-10-05",pickups:[],returns:[],away:[],holds:[]}];
   expect(await (getCalendarStrip as any)._handler(context([booking],cache),{accountSlug:null,startDate:"2026-10-05",days:7})).toEqual(cache);
-  const weekly={calendarWindowVersion:2,days:[]};expect(await (getWeeklyCalendar as any)._handler(context([booking],weekly),{accountSlug:null,weekStartDate:"2026-10-05"})).toEqual(weekly);
+  const weekly={calendarWindowVersion:3,days:[]};expect(await (getWeeklyCalendar as any)._handler(context([booking],weekly),{accountSlug:null,weekStartDate:"2026-10-05"})).toEqual(weekly);
  });
  it("chat availability reports the real gap and only upcoming physical periods",async()=>{
   const result=await (getItemAvailabilityForChat as any)._handler(context(),{query:"FX3",horizonDays:5,accountSlug:"leo"});

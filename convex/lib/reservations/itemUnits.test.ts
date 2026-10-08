@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { websiteDayIntervals, reservationItemUnits, type OverrideMap } from "./itemUnits";
+import {websiteWindowUnits,websiteCalendarPeriods, websiteDayIntervals, reservationItemUnits, type OverrideMap } from "./itemUnits";
 import { withDefaultAdapters } from "../default_adapter_units";
 const overrides: OverrideMap = new Map([
   ["leo#1", [{ item_id: "camera", qty: 2 }, { item_id: "lens", qty: 2 }]],
@@ -58,12 +58,12 @@ it("sums shared supplied batteries and separately booked extras across logical l
 describe("website item calendar intervals",()=>{
  const day=(n:number)=>Date.UTC(2035,0,n);
  const r={site_item_windows:[{item_id:"camera",qty:3,start:day(1),end:day(2)},{item_id:"camera",qty:3,start:day(4),end:day(5)}],pickup_time:"10:00",return_time:"17:00"};
- it("leaves the gap free and applies the return buffer on the actual item date",()=>{
+ it("leaves the gap free and includes turnaround after the agreed return on the actual item date",()=>{
   expect(websiteDayIntervals(r,"2035-01-03")).toEqual([]);
   expect(websiteDayIntervals(r,"2035-01-01")).toEqual([{id:"camera",a:"10:00",b:"24:00",qty:3}]);
   expect(websiteDayIntervals(r,"2035-01-02")).toEqual([{id:"camera",a:"00:00",b:"18:00",qty:3}]);
  });
- it("carries a late return buffer into the next day",()=>{
+ it("carries one hour after a late return into the next day",()=>{
   expect(websiteDayIntervals({...r,return_time:"23:30"},"2035-01-03")).toEqual([{id:"camera",a:"00:00",b:"00:30",qty:3}]);
  });
 });
@@ -71,7 +71,7 @@ describe("website item calendar intervals",()=>{
 describe("saved website per-item clocks", () => {
   const start = Date.UTC(2035, 0, 1), end = Date.UTC(2035, 0, 2);
   const base = {pickup_time:"10:00",return_time:"19:00"};
-  it("releases separate items after their own agreed return and buffer", () => {
+  it("releases separate items after their own agreed return plus one hour", () => {
     const site_item_windows = [{item_id:"camera",qty:1,start,end,returnTime:"12:00"},{item_id:"lens",qty:2,start,end,returnTime:"19:00"}];
     expect(websiteDayIntervals({...base,site_item_windows},"2035-01-02")).toEqual([{id:"camera",a:"00:00",b:"13:00",qty:1},{id:"lens",a:"00:00",b:"20:00",qty:2}]);
   });
@@ -82,7 +82,7 @@ describe("saved website per-item clocks", () => {
     expect(websiteDayIntervals({...base,site_item_windows:[{item_id:"camera",qty:1,start,end,pickupTime:"12:00"}]},"2035-01-01")[0].a).toBe("12:00");
     expect(websiteDayIntervals({...base,site_item_windows:[{item_id:"camera",qty:1,start,end}]},"2035-01-02")[0].b).toBe("20:00");
   });
-  it("carries an individual late return buffer into the following day", () => {
+  it("carries one hour after an individual late return into the following day", () => {
     expect(websiteDayIntervals({...base,site_item_windows:[{item_id:"camera",qty:1,start,end,returnTime:"23:30"}]},"2035-01-03")).toEqual([{id:"camera",a:"00:00",b:"00:30",qty:1}]);
   });
 });
@@ -111,3 +111,21 @@ it('refuses overflowing multiplied or accumulated physical quantities',()=>{
  expect(()=>reservationItemUnits({account_slug:'leo',hygglo_items:[{product_id:10,qty:2}]},new Map(),mapping)).toThrow('Invalid reserved unit quantity');
  expect(()=>reservationItemUnits({account_slug:'leo',hygglo_items:[{product_id:10},{product_id:10}]},new Map(),mapping)).toThrow('Invalid reserved unit quantity');
 });
+
+describe("exact website UTC allocation projection",()=>{
+ const first={item_id:"body",qty:1,start:Date.UTC(2026,9,9,8),end:Date.UTC(2026,9,9,12),pickupTime:"09:00",returnTime:"12:00",endExclusive:true,stockWindowVersion:2,turnaroundBufferMinutes:60};
+ const second={...first,start:Date.UTC(2026,9,9,12),end:Date.UTC(2026,9,9,18),pickupTime:"13:00",returnTime:"18:00"};
+ it("keeps same-day adjacent hires at one physical unit",()=>expect(websiteWindowUnits([first,second],"2026-10-09").get("body")).toBe(1));
+ it("uses marked occupied end without adding the turnaround twice",()=>expect(websiteDayIntervals({account_slug:"dbcinema_web",site_item_windows:[first]},"2026-10-09")).toEqual([{id:"body",a:"09:00",b:"13:00",qty:1}]));
+ it("preserves actual displayed return clock and date separately from occupied turnaround",()=>{const p=websiteCalendarPeriods({account_slug:"dbcinema_web",end_date:"2026-10-09",return_time:"12:00",site_item_windows:[first]})[0];expect(p.return_time).toBe("12:00");expect(p.end_date).toBe("2026-10-09");});
+ it("shows an unknown midnight-exclusive return on its occupied final day",()=>{const w={...first,returnTime:null,end:Date.UTC(2026,9,10,0)};expect(websiteCalendarPeriods({account_slug:"dbcinema_web",end_date:"2026-10-09",site_item_windows:[w]})[0].end_date).toBe("2026-10-09");expect(websiteWindowUnits([w],"2026-10-10").get("body")).toBe(1);});
+});
+
+describe("legacy calendar elapsed turnaround across London DST",()=>{
+ const window=(date:string)=>({item_id:"body",qty:1,start:Date.parse(date+"T00:00Z"),end:Date.parse(date+"T00:00Z")});
+ it("shows02:30 after an actual00:30 spring return plus one elapsed hour",()=>expect(websiteDayIntervals({site_item_windows:[window("2026-03-29")],pickup_time:"00:00",return_time:"00:30"},"2026-03-29")).toEqual([{id:"body",a:"00:00",b:"02:30",qty:1}]));
+ it("uses the later ambiguous autumn return before adding one elapsed hour",()=>expect(websiteDayIntervals({site_item_windows:[window("2026-10-25")],pickup_time:"00:00",return_time:"01:30"},"2026-10-25")).toEqual([{id:"body",a:"00:00",b:"02:30",qty:1}]));
+ it("carries an unknown full-day spring boundary through the clock jump conservatively",()=>expect(websiteDayIntervals({site_item_windows:[window("2026-03-28")]},"2026-03-29")).toEqual([{id:"body",a:"00:00",b:"02:00",qty:1}]));
+});
+
+ it("uses signed display dates without narrowing conservative occupied UTC bounds",()=>{const w={item_id:"body",qty:1,start:Date.UTC(2026,9,8,23),end:Date.UTC(2026,9,11,0),pickupDate:"2026-10-09",returnDate:"2026-10-10",pickupTime:"09:00",returnTime:"18:00",endExclusive:true,stockWindowVersion:2,turnaroundBufferMinutes:60};const p=websiteCalendarPeriods({account_slug:"dbcinema_web",start_date:"2026-10-09",end_date:"2026-10-10",return_time:"18:00",site_item_windows:[w]})[0];expect(p.start_date).toBe("2026-10-09");expect(p.end_date).toBe("2026-10-10");expect(p.return_time).toBe("18:00");expect(websiteDayIntervals({site_item_windows:[w]},"2026-10-11")).toEqual([{id:"body",a:"00:00",b:"01:00",qty:1}]);});
