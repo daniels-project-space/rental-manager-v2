@@ -17,6 +17,14 @@ function fixture(){
 }
 afterEach(()=>{vi.unstubAllEnvs();vi.useRealTimers()});
 describe("actual private shared-stock snapshot",()=>{
+ it.each(["2026-08-22","2026-07-13"])("projects booked days when historical pickup contradicts return (%s)",async date=>{
+  const f=fixture();const pickup=new Date(Date.parse(date+"T00:00Z")+86400000).toISOString().slice(0,10);
+  const row=f.rental({order_step:"RETURNED",start_date:date,end_date:date,pickup_date:pickup,return_date:date});f.tables.reservations=[row];
+  const result=await f.run();expect(result.units[0].windows).toEqual([{start:ms(date+"T00:00"),end:ms(pickup+"T00:00"),qty:1}]);
+  const sources=await loadStockSources({db:f.db} as any);expect(stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:date,end_date:date,quantity:3}).available).toBe(false);
+  expect(stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:"2026-10-08",end_date:"2026-10-08",quantity:3}).available).toBe(true);
+  expect(row.order_step).toBe("RETURNED");expect(row.pickup_date).toBe(pickup);
+ });
  it("reads all shared accounts, omits local website mirrors and exposes only physical occupancy",async()=>{
   const f=fixture();f.tables.reservations=[f.rental({renter_name:"PRIVATE CUSTOMER",notes:"PRIVATE NOTE"}),f.rental({_id:"web",hygglo_order_id:"web",account_slug:"dbcinema_web"}),f.rental({_id:"returned",hygglo_order_id:"returned",order_step:"REVIEWED"}),f.rental({_id:"cancelled",hygglo_order_id:"cancelled",status:"cancelled"}),f.rental({_id:"obsolete",hygglo_order_id:"obsolete",is_obsolete:true})];
   const result=await f.run();expect(f.reads).toEqual(["items","reservations","reservations","hygglo_product_index","listing_resolution_override","insurance_claims","owner_unavailability","vacation_periods"]);expect(result.units[0].windows).toEqual([{start:ms("2027-01-01T00:00"),end:ms("2027-01-03T00:00"),qty:1}]);expect(JSON.stringify(result)).not.toMatch(/PRIVATE|other-owned-account|booking|web|returned/);

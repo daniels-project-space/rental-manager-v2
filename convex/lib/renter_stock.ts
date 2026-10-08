@@ -160,12 +160,20 @@ export function stockOccupancyForItem(sources: Awaited<ReturnType<typeof loadSto
       // The buffer carries into the following date instead of wrapping to 00:xx.
       end = new Date(Date.parse(`${ret}T${returnTime}:00Z`) + 3600000).toISOString().slice(0, 16);
     }
+    let start = `${pickup}T${r.pickup_time ?? "00:00"}`;
+    if (end <= start) {
+      // Historical logistics can put pickup after the saved return. Preserve
+      // the authoritative booked days instead of emitting an impossible span
+      // that prevents every storefront stock check. Custody stays unchanged.
+      start = `${r.start_date}T00:00`;
+      end = `${shiftStockDate(r.end_date, 1)}T00:00`;
+    }
     const name = r.renter_name?.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
     const renter = r.renter_id ? `id:${r.renter_id}` : name && !["unknown", "unknown renter", "?", "—"].includes(name) ? `name:${name}` : undefined;
     // Preserve same-kit extensions; sharing a battery or adapter does not make
     // two different kits one rental. Quantity is part of the complete basket.
     const extension_key = renter && r.account_slug ? JSON.stringify([r.account_slug, renter, [...units].sort(([a], [b]) => a.localeCompare(b))]) : undefined;
-    occupancy.push({ start: `${pickup}T${r.pickup_time ?? "00:00"}`, end, qty, renter_name: r.renter_name, order_id: r.hygglo_order_id, extension_key });
+    occupancy.push({ start, end, qty, renter_name: r.renter_name, order_id: r.hygglo_order_id, extension_key });
   }
   return occupancy;
 }
