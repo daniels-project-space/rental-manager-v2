@@ -1,0 +1,31 @@
+{
+  "scope": "actual prior/current Rental Manager snapshot producer -> actual website sync, cart, listing and whole-order holds; synthetic source/database, no network/provider writes",
+  "capacity": 12,
+  "priorOccupied": 1,
+  "correctedOccupied": 10,
+  "available": 2,
+  "priorThreeAccepted": true,
+  "currentTwoAccepted": true,
+  "currentThreeRejected": true,
+  "rejectedOrderUnchanged": true,
+  "remainingTwoHeld": true,
+  "nextRequestRejected": true,
+  "replayNoDuplicate": true,
+  "sourceRevisions": {
+    "rentalManagerPrior": "8346819cee6e2f7562214dd2ca87fbbc654e068b",
+    "rentalManagerCorrected": "a9fd995d058b2fbfecaef7fdeb07bf51680d10a4",
+    "website": "e806394f6635ff95d055a5da7fb122d6ca3f8817"
+  },
+  "hostedChecks": {
+    "rentalManager": {
+      "run": 37749871702,
+      "conclusion": "success"
+    },
+    "website": {
+      "run": 37749876648,
+      "conclusion": "failure",
+      "reason": "STOCK_FUNCTION_NOT_DEPLOYED",
+      "backend": "https://deafening-stoat-340.convex.cloud"
+    }
+  }
+}
