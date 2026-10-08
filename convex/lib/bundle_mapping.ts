@@ -4,9 +4,9 @@ import { extractComponents } from "./bundle_description_parse";
 
 type Inventory = { _id: unknown; name_canonical: string; kind?: string; qty?: number; aliases?: string[]; lens_mount?: string | null; status?: string; is_marketing_only?: boolean; track_independent_stock?: boolean };
 const mountTokens = new Set(["ef", "l", "rf", "e", "pl", "mount"]);
-const tokens = (text: string) => (text.toLowerCase().match(/[a-z0-9]+/g) ?? [])
+const tokens = (text: string) => (text.toLowerCase().replace(/\bg\s*-?\s*master\b/g, "gm").match(/[a-z0-9]+/g) ?? [])
   .map(token => token.length > 3 && token.endsWith("s") ? token.slice(0, -1) : token);
-const incidental = /\b(?:batter(?:y|ies)|chargers?|cables?|carrying (?:bag|case)|(?:camera )?cage|(?:sd|memory) cards?|(?:cfexpress|sdxc|sdhc)\b[^.;]{0,50}\bcard|ssds?|\d+\s*(?:tb|gb)\s+(?:card|media))\b/i;
+const incidental = /\b(?:batter(?:y|ies)|chargers?|cables?|carrying (?:bag|case)|uv\s+filters?|(?:camera )?cage|(?:sd|memory) cards?|(?:cfexpress|sdxc|sdhc)\b[^.;]{0,50}\bcard|ssds?|\d+\s*(?:tb|gb)\s+(?:card|media))\b/i;
 
 /** Contents identity and stated quantities, independently of whether we own them. */
 export function resolveBundleMapping(description: string, items: Inventory[]) {

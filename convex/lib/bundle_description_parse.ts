@@ -20,11 +20,11 @@ const NOISE_RE =
   /^(various|needed|cables?|carrying|carry|bag|bags|case|cases|packaged|all items|charger|chargers|cable)\b/i;
 /** Protective caps and lens hoods are supplied packaging, not separate rented
  * lenses. Match the whole component so mixed gear lines remain unresolved. */
-const PROTECTIVE_PACKAGING_RE = /^(?:(?:front(?:\s+and\s+rear)?|rear)\s+)?(?:lens\s+|body\s+)?caps?$|^lens\s+hood$/i;
+const PROTECTIVE_PACKAGING_RE = /^(?:(?:front(?:\s+and\s+rear)?|rear)\s+)?(?:lens\s+|body\s+)?caps?$|^lens\s+hoods?$/i;
 /** A model-specific carry case is still a case, not a second copy of that
  * model. Mixed equipment lines must remain visible to identity review. */
 function isProtectivePackaging(name:string):boolean {
-  return PROTECTIVE_PACKAGING_RE.test(name) ||
+  return PROTECTIVE_PACKAGING_RE.test(name) || /^(?:protective\s+)?(?:lens\s+)?pouches?$/i.test(name) ||
     /\bcarry(?:ing)?\s+(?:case|bag)\s*$/i.test(name) && !/\b(?:with|and|plus)\b|[+]/i.test(name);
 }
 
@@ -36,7 +36,7 @@ export function extractComponents(desc: string): {
 } {
   // Preserve structural Unicode before the ASCII cleanup. Removing bullets
   // here made every real “• 1× …” kit look unstructured to callers.
-  const clean = desc.replace(/[•‣●]/g, " * ").replace(/×/g, "x")
+  const clean = desc.replace(/\r?\n+/g, " * ").replace(/[•‣●]/g, " * ").replace(/×/g, "x")
     .replace(/[^\x20-\x7E]/g, " ").replace(/\s+/g, " ");
   // Where does the component list actually start? Owners phrase this several
   // ways. Missing the marker leaves the marketing intro in the list, and an
@@ -44,11 +44,13 @@ export function extractComponents(desc: string): {
   // comprehensive, ready-to-shoot cinema kit" became a PL-to-EF mount.
   const START_RE =
     /(?:included in th(?:is|e)(?:(?!\b\d{1,2}\s*x\b)[^:])*|in th(?:is|e) (?:kit|rental|bundle|package)|(?:what(?:'|)s|whats) included|(?:this |the )?(?:kit|package|bundle|rental) includes|you (?:get|receive)|contents)\s*:?(.*)$/i;
-  const m = clean.match(START_RE);
+  // A formal contents heading later in the description is more authoritative
+  // than an introductory "this rental includes" followed by feature prose.
+  const m = clean.match(/(?:included in th(?:is|e)(?:(?!\b\d{1,2}\s*x\b)[^:])*|(?:what(?:'|)s|whats) included|contents)\s*:?(.*)$/i) ?? clean.match(START_RE);
   let body = m ? m[1] : clean;
   // Everything after "About this ..." is marketing prose, not contents.
   body = body.split(
-    /\bAbout th(?:is|e)\b|\bA quick note\b|\bPlease(?: kindly)? note\b|\bI do my best\b|\busually available\b/i,
+    /\bAbout (?:th(?:is|e)|us|me)\b|\(\s*No batteries or special cables required\b|\bA quick note\b|\bPlease(?: kindly)? note\b|\bI do my best\b|\busually available\b/i,
   )[0];
   // STOP AT THE ADD-ON SECTION. Several listings follow the kit list with a
   // long menu of PAID extras ("Direct Add-on Upgrades:", "ADD-ONS"). Those are
@@ -59,7 +61,7 @@ export function extractComponents(desc: string): {
   // listing -- gear shown as rented while it sits on the shelf, which is the
   // false-unavailability failure this work exists to eliminate.
   body = body.split(
-    /\bDirect Add-?on\b|\bAdd-?ons?\s*:|\bADD-?ONS\b|\bOptional (?:extras?|add-?ons?|upgrades?)\b|\bUpgrades?\s*:|\bI also have\b/i,
+    /\bDirect Add-?on\b|\bAdd-?on direct\b|\bAdd-?ons?\s*:|\bADD-?ONS\b|\bOptional (?:extras?|add-?ons?|upgrades?)\b|\bUpgrades?\s*:|\bI also have\b/i,
   )[0];
   // Section labels ("Camera:", "Lenses (Anamorphic):", "Media:") are headings.
   body = body.replace(/(?:\b\d{1,2}\s*x?\s+)?\b(cameras?|lenses?|media|audio|support|accessories|lighting|power)\s*\([^)]*\)\s*:/gi, " ");

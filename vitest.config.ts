@@ -56,6 +56,8 @@ export default defineConfig({
       "src/lib/renter-pricing-preview.test.ts",
       "convex/settings.draft-epoch.test.ts",
       "convex/lib/listing_inventory.test.ts",
+      "convex/lib/sony_gm_mapping.test.ts",
+      "convex/online_listings.description.test.ts",
       "convex/lib/recommendation_basket.test.ts",
       "convex/lib/availability_basket.test.ts",
       "convex/lib/listing_media_conflict.test.ts",
