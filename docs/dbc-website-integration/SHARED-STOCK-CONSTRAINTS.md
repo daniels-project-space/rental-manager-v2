@@ -12,4 +12,4 @@ The website also prevents a slower catalogue read restoring historical capacity 
 
 Backend publication, live shared-stock/cart acceptance, credential/owner setup, legacy allocation reconciliation, freshness and a shared atomic claim across all writers remain pending. No live provider writes, messaging, payments or production rollout have been enabled.
 
-Full local validation passes: 141 files / 2159 tests / 14 skips, TypeScript, Next build and both owner audits. The paired website full default suite/typecheck/build passes. Both graphs are updated. Current hosted checks/previews remain pending.
+Full local validation passes: 141 files / 2159 tests / 14 skips, TypeScript, Next build and both owner audits. The paired website full default suite/typecheck/build passes. Both graphs are updated. Hosted manager CI 37732363731 for 460a6bd and website CI 37732364129 for 315f732 are terminal SUCCESS; the website includes complete membership/cart/checkout browser regression. Matching previews dpl_HcsSjCbG6r9GbAgzUa9opGW6EMMV and dpl_4ZuuLAkUgjHYyTvkrimEBRuBoSJU are READY. Backend publication and live provider acceptance remain separate.
