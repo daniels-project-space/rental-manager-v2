@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { resolveBundleMapping } from "./bundle_mapping";
+import { resolveListingComponents } from "./listing_inventory";
+import supportDescriptions from "../fixtures/bundled-support-accessories.json";
 import fullDescriptions from "../fixtures/full-description-boundaries.json";
 import { extractComponents } from "./bundle_description_parse";
 
@@ -222,5 +224,56 @@ describe("full retained provider descriptions", () => {
   it("still retains independently rented camera, lens and support equipment", () => {
     const rows=names("Included in this kit:\n- 1x Sony A7S III\n- 2x Sony 24-70mm GM lenses\n- 1x tripod\nWe also offer:\n- Drone");
     expect(rows).toEqual(["Sony A7S III", "Sony 24-70mm GM lenses", "tripod"]);
+  });
+});
+
+
+describe("supplied hardware and independently tracked stock", () => {
+  const tubes={_id:"tubes",name_canonical:"Nanlite Pavotube 30x II",kind:"lighting",qty:4,status:"active",is_marketing_only:false};
+  it.each([["1048230",2],["1048231",4]] as const)("resolves actual PavoTube %s without inventing a clamp pool", (id,qty) => {
+    const r=resolveBundleMapping(supportDescriptions[id],[tubes]);
+    expect(r.components).toEqual([{item_id:"tubes",name:tubes.name_canonical,qty,kind:"lighting"}]);
+    expect(r.unmatched).toEqual([]);
+  });
+  it("keeps an explicitly tracked clamp pool and its actual requested quantity", () => {
+    const clamp={_id:"clamps",name_canonical:"Clamp",kind:"grip",qty:1,status:"active",is_marketing_only:false,track_independent_stock:true};
+    const r=resolveBundleMapping(supportDescriptions["1048231"],[tubes,clamp]);
+    expect(r.components.find(c=>c.item_id==="clamps")?.qty).toBe(4);
+  });
+  it("does not select a fuzzy C-stand proxy for supplied clamps", () => {
+    const stand={_id:"stand",name_canonical:"C-stand",kind:"grip",aliases:["stand"],qty:1};
+    expect(resolveBundleMapping(supportDescriptions["1048230"],[tubes,stand]).components.map(c=>c.item_id)).toEqual(["tubes"]);
+  });
+  it.each(["clamps","mounting clips","brackets","antennas","side handles","barn doors","soft diffusion","power adapters","charging case"])("treats only the whole supplied hardware line %s as incidental", name=>{
+    expect(resolveBundleMapping("Included in this kit:\n- 1x "+name,[]).unmatched).toEqual([]);
+    expect(resolveBundleMapping("Included in this kit:\n- 1x "+name+" with Sony FX3 camera",[]).unmatched.length).toBe(1);
+  });
+  it("retains unknown light stands and mount adapters for review", () => {
+    const r=resolveBundleMapping("Included in this kit:\n- 1x Light stand\n- 1x PL to EF mount adapter",[]);
+    expect(r.unmatched).toEqual(["1x Light stand","1x PL to EF mount adapter"]);
+  });
+  it("rejects ambiguous tracked clamp identities", () => {
+    const clamp={name_canonical:"Clamp",kind:"grip",qty:4,track_independent_stock:true};
+    const r=resolveBundleMapping(supportDescriptions["1048230"],[tubes,{...clamp,_id:"one"},{...clamp,_id:"two"}]);
+    expect(r.unmatched).toContain("2x clamps");
+  });
+});
+
+
+describe("bundled hardware listing safety", () => {
+  const tubes={_id:"tubes",name_canonical:"Nanlite Pavotube 30x II",kind:"lighting",qty:4,status:"active",is_marketing_only:false};
+  const clamp={_id:"clamps",name_canonical:"Studio clamp",aliases:["clamp"],kind:"grip",qty:1,status:"active",is_marketing_only:false,track_independent_stock:true};
+  it("fails closed when a reviewed kit has too few of an independently tracked clamp pool", () => {
+    const r=resolveListingComponents([tubes,clamp] as any,[{item_id:"tubes",qty:4},{item_id:"clamps",qty:1}],undefined,1,supportDescriptions["1048231"]);
+    expect(r.complete).toBe(false);
+    expect(r.coverage?.missing).toEqual([{item_id:"clamps",name:"Studio clamp",qty:4}]);
+  });
+  it("keeps marketing-only independently tracked hardware blocked", () => {
+    const r=resolveListingComponents([tubes,{...clamp,is_marketing_only:true}] as any,[{item_id:"tubes",qty:4},{item_id:"clamps",qty:4}],undefined,1,supportDescriptions["1048231"]);
+    expect(r.owned).toBe(false);
+    expect(r.ownership_blockers[0]?.reason).toBe("marketing_only");
+  });
+  it("does not suppress an unknown named mounting bracket", () => {
+    expect(resolveBundleMapping("Included in this kit:\n- 1x Sony camera mounting bracket",[]).unmatched).toEqual(["1x Sony camera mounting bracket"]);
   });
 });
