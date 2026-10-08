@@ -104,3 +104,31 @@ it('blocks private case import until public manager queries enforce owner access
  vi.stubEnv('OWNER_AUTH_REQUIRED','false');const {ctx,rows}=database();const c={id:'private-case',itemKey:'unit:0',title:'Camera',details:'Private customer evidence',status:'open',openedAt:2000,closedAt:null,resolution:null,customerAccountId:'private-account',rmv2ItemId:null};
  await expect(invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({damageCases:[c]})],reconcile:false})).rejects.toThrow('enforced owner authentication');expect([...rows.values()].filter(r=>r.table==='insurance_claims')).toHaveLength(0);
 });
+
+const verification=(extra:any={})=>({version:1,provider:"didit",status:"processing",checks:{identity:"approved",selfie:"approved",address:"review"},accountId:"customer-1",sessionId:"source-case-session",updatedAt:1000,securityReady:true,archiveReady:false,requiresDroneLicence:false,droneLicenceStatus:"not_required",approved:false,...extra});
+it('persists verification independently of paid status, refuses conflicting or stale approvals, and keeps financial and stock totals unchanged',async()=>{
+ const {ctx,rows}=database();
+ await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({verification:verification()})],reconcile:false});
+ const saved=()=>[...rows.values()].find(r=>r.table==='reservations');
+ expect(saved().site_verification).toMatchObject({approved:false,sessionId:'source-case-session'});
+ const before={net:saved().net_to_owner_gbp,gross:saved().gross_paid_gbp,stock:saved().expanded_items};
+ const approved=verification({status:'verified',approved:true,archiveReady:true});
+ await expect(invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({verification:approved})],reconcile:false})).rejects.toThrow('Conflicting website rental revision');
+ await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({revision:2,verification:approved})],reconcile:false});
+ expect(saved()).toMatchObject({site_revision:2,status:'confirmed',order_step:undefined,site_verification:approved});
+ expect({net:saved().net_to_owner_gbp,gross:saved().gross_paid_gbp,stock:saved().expanded_items}).toEqual(before);
+ expect(await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({revision:2,verification:approved})],reconcile:false})).toMatchObject({upserted:0,skipped:1});
+ await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({verification:verification()})],reconcile:false});expect(saved().site_verification.approved).toBe(true);
+ await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({revision:3,verification:verification({status:'rejected'})})],reconcile:false});
+ await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({revision:2,verification:approved})],reconcile:false});expect(saved().site_verification.approved).toBe(false);
+ await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({revision:4})],reconcile:false});expect(saved().site_verification).toBeUndefined();
+});
+it('rejects malformed or inconsistent approvals before writes and permits authenticated human review override',async()=>{
+ const {ctx,rows}=database();
+ for(const verificationValue of [verification({version:2}),verification({checks:{identity:'bogus',selfie:'approved',address:'approved'}}),verification({status:'verified',approved:true,archiveReady:true,accountId:null}),verification({status:'verified',approved:true,archiveReady:false}),verification({status:'verified',approved:true,archiveReady:true,requiresDroneLicence:true,droneLicenceStatus:'waiting'})]){
+  await expect(invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({verification:verificationValue})],reconcile:false})).rejects.toThrow(/website verification/);
+ }
+ expect([...rows.values()].filter(r=>r.table==='reservations')).toHaveLength(0);
+ await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({verification:verification({status:'verified',approved:true,archiveReady:true,sessionId:null})})],reconcile:false});
+ expect([...rows.values()].find(r=>r.table==='reservations').site_verification).toMatchObject({approved:true,checks:{address:'review'},sessionId:null});
+});

@@ -182,6 +182,7 @@ import type * as lib_lens_focus_claims from "../lib/lens_focus_claims.js";
 import type * as lib_lens_requirements from "../lib/lens_requirements.js";
 import type * as lib_lens_set_resolution from "../lib/lens_set_resolution.js";
 import type * as lib_lens_variant_review from "../lib/lens_variant_review.js";
+import type * as lib_listing_description from "../lib/listing_description.js";
 import type * as lib_listing_display_catalog from "../lib/listing_display_catalog.js";
 import type * as lib_listing_equivalence from "../lib/listing_equivalence.js";
 import type * as lib_listing_inventory from "../lib/listing_inventory.js";
@@ -272,12 +273,15 @@ import type * as lib_sent_inquiry_offer from "../lib/sent_inquiry_offer.js";
 import type * as lib_sent_rental_request from "../lib/sent_rental_request.js";
 import type * as lib_shadow_compare from "../lib/shadow_compare.js";
 import type * as lib_stock_claims from "../lib/stock_claims.js";
+import type * as lib_storefront_stock from "../lib/storefront_stock.js";
+import type * as lib_supplied_parts_coverage from "../lib/supplied_parts_coverage.js";
 import type * as lib_telegram_convex from "../lib/telegram_convex.js";
 import type * as lib_thread_messages from "../lib/thread_messages.js";
 import type * as lib_thread_referral_reference from "../lib/thread_referral_reference.js";
 import type * as lib_verification_failure from "../lib/verification_failure.js";
 import type * as lib_verified_item_spec from "../lib/verified_item_spec.js";
 import type * as lib_websiteCases from "../lib/websiteCases.js";
+import type * as lib_websiteVerification from "../lib/websiteVerification.js";
 import type * as lib_weekly_metrics_compute from "../lib/weekly_metrics_compute.js";
 import type * as lib_widget_mv from "../lib/widget_mv.js";
 import type * as listing_cache from "../listing_cache.js";
@@ -391,6 +395,7 @@ import type * as vacation from "../vacation.js";
 import type * as walle_inventory from "../walle_inventory.js";
 import type * as walle_ratelimits from "../walle_ratelimits.js";
 import type * as websiteReturns from "../websiteReturns.js";
+import type * as websiteVerification from "../websiteVerification.js";
 
 import type {
   ApiFromModules,
@@ -573,6 +578,7 @@ declare const fullApi: ApiFromModules<{
   "lib/lens_requirements": typeof lib_lens_requirements;
   "lib/lens_set_resolution": typeof lib_lens_set_resolution;
   "lib/lens_variant_review": typeof lib_lens_variant_review;
+  "lib/listing_description": typeof lib_listing_description;
   "lib/listing_display_catalog": typeof lib_listing_display_catalog;
   "lib/listing_equivalence": typeof lib_listing_equivalence;
   "lib/listing_inventory": typeof lib_listing_inventory;
@@ -663,12 +669,15 @@ declare const fullApi: ApiFromModules<{
   "lib/sent_rental_request": typeof lib_sent_rental_request;
   "lib/shadow_compare": typeof lib_shadow_compare;
   "lib/stock_claims": typeof lib_stock_claims;
+  "lib/storefront_stock": typeof lib_storefront_stock;
+  "lib/supplied_parts_coverage": typeof lib_supplied_parts_coverage;
   "lib/telegram_convex": typeof lib_telegram_convex;
   "lib/thread_messages": typeof lib_thread_messages;
   "lib/thread_referral_reference": typeof lib_thread_referral_reference;
   "lib/verification_failure": typeof lib_verification_failure;
   "lib/verified_item_spec": typeof lib_verified_item_spec;
   "lib/websiteCases": typeof lib_websiteCases;
+  "lib/websiteVerification": typeof lib_websiteVerification;
   "lib/weekly_metrics_compute": typeof lib_weekly_metrics_compute;
   "lib/widget_mv": typeof lib_widget_mv;
   listing_cache: typeof listing_cache;
@@ -782,6 +791,7 @@ declare const fullApi: ApiFromModules<{
   walle_inventory: typeof walle_inventory;
   walle_ratelimits: typeof walle_ratelimits;
   websiteReturns: typeof websiteReturns;
+  websiteVerification: typeof websiteVerification;
 }>;
 
 /**

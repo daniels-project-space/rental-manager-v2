@@ -41,3 +41,15 @@ describe('actual booking-sync HTTP receipts',()=>{
   expect(response.status).toBe(500);expect(await response.json()).toMatchObject({ok:false});
  });
 });
+
+it('accepts verification only through the secret bridge and applies a new revision without a booking-status transition',async()=>{
+ vi.stubEnv('DBCINEMA_WEBHOOK_SECRET','receipt-fixture');const{ctx,rows}=fixture();
+ const verification={version:1,provider:'didit',status:'processing',checks:{identity:'approved',selfie:'approved',address:'review'},accountId:'account-bound',sessionId:'source-session',updatedAt:1000,securityReady:true,archiveReady:false,requiresDroneLicence:false,droneLicenceStatus:'not_required',approved:false};
+ const pending=booking({verification});expect((await invoke(ctx,request(pending,'foreign'))).status).toBe(401);expect(ctx.runMutation).not.toHaveBeenCalled();
+ expect(await(await invoke(ctx,request(pending))).json()).toMatchObject({outcome:'applied',appliedRevision:4});
+ const approved=booking({revision:5,verification:{...verification,status:'verified',archiveReady:true,approved:true}});
+ expect(await(await invoke(ctx,request(approved))).json()).toMatchObject({outcome:'applied',appliedRevision:5});
+ expect([...rows.values()].find(r=>r.table==='reservations')).toMatchObject({status:'confirmed',site_verification:{approved:true,sessionId:'source-session'}});
+ expect((await invoke(ctx,request(booking({revision:5,verification})))).status).toBe(500);
+ expect([...rows.values()].find(r=>r.table==='reservations').site_verification.approved).toBe(true);
+});

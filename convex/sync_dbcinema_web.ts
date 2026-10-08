@@ -1,3 +1,4 @@
+import { parseWebsiteVerification, type WebsiteVerification } from "./lib/websiteVerification";
 /**
  * DB Cinema WEB profile sync (2026-06-25).
  *
@@ -47,6 +48,7 @@ type SiteLine = { title: string; qty: number; start: number; end: number; units:
 type SiteBooking = {
   id: string;
   revision?: number;
+  verification?: WebsiteVerification;
   status: string;
   customerName: string | null;
   customerEmail: string | null;
@@ -216,6 +218,7 @@ export const upsertSiteBookingsBatch = internalMutation({
         if (b.status === "pending_payment") receipts.push({ bookingId: b.id, receivedRevision: b.revision ?? 0, appliedRevision: null, outcome: "ignored", reason: "unpaid" });
         continue;
       }
+      const verification = parseWebsiteVerification(b.verification);
       if (b.damageCases !== undefined) validateWebsiteCases(b.damageCases);
       const startISO = new Date(b.start).toISOString().slice(0, 10);
       const endISO = new Date(b.end).toISOString().slice(0, 10);
@@ -354,6 +357,7 @@ export const upsertSiteBookingsBatch = internalMutation({
         booking_status: b.status,
         platform_close_pending:false,
         site_revision: b.revision ?? 0,
+        site_verification: verification,
         site_item_windows,
       };
       fields.pickup_time = b.pickupTime || undefined;
@@ -386,6 +390,7 @@ export const upsertSiteBookingsBatch = internalMutation({
           skipped++;
           continue;
         }
+        if ((b.revision ?? 0) === (mine.site_revision ?? 0) && (b.revision ?? 0) > 0) throw Error("Conflicting website rental revision");
         await ctx.db.patch(mine._id, {
           ...fields,
           image_hints,

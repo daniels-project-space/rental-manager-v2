@@ -1,4 +1,6 @@
 "use client";
+import WebsiteVerificationPanel from "./WebsiteVerificationPanel";
+import { websiteVerificationLabel, type WebsiteVerification } from "../../../convex/lib/websiteVerification";
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "convex/react";
@@ -15,6 +17,7 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 interface Block {
+  site_verification?: Pick<WebsiteVerification, "approved" | "status"> | null;
   reservation_id: string;
   qty?: number;
   start_date: string | undefined;
@@ -609,7 +612,7 @@ function BlockDetail({ block, items, accent, onClose }: { block: Block; items: R
   const fmtDay = (d: string | null | undefined) =>
     d ? new Date(d + "T00:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }) : null;
   const rows: Array<[string, string | null | undefined]> = [
-    ["Status", orderStepLabel(block.order_step)],
+    ["Status", block.account_slug === "dbcinema_web" && !block.order_step ? websiteVerificationLabel(block.site_verification) : orderStepLabel(block.order_step)],
     ["Renter", block.renter_name && block.renter_name !== "?" ? block.renter_name : "—"],
     // Effective (negotiated) return so an extended rental's detail matches its bar.
     ["↑ Out", [fmtDay(block.start_date), block.pickup_time?.slice(0, 5), fmtMethod(block.pickup_method)].filter(Boolean).join(" · ") || null],
@@ -662,6 +665,7 @@ function BlockDetail({ block, items, accent, onClose }: { block: Block; items: R
           ))}
         </div>
       )}
+      {block.account_slug === "dbcinema_web" && <WebsiteVerificationPanel key={block.reservation_id} reservationId={block.reservation_id} />}
       {rows
         .filter(([, v]) => v != null && v !== "")
         .map(([label, val]) => (
