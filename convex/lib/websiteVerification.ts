@@ -25,6 +25,6 @@ export function parseWebsiteVerification(raw: unknown): WebsiteVerification | un
   if (x.approved && (x.status !== "verified" || !x.accountId || !x.securityReady || !x.archiveReady || (x.requiresDroneLicence && x.droneLicenceStatus !== "approved"))) throw Error("Inconsistent website verification approval");
   return { ...x, checks: { ...x.checks } };
 }
-export function websiteVerificationLabel(snapshot: WebsiteVerification | null | undefined): string {
+export function websiteVerificationLabel(snapshot: Pick<WebsiteVerification, "approved"> | null | undefined): string {
   return snapshot?.approved ? "Approved · ready for collection" : "Paid · awaiting verification";
 }

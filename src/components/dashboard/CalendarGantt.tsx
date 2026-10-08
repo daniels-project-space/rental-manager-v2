@@ -17,7 +17,7 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 interface Block {
-  site_verification?: WebsiteVerification | null;
+  site_verification?: Pick<WebsiteVerification, "approved" | "status"> | null;
   reservation_id: string;
   qty?: number;
   start_date: string | undefined;

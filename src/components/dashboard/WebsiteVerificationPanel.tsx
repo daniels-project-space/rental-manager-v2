@@ -1,5 +1,5 @@
 "use client";
-import { useAction, useQuery } from "convex/react";
+import { useAction, useQuery, useConvexAuth } from "convex/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -7,6 +7,13 @@ import { websiteVerificationLabel } from "../../../convex/lib/websiteVerificatio
 
 /** Mounted only for the selected private rental; background tabs never poll. */
 export default function WebsiteVerificationPanel({ reservationId }: { reservationId: string }) {
+  const { isLoading, isAuthenticated } = useConvexAuth();
+  const owner = useQuery(api.auth.state, isAuthenticated ? {} : "skip");
+  if (isLoading || (isAuthenticated && owner === undefined)) return <p className="mt-3 text-xs text-slate-400">Checking owner sign-in…</p>;
+  if (!isAuthenticated || !owner?.isOwner) return <div className="mt-3 rounded-lg border border-slate-700 p-3 text-xs text-slate-300" onClick={e => e.stopPropagation()}>Verification documents and collection controls are private. <a className="text-amber-200 underline" href="/login">Sign in to Rental Manager</a></div>;
+  return <PrivateVerificationPanel key={reservationId} reservationId={reservationId} />;
+}
+function PrivateVerificationPanel({ reservationId }: { reservationId: string }) {
   const id = reservationId as Id<"reservations">;
   const data = useQuery(api.websiteVerification.context, { reservationId: id });
   const refresh = useAction(api.websiteVerification.refresh);
@@ -23,11 +30,11 @@ export default function WebsiteVerificationPanel({ reservationId }: { reservatio
   }, [id, refresh]);
   useEffect(() => {
     mounted.current = true;
-    void reload();
+    const initial = window.setTimeout(() => void reload(), 0);
     const timer = window.setInterval(() => void reload(), 15000);
     const visible = () => { if (document.visibilityState === "visible") void reload(); };
     document.addEventListener("visibilitychange", visible);
-    return () => { mounted.current = false; window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
+    return () => { mounted.current = false; window.clearTimeout(initial); window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
   }, [reload]);
   if (!data) return <p className="mt-3 text-xs text-slate-400">Loading website verification…</p>;
   const v = data.verification;

@@ -24,7 +24,7 @@ export const refresh = action({ args, handler: async (ctx, { reservationId }): P
   if (!url || !token) throw Error("Website verification connection is not configured");
   const response = await fetch(`${url.replace(/\/$/, "")}/api/query`, { method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ path: "rmv2_sync:forRmv2SyncBooking", args: { token, bookingId }, format: "json" }), signal: AbortSignal.timeout(12000) });
-  let result: any;
+  let result: { status?: string; value?: { id?: string } };
   try { result = await response.json(); } catch { throw Error("Website verification could not be refreshed. Try again."); }
   if (!response.ok || result.status !== "success" || result.value?.id !== bookingId) throw Error("Website verification could not be refreshed. Try again.");
   const receipt = await ctx.runMutation(internal.sync_dbcinema_web.upsertSiteBookingsBatch, { bookings: [result.value], reconcile: false });
