@@ -118,10 +118,22 @@ export function resolveStockItem(name: string, items: Doc<"items">[]) {
   return bestMatch(name, items, (i) => i.name_canonical, (i) => i.aliases ?? []);
 }
 
+/** Live quotes cannot promise a return date once delivered gear is overdue.
+ * Clip its unresolved occupancy to the requested horizon; never rewrite the
+ * rental's planned dates or the historical revenue/display calculations. */
+function quotationEnd(r: Parameters<typeof effEnd>[0], today: string, horizon: string): string {
+  const agreed = r.return_date && r.return_date > r.end_date ? r.return_date : r.end_date;
+  if (r.order_step === "DELIVERED" && (r.status === "confirmed" || r.status === "ongoing") && agreed < today) {
+    return validIsoDate(horizon) && horizon > today ? horizon : today;
+  }
+  return effEnd(r, today);
+}
+
 export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources>>, item: Doc<"items">, request: StockRequest) {
   const today = londonToday();
   const occupancy: Occupancy[] = [];
   for (const r of sources.reservations) {
+    if (r.is_obsolete || r.order_step === "RETURNED" || r.order_step === "REVIEWED") continue;
     // The requesting booking already occupies its units; it must not block itself.
     if (request.thread_id && r.hygglo_order_id === request.thread_id) continue;
     if (!r.start_date || !r.end_date) continue;
@@ -133,7 +145,7 @@ export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources
         const agreedReturn = new Date(w.end).toISOString().slice(0,10);
         // Only the last allocation can be overdue; extending older extension
         // rows as well would count the same bodies twice.
-        const ret = w.end === latestEnd ? effEnd({end_date:agreedReturn,return_date:agreedReturn,status:r.status,order_step:r.order_step},today) : agreedReturn;
+        const ret = w.end === latestEnd ? quotationEnd({end_date:agreedReturn,return_date:agreedReturn,status:r.status,order_step:r.order_step},today,request.end_date) : agreedReturn;
         const pickupTime = w.pickupTime === undefined ? r.pickup_time : w.pickupTime;
         const returnTime = ret > agreedReturn ? undefined : w.returnTime === undefined ? r.return_time : w.returnTime;
         const end = returnTime && /^([01]\d|2[0-3]):[0-5]\d$/.test(returnTime)
@@ -147,7 +159,7 @@ export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources
     const qty = units.get(String(item._id)) ?? 0;
     if (qty <= 0) continue;
     const pickup = effStart({ start_date: r.start_date, pickup_date: r.pickup_date });
-    const ret = effEnd({ end_date: r.end_date, return_date: r.return_date, status: r.status, order_step: r.order_step }, today);
+    const ret = quotationEnd({ end_date: r.end_date, return_date: r.return_date, status: r.status, order_step: r.order_step }, today,request.end_date);
     const returnTime = ret > (r.return_date ?? r.end_date) ? undefined : r.return_time;
     let end = `${shiftStockDate(ret, 1)}T00:00`;
     if (returnTime && /^([01]\d|2[0-3]):[0-5]\d$/.test(returnTime)) {

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { evaluateStockWindow, stockForItem, stockWindowPeak, validIsoDate } from "./renter_stock";
 
 const request = { item_name: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04" };
@@ -136,5 +136,39 @@ describe("saved website clocks in actual quoting",()=>{
  it("carries late buffered returns into the next day",()=>{
   expect(quote({...window,returnTime:"23:30"},"2035-01-03","00:29").available).toBe(false);
   expect(quote({...window,returnTime:"23:30"},"2035-01-03","00:30").available).toBe(true);
+ });
+});
+
+describe("overdue physical custody in live quotes",()=>{
+ beforeEach(()=>{vi.useFakeTimers();vi.setSystemTime(new Date("2026-10-08T12:00:00Z"));});
+ afterEach(()=>vi.useRealTimers());
+ const item={_id:"camera",name_canonical:"FX3",status:"active",qty:3};
+ const hire={account_slug:"leo",hygglo_order_id:"out",status:"confirmed",order_step:"DELIVERED",start_date:"2026-08-01",end_date:"2026-08-02",return_time:"12:00",resolved_items:[{item_id:"camera",qty:2}]};
+ const quote=(reservation:any,extra={})=>stockForItem({items:[item],reservations:[reservation],productIndex:new Map(),overrides:new Map(),claims:[],blackouts:[],vacations:[]} as any,item as any,{item_name:"FX3",start_date:"2027-01-01",end_date:"2027-01-02",quantity:2,...extra});
+ it("does not assume an ancient delivered rental returned after the old grace period",()=>{
+  const saved=JSON.stringify(hire);
+  const result=quote(hire);
+  expect(result.available).toBe(false);expect(result.free_units).toBe(1);
+  expect(result.per_day.map(d=>d.booked)).toEqual([2,2]);
+  expect(JSON.stringify(hire)).toBe(saved);
+  expect(quote({...hire,status:"ongoing"}).free_units).toBe(1);
+ });
+ it("releases recorded returns and excludes obsolete copies",()=>{
+  for(const order_step of ["RETURNED","REVIEWED"])expect(quote({...hire,order_step}).free_units).toBe(3);
+  expect(quote({...hire,is_obsolete:true}).free_units).toBe(3);
+ });
+ it("preserves planned future handovers and request identity",()=>{
+  expect(quote({...hire,start_date:"2026-10-20",end_date:"2026-10-21"}).free_units).toBe(3);
+  expect(quote(hire,{thread_id:"out"}).free_units).toBe(3);
+  expect(quote(hire,{end_date:"tomorrow"}).available).toBeNull();
+ });
+ it("extends only the final website allocation without counting an older extension twice",()=>{
+  const reservation={...hire,account_slug:"dbcinema_web",site_item_windows:[
+   {item_id:"camera",qty:2,start:Date.UTC(2026,7,1),end:Date.UTC(2026,7,2),returnTime:"12:00"},
+   {item_id:"camera",qty:2,start:Date.UTC(2026,7,3),end:Date.UTC(2026,7,4),returnTime:"12:00"},
+  ]};
+  const saved=JSON.stringify(reservation);const result=quote(reservation);
+  expect(result.free_units).toBe(1);expect(result.per_day.map(d=>d.booked)).toEqual([2,2]);
+  expect(JSON.stringify(reservation)).toBe(saved);
  });
 });
