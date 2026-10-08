@@ -1,4 +1,5 @@
 "use client";
+import { WebsiteReturnModal } from "./WebsiteReturnModal";
 import { useAction, useMutation } from "convex/react";
 import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -718,7 +719,10 @@ function OpenCaseModal({
 
 export function ReturnHub() {
   const { activeAccountSlug } = useAccount();
-  const rows = useStableQuery(api.reservations.getDueReturns, { accountSlug: activeAccountSlug }) as DueReturn[] | undefined;
+  const queriedRows = useStableQuery(api.reservations.getDueReturns, { accountSlug: activeAccountSlug }) as DueReturn[] | undefined;
+  // Old website rows may still carry a Hygglo-close flag. Resume their actual
+  // website inspection instead of sending a website ID to the Hygglo API.
+  const rows = queriedRows?.map(row=>row.accountSlug === "dbcinema_web" ? {...row,platformClosePending:false,platformCloseError:null}:row);
   const [active, setActive] = useState<DueReturn | null>(null);
   const [caseFor, setCaseFor] = useState<DueReturn | null>(null);
   // finalizeReturn = markReturned (CRM save, status, reactive-query refresh that
@@ -924,12 +928,12 @@ export function ReturnHub() {
                         ✓ Return
                       </button>
                       <button
-                        onClick={() => setCaseFor(r)}
+                        onClick={() => r.accountSlug === "dbcinema_web" ? setActive(r) : setCaseFor(r)}
                         className="text-[11px] font-medium py-2.5 transition-colors text-[#8b8fa3] hover:bg-[rgba(245,158,11,0.1)] hover:text-[#fbbf24]"
                         style={{ borderLeft: "1px solid rgba(255,255,255,0.06)" }}
-                        title="Open a damage/loss case — flags the renter and moves this to the Cases pipeline (stage 1)"
+                        title={r.accountSlug === "dbcinema_web" ? "Inspect individual items and open a linked website damage case" : "Open a damage/loss case — flags the renter and moves this to the Cases pipeline (stage 1)"}
                       >
-                        Open case
+                        {r.accountSlug === "dbcinema_web" ? "Inspect issues" : "Open case"}
                       </button>
                     </div>
                     )}
@@ -943,7 +947,7 @@ export function ReturnHub() {
           </>
         )}
       </Card>
-      {active && <ReturnModal item={active} onClose={() => setActive(null)} onConfirm={handleReturn} />}
+      {active && (active.accountSlug === "dbcinema_web" ? <WebsiteReturnModal reservationId={active.reservationId} onClose={() => setActive(null)} /> : <ReturnModal item={active} onClose={() => setActive(null)} onConfirm={handleReturn} />)}
       {caseFor && <OpenCaseModal item={caseFor} onClose={() => setCaseFor(null)} onConfirm={handleOpenCase} />}
     </>
   );

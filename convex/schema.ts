@@ -483,6 +483,8 @@ const operationalSchema = defineSchema({
      *  hint so future runs can re-link without refetching the order. */
     hygglo_user_id: v.optional(v.string()),
     booking_status: v.optional(v.string()),         // raw Hygglo booking status (e.g. "pending_review", "confirmed")
+    site_revision: v.optional(v.number()), // monotonically ordered website updates
+    site_item_windows: v.optional(v.array(v.object({ item_id: v.id("items"), qty: v.number(), start: v.number(), end: v.number(), pickupTime: v.optional(v.union(v.string(), v.null())), returnTime: v.optional(v.union(v.string(), v.null())) }))), // saved per-component hire periods and agreed clocks
     /** Reply Inbox (2026-06-22): true when Hygglo's order `actions` map currently
      *  offers accept/deny — i.e. the request is awaiting MY approval (the trigger
      *  shown atop the messages board). Authoritative source for the Approve/Decline
@@ -680,6 +682,7 @@ const operationalSchema = defineSchema({
     // account + recent start_date in one indexed range.
     .index("by_account_start", ["account_slug", "start_date"])
     .index("by_account_end", ["account_slug", "end_date"])
+    .index("by_account_order_step", ["account_slug", "order_step"])
     .index("by_account_obsolete_end", ["account_slug", "is_obsolete", "end_date"])
     .index("by_account_obsolete_return", ["account_slug", "is_obsolete", "return_date"]),
 
@@ -1033,11 +1036,20 @@ const operationalSchema = defineSchema({
     renter_id: v.optional(v.id("renters")),
     renter_name: v.optional(v.string()),
     opened_from: v.optional(v.string()),       // "return_hub" | "manual"
+    site_case_id: v.optional(v.string()),
+    site_booking_id: v.optional(v.string()),
+    site_customer_account_id: v.optional(v.string()),
+    site_item_key: v.optional(v.string()),
+    site_case_status: v.optional(v.union(v.literal("open"), v.literal("closed"))),
+    site_case_resolution: v.optional(v.string()),
+    site_case_closed_at: v.optional(v.number()),
+    site_case_revision: v.optional(v.number()),
     // Items physically OUT ON REPAIR for this case — reduce effective stock
     // until the case is closed (terminal stage).
     repair_item_ids: v.optional(v.array(v.id("items"))),
   }).index("by_account", ["account_slug"])
-    .index("by_claim_date", ["claim_date"]),
+    .index("by_claim_date", ["claim_date"])
+    .index("by_site_case", ["site_case_id"]),
 
   // ── Conflict dismissals — per-event flags so an owner can suppress
   // a known double-booking from the banner. Keyed by a hash of item_id +

@@ -300,7 +300,7 @@ export const getLifetimeByMonth = query({
         .query("mv_lifetime_revenue")
         .withIndex("by_account", (q) => q.eq("account", accountKey))
         .first();
-      if (cached) return cached.payload;
+      if (cached?.payload?.accountBreakdownVersion === 2) return cached.payload;
     }
     // AI Boost parameters from settings (no hardcoded fallback — settings row is seeded)
     const settings = await ctx.db.query("settings").first();
@@ -361,6 +361,7 @@ export const getLifetimeByMonth = query({
 
     if (!firstMonth) {
       return {
+        accountBreakdownVersion: 2,
         months: [],
         totalRevenue: 0,
         avgMonthly: 0,
@@ -412,6 +413,7 @@ export const getLifetimeByMonth = query({
     }
 
     const dbGross = new Map<string, number>();
+    const webGross = new Map<string, number>();
     const leoGross = new Map<string, number>();
     // diogo — live-only account (no v1 / historical_revenue rows). Its realised
     // gross flows purely through this map (mirrors leoGross), keeping diogo's
@@ -488,6 +490,8 @@ export const getLifetimeByMonth = query({
       if (key === currentMonth) continue;
       if (slug === "leo") {
         leoGross.set(key, r2((leoGross.get(key) ?? 0) + amount));
+      } else if (slug === "dbcinema_web") {
+        webGross.set(key, r2((webGross.get(key) ?? 0) + amount));
       } else if (slug === "diogo") {
         diogoGross.set(key, r2((diogoGross.get(key) ?? 0) + amount));
       } else {
@@ -508,12 +512,13 @@ export const getLifetimeByMonth = query({
     {
       // Iterate ACCOUNT_SLUGS so adding a 5th account picks up automatically
       // here AND in dashboard.getStatsDrawerData's runtime invariant. Today
-      // only dbcinema and leo have legacy gross maps; daniel/vertus join the
+      // dbcinema/website/leo/diogo have live gross maps; daniel/vertus join the
       // per-account `byAccount` totals below via hist + isFuture branches.
       const perSlug = Object.fromEntries(
         ACCOUNT_SLUGS.map((slug) => [slug, realisedMonthRevenue(filtered as any, currentMonth, slug)]),
       ) as Record<(typeof ACCOUNT_SLUGS)[number], ReturnType<typeof realisedMonthRevenue>>;
-      const dbCurrent = perSlug.dbcinema.netGbp + (perSlug.dbcinema_web?.netGbp ?? 0);
+      const dbCurrent = perSlug.dbcinema.netGbp;
+      if (perSlug.dbcinema_web.netGbp > 0) webGross.set(currentMonth, r2(perSlug.dbcinema_web.netGbp));
       if (dbCurrent > 0) dbGross.set(currentMonth, r2(dbCurrent));
       if (perSlug.leo.netGbp > 0) leoGross.set(currentMonth, r2(perSlug.leo.netGbp));
       if (perSlug.diogo.netGbp > 0) diogoGross.set(currentMonth, r2(perSlug.diogo.netGbp));
@@ -540,6 +545,7 @@ export const getLifetimeByMonth = query({
       month: string;
       monthLabel: string;
       dbcinemaOrganic: number;
+      dbcinemaWebOrganic: number;
       leoOrganic: number;
       diogoOrganic: number;
       danielOrganic: number;
@@ -553,7 +559,7 @@ export const getLifetimeByMonth = query({
       count: number;
       // v1-parity response shape
       revenue: number;
-      byAccount: { dbcinema: number; leo: number; diogo: number; daniel: number; vertus: number };
+      byAccount: { dbcinema_web: number; dbcinema: number; leo: number; diogo: number; daniel: number; vertus: number };
       damage: number;
       aiAttribution: AiAttributionMonth;
     };
@@ -588,6 +594,7 @@ export const getLifetimeByMonth = query({
       const isFuture = mo > currentMonth;
 
       let dbOrganic = 0;
+      let webOrganic = 0;
       let leoOrganic = 0;
       let diogoOrganic = 0;
       let danielOrganic = 0;
@@ -615,7 +622,10 @@ export const getLifetimeByMonth = query({
         const dbRaw = dbGross.get(mo) ?? 0;
         const leoRaw = leoGross.get(mo) ?? 0;
         const diogoRaw = diogoGross.get(mo) ?? 0;
-        const totalRaw = dbRaw + leoRaw + diogoRaw;
+        const webRaw = webGross.get(mo) ?? 0;
+        const totalRaw = dbRaw + webRaw + leoRaw + diogoRaw;
+        // Website revenue has no legacy Hygglo historical column.
+        webOrganic = webRaw;
         const hist = histByMonth.get(mo);
 
         // Determine whether per-account hist columns are present for this month.
@@ -700,12 +710,16 @@ export const getLifetimeByMonth = query({
           damageClaims = claimsByMonth.get(mo) ?? 0;
         }
 
+        if (accountSlug && accountSlug !== "dbcinema_web") webOrganic = 0;
         // Per-account filter: zero out accounts not requested.
         // For retired accounts (daniel/vertus), also pull in hist columns that live polling skips.
         if (accountSlug === "dbcinema") {
           // Always incorporate hist.dbcinema so pre-import months surface in the dbcinema-only view.
           dbOrganic = (hist?.dbcinema !== undefined ? hist.dbcinema : 0) + dbRaw;
           leoOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
+        } else if (accountSlug === "dbcinema_web") {
+          webOrganic = webRaw;
+          dbOrganic = 0; leoOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
         } else if (accountSlug === "leo") {
           // Always incorporate hist.leo so pre-import months surface in the leo-only view.
           leoOrganic = (hist?.leo !== undefined ? hist.leo : 0) + leoRaw;
@@ -729,7 +743,7 @@ export const getLifetimeByMonth = query({
       pendingNextVal = pendingByMonth.get(mo) ?? 0;
       awaitingPaymentNextVal = awaitingPaymentByMonth.get(mo) ?? 0;
 
-      const monthTotal = dbOrganic + leoOrganic + diogoOrganic + danielOrganic + vertusOrganic + damageClaims + bookedNextVal;
+      const monthTotal = dbOrganic + webOrganic + leoOrganic + diogoOrganic + danielOrganic + vertusOrganic + damageClaims + bookedNextVal;
       if (!isFuture) cumulative = r2(cumulative + monthTotal);
 
       const count = !isFuture
@@ -747,6 +761,7 @@ export const getLifetimeByMonth = query({
         month: mo,
         monthLabel: label,
         dbcinemaOrganic: dbOrganic,
+        dbcinemaWebOrganic: webOrganic,
         leoOrganic,
         diogoOrganic,
         danielOrganic,
@@ -761,6 +776,7 @@ export const getLifetimeByMonth = query({
         // v1-parity response shape
         revenue: monthTotal,
         byAccount: {
+          dbcinema_web: webOrganic,
           dbcinema: accountSlug === "daniel" || accountSlug === "vertus" ? 0 : dbOrganic,
           leo: leoOrganic,
           diogo: diogoOrganic,
@@ -778,11 +794,11 @@ export const getLifetimeByMonth = query({
     const completedRows = rows.filter(
       (row) =>
         row.month <= currentMonth &&
-        row.dbcinemaOrganic + row.leoOrganic + row.diogoOrganic + row.danielOrganic + row.vertusOrganic + row.damageClaims > 0
+        row.dbcinemaOrganic + row.dbcinemaWebOrganic + row.leoOrganic + row.diogoOrganic + row.danielOrganic + row.vertusOrganic + row.damageClaims > 0
     );
 
     const monthRev = (row: MonthRow) =>
-      row.dbcinemaOrganic + row.leoOrganic + row.diogoOrganic + row.danielOrganic + row.vertusOrganic + row.damageClaims;
+      row.dbcinemaOrganic + row.dbcinemaWebOrganic + row.leoOrganic + row.diogoOrganic + row.danielOrganic + row.vertusOrganic + row.damageClaims;
 
     const totalRevenue = r2(completedRows.reduce((s, row) => s + monthRev(row), 0));
     const avgMonthly =
@@ -823,6 +839,7 @@ export const getLifetimeByMonth = query({
     const currentMonthTarget = currentProjection.target;
 
     return {
+      accountBreakdownVersion: 2,
       months: rows,
       totalRevenue,
       avgMonthly,

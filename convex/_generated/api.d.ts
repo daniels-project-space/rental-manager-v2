@@ -277,6 +277,7 @@ import type * as lib_thread_messages from "../lib/thread_messages.js";
 import type * as lib_thread_referral_reference from "../lib/thread_referral_reference.js";
 import type * as lib_verification_failure from "../lib/verification_failure.js";
 import type * as lib_verified_item_spec from "../lib/verified_item_spec.js";
+import type * as lib_websiteCases from "../lib/websiteCases.js";
 import type * as lib_weekly_metrics_compute from "../lib/weekly_metrics_compute.js";
 import type * as lib_widget_mv from "../lib/widget_mv.js";
 import type * as listing_cache from "../listing_cache.js";
@@ -389,6 +390,7 @@ import type * as twin_gap_apply from "../twin_gap_apply.js";
 import type * as vacation from "../vacation.js";
 import type * as walle_inventory from "../walle_inventory.js";
 import type * as walle_ratelimits from "../walle_ratelimits.js";
+import type * as websiteReturns from "../websiteReturns.js";
 
 import type {
   ApiFromModules,
@@ -666,6 +668,7 @@ declare const fullApi: ApiFromModules<{
   "lib/thread_referral_reference": typeof lib_thread_referral_reference;
   "lib/verification_failure": typeof lib_verification_failure;
   "lib/verified_item_spec": typeof lib_verified_item_spec;
+  "lib/websiteCases": typeof lib_websiteCases;
   "lib/weekly_metrics_compute": typeof lib_weekly_metrics_compute;
   "lib/widget_mv": typeof lib_widget_mv;
   listing_cache: typeof listing_cache;
@@ -778,6 +781,7 @@ declare const fullApi: ApiFromModules<{
   vacation: typeof vacation;
   walle_inventory: typeof walle_inventory;
   walle_ratelimits: typeof walle_ratelimits;
+  websiteReturns: typeof websiteReturns;
 }>;
 
 /**

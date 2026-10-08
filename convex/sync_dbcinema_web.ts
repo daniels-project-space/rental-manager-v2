@@ -8,7 +8,7 @@
  * pushes Hygglo availability DOWN into the storefront.
  *
  *   syncDbcinemaWeb (internalAction) — fetches the storefront's bookings feed
- *     (rmv2_sync:forRmv2Sync, token-guarded) over Convex's HTTP query API and
+ *     (rmv2_sync:forRmv2SyncPage, token-guarded) over Convex's HTTP query API and
  *     hands them to the upsert mutation.
  *   upsertSiteBookingsBatch (internalMutation) — maps each booking's decomposed
  *     Hygglo product IDs to RMv2 items (via the dbcinema hygglo_product_index),
@@ -23,11 +23,15 @@
  *   DBCINEMA_CONVEX_URL   (e.g. https://veracious-wombat-196.convex.cloud)
  *   DBCINEMA_ADMIN_TOKEN  (the storefront's ADMIN_TOKEN)
  */
+import { syncWebsiteCases, validateWebsiteCases } from "./lib/websiteCases";
 import { internalAction, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
 import { computePollHash } from "./hygglo";
+import { queueNotificationEvents } from "./notifications";
+import { websiteWindowUnits } from "./lib/reservations/itemUnits";
+import { buildConfirmedBookingNotificationCopy } from "./lib/notification_events";
 
 const upsertBatchRef = internal.sync_dbcinema_web.upsertSiteBookingsBatch;
 // This scheduled refresh is an action, as declared by its native registration.
@@ -42,6 +46,7 @@ type SiteUnit = { hyggloProductId: number; qty: number };
 type SiteLine = { title: string; qty: number; start: number; end: number; units: SiteUnit[] };
 type SiteBooking = {
   id: string;
+  revision?: number;
   status: string;
   customerName: string | null;
   customerEmail: string | null;
@@ -58,6 +63,8 @@ type SiteBooking = {
   currency: string;
   createdAt: number;
   lineItems: SiteLine[];
+  damageCases?: import("./lib/websiteCases").WebsiteCase[];
+  physicalReservations?: Array<{rmv2ItemId: string | null; hyggloProductId?: number | null; qty: number; start: number; end: number; pickupTime?: string | null; returnTime?: string | null}>;
 };
 
 export const syncDbcinemaWeb = internalAction({
@@ -69,33 +76,38 @@ export const syncDbcinemaWeb = internalAction({
       console.error("[dbcinema_web sync] missing DBCINEMA_CONVEX_URL / DBCINEMA_ADMIN_TOKEN");
       return { ok: false, reason: "missing_config" };
     }
-    let payload: { authorized?: boolean; bookings?: SiteBooking[] };
+    let cursor: string | null = null;
+    let upserted = 0, mapped_units = 0, unmapped_units = 0;
     try {
-      const resp = await fetch(`${url.replace(/\/$/, "")}/api/query`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          path: "rmv2_sync:forRmv2Sync",
-          args: { token },
-          format: "json",
-        }),
-      });
-      const json = (await resp.json()) as { status?: string; value?: unknown; errorMessage?: string };
-      if (json.status !== "success") {
-        console.error("[dbcinema_web sync] storefront query failed:", json.errorMessage ?? json.status);
-        return { ok: false, reason: "query_failed" };
+      for (let page = 0; page < 100; page++) {
+        const resp = await fetch(`${url.replace(/\/$/, "")}/api/query`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            path: "rmv2_sync:forRmv2SyncPage",
+            args: { token, paginationOpts: { cursor, numItems: 100 } },
+            format: "json",
+          }),
+          signal: AbortSignal.timeout(20000),
+        });
+        const json = (await resp.json()) as { status?: string; value?: unknown; errorMessage?: string };
+        if (json.status !== "success") {
+          console.error("[dbcinema_web sync] storefront query failed:", json.errorMessage ?? json.status);
+          return { ok: false, reason: "query_failed" };
+        }
+        const payload = json.value as { authorized?: boolean; bookings?: SiteBooking[]; isDone?: boolean; continueCursor?: string };
+        if (!resp.ok || !payload?.authorized || !Array.isArray(payload.bookings) || typeof payload.isDone !== "boolean") return { ok: false, reason: "invalid_feed" };
+        const res = await ctx.runMutation(upsertBatchRef, { bookings: payload.bookings, reconcile: false });
+        upserted += res.upserted; mapped_units += res.mapped_units; unmapped_units += res.unmapped_units;
+        if (payload.isDone) return { ok: true, upserted, mapped_units, unmapped_units };
+        if (!payload.continueCursor || payload.continueCursor === cursor) return { ok: false, reason: "invalid_cursor" };
+        cursor = payload.continueCursor;
       }
-      payload = json.value as { authorized?: boolean; bookings?: SiteBooking[] };
+      return { ok: false, reason: "page_limit" };
     } catch (err) {
       console.error("[dbcinema_web sync] fetch error:", err instanceof Error ? err.message : err);
       return { ok: false, reason: "fetch_error" };
     }
-    if (!payload?.authorized) return { ok: false, reason: "unauthorized" };
-    const bookings = Array.isArray(payload.bookings) ? payload.bookings : [];
-    const res = await ctx.runMutation(upsertBatchRef, {
-      bookings: bookings as unknown[],
-    });
-    return { ok: true, ...res };
   },
 });
 
@@ -121,7 +133,7 @@ const SITE_STATUS_MAP: Record<string, "confirmed" | "completed" | "cancelled"> =
 export const upsertSiteBookingsBatch = internalMutation({
   // reconcile: when false, SKIP the "cancel anything missing from the feed"
   // sweep. The event-driven webhook pushes ONE booking, so reconciling against
-  // it would cancel every other web reservation. Bulk poll omits it → true.
+  // it would cancel every other web reservation. Paged pulls also pass false; cancellations arrive as explicit records.
   args: { bookings: v.array(v.any()), reconcile: v.optional(v.boolean()) },
   handler: async (ctx, { bookings, reconcile }) => {
     // Ensure the account row exists so the switcher pill + avatar render.
@@ -180,6 +192,7 @@ export const upsertSiteBookingsBatch = internalMutation({
       );
     }
 
+    const receipts: Array<{bookingId: string; receivedRevision: number; appliedRevision: number | null; outcome: "applied" | "unchanged" | "stale" | "ignored"; reason?: string}> = [];
     let upserted = 0;
     let skipped = 0;
     let mappedUnits = 0;
@@ -192,15 +205,18 @@ export const upsertSiteBookingsBatch = internalMutation({
 
     for (const raw of bookings as SiteBooking[]) {
       const b = raw;
-      if (!b || !b.id || !b.start || !b.end) continue;
+      if (!b || !b.id || !Number.isFinite(b.start) || !Number.isFinite(b.end) || b.end < b.start) continue;
+      if (b.revision !== undefined && (!Number.isSafeInteger(b.revision) || b.revision < 0)) throw Error("Invalid website rental revision");
       // status → RMv2 status + order_step (so due-returns / Return Hub / the
       // ongoing-vs-upcoming split treat web rentals like Hygglo ones).
       // Unknown / non-actionable (pending_payment) → skip, never default.
       const status = SITE_STATUS_MAP[b.status];
       if (!status) {
         skipped++;
+        if (b.status === "pending_payment") receipts.push({ bookingId: b.id, receivedRevision: b.revision ?? 0, appliedRevision: null, outcome: "ignored", reason: "unpaid" });
         continue;
       }
+      if (b.damageCases !== undefined) validateWebsiteCases(b.damageCases);
       const startISO = new Date(b.start).toISOString().slice(0, 10);
       const endISO = new Date(b.end).toISOString().slice(0, 10);
       const order_step =
@@ -238,6 +254,24 @@ export const upsertSiteBookingsBatch = internalMutation({
           const pcur = byProduct.get(u.hyggloProductId);
           if (pcur) pcur.qty += u.qty;
           else byProduct.set(u.hyggloProductId, { name: head.name, image_url: head.image_url, qty: u.qty });
+        }
+      }
+      let site_item_windows: Array<{item_id: Id<"items">; qty:number; start:number; end:number; pickupTime?:string|null; returnTime?:string|null}> | undefined;
+      if (b.physicalReservations !== undefined) {
+        if (!Array.isArray(b.physicalReservations)) throw Error("Invalid website physical reservation ledger");
+        site_item_windows = b.physicalReservations.map(w => {
+          if (!w.rmv2ItemId || !itemById.has(w.rmv2ItemId)) throw Error("Website equipment needs a canonical master inventory mapping");
+          if (!Number.isSafeInteger(w.qty) || w.qty <= 0 || !Number.isFinite(w.start) || !Number.isFinite(w.end) || w.end < w.start) throw Error("Invalid website equipment window");
+          for (const time of [w.pickupTime, w.returnTime]) if (time != null && (typeof time !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time))) throw Error("Invalid website equipment time");
+          return { item_id: w.rmv2ItemId as Id<"items">, qty:w.qty, start:w.start, end:w.end, ...(w.pickupTime !== undefined ? {pickupTime:w.pickupTime} : {}), ...(w.returnTime !== undefined ? {returnTime:w.returnTime} : {}) };
+        });
+        byItem.clear();
+        byProduct.clear();
+        for (const [id,qty] of websiteWindowUnits(site_item_windows)) {
+          const canonical = describe(id as Id<"items">,qty);
+          byItem.set(id,{item_id:canonical.item_id,name:canonical.name,qty,image_url:canonical.image_url});
+          const pid = b.physicalReservations.find(w => w.rmv2ItemId === id)?.hyggloProductId;
+          if (typeof pid === "number") byProduct.set(pid,{name:canonical.name,qty,image_url:canonical.image_url});
         }
       }
       const hygglo_items = [...byProduct.entries()].map(([product_id, p]) => ({
@@ -301,9 +335,9 @@ export const upsertSiteBookingsBatch = internalMutation({
         items: itemsDisplay,
         resolved_items,
         expanded_items,
-        ...(photos_urls.length > 0 ? { photos_urls } : {}),
-        ...(hygglo_items.length > 0 ? { hygglo_items } : {}),
-        ...(order_step ? { order_step } : {}),
+        photos_urls,
+        hygglo_items,
+        order_step,
         gross_paid_gbp: gross,
         net_to_owner_gbp: net,
         platform_fee_gbp: 0,
@@ -315,12 +349,15 @@ export const upsertSiteBookingsBatch = internalMutation({
         // sweep below produces, or the two paths would disagree about whether a
         // cancelled web rental is obsolete.
         is_obsolete: status === "cancelled",
-        ...(status === "cancelled" ? { obsolete_reason: "renter_cancelled" } : {}),
+        obsolete_reason: status === "cancelled" ? "renter_cancelled" : undefined,
         source_filter: "dbcinema_web_site",
         booking_status: b.status,
+        platform_close_pending:false,
+        site_revision: b.revision ?? 0,
+        site_item_windows,
       };
-      if (b.pickupTime) fields.pickup_time = b.pickupTime;
-      if (b.returnTime) fields.return_time = b.returnTime;
+      fields.pickup_time = b.pickupTime || undefined;
+      fields.return_time = b.returnTime || undefined;
 
       // ── Conditional write — same diff gate as hygglo.ts upsertOrderImpl ─────
       // This cron re-upserts every booking every 30 min; a ctx.db.patch creates
@@ -331,33 +368,48 @@ export const upsertSiteBookingsBatch = internalMutation({
       // already in the hash) plus a volatile captured_at — and skip the row
       // entirely when unchanged. last_polled_at + poll_hash only advance when
       // the row is new or something actually changed (2026-07-12).
-      const newPollHash = computePollHash(JSON.stringify(fields));
+      const newPollHash = computePollHash(JSON.stringify({ ...fields, ...(b.damageCases !== undefined ? { damageCases: b.damageCases } : {}) }));
 
       const existing = await ctx.db
         .query("reservations")
         .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", b.id))
         .collect();
       const mine = existing.find((r) => r.account_slug === WEB_SLUG);
+      let reservationId = mine?._id;
       if (mine) {
+        if ((b.revision ?? 0) < (mine.site_revision ?? 0)) {
+          receipts.push({ bookingId: b.id, receivedRevision: b.revision ?? 0, appliedRevision: mine.site_revision ?? 0, outcome: "stale" });
+          skipped++; continue;
+        }
         if ((mine as { poll_hash?: string }).poll_hash === newPollHash) {
+          receipts.push({ bookingId: b.id, receivedRevision: b.revision ?? 0, appliedRevision: mine.site_revision ?? 0, outcome: "unchanged" });
           skipped++;
           continue;
         }
         await ctx.db.patch(mine._id, {
           ...fields,
-          ...(image_hints.length > 0 ? { image_hints } : {}),
+          image_hints,
           last_polled_at: Date.now(),
           poll_hash: newPollHash,
         });
       } else {
-        await ctx.db.insert("reservations", {
+        reservationId = await ctx.db.insert("reservations", {
           ...fields,
-          ...(image_hints.length > 0 ? { image_hints } : {}),
+          image_hints,
           last_polled_at: Date.now(),
           poll_hash: newPollHash,
           created_at: Date.now(),
         } as never);
       }
+      await syncWebsiteCases(ctx, b, reservationId, itemById);
+      // Notify new/upcoming confirmations, never a historical import or a repeat poll.
+      const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+      if (status === "confirmed" && startISO >= today && (!mine || mine.status !== "confirmed")) {
+        const copy_data = { renter_name: b.customerName ?? undefined, item_name: itemsDisplay[0]?.item_name, gross, net, currency: b.currency ?? "GBP" };
+        const copy = buildConfirmedBookingNotificationCopy({ renterName: copy_data.renter_name, itemName: copy_data.item_name, gross, net, currency: copy_data.currency, accountSlug: WEB_SLUG });
+        await queueNotificationEvents(ctx, [{ type: "booking_confirmed", thread_id: b.id, account_slug: WEB_SLUG, title: copy.title, body: `Website · ${copy.body}`, copy_data, url: `https://dbcinemarentals.com/admin?rental=${encodeURIComponent(b.id)}#messages` }]);
+      }
+      receipts.push({ bookingId: b.id, receivedRevision: b.revision ?? 0, appliedRevision: b.revision ?? 0, outcome: "applied" });
       upserted++;
     }
 
@@ -399,6 +451,7 @@ export const upsertSiteBookingsBatch = internalMutation({
     }
 
     return {
+      receipts,
       upserted,
       skipped,
       mapped_units: mappedUnits,

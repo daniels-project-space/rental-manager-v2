@@ -1,0 +1,11 @@
+# Website booking delivery receipts
+
+The actual booking upsert now emits one receipt for each accepted website booking: booking ID, received revision, applied revision and applied/unchanged/stale/ignored outcome. The authenticated `/dbcinema/booking-sync` route returns that receipt with version 1 rather than generic success/counts. Unsupported or malformed records without an accepted receipt return 422. Invalid physical stock evidence still fails the real mutation and does not receive success.
+
+A repeated unchanged booking returns the same applied revision. A stale confirmation cannot overwrite a newer return and reports the newer applied revision, so the website can keep reconciliation visible. Pending payment is explicitly ignored as unpaid and never becomes a paid manager rental; pending-stock visibility and the shared atomic reservation authority remain separate unfinished requirements.
+
+Four registered HTTP-route/real-upsert tests cover application, repeated delivery, return then stale confirmation, explicit unpaid/unknown records, shared-secret/config/malformed requests and rejected physical stock evidence. The tests are in the default Vitest include list. Controlled records and Request objects prove source handler behavior, not deployed customer/provider acceptance.
+
+Deploy manager-first with the compatible website PR58. Existing website consumers accept the extra receipt fields; new website consumers reject old generic success. Website lease-generation changes independently prevent duplicate or late older workers from acknowledging newer attempts and keep leased rows out of the due batch. Both changes remain in draft PRs; no runtime flags or live credentials are changed.
+
+Full suites/typecheck/safe `build:next`/owner boundary checks and Graphify updates pass before commit. Manager suite: 142 files, 2163 passing tests and 14 existing skips. Historical generic website acknowledgements need protected resync during rollout; the new contract does not retroactively attest them. Real paired source/auth bindings, downstream calendar/notifications/case acceptance, one atomic stock claim authority, legacy allocation reconciliation and the full visual/document/render goal remain open.

@@ -10,6 +10,7 @@ import { useCalendarOverlay } from "@/lib/dashboard/calendar-overlay-context";
 // ── Types inferred from convex/calendar.ts return shape ─────────────────────
 type ChipData = {
   reservationId: string;
+  periodKey?: string | null;
   kind?: "pickup" | "return" | "away";
   items: Array<{
     itemId: string | null;
@@ -915,7 +916,7 @@ function DayDrawer({ day }: { day: DayData }) {
       {allBookings.length > 0 && (
         <div className="space-y-3">
           {allBookings.map((b) => (
-            <BookingCard key={`${b.kind}-${String(b.reservationId)}`} chip={b} />
+            <BookingCard key={`${b.kind}-${String(b.reservationId)}-${b.periodKey ?? ""}`} chip={b} />
           ))}
         </div>
       )}

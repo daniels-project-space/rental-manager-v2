@@ -28,7 +28,7 @@ export function shiftStockDate(date: string, days: number): string {
   return new Date(Date.parse(date + "T00:00:00Z") + days * 86400000).toISOString().slice(0, 10);
 }
 
-type Occupancy = {
+export type Occupancy = {
   start: string;
   end: string;
   qty: number;
@@ -118,18 +118,50 @@ export function resolveStockItem(name: string, items: Doc<"items">[]) {
   return bestMatch(name, items, (i) => i.name_canonical, (i) => i.aliases ?? []);
 }
 
-export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources>>, item: Doc<"items">, request: StockRequest) {
+/** Live quotes cannot promise a return date once delivered gear is overdue.
+ * Clip its unresolved occupancy to the requested horizon; never rewrite the
+ * rental's planned dates or the historical revenue/display calculations. */
+function quotationEnd(r: Parameters<typeof effEnd>[0], today: string, horizon: string): string {
+  const agreed = r.return_date && r.return_date > r.end_date ? r.return_date : r.end_date;
+  if (r.order_step === "DELIVERED" && (r.status === "confirmed" || r.status === "ongoing") && agreed < today) {
+    return validIsoDate(horizon) && horizon > today ? horizon : today;
+  }
+  return effEnd(r, today);
+}
+
+/** Shared physical occupancy, including extensions, per-item windows and
+ * overdue custody. Callers may project it without exposing renter identities. */
+export function stockOccupancyForItem(sources: Awaited<ReturnType<typeof loadStockSources>>, item: Doc<"items">, request: StockRequest) {
   const today = londonToday();
   const occupancy: Occupancy[] = [];
   for (const r of sources.reservations) {
+    if (r.is_obsolete || r.order_step === "RETURNED" || r.order_step === "REVIEWED") continue;
     // The requesting booking already occupies its units; it must not block itself.
     if (request.thread_id && r.hygglo_order_id === request.thread_id) continue;
     if (!r.start_date || !r.end_date) continue;
+    if (r.account_slug === "dbcinema_web" && r.site_item_windows !== undefined) {
+      const windows = r.site_item_windows.filter(w => String(w.item_id) === String(item._id));
+      const latestEnd = Math.max(...windows.map(w=>w.end));
+      for (const w of windows) {
+        const pickup = new Date(w.start).toISOString().slice(0,10);
+        const agreedReturn = new Date(w.end).toISOString().slice(0,10);
+        // Only the last allocation can be overdue; extending older extension
+        // rows as well would count the same bodies twice.
+        const ret = w.end === latestEnd ? quotationEnd({end_date:agreedReturn,return_date:agreedReturn,status:r.status,order_step:r.order_step},today,request.end_date) : agreedReturn;
+        const pickupTime = w.pickupTime === undefined ? r.pickup_time : w.pickupTime;
+        const returnTime = ret > agreedReturn ? undefined : w.returnTime === undefined ? r.return_time : w.returnTime;
+        const end = returnTime && /^([01]\d|2[0-3]):[0-5]\d$/.test(returnTime)
+          ? new Date(Date.parse(`${ret}T${returnTime}:00Z`) + 3600000).toISOString().slice(0,16)
+          : `${shiftStockDate(ret,1)}T00:00`;
+        occupancy.push({start:`${pickup}T${pickupTime ?? "00:00"}`,end,qty:w.qty,renter_name:r.renter_name,order_id:r.hygglo_order_id});
+      }
+      continue;
+    }
     const units = reservationItemUnits(r, sources.productIndex, sources.overrides, sources.items);
     const qty = units.get(String(item._id)) ?? 0;
     if (qty <= 0) continue;
     const pickup = effStart({ start_date: r.start_date, pickup_date: r.pickup_date });
-    const ret = effEnd({ end_date: r.end_date, return_date: r.return_date, status: r.status, order_step: r.order_step }, today);
+    const ret = quotationEnd({ end_date: r.end_date, return_date: r.return_date, status: r.status, order_step: r.order_step }, today,request.end_date);
     const returnTime = ret > (r.return_date ?? r.end_date) ? undefined : r.return_time;
     let end = `${shiftStockDate(ret, 1)}T00:00`;
     if (returnTime && /^([01]\d|2[0-3]):[0-5]\d$/.test(returnTime)) {
@@ -143,6 +175,11 @@ export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources
     const extension_key = renter && r.account_slug ? JSON.stringify([r.account_slug, renter, [...units].sort(([a], [b]) => a.localeCompare(b))]) : undefined;
     occupancy.push({ start: `${pickup}T${r.pickup_time ?? "00:00"}`, end, qty, renter_name: r.renter_name, order_id: r.hygglo_order_id, extension_key });
   }
+  return occupancy;
+}
+
+export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources>>, item: Doc<"items">, request: StockRequest) {
+  const occupancy = stockOccupancyForItem(sources,item,request);
   const repair = sources.claims.filter(claimHoldsStock).reduce((n, c) => n + (c.repair_item_ids ?? []).filter((id) => id === item._id).length, 0);
   const result = evaluateStockWindow({ request, owned: item.status === "active" && !item.is_marketing_only && item.qty > 0, total: item.qty, repair, occupancy, blackouts: sources.blackouts.filter((b) => b.item_id === item._id), vacations: sources.vacations });
   return { ...result, ...(item.quantity_basis ? { quantity_basis: item.quantity_basis } : {}), item_name: item.name_canonical, item_id: item._id, kind: item.kind, owned: item.status === "active" && !item.is_marketing_only && item.qty > 0, is_marketing_only: item.is_marketing_only === true, buffer_minutes: 60, source: "shared_inventory_confirmed_rentals", checked_at: Date.now() };

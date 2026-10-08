@@ -47,6 +47,23 @@ for(const [status,order_step,expected] of [["confirmed","BOOKED_AFTER_VERIFIED",
 it("retains the saved sales stage for a conversation without a booking",async()=>{
  const {tables,ctx}=fixture();tables.conversations.push({thread_id:"thread",conversation_stage:"INTERESTED"});expect((await (get_renter_context as any)._handler(ctx,{thread_id:"thread"})).conversation_stage).toBe("INTERESTED");
 });
+it("saved ready-to-book interest does not confirm a booking or allow pickup details",async()=>{
+ const {tables,ctx}=fixture();tables.conversations.push({thread_id:"thread",conversation_stage:"READY_TO_BOOK"});
+ const context=await (get_renter_context as any)._handler(ctx,{thread_id:"thread"});
+ expect(context.conversation_stage).toBe("READY_TO_BOOK");
+ expect(context.active_request_stage).toMatchObject({stage:"INQUIRY",booking_confirmed:false,can_confirm_booking:false,can_share_pickup_address:false});
+});
+it("a separate inquiry does not inherit the original sales progress",async()=>{
+ const {tables,ctx}=fixture();tables.conversations.push({thread_id:"thread",conversation_stage:"READY_TO_BOOK"});
+ tables.hygglo_messages.push({thread_id:"thread",message_id:"new-request",sender:"renter",body_text:"Can I hire a camera for a separate shoot?",fetched_at:1,_creationTime:1});
+ const context=await (get_renter_context as any)._handler(ctx,{thread_id:"thread",rental_request:{kind:"inquiry",origin_message_id:"new-request"}});
+ expect(context.conversation_stage).toBe("INQUIRY");expect(context.active_request_stage.can_confirm_booking).toBe(false);
+});
+it("a saved operational label cannot substitute for a missing booking",async()=>{
+ const {tables,ctx}=fixture();tables.conversations.push({thread_id:"thread",conversation_stage:"CONFIRMED_UPCOMING"});
+ const context=await (get_renter_context as any)._handler(ctx,{thread_id:"thread"});
+ expect(context.conversation_stage).toBe("INQUIRY");expect(context.active_request_stage.can_share_pickup_address).toBe(false);
+});
 
 
 it("business history excludes future collection, unconfirmed, cancelled, current and duplicate orders",()=>{

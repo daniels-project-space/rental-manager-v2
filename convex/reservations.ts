@@ -425,6 +425,11 @@ export const markReturned = mutation({
       : null;
     const res = await ctx.db.get(reservationId);
     if (!res) throw new Error("Reservation not found");
+    if (res.account_slug === "dbcinema_web") throw Error("Use the website item inspection and security settlement flow for this rental");
+    for (const memberId of memberIds ?? []) {
+      const member = await ctx.db.get(memberId);
+      if (member?.account_slug === "dbcinema_web") throw Error("Website rentals require their own security settlement");
+    }
     // Double-click / re-submit: the reservation is already completed. This is a
     // benign no-op, NOT an error — return early so the UI doesn't surface a
     // scary "Already returned" banner. Genuine bad-input/not-found throws below
@@ -922,11 +927,22 @@ export const listActiveForStorefront = query({
   args: { account_slug: v.string() },
   handler: async (ctx, { account_slug }) => {
     const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
-    const rows = await ctx.db
+    const dated = await ctx.db
       .query("reservations")
       .withIndex("by_account_end", (q) =>
         q.eq("account_slug", account_slug).gte("end_date", yesterday))
       .collect();
+    // Custody does not end because a scheduled return date passed. Keep older
+    // DELIVERED equipment in the stock feed until an actual return is recorded.
+    const delivered = (await ctx.db.query("reservations")
+      .withIndex("by_account_order_step", q => q.eq("account_slug", account_slug).eq("order_step", "DELIVERED")).collect())
+      .filter(r => r.account_slug === account_slug && r.status === "confirmed" && !r.is_obsolete);
+    const rows = [...new Map([...dated, ...delivered].map(r => [r._id, r])).values()];
+    const [inventory, indexRows, overrideRows] = await Promise.all([
+      ctx.db.query("items").collect(),ctx.db.query("hygglo_product_index").collect(),
+      ctx.db.query("listing_resolution_override").withIndex("by_account_product", q => q.eq("account_slug", account_slug)).collect(),
+    ]);
+    const productIndex = buildProductIndexMap(indexRows), overrides = buildOverrideMap(overrideRows);
     return rows.map((r) => ({
       _id: r._id,
       hygglo_order_id: r.hygglo_order_id,
@@ -938,6 +954,7 @@ export const listActiveForStorefront = query({
       status: r.status,
       is_obsolete: r.is_obsolete,
       items: r.items,
+      physical_items: [...reservationItemUnits(r,productIndex,overrides,inventory)].map(([item_id,qty]) => ({item_id,qty})),
       resolved_items: (r as { resolved_items?: Array<{ item_id: string; item_name_canonical?: string; qty?: number }> }).resolved_items,
     }));
   },
@@ -1501,3 +1518,7 @@ export const __service_markPlatformClosed = internalMutationOf(markPlatformClose
 
 // Privileged caller counterpart; shares the original handler and validators.
 export const __service_markReturned = internalMutationOf(markReturned);
+
+/** Privileged reads used only after storefront service authentication. */
+export const __service_listActiveForStorefront = internalQueryOf(listActiveForStorefront);
+export const __service_listDemandForStorefront = internalQueryOf(listForReconcile);

@@ -6,6 +6,7 @@ type HItem = { name?: string; product_id?: number; qty?: number };
 
 export type ResolvableRes = {
   account_slug?: string;
+  site_item_windows?: Array<{item_id: string; qty: number; start: number; end: number; pickupTime?: string | null; returnTime?: string | null}>;
   expanded_items?: XItem[] | null;
   resolved_items?: XItem[] | null;
   hygglo_items?: HItem[] | null;
@@ -63,8 +64,24 @@ export function reservationItemUnits(
   productIndex: Map<string, string>,
   overrideMap?: OverrideMap,
   inventory: AdapterInventoryItem[] = [],
+  date?: string,
 ): Map<string, number> {
+  const listingQty = (h: HItem) => {
+    const qty = h.qty ?? 1;
+    if (!Number.isSafeInteger(qty) || qty < 1) throw Error("Invalid reserved listing quantity");
+    return qty;
+  };
+  const auditedComponents = (components: Array<{item_id: string; qty: number}>) => {
+    if (components.some(c => !c.item_id || !Number.isSafeInteger(c.qty) || c.qty < 1)) throw Error("Invalid audited kit quantity");
+    return withDefaultAdapters(components, inventory).components;
+  };
+  const addUnits = (map: Map<string, number>, id: string, qty: number) => {
+    const total = (map.get(id) ?? 0) + qty;
+    if (!Number.isSafeInteger(qty) || qty < 1 || !Number.isSafeInteger(total)) throw Error("Invalid reserved unit quantity");
+    map.set(id, total);
+  };
   const slug = r.account_slug ?? "";
+  if (slug === "dbcinema_web" && r.site_item_windows !== undefined) return websiteWindowUnits(r.site_item_windows, date);
 
   // 0a. Fully-overridden reservation → the override IS the answer.
   if (overrideMap && (r.hygglo_items?.length ?? 0) > 0) {
@@ -73,7 +90,8 @@ export function reservationItemUnits(
     for (const h of r.hygglo_items ?? []) {
       const comps = h.product_id != null ? overrideMap.get(`${slug}#${h.product_id}`) : undefined;
       if (!comps) { allOverridden = false; break; }
-      for (const c of withDefaultAdapters(comps,inventory).components) ov.set(c.item_id, (ov.get(c.item_id) ?? 0) + c.qty * (h.qty ?? 1));
+      const qty = listingQty(h);
+      for (const c of auditedComponents(comps)) addUnits(ov, c.item_id, c.qty * qty);
     }
     // allOverridden with an EMPTY ov = every listing is a marketing/own-nothing
     // override → the reservation has no owned items (drops mis-attributions).
@@ -93,12 +111,26 @@ export function reservationItemUnits(
     m.set(id, parseLeadingQty(h.name));
   }
 
-  // 0b. Overlay any partial overrides — authoritative for the items they name.
+  // 0b. Aggregate partial audits before replacing legacy attributions. Each
+  // component quantity is per listing; several booked listings can share it.
   if (overrideMap) {
+    const audited = new Map<string, number>();
     for (const h of r.hygglo_items ?? []) {
       const comps = h.product_id != null ? overrideMap.get(`${slug}#${h.product_id}`) : undefined;
-      if (comps) for (const c of comps) m.set(c.item_id, c.qty);
+      if (comps) {
+        const qty = listingQty(h);
+        for (const c of auditedComponents(comps)) addUnits(audited, c.item_id, c.qty * qty);
+      }
     }
+    // An unoverridden listing mapped to the same physical unit is independent
+    // demand, not another alias of the audited kit. Preserve its contribution.
+    for (const h of r.hygglo_items ?? []) {
+      const key = h.product_id != null ? `${slug}#${h.product_id}` : undefined;
+      if (!key || overrideMap.has(key)) continue;
+      const id = productIndex.get(key);
+      if (id && audited.has(id)) addUnits(audited, id, parseLeadingQty(h.name) * listingQty(h));
+    }
+    for (const [id, qty] of audited) m.set(id, qty);
   }
   return new Map(withDefaultAdapters([...m].map(([item_id,qty]) => ({item_id,qty})),inventory).components.map(c=>[c.item_id,c.qty]));
 }
@@ -116,4 +148,68 @@ export function isStandardAccessory(kind: string | undefined, name: string | und
   if (k === "storage_card" || k === "media") return true;
   if (k === "power" && /batter/i.test(name ?? "")) return true;
   return false;
+}
+
+/** The saved website allocation is authoritative; extensions do not multiply bodies. */
+export function websiteWindowUnits(windows: NonNullable<ResolvableRes["site_item_windows"]>, date?: string): Map<string, number> {
+  const perItem = new Map<string, Array<{start: string; end: string; qty: number}>>();
+  for (const w of windows) {
+    const start = new Date(w.start).toISOString().slice(0, 10), end = new Date(w.end).toISOString().slice(0, 10);
+    if (date && (date < start || date > end)) continue;
+    const rows = perItem.get(String(w.item_id)) ?? []; rows.push({start, end, qty:w.qty}); perItem.set(String(w.item_id),rows);
+  }
+  const result = new Map<string,number>();
+  for (const [id,rows] of perItem) {
+    if (date) { result.set(id,rows.reduce((n,w)=>n+w.qty,0)); continue; }
+    const starts = [...new Set(rows.map(w=>w.start))];
+    result.set(id, Math.max(...starts.map(day=>rows.filter(w=>w.start<=day && w.end>=day).reduce((n,w)=>n+w.qty,0))));
+  }
+  return result;
+}
+
+/** Local booking-clock intervals for the calendar, including the standard return buffer. */
+export function websiteDayIntervals(r: ResolvableRes & {pickup_time?:string;return_time?:string}, date: string) {
+  const dayStart=Date.parse(`${date}T00:00:00Z`),dayEnd=dayStart+86400000;
+  const result:Array<{id:string;a:string;b:string;qty:number}>=[];
+  for(const w of r.site_item_windows ?? []) {
+    const pickup=new Date(w.start).toISOString().slice(0,10),ret=new Date(w.end).toISOString().slice(0,10);
+    const pickupTime=w.pickupTime === undefined ? r.pickup_time : w.pickupTime;
+    const returnTime=w.returnTime === undefined ? r.return_time : w.returnTime;
+    const start=Date.parse(`${pickup}T${pickupTime || "00:00"}:00Z`);
+    const end=returnTime ? Date.parse(`${ret}T${returnTime}:00Z`)+3600000 : Date.parse(`${ret}T00:00:00Z`)+86400000;
+    if(start>=dayEnd || end<=dayStart)continue;
+    const a=start<=dayStart?"00:00":new Date(start).toISOString().slice(11,16);
+    const b=end>=dayEnd?"24:00":new Date(end).toISOString().slice(11,16);
+    result.push({id:String(w.item_id),a,b,qty:w.qty});
+  }
+  return result;
+}
+
+/** Display saved website periods without filling gaps or borrowing another item's clock.
+ * The original reservation ID is retained for every operation; periodKey is display-only.
+ */
+export function websiteCalendarPeriods<T extends ResolvableRes & {
+  start_date?: string; end_date?: string; pickup_date?: string; return_date?: string;
+  pickup_time?: string; return_time?: string;
+}>(r: T, itemId?: string): Array<T & { site_period_key?: string }> {
+  if (r.account_slug !== "dbcinema_web" || r.site_item_windows === undefined) return [r];
+  const groups = new Map<string, NonNullable<ResolvableRes["site_item_windows"]>>();
+  for (const w of r.site_item_windows) {
+    if (itemId !== undefined && String(w.item_id) !== itemId) continue;
+    const start = new Date(w.start).toISOString().slice(0, 10);
+    const end = new Date(w.end).toISOString().slice(0, 10);
+    const pickup = w.pickupTime === undefined ? r.pickup_time : w.pickupTime;
+    const ret = w.returnTime === undefined ? r.return_time : w.returnTime;
+    const key = JSON.stringify([start, end, pickup ?? null, ret ?? null]);
+    const rows = groups.get(key) ?? []; rows.push(w); groups.set(key, rows);
+  }
+  return [...groups].map(([key, windows]) => {
+    const w = windows[0];
+    const start = new Date(w.start).toISOString().slice(0, 10);
+    const end = new Date(w.end).toISOString().slice(0, 10);
+    return { ...r, site_period_key: key, site_item_windows: windows,
+      start_date: start, pickup_date: start, end_date: end, return_date: end,
+      pickup_time: (w.pickupTime === undefined ? r.pickup_time : w.pickupTime) ?? undefined,
+      return_time: (w.returnTime === undefined ? r.return_time : w.returnTime) ?? undefined };
+  });
 }

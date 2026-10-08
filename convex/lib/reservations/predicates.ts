@@ -315,7 +315,7 @@ export function groupLogicalRentals(rows: ReservationRow[]): LogicalRental[] {
     const rk =
       r.renter_id ??
       (r.renter_name ? `n:${r.renter_name.trim().toLowerCase()}` : `u:${r._id}`);
-    const key = `${rk}|${r.account_slug ?? "?"}|${ik}`;
+    const key = r.account_slug === "dbcinema_web" ? `website:${r.hygglo_order_id ?? r._id}` : `${rk}|${r.account_slug ?? "?"}|${ik}`;
     const arr = buckets.get(key);
     if (arr) arr.push(r);
     else buckets.set(key, [r]);
@@ -413,7 +413,7 @@ export function renterPeriodGroupIds(rows: ReservationRow[]): Map<string, string
     const rk =
       r.renter_id ??
       (r.renter_name ? `n:${r.renter_name.trim().toLowerCase()}` : `u:${r._id}`);
-    const key = `${rk}|${r.account_slug ?? "?"}`;
+    const key = r.account_slug === "dbcinema_web" ? `website:${r.hygglo_order_id ?? r._id}` : `${rk}|${r.account_slug ?? "?"}`;
     const arr = buckets.get(key);
     if (arr) arr.push(r);
     else buckets.set(key, [r]);

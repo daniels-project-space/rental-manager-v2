@@ -104,6 +104,62 @@ http.route({
   }),
 });
 
+/** Private, read-only storefront transport. Its fixed allowlist cannot invoke
+ * arbitrary queries, change accounts or write manager data. */
+export const storefrontRead = httpAction(async (ctx, request) => {
+  const reply = (status: number, payload: unknown) => new Response(JSON.stringify(payload), {
+    status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+  });
+  const expected = process.env.DBCINEMA_WEBHOOK_SECRET;
+  if (!expected) return reply(503, { status: "error", error: "service_not_configured" });
+  if (request.headers.get("x-dbcinema-sync-token") !== expected)
+    return reply(401, { status: "error", error: "unauthorized" });
+  let input: any;
+  try {
+    const text = await request.text();
+    if (new TextEncoder().encode(text).length > 4096) return reply(413, { status: "error", error: "request_too_large" });
+    input = JSON.parse(text);
+  } catch { return reply(400, { status: "error", error: "invalid_request" }); }
+  if (!input || typeof input !== "object" || Array.isArray(input) ||
+      Object.keys(input).some(k => !["path", "args"].includes(k)) ||
+      !input.args || typeof input.args !== "object" || Array.isArray(input.args))
+    return reply(400, { status: "error", error: "invalid_request" });
+  const path = input.path;
+  const args = input.args;
+  const exactArgs = (key?: string) => key
+    ? Object.keys(args).length === 1 && args[key] === "dbcinema"
+    : Object.keys(args).length === 0;
+  const calls = {
+    "items:sharedStockForStorefront": { ref: internal.items.__service_sharedStockForStorefront, key: undefined },
+    "hygglo_products:catalogueForStorefront": { ref: internal.hygglo_products.__service_catalogueForStorefront, key: "accountSlug" },
+    "hygglo_products:list": { ref: internal.hygglo_products.__service_listForStorefront, key: "accountSlug" },
+    "items:listForReconcile": { ref: internal.items.__service_listForStorefront, key: undefined },
+    "reservations:listActiveForStorefront": { ref: internal.reservations.__service_listActiveForStorefront, key: "account_slug" },
+    "reservations:listForReconcile": { ref: internal.reservations.__service_listDemandForStorefront, key: "account_slug" },
+  } as const;
+  if (typeof path !== "string" || !Object.prototype.hasOwnProperty.call(calls, path))
+    return reply(400, { status: "error", error: "unsupported_read" });
+  const selected = calls[path as keyof typeof calls];
+  if (!exactArgs(selected.key)) return reply(400, { status: "error", error: "invalid_account_or_arguments" });
+  try {
+    const rows = await ctx.runQuery(selected.ref, args);
+    const pick = (row: any, fields: string[]) => Object.fromEntries(fields.filter(k => row[k] !== undefined).map(k => [k, row[k]]));
+    const value = rows.map((row: any) => {
+      if(path==="items:sharedStockForStorefront") return {version:row.version,checkedAt:row.checkedAt,units:row.units.map((unit:any)=>({masterItemId:unit.masterItemId,active:unit.active,quantityOwned:unit.quantityOwned,windows:unit.windows.map((window:any)=>pick(window,["start","end","qty"]))}))};
+      if (path === "hygglo_products:list" || path === "hygglo_products:catalogueForStorefront") return pick(row, ["productId", "name", "isPublished", "isMarketingOnly", "valuation", "minimumRentalDays", "prices", "images", "unavailableDates", "listings", "masterItemId", ...(path === "hygglo_products:catalogueForStorefront" ? ["stockMapping"] : [])]);
+      if (path === "items:listForReconcile") return pick(row, ["_id", "name", "display_name", "aliases", "qty", "status", "is_marketing_only"]);
+      return {
+        ...pick(row, ["_id", "hygglo_order_id", "start_date", "end_date", "pickup_date", "return_date", "order_step", "status", "is_obsolete"]),
+        items: (row.items ?? []).map((item: any) => pick(item, ["product_id", "item_name", "qty"])),
+        resolved_items: (row.resolved_items ?? []).map((item: any) => pick(item, ["item_id", "item_name_canonical", "qty"])),
+        ...(Array.isArray(row.physical_items) ? {physical_items:row.physical_items.map((item:any) => pick(item,["item_id","qty"]))} : {}),
+      };
+    });
+    return reply(200, { protocolVersion: 1, status: "success", path, value });
+  } catch { return reply(503, { status: "error", error: "source_read_failed" }); }
+});
+http.route({ path: "/dbcinema/storefront-read", method: "POST", handler: storefrontRead });
+
 /**
  * DB Cinema storefront → RMv2 booking push (2026-08-18).
  *
@@ -175,7 +231,9 @@ http.route({
       );
     }
 
-    return new Response(JSON.stringify({ ok: true, result }), {
+    const receipt = (result as { receipts?: any[] })?.receipts?.find(r => r.bookingId === booking.id && r.receivedRevision === (booking.revision ?? 0));
+    if (!receipt) return new Response(JSON.stringify({ ok: false, error: "booking_not_accepted" }), { status: 422, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ ok: true, version: 1, ...receipt }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });

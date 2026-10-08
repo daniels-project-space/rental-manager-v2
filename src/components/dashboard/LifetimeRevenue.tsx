@@ -8,6 +8,8 @@ import {
   calculateLeoTakeoverPerformance,
   LEO_TAKEOVER_MONTH,
 } from "@/lib/revenue/leo-takeover";
+import { applyCurrentAccountRevenue } from "@/lib/revenue/account-breakdown";
+import { accountAccent, accountLabel } from "@/lib/account-theme";
 import { useMemo, useState } from "react";
 import {
   ResponsiveContainer,
@@ -34,6 +36,7 @@ const SERIES = [
   { key: "danielOrganic",       label: "Daniel (retired)",        color: "#ec4899", fill: "url(#grad-daniel)",      roundTop: false },
   { key: "vertusOrganic",       label: "Vertus (retired)",        color: "#8b5a2b", fill: "url(#grad-vertus)",      roundTop: false },
   { key: "dbcinemaOrganic",     label: "DB Cinema",               color: "#6366f1", fill: "url(#grad-dbcinema)",    roundTop: false },
+  { key: "dbcinemaWebOrganic", label: accountLabel("dbcinema_web"), color: accountAccent("dbcinema_web"), fill: "url(#grad-dbcinema-web)", roundTop: false },
   { key: "leoOrganic",          label: "Leo Adams",               color: "#a855f7", fill: "url(#grad-leo)",         roundTop: false },
   { key: "diogoOrganic",        label: "Diogo Valdivieso",        color: "#f97316", fill: "url(#grad-diogo)",       roundTop: false },
   { key: "damageClaims",        label: "Claims",                  color: "#ffffff", fill: "url(#grad-damage)",      roundTop: true  },
@@ -70,6 +73,7 @@ const ACTUAL_KEYS = [
   "danielOrganic",
   "vertusOrganic",
   "dbcinemaOrganic",
+  "dbcinemaWebOrganic",
   "leoOrganic",
   "diogoOrganic",
   "damageClaims",
@@ -122,9 +126,7 @@ export function LifetimeRevenue() {
     // historical chart remains a daily aggregate. Do not re-scan history per tab.
     if (row.month === raw.currentMonth && monthlyStats?.booked_by_account) {
       const by = monthlyStats.booked_by_account;
-      r.dbcinemaOrganic = (by.dbcinema ?? 0) + (by.dbcinema_web ?? 0);
-      r.leoOrganic = by.leo ?? 0;
-      r.diogoOrganic = by.diogo ?? 0;
+      Object.assign(r, applyCurrentAccountRevenue(by, activeAccountSlug));
     }
     const rentalCommitted = ACTUAL_KEYS.filter((key) => key !== "damageClaims")
       .reduce((sum, key) => sum + (r[key] ?? 0), 0);
@@ -135,7 +137,7 @@ export function LifetimeRevenue() {
       forecastLow: fc?.low, forecastHigh: fc?.high,
       predictedRemainder: estimate !== undefined ? Math.max(0, estimate - rentalCommitted) : 0,
     };
-  }) ?? [], [aiActiveFrom, raw, monthlyStats]);
+  }) ?? [], [aiActiveFrom, raw, monthlyStats, activeAccountSlug]);
 
   const seriesTotals = useMemo(() => {
     const out: Record<string, number> = {};
@@ -498,6 +500,10 @@ export function LifetimeRevenue() {
                 <linearGradient id="grad-dbcinema" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#818cf8" stopOpacity={0.95} />
                   <stop offset="100%" stopColor="#4338ca" stopOpacity={0.85} />
+                </linearGradient>
+                <linearGradient id="grad-dbcinema-web" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={accountAccent("dbcinema_web")} stopOpacity={0.95} />
+                  <stop offset="100%" stopColor="#047857" stopOpacity={0.85} />
                 </linearGradient>
                 <linearGradient id="grad-leo" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#c084fc" stopOpacity={0.95} />

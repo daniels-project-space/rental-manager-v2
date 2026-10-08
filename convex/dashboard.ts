@@ -1,3 +1,4 @@
+import { websiteCaseView, type WebsiteCaseRow } from "./lib/websiteCases";
 import { listingDisplayName, shortItemName, shortListingTitle } from "./lib/item_display_name";
 import { query, type QueryCtx, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
@@ -247,7 +248,7 @@ const ACTIVE_ORDER_STEPS = new Set([
 // not insurance_claims.list. We rebuild this card live on every read so stage
 // transitions (Advance / Back / Deny / Credit) are instant, mirroring the
 // conflict-dismissal and scanner read-time overlays already in the cached branch.
-type ClaimRowLite = {
+type ClaimRowLite = WebsiteCaseRow & {
   _id: unknown;
   stage?: string;
   status?: string;
@@ -292,6 +293,7 @@ function buildInsuranceCard(claimRows: ClaimRowLite[]) {
     total_count: claimRows.length,
     claims: claimRows.slice(0, 50).map((c) => ({
       id: c._id as string,
+      ...websiteCaseView(c),
       accountSlug: c.account_slug ?? null,
       itemNameCanonical: c.item_name_canonical ?? null,
       renterName: c.renter_name ?? null,
