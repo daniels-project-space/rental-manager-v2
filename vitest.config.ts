@@ -80,6 +80,7 @@ export default defineConfig({
       "convex/items.storefront-stock.test.ts",
       "convex/storefront-read.test.ts",
       "convex/storefront-canonical-kits.test.ts",
+      "convex/storefront-stock.test.ts",
       "convex/websiteReturns.test.ts",
       "convex/lib/reservations/predicates.website.test.ts",
       "src/lib/push-service-worker.test.ts",

@@ -28,7 +28,7 @@ export function shiftStockDate(date: string, days: number): string {
   return new Date(Date.parse(date + "T00:00:00Z") + days * 86400000).toISOString().slice(0, 10);
 }
 
-type Occupancy = {
+export type Occupancy = {
   start: string;
   end: string;
   qty: number;
@@ -129,7 +129,9 @@ function quotationEnd(r: Parameters<typeof effEnd>[0], today: string, horizon: s
   return effEnd(r, today);
 }
 
-export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources>>, item: Doc<"items">, request: StockRequest) {
+/** Shared physical occupancy, including extensions, per-item windows and
+ * overdue custody. Callers may project it without exposing renter identities. */
+export function stockOccupancyForItem(sources: Awaited<ReturnType<typeof loadStockSources>>, item: Doc<"items">, request: StockRequest) {
   const today = londonToday();
   const occupancy: Occupancy[] = [];
   for (const r of sources.reservations) {
@@ -173,6 +175,11 @@ export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources
     const extension_key = renter && r.account_slug ? JSON.stringify([r.account_slug, renter, [...units].sort(([a], [b]) => a.localeCompare(b))]) : undefined;
     occupancy.push({ start: `${pickup}T${r.pickup_time ?? "00:00"}`, end, qty, renter_name: r.renter_name, order_id: r.hygglo_order_id, extension_key });
   }
+  return occupancy;
+}
+
+export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources>>, item: Doc<"items">, request: StockRequest) {
+  const occupancy = stockOccupancyForItem(sources,item,request);
   const repair = sources.claims.filter(claimHoldsStock).reduce((n, c) => n + (c.repair_item_ids ?? []).filter((id) => id === item._id).length, 0);
   const result = evaluateStockWindow({ request, owned: item.status === "active" && !item.is_marketing_only && item.qty > 0, total: item.qty, repair, occupancy, blackouts: sources.blackouts.filter((b) => b.item_id === item._id), vacations: sources.vacations });
   return { ...result, ...(item.quantity_basis ? { quantity_basis: item.quantity_basis } : {}), item_name: item.name_canonical, item_id: item._id, kind: item.kind, owned: item.status === "active" && !item.is_marketing_only && item.qty > 0, is_marketing_only: item.is_marketing_only === true, buffer_minutes: 60, source: "shared_inventory_confirmed_rentals", checked_at: Date.now() };

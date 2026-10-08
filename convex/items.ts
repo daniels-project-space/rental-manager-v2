@@ -1,7 +1,10 @@
 import { shortItemName } from "./lib/item_display_name";
-import { mutation, query, internalQueryOf } from "./owner_functions";
+import { mutation, query, internalQuery, internalQueryOf } from "./owner_functions";
+import { loadStockSources } from "./lib/renter_stock";
+import { sharedStockSnapshot } from "./lib/storefront_stock";
 import { isPaid } from "./order_step_semantics";
 import { v } from "convex/values";
+
 import { infoPoolEnabledAccounts } from "./lib/feature_flags_helper";
 import {
   FAST_WIDGET_MAX_AGE_MS,
@@ -1120,3 +1123,9 @@ export const __service_getPriceRecommendations = internalQueryOf(getPriceRecomme
 
 /** Privileged read used only after storefront service authentication. */
 export const __service_listForStorefront = internalQueryOf(listForReconcile);
+
+/** Authenticated storefront-only shared stock, with no renter/case details. */
+export const __service_sharedStockForStorefront = internalQuery({
+  args:{},
+  handler:async ctx=>[sharedStockSnapshot(await loadStockSources(ctx),Date.now())],
+});
