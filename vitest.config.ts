@@ -77,6 +77,7 @@ export default defineConfig({
       "convex/notifications.push.test.ts",
       "convex/sync_dbcinema_web.test.ts",
       "convex/reservations.storefront.test.ts",
+      "convex/items.storefront-stock.test.ts",
       "convex/websiteReturns.test.ts",
       "convex/lib/reservations/predicates.website.test.ts",
       "src/lib/push-service-worker.test.ts",

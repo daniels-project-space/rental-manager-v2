@@ -823,6 +823,8 @@ export const listForReconcile = query({
       display_name: shortItemName(i),
       aliases: i.aliases ?? [],
       qty: i.qty,
+      status: i.status,
+      is_marketing_only: i.is_marketing_only,
     }));
   },
 });
