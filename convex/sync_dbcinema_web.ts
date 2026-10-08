@@ -192,6 +192,7 @@ export const upsertSiteBookingsBatch = internalMutation({
       );
     }
 
+    const receipts: Array<{bookingId: string; receivedRevision: number; appliedRevision: number | null; outcome: "applied" | "unchanged" | "stale" | "ignored"; reason?: string}> = [];
     let upserted = 0;
     let skipped = 0;
     let mappedUnits = 0;
@@ -212,6 +213,7 @@ export const upsertSiteBookingsBatch = internalMutation({
       const status = SITE_STATUS_MAP[b.status];
       if (!status) {
         skipped++;
+        if (b.status === "pending_payment") receipts.push({ bookingId: b.id, receivedRevision: b.revision ?? 0, appliedRevision: null, outcome: "ignored", reason: "unpaid" });
         continue;
       }
       if (b.damageCases !== undefined) validateWebsiteCases(b.damageCases);
@@ -375,8 +377,12 @@ export const upsertSiteBookingsBatch = internalMutation({
       const mine = existing.find((r) => r.account_slug === WEB_SLUG);
       let reservationId = mine?._id;
       if (mine) {
-        if ((b.revision ?? 0) < (mine.site_revision ?? 0)) { skipped++; continue; }
+        if ((b.revision ?? 0) < (mine.site_revision ?? 0)) {
+          receipts.push({ bookingId: b.id, receivedRevision: b.revision ?? 0, appliedRevision: mine.site_revision ?? 0, outcome: "stale" });
+          skipped++; continue;
+        }
         if ((mine as { poll_hash?: string }).poll_hash === newPollHash) {
+          receipts.push({ bookingId: b.id, receivedRevision: b.revision ?? 0, appliedRevision: mine.site_revision ?? 0, outcome: "unchanged" });
           skipped++;
           continue;
         }
@@ -403,6 +409,7 @@ export const upsertSiteBookingsBatch = internalMutation({
         const copy = buildConfirmedBookingNotificationCopy({ renterName: copy_data.renter_name, itemName: copy_data.item_name, gross, net, currency: copy_data.currency, accountSlug: WEB_SLUG });
         await queueNotificationEvents(ctx, [{ type: "booking_confirmed", thread_id: b.id, account_slug: WEB_SLUG, title: copy.title, body: `Website · ${copy.body}`, copy_data, url: `https://dbcinemarentals.com/admin?rental=${encodeURIComponent(b.id)}#messages` }]);
       }
+      receipts.push({ bookingId: b.id, receivedRevision: b.revision ?? 0, appliedRevision: b.revision ?? 0, outcome: "applied" });
       upserted++;
     }
 
@@ -444,6 +451,7 @@ export const upsertSiteBookingsBatch = internalMutation({
     }
 
     return {
+      receipts,
       upserted,
       skipped,
       mapped_units: mappedUnits,

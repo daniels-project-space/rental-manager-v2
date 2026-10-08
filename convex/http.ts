@@ -231,7 +231,9 @@ http.route({
       );
     }
 
-    return new Response(JSON.stringify({ ok: true, result }), {
+    const receipt = (result as { receipts?: any[] })?.receipts?.find(r => r.bookingId === booking.id && r.receivedRevision === (booking.revision ?? 0));
+    if (!receipt) return new Response(JSON.stringify({ ok: false, error: "booking_not_accepted" }), { status: 422, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ ok: true, version: 1, ...receipt }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
