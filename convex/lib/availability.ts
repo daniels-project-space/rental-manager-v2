@@ -60,6 +60,7 @@ type ClaimRow = Doc<"insurance_claims">;
 const HOLDING_STAGES = new Set(["quote_received", "in_for_repair"]);
 
 export function claimStage(c: { stage?: string; status?: string }): string {
+  if (c.status === "closed" || c.stage === "closed") return "closed";
   return c.stage ?? (c.status === "denied" ? "denied" : c.status === "settled" ? "added_to_revenue" : "case_opened");
 }
 

@@ -85,6 +85,36 @@ function makeMockCore(opts: {
   return mock as unknown as HyggloCore;
 }
 
+describe("bounded stale-custody reconciliation",()=>{
+  it("refreshes archived custody outside list buckets and recognises a completed funnel",async()=>{
+    const detail=makeOrderDetail(901);
+    detail.steps=[{key:"DELIVERED",active:false,completed:true},{key:"RETURNED",active:false,completed:true},{key:"REVIEWED",active:false,completed:true}];
+    const core=makeMockCore({ordersByFilter:{},details:{901:detail}});
+    const result=await corePoll("test-account",{core,getCustodyReconciliationIds:async()=>["901"]});
+    expect(core.getOrder).toHaveBeenCalledWith(901);
+    expect(result.reservations[0].order_step_extracted).toBe("REVIEWED");
+    expect(result.presentOrderIds).toEqual([]);
+    expect(result.meta.orders_listed).toBe(0);
+  });
+  it("bypasses unchanged activity only for custody recovery and retains next-to-do return",async()=>{
+    const core=makeMockCore({ordersByFilter:{current:[{id:902,sourceFilter:"current",latest_activity:123}]},details:{902:makeOrderDetail(902,"RETURNED")}});
+    const result=await corePoll("test-account",{core,getStoredActivity:async()=>({"902":{latest_activity:123,has_order_step:true}}),getCustodyReconciliationIds:async()=>["902"]});
+    expect(core.getOrder).toHaveBeenCalledWith(902);
+    expect(result.reservations[0].order_step_extracted).toBe("RETURNED");
+  });
+  it("keeps recovery out of frequent operational polling",async()=>{
+    const getCustodyReconciliationIds=vi.fn(async()=>["901"]),core=makeMockCore({ordersByFilter:{},details:{}});
+    await corePoll("test-account",{core,mode:"operational",getCustodyReconciliationIds});
+    expect(getCustodyReconciliationIds).not.toHaveBeenCalled();expect(core.getOrder).not.toHaveBeenCalled();
+  });
+  it("caps recovery at sixteen provider reads and ignores malformed IDs",async()=>{
+    const ids=Array.from({length:20},(_,i)=>String(900+i)),details=Object.fromEntries(ids.map(id=>[Number(id),makeOrderDetail(Number(id))]));
+    const core=makeMockCore({ordersByFilter:{},details});
+    await corePoll("test-account",{core,getCustodyReconciliationIds:async()=>ids});
+    expect(core.getOrder).toHaveBeenCalledTimes(16);
+  });
+});
+
 describe("corePoll — B3: order_step_extracted always defined on active-step rows", () => {
   it("sets order_step_extracted for every recognised active step", async () => {
     const core = makeMockCore({

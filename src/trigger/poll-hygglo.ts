@@ -275,6 +275,10 @@ async function scrapeAccountViaCore(
     // (any ambiguity falls through to a real fetch).
     getStoredActivity: (hygglo_order_ids) =>
       convex.query(api.hygglo.getLatestActivityBatch, { hygglo_order_ids }),
+    // Existing :00 full poll owns recovery; the other quarter-hour full runs
+    // keep ordinary reconciliation without repeating archival provider GETs.
+    getCustodyReconciliationIds: new Date(observedAt).getUTCMinutes() === 0 ? () =>
+      convex.query(api.hygglo.getCustodyReconciliationIds, { account_slug: accountSlug }) : undefined,
   });
 
   // B4 — surface non-fatal per-filter / per-order fetch failures that corePoll

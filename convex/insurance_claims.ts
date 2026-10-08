@@ -13,17 +13,18 @@ const STAGES = [
   "payout_confirmation",
   "added_to_revenue",
 ] as const;
-type Stage = (typeof STAGES)[number] | "denied";
+type Stage = (typeof STAGES)[number] | "denied" | "closed";
 
 // Legacy rows stored progress in `status`; derive a stage for them.
 function stageOf(c: { stage?: string; status?: string }): Stage {
+  if (c.stage === "closed" || c.status === "closed") return "closed";
   if (c.stage && (STAGES as readonly string[]).includes(c.stage)) return c.stage as Stage;
   if (c.stage === "denied" || c.status === "denied") return "denied";
   if (c.status === "settled" || c.status === "added_to_revenue") return "added_to_revenue";
   return "case_opened";
 }
 const statusForStage = (s: Stage): string =>
-  s === "denied" ? "denied" : s === "added_to_revenue" ? "settled" : "open";
+  s === "closed" ? "closed" : s === "denied" ? "denied" : s === "added_to_revenue" ? "settled" : "open";
 
 /** W22 Insurance/Case claims — list recent, optional account filter. */
 export const list = query({
@@ -199,11 +200,27 @@ export const update = mutation({
     repair_item_ids: v.optional(v.array(v.id("items"))),
   },
   handler: async (ctx, { id, ...fields }) => {
+    const record = await ctx.db.get(id);
+    if (!record) throw Error("Claim not found");
+    if (fields.status === "closed" && record.site_case_id)
+      throw Error("Resolve website return cases at their source rental");
+    if (fields.status === "closed" && (record.stage === "added_to_revenue" || record.status === "settled" || record.credited_at !== undefined))
+      throw Error("Credited cases retain their financial settlement history");
+    const auditClose = fields.status === "closed" && (record.status !== "closed" || record.stage !== "closed");
     const patch: Record<string, unknown> = {};
     for (const k of ["amount_gbp", "claim_date", "description", "status", "item_name_canonical", "repair_item_ids"] as const) {
       if (fields[k] !== undefined) patch[k] = fields[k];
     }
+    if (fields.status === "closed") {
+      // Neutral close: retain the estimate and evidence, release repair stock,
+      // and create no payout, revenue credit or rental financial settlement.
+      patch.stage = "closed";
+      patch.repair_item_ids = [];
+    }
     await ctx.db.patch(id, patch);
+    if (auditClose)
+      await ctx.db.insert("audit_log", {table_name:"insurance_claims",actor:"owner",op:"update",count:1,
+        source_file:"insurance_claims.update",note:`Closed case ${id} without recording money; original claim amount and payout history retained; repair holds released.`,ts:Date.now()});
     return { ok: true };
   },
 });
@@ -214,7 +231,7 @@ export const advanceStage = mutation({
     const row = await ctx.db.get(id);
     if (!row) return;
     const cur = stageOf(row);
-    if (cur === "denied" || cur === "added_to_revenue") return;
+    if (cur === "denied" || cur === "added_to_revenue" || cur === "closed") return;
     const idx = STAGES.indexOf(cur as (typeof STAGES)[number]);
     const next = STAGES[Math.min(STAGES.length - 1, idx + 1)];
     await ctx.db.patch(id, { stage: next, status: statusForStage(next) });
@@ -227,7 +244,7 @@ export const revertStage = mutation({
     const row = await ctx.db.get(id);
     if (!row) return;
     const cur = stageOf(row);
-    if (cur === "denied") {
+    if (cur === "denied" || cur === "closed") {
       await ctx.db.patch(id, { stage: "case_opened", status: "open" });
       return;
     }

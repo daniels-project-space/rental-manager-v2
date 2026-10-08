@@ -46,7 +46,7 @@ export { PAID_ORDER_STEPS } from "./order_step_semantics";
  *   - `order.steps[]`          — direct detail response from /v4/my/orders/:id
  *   - `order.detail.steps[]`   — v1 wrapper shape (detail nested under .detail)
  *   - `order._detail.steps[]`  — v1 wrapper shape (detail nested under ._detail)
- * Returns null when the step array is absent or no step is active.
+ * Returns null when steps are absent or no active/explicit completed return exists.
  * Logs a warning and returns undefined for unrecognised step keys.
  * NOTE: "active" = the NEXT-TO-DO step (renter's current action). This is
  * intentional because downstream logic (deriveStatusFromStep, ongoing/upcoming
@@ -68,7 +68,10 @@ function extractActiveOrderStep(order: unknown): string | null | undefined {
     step !== null &&
     (step as Record<string, unknown>).active === true,
   ) as Record<string, unknown> | undefined;
-  if (!active) return null;
+  if (!active) return steps.some((step) => typeof step === "object" && step !== null &&
+    (step as Record<string, unknown>).key === "RETURNED" &&
+    (step as Record<string, unknown>).completed === true &&
+    (step as Record<string, unknown>).failure !== true) ? "REVIEWED" : null;
   const key = typeof active.key === "string" ? active.key : "";
   if (!VALID_ORDER_STEPS.has(key)) {
     console.warn(`[hygglo] Unrecognised order_step key: "${key}" — storing undefined`);
@@ -1683,6 +1686,26 @@ export const listByThread = query({
 });
 
 // ── Phase 18.2 — latest_activity skip-fetch optimisation ──────
+
+/** Owner/service protected, indexed recovery for stale custody rows. Only the
+ * existing full/hourly poll calls this: at most 128 indexed rows and sixteen
+ * provider details per account, rotating the bounded window each hour. No
+ * private customer data leaves this query and no second schedule is added. */
+export const getCustodyReconciliationIds = query({
+  args: {account_slug:v.string()},
+  handler:async(ctx,{account_slug})=>{
+    const now=Date.now(),today=new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/London",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(now));
+    const ids:string[]=[];
+    for(const step of ["DELIVERED","RETURNED"] as const){
+      const rows=await ctx.db.query("reservations").withIndex("by_account_order_step",q=>q.eq("account_slug",account_slug).eq("order_step",step)).order("desc").take(64);
+      const pending=rows.filter(r=>!r.is_obsolete&&["confirmed","ongoing"].includes(r.status)&&r.end_date&&r.end_date<today&&/^\d+$/.test(r.hygglo_order_id??""));
+      if(!pending.length)continue;
+      const offset=(Math.floor(now/3600000)%Math.ceil(pending.length/8))*8;
+      ids.push(...pending.slice(offset,offset+8).map(r=>r.hygglo_order_id!));
+    }
+    return ids;
+  },
+});
 
 /**
  * Returns the stored `latest_activity` value for each given hygglo_order_id.

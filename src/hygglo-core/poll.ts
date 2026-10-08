@@ -86,7 +86,7 @@ const VALID_STEP_KEYS = new Set<string>([
  * VERBATIM from poll-hygglo.ts run()'s inline `extractStep` (L727-735):
  * looks at order.steps ?? order.detail.steps ?? order._detail.steps and returns
  * the `key` of the first step with `active === true`. Returns undefined when no
- * active step is present.
+ * active step is present, unless explicit completed return proves a finished funnel.
  */
 function extractStep(order: unknown): string | undefined {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -95,7 +95,11 @@ function extractStep(order: unknown): string | undefined {
   if (!Array.isArray(steps)) return undefined;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const active = steps.find((s: any) => s?.active === true);
-  return active?.key;
+  if (active) return active.key;
+  // A finished funnel has no next-to-do step. Explicit completed return is
+  // terminal evidence, whereas elapsed dates alone never change rental state.
+  return steps.some((s: any) => s?.key === "RETURNED" && s.completed === true && s.failure !== true)
+    ? "REVIEWED" : undefined;
 }
 
 /**
@@ -358,6 +362,9 @@ export async function corePoll(
      *  the corePoll docstring's NOTE). Omit to always fetch every order's
      *  detail (tests / parity-dryrun / manual-poll all omit it). */
     getStoredActivity?: StoredActivityLookup;
+    /** Hourly/full polling also revisits a bounded batch of stored custody
+     * rows that may have fallen out of Hygglo's 50-row list buckets. */
+    getCustodyReconciliationIds?: () => Promise<string[]>;
   } = {},
 ): Promise<CorePollResult> {
   const core = opts.core ?? createHyggloCore(accountInput);
@@ -412,7 +419,23 @@ export async function corePoll(
         opts.operationalWindowMs,
         opts.operationalMaxOrders,
       )
-    : uniqueOrders;
+    : [...uniqueOrders];
+  const listedIds = new Set(uniqueOrders.map(order => order.id));
+
+  const custodyReconciliation = new Set<number>();
+  if (mode === "full" && opts.getCustodyReconciliationIds) {
+    try {
+      for (const raw of (await opts.getCustodyReconciliationIds()).slice(0, 16)) {
+        if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) continue;
+        const id = Number(raw);
+        custodyReconciliation.add(id);
+        if (!selectedOrders.some(o => o.id === id)) selectedOrders.push({id,sourceFilter:"current"});
+      }
+    } catch (err) {
+      listFilterErrors++;
+      console.error(`[corePoll] custody reconciliation lookup failed account=${account_slug}`);
+    }
+  }
 
   const reservations: ReservationUpsertArgs[] = [];
   const renterMap = new Map<string, RenterPayload>();
@@ -446,7 +469,7 @@ export async function corePoll(
   for (const order of selectedOrders) {
     const stored = storedActivity[String(order.id)];
     if (
-      stored?.has_order_step === true &&
+      !custodyReconciliation.has(order.id) && stored?.has_order_step === true &&
       activityStampUnchanged(stored.latest_activity, order.latest_activity)
     ) {
       // Hygglo's own list-endpoint activity stamp matches what we stored the
@@ -571,7 +594,9 @@ export async function corePoll(
       hygglo_system_signal: payload.hygglo_system_signal,
       hygglo_system_signal_text: payload.hygglo_system_signal_text,
     });
-    presentOrderIds.push({ id: payload.hygglo_order_id, sourceFilter: order.sourceFilter });
+    // Recovery GETs are not evidence that an archived order is in the provider
+    // current bucket; do not fabricate current-presence rows for them.
+    if (listedIds.has(order.id)) presentOrderIds.push({ id: payload.hygglo_order_id, sourceFilter: order.sourceFilter });
   }
 
   return {
