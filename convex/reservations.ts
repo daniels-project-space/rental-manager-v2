@@ -1,3 +1,4 @@
+import { withoutWebsiteVerification } from "./lib/websiteVerification";
 import { action, internalAction, internalMutation, internalQuery, mutation, query, internalQueryOf, internalMutationOf } from "./owner_functions";
 import { anyApi } from "convex/server";
 import type { Id } from "./_generated/dataModel";
@@ -971,7 +972,7 @@ export const getByHygglo = query({
         q.eq("hygglo_order_id", hygglo_order_id)
       )
       .collect();
-    return rows[0] ?? null;
+    return rows[0] ? withoutWebsiteVerification(rows[0]) : null;
   },
 });
 
@@ -1414,7 +1415,7 @@ export const listPendingWithoutDecision = query({
         .first();
       if (!decided) out.push(r);
     }
-    return out;
+    return out.map(withoutWebsiteVerification);
   },
 });
 
