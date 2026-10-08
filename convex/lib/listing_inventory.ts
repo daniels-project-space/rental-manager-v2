@@ -3,6 +3,7 @@ import type { QueryCtx } from "../_generated/server";
 import { isStandardAccessory } from "./reservations/itemUnits";
 import { loadStockSources, stockForItem, type StockRequest } from "./renter_stock";
 
+import { coverReviewedSuppliedParts } from "./supplied_parts_coverage";
 import { resolveBundleMapping, declaredRentalBlockers } from "./bundle_mapping";
 import { withDefaultAdapters } from "./default_adapter_units";
 import type { PriceTier } from "./hygglo_pricing";
@@ -23,7 +24,9 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
       stock_required: !item || item.track_independent_stock === true || !isStandardAccessory(item.kind, item.name_canonical),
       owned: !item || !valid ? null : item.status === "active" && !item.is_marketing_only && item.qty > 0 };
   });
-  const declared = description ? resolveBundleMapping(description, items) : null;
+  const rawDeclared = description ? resolveBundleMapping(description, items) : null;
+  const suppliedParts = rawDeclared && override !== undefined ? coverReviewedSuppliedParts(rawDeclared, items, quantities) : null;
+  const declared = suppliedParts?.declared ?? rawDeclared;
   const ownership_blockers = declaredRentalBlockers(declared, items);
   const declaredCameras = declared?.explicit ? declared.components.filter(c => ["camera", "camera_body"].includes(c.kind)) : [];
   // The advertised body remains the item identity even when a bad override
@@ -38,7 +41,7 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
   const complete = !supplied.unresolved.length && coverageComplete && override !== undefined && validQuantity && components.every((c) => c.owned !== null);
   const owned = !validQuantity ? null : override?.length === 0 || ownership_blockers.length > 0 || components.some((c) => c.owned === false) ? false
     : !complete || !components.length ? null : true;
-  return { components, complete, owned, primary_camera, ownership_blockers, valid_quantity: validQuantity, source: override === undefined ? "primary_item_only" : "listing_override", coverage, unresolved_default_adapters:supplied.unresolved };
+  return { components, complete, owned, primary_camera, ownership_blockers, valid_quantity: validQuantity, supplied_part_bindings:suppliedParts?.bindings??[], source: override === undefined ? "primary_item_only" : "listing_override", coverage, unresolved_default_adapters:supplied.unresolved };
 }
 
 export async function loadListingInventory(ctx: QueryCtx, account: string, productId: number, quantity = 1,

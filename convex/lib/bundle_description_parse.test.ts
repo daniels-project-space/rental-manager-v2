@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { resolveBundleMapping } from "./bundle_mapping";
 import { resolveListingComponents } from "./listing_inventory";
+import countedKitParts from "../fixtures/reviewed-counted-kit-parts.json";
 import cameraSpacing from "../fixtures/sony-camera-model-spacing.json";
 import supportDescriptions from "../fixtures/bundled-support-accessories.json";
 import fullDescriptions from "../fixtures/full-description-boundaries.json";
@@ -299,5 +300,70 @@ describe("equivalent Sony camera model spacing", () => {
     const r=resolveListingComponents([fx3,{...fx30,is_marketing_only:true}] as any,[{item_id:"fx3",qty:1}],undefined,1,"Included in this kit:\n- 1x Sony fx 30");
     expect(r.owned).toBe(false);
     expect(r.ownership_blockers[0]?.reason).toBe("marketing_only");
+  });
+});
+
+
+describe("reviewed master sets and recorded supplied-parts counts", () => {
+  const masters=countedKitParts.masters as any[];
+  const rode=masters.find(i=>i.name_canonical==="Rode Wireless Mic Pro set");
+  const dji=masters.find(i=>i.name_canonical==="DJI Mic 2 wireless");
+  const firstDji=masters.find(i=>i.name_canonical==="DJI Wireless Mics");
+  function resolve(description:string,selected:any[]= [rode],qty=1){return resolveListingComponents(selected as any,selected.map(i=>({item_id:i._id,qty})),undefined,1,description);}
+  it("resolves the actual Rode TX/RX/lav listing as one counted master set", () => {
+    const r=resolve(countedKitParts.descriptions["852890"]);
+    expect(r.complete).toBe(true);expect(r.owned).toBe(true);
+    expect(r.coverage?.unresolved).toEqual([]);
+    expect(r.components.find(c=>c.item_id===rode._id)?.units_per_listing).toBe(1);
+    expect(r.supplied_part_bindings.map(b=>b.requiredCountedUnits)).toEqual([1,1,1]);
+  });
+  it("retains unrecorded external lavalier equipment in the actual DJI listing", () => {
+    const r=resolve(countedKitParts.descriptions["852812"],[dji]);
+    expect(r.complete).toBe(false);
+    expect(r.coverage?.unresolved).toContain("2x lavalier Lapel microphones");
+    expect(r.supplied_part_bindings.map(b=>b.requiredCountedUnits)).toEqual([1,1]);
+  });
+  it("uses max across part roles and rounds partial piece demand up to whole sets", () => {
+    const r=resolve("Included in this kit:\n- 3x Rode Transmitter\n- 2x Rode Receiver",[rode],2);
+    expect(r.complete).toBe(true);
+    expect(r.supplied_part_bindings.map(b=>b.requiredCountedUnits)).toEqual([2,2]);
+    expect(r.coverage?.missing).toEqual([]);
+  });
+  it("fails closed when the reviewed mapping supplies fewer counted sets than the declared pieces need", () => {
+    const r=resolve("Included in this kit:\n- 4x Rode Transmitter\n- 2x Rode Receiver");
+    expect(r.complete).toBe(false);
+    expect(r.coverage?.missing).toEqual([{item_id:rode._id,name:rode.name_canonical,qty:2}]);
+  });
+  it("does not sum the full kit and its own supplied component list as separate rentals", () => {
+    const r=resolve("Included in this kit:\n- 1x Rode Wireless Mic Pro set\n- 2x Rode Transmitter\n- 1x Rode Receiver");
+    expect(r.complete).toBe(true);expect(r.coverage?.missing).toEqual([]);
+  });
+  it("does not use missing BOM data to invent a Pyro receiver", () => {
+    const pyro=masters.find(i=>i.name_canonical==="Hollyland Pyro S transmitter");
+    const r=resolve("Included in this kit:\n- 1x Hollyland Pyro S Receiver",[pyro]);
+    expect(r.complete).toBe(false);expect(r.supplied_part_bindings).toEqual([]);
+  });
+  it("keeps multi-kit generic parts ambiguous and matches only a named brand", () => {
+    expect(resolve("Included in this kit:\n- 1x Receiver",[rode,dji]).complete).toBe(false);
+    const r=resolve("Included in this kit:\n- 1x Rode Receiver",[rode,dji]);
+    expect(r.complete).toBe(true);expect(r.supplied_part_bindings[0].masterId).toBe(rode._id);
+  });
+  it("does not change a stated DJI generation or substitute unrelated transmitter functions", () => {
+    expect(resolve("Included in this kit:\n- 1x DJI Mic 2 Transmitter",[firstDji]).complete).toBe(false);
+    expect(resolve("Included in this kit:\n- 1x Timecode Transmitter",[rode]).complete).toBe(false);
+  });
+  it("requires the owner-reviewed mapped kit instead of inventing stock from a primary match", () => {
+    const r=resolveListingComponents([rode] as any,undefined,rode._id,1,"Included in this kit:\n- 1x Rode Receiver");
+    expect(r.complete).toBe(false);expect(r.supplied_part_bindings).toEqual([]);
+  });
+  it("preserves a marketing-only counted set blocker", () => {
+    const r=resolve("Included in this kit:\n- 1x Rode Receiver",[{...rode,is_marketing_only:true}]);
+    expect(r.owned).toBe(false);
+  });
+  it("normalizes A7 generation spacing while preserving S model identity", () => {
+    const a7=masters.find(i=>i.name_canonical==="Sony A7 III"),a7s=masters.find(i=>i.name_canonical==="Sony A7S III");
+    const r=resolveBundleMapping("Included in this kit:\n- 1x Sony a7iii camera\n- 1x Sony a7siii camera",[a7,a7s]);
+    expect(r.components.map(c=>c.item_id)).toEqual([a7._id,a7s._id]);
+    expect(resolve("Included in this kit:\n- 1x Sony a7siii camera",[a7,a7s]).owned).toBe(false);
   });
 });
