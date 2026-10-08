@@ -1,6 +1,6 @@
 # Shared stock authority: implementation boundary still open
 
-The canonical physical inventory already lives in Rental Manager. A coordinator in that same Convex deployment must serialize the complete proposed physical basket against capacity, repairs/owner blocks, confirmed/ongoing custody and all unresolved claims. Website local holds and authenticated snapshots remain projections; neither may independently approve a new stock commitment. This plan records source inspection, not a completed coordinator.
+The canonical physical inventory already lives in Rental Manager. A coordinator in that same Convex deployment must serialize the complete proposed physical basket against capacity, repairs/owner blocks, confirmed/ongoing custody and all unresolved claims. Website local holds and authenticated snapshots remain projections; neither may independently approve a new stock commitment. This plan records source inspection and the first protected approval-claim implementation, not a completed cross-app coordinator.
 
 Observed callers:
 
@@ -19,3 +19,13 @@ Required protocol:
 6. Before rollout, reconcile current legacy allocations from source evidence; register owner/service bindings and the exact production project pair. Test concurrent last-unit requests across both apps, request replay/changed payload, lost create response, provider uncertainty, mutation rollback/recovery, amendment mixtures and return/repair transitions. Then verify the deployed aliases, actual authenticated callers and real resulting calendars/notifications.
 
 The authority adds a network dependency to checkout/provider approval. Failures must offer recovery of the saved request and preserve already-started operations rather than falling back to independent writes. No new paid provider or silent quality downgrade is proposed. The whole guarantee remains unproven until every relevant writer participates and actual paired acceptance passes. Source snapshots, private handler fixtures and green local builds do not establish it.
+
+## First implementation: provider approvals
+
+`stockAuthority.prepareHyggloApproval` now resolves the source request's complete audited physical basket, reads actual confirmed/ongoing stock plus approval claims, repairs and owner/vacation blocks, and inserts a durable whole-basket claim within the same mutation. The common outbound approval writer waits for that mutation before any approval PATCH. Convex manual actions use their internal mutation context; server workers use the existing pinned private owner service transport. Existing manual/automation gates remain first.
+
+Shared stock readers and the storefront snapshot include unresolved approval occupancy. Exact confirmed physical mirrors replace their corresponding claim projection without double counting; changed mirrors retain conservative additional occupancy. Prepared claims do not expire or permit another approval PATCH merely because a response was lost.
+
+This is draft work: no production deployment, provider approval or gate change occurred. Website checkout acquisition, item/date amendment writers, provider-outcome reconciliation/retry/release, operator remediation and deployed concurrent acceptance remain incomplete. In particular, declined/cancelled/missing source rows currently keep their unresolved claim until the reconciliation lifecycle is implemented; do not roll this draft out as a complete working coordinator. Unknown legacy mapping reconciliation remains required.
+
+Local acceptance for this draft: the actual preparation mutation and common outbound writers pass seven controlled handler/transport cases: whole-kit conflicts before any insert/PATCH, claims visible to real stock quotes and snapshots, loss of provider response, retry refusal after arbitrarily old timestamps, exact physical-mirror deduplication, changed-mirror retention, buffered midnight/repair/owner constraints, invalid source identities/mappings and disabled gates/absent receipts. Full suite: 143 files, 2175 tests passed and 14 existing skips. TypeScript, safe Next build and owner-boundary checks passed. These are synthetic records/transport; no provider write or deployed concurrent transaction is claimed.

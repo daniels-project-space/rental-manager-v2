@@ -28,6 +28,13 @@ import {
   hyggloAuthHeaders,
   HYGGLO_API_BASE,
 } from "./hygglo-auth";
+import {createConvexServiceClient} from "./convex-service";
+import {makeFunctionReference,type FunctionReference} from "convex/server";
+
+type ApprovalIdentity={accountSlug:string;hyggloOrderId:string};
+export type ApprovalStockAuthority=(args:ApprovalIdentity)=>Promise<unknown>;
+export const approvalStockReference=makeFunctionReference<"mutation",ApprovalIdentity>("stockAuthority:prepareHyggloApproval") as unknown as FunctionReference<"mutation","internal",ApprovalIdentity>;
+const prepareApprovalStock:ApprovalStockAuthority=args=>createConvexServiceClient().mutation(approvalStockReference,args);
 
 // ── Result envelope ──────────────────────────────────────────────
 
@@ -126,12 +133,16 @@ async function patchOrderAction(args: {
   hyggloOrderId: string;
   action: string;
   data: Record<string, unknown>;
-}): Promise<HyggloWriteResult> {
+}, approvalAuthority:ApprovalStockAuthority=prepareApprovalStock): Promise<HyggloWriteResult> {
   const creds = await getAccountCredentials(args.accountSlug);
   const token = await getHyggloAccessToken({
     ...creds,
     accountSlug: args.accountSlug,
   });
+  if(args.action==="approve"||args.action==="accept") {
+    const receipt=await approvalAuthority({accountSlug:args.accountSlug,hyggloOrderId:args.hyggloOrderId}) as {claimId?:unknown;physicalFingerprint?:unknown}|null;
+    if(!receipt||typeof receipt.claimId!=="string"||!receipt.claimId||typeof receipt.physicalFingerprint!=="string"||!receipt.physicalFingerprint)throw Error("Approval stock authority did not confirm the physical claim");
+  }
   const res = await fetch(
     `${HYGGLO_API_BASE}/v4/my/orders/${encodeURIComponent(args.hyggloOrderId)}?timezone=${encodeURIComponent(HYGGLO_WRITE_TZ)}`,
     {
@@ -159,10 +170,10 @@ async function patchOrderAction(args: {
 export async function acceptOrder(args: {
   accountSlug: string;
   hyggloOrderId: string;
-}): Promise<HyggloWriteResult> {
+}, approvalAuthority?:ApprovalStockAuthority): Promise<HyggloWriteResult> {
   if (!writesAllowed()) return skipResult();
   try {
-    return await patchOrderAction({ ...args, action: "approve", data: {} });
+    return await patchOrderAction({ ...args, action: "approve", data: {} },approvalAuthority);
   } catch (err) {
     return { status: "failed", error: (err as Error).message };
   }
@@ -424,11 +435,11 @@ export async function sendManualRenterMessage(args: {
 export async function manualApproveOrder(args: {
   accountSlug: string;
   hyggloOrderId: string;
-}): Promise<HyggloWriteResult> {
+}, approvalAuthority?:ApprovalStockAuthority): Promise<HyggloWriteResult> {
   if (!manualOrderActionsAllowed())
     return { status: "skipped", reason: "MANUAL_ACTION_DISABLED" };
   try {
-    return await patchOrderAction({ ...args, action: "accept", data: {} });
+    return await patchOrderAction({ ...args, action: "accept", data: {} },approvalAuthority);
   } catch (err) {
     return { status: "failed", error: (err as Error).message };
   }

@@ -41,6 +41,7 @@ import { dnaSummary } from "./lib/renter_dna";
 import {
   sendManualRenterMessage,
   manualApproveOrder,
+  approvalStockReference,
   manualDeclineOrder,
 } from "../src/lib/hygglo-write";
 import {
@@ -1242,7 +1243,7 @@ export const approveOrder = action({
     const res = await manualApproveOrder({
       accountSlug: account_slug,
       hyggloOrderId: thread_id,
-    });
+    },args=>ctx.runMutation(approvalStockReference,args));
     // Approved → accept no longer available, but I can still decline (cancel)
     // until the renter pays. Persist so the widget shows only Decline + the
     // "approved before" marker, instantly and across reloads.

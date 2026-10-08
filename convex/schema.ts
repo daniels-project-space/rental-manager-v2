@@ -18,6 +18,13 @@ import { invoiceStatsValidator } from "./lib/invoice_stats_fields";
 // (renters, reservations, conversations, rules, denial_records).
 // MASTER SAFETY RAIL: settings.ALLOW_HYGGLO_SEND must remain false.
 const operationalSchema = defineSchema({
+  stock_approval_claims: defineTable({
+    reservation_id: v.id("reservations"), account_slug: v.string(), order_id: v.string(),
+    physical_fingerprint: v.string(),
+    start: v.string(), end: v.string(),
+    components: v.array(v.object({item_id: v.id("items"), qty: v.number()})),
+    prepared_at: v.number(),
+  }).index("by_order", ["account_slug", "order_id"]),
   finance_snapshots: defineTable({
     month: v.string(), revision: v.number(), revenue: v.number(), expenses: v.number(), profit: v.number(),
     daniel_bps: v.number(), daniel: v.number(), leo: v.number(), source_revenue: v.number(),

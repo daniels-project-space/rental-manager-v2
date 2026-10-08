@@ -99,7 +99,7 @@ export function evaluateStockWindow(args: {
 }
 
 export async function loadStockSources(ctx: QueryCtx) {
-  const [items, confirmed, ongoing, index, overrides, claims, blackouts, vacations] = await Promise.all([
+  const [items, confirmed, ongoing, index, overrides, claims, blackouts, vacations, approvalClaims] = await Promise.all([
     ctx.db.query("items").collect(),
     ctx.db.query("reservations").withIndex("by_status", (q) => q.eq("status", "confirmed")).collect(),
     ctx.db.query("reservations").withIndex("by_status", (q) => q.eq("status", "ongoing")).collect(),
@@ -108,8 +108,26 @@ export async function loadStockSources(ctx: QueryCtx) {
     ctx.db.query("insurance_claims").collect(),
     ctx.db.query("owner_unavailability").collect(),
     ctx.db.query("vacation_periods").withIndex("by_active_start", (q) => q.eq("is_active", true)).collect(),
+    ctx.db.query("stock_approval_claims").collect(),
   ]);
-  return { items, reservations: dedupByLogicalRental([...confirmed, ...ongoing].filter((r) => !r.is_obsolete && !r.hygglo_order_id?.startsWith("__probe__"))), productIndex: buildProductIndexMap(index), overrides: buildOverrideMap(overrides), claims, blackouts, vacations };
+  return { items, reservations: dedupByLogicalRental([...confirmed, ...ongoing].filter((r) => !r.is_obsolete && !r.hygglo_order_id?.startsWith("__probe__"))), productIndex: buildProductIndexMap(index), overrides: buildOverrideMap(overrides), claims, blackouts, vacations, approvalClaims };
+}
+
+/** Physical identity for a prepared provider approval, using the same buffered
+ * coordinates as confirmed stock. It deliberately excludes names/prices. */
+export function approvalPhysicalIdentity(start:string,end:string,units:ReadonlyMap<string,number>) {
+  return JSON.stringify([start,end,[...units].sort(([a],[b])=>a.localeCompare(b))]);
+}
+
+export function approvalReservationWindow(r:{start_date?:string;end_date?:string;pickup_date?:string;return_date?:string;pickup_time?:string;return_time?:string}) {
+  const startDate=r.start_date&&effStart({start_date:r.start_date,pickup_date:r.pickup_date});
+  const endDate=r.return_date??r.end_date;
+  const validTime=(value?:string)=>value===undefined||/^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+  if(!startDate||!endDate||!validIsoDate(startDate)||!validIsoDate(endDate)||!validTime(r.pickup_time)||!validTime(r.return_time))throw Error("Approval rental dates require reconciliation");
+  const start=`${startDate}T${r.pickup_time??"00:00"}`;
+  const end=r.return_time?new Date(Date.parse(`${endDate}T${r.return_time}:00Z`)+3600000).toISOString().slice(0,16):`${shiftStockDate(endDate,1)}T00:00`;
+  if(end<=start)throw Error("Approval rental dates require reconciliation");
+  return {start,end};
 }
 
 export function resolveStockItem(name: string, items: Doc<"items">[]) {
@@ -174,6 +192,18 @@ export function stockOccupancyForItem(sources: Awaited<ReturnType<typeof loadSto
     // two different kits one rental. Quantity is part of the complete basket.
     const extension_key = renter && r.account_slug ? JSON.stringify([r.account_slug, renter, [...units].sort(([a], [b]) => a.localeCompare(b))]) : undefined;
     occupancy.push({ start: `${pickup}T${r.pickup_time ?? "00:00"}`, end, qty, renter_name: r.renter_name, order_id: r.hygglo_order_id, extension_key });
+  }
+  for(const claim of sources.approvalClaims??[]) {
+    // Exclude only an exact physical mirror. A stale/different mirror must
+    // not discard the prepared commitment or expand a loosely related kit.
+    const mirrored=sources.reservations.some(r=>{
+      if(String(r._id)!==String(claim.reservation_id)||r.account_slug!==claim.account_slug||r.hygglo_order_id!==claim.order_id||r.is_obsolete)return false;
+      const window=approvalReservationWindow(r);
+      const units=reservationItemUnits(r,sources.productIndex,sources.overrides,sources.items);
+      return approvalPhysicalIdentity(window.start,window.end,units)===claim.physical_fingerprint;
+    });
+    if(mirrored)continue;
+    for(const component of claim.components)if(String(component.item_id)===String(item._id))occupancy.push({start:claim.start,end:claim.end,qty:component.qty,order_id:claim.order_id});
   }
   return occupancy;
 }
