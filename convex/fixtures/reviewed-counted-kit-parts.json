@@ -1,0 +1,154 @@
+{
+  "masters": [
+    {
+      "_id": "kn758tccqwp1ts1qjk63ecvy0d871rne",
+      "name_canonical": "Sony A7S III",
+      "aliases": [],
+      "kind": "camera_body",
+      "unit_kind": "unit",
+      "qty": 1,
+      "status": "active",
+      "is_marketing_only": true
+    },
+    {
+      "_id": "kn798d7b6nv7rvpcfhzek01h8h86b320",
+      "name_canonical": "DJI Mic 2 wireless",
+      "aliases": [
+        "dji mic 2",
+        "dji mic2",
+        "dji wireless mic 2"
+      ],
+      "kind": "audio",
+      "unit_kind": "set",
+      "qty": 1,
+      "status": "active",
+      "is_marketing_only": false,
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "2x transmitter",
+          "1x receiver",
+          "1x charging case"
+        ],
+        "lenses": []
+      }
+    },
+    {
+      "_id": "kn7cqfdykt0jawskn4e6dyft1186bxn3",
+      "name_canonical": "DJI Wireless Mics",
+      "aliases": [
+        "dji wireless mics",
+        "dji wireless microphones"
+      ],
+      "kind": "audio",
+      "unit_kind": "set",
+      "qty": 1,
+      "status": "active",
+      "is_marketing_only": false,
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "2x transmitter",
+          "1x receiver",
+          "1x charging case"
+        ],
+        "lenses": []
+      }
+    },
+    {
+      "_id": "kn72f7s8b5dkspbqq2eghaxak186a61p",
+      "name_canonical": "Rode Wireless Mic Pro set",
+      "aliases": [
+        "R\u00d8DE Wireless PRO"
+      ],
+      "kind": "audio",
+      "unit_kind": "set",
+      "qty": 2,
+      "status": "active",
+      "is_marketing_only": false,
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "2x transmitter",
+          "1x receiver",
+          "2x lavalier mic",
+          "1x smart charge case"
+        ],
+        "lenses": []
+      }
+    },
+    {
+      "_id": "kn7fqh3k3fqnxanqv0h7bmm8e186bn2s",
+      "name_canonical": "Hollyland Pyro S transmitter",
+      "aliases": [],
+      "kind": "transmission",
+      "unit_kind": "unit",
+      "qty": 1,
+      "status": "active",
+      "is_marketing_only": false,
+      "compatibility": {
+        "accessories": [
+          "Hollyland 7-inch monitor"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      }
+    },
+    {
+      "_id": "kn74p93r60ndmmb0qghjqg84yh86abvh",
+      "name_canonical": "Sony A7 III",
+      "aliases": [],
+      "kind": "camera",
+      "unit_kind": "unit",
+      "qty": 1,
+      "status": "active",
+      "is_marketing_only": false,
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal",
+          "ND filter",
+          "Cinebloom filter mist",
+          "Tilta shoulder rig",
+          "Small rig tripod",
+          "Sirui tripod",
+          "PL to Sony E mount"
+        ],
+        "batteries": [
+          "Sony NP-FZ100"
+        ],
+        "cards": [
+          "256GB card"
+        ],
+        "included_with_rental": [
+          "Sony NP-FZ100 batteries 2x sets",
+          "256GB card"
+        ],
+        "lenses": [
+          "Sony GM 24-70mm f2.8",
+          "Sony GM 16-35mm f2.8",
+          "Sony GM 70-200mm f2.8",
+          "Sony FE 90mm f2.8 Macro G OSS",
+          "Sony 28-70mm",
+          "TTArtisan 11mm f2.8 Fisheye (Sony E)",
+          "Anamorphic Blazar Remus 33mm",
+          "Anamorphic Blazar Remus 45mm",
+          "Anamorphic Blazar Remus 65mm",
+          "Anamorphic Blazar Remus 100mm"
+        ]
+      }
+    }
+  ],
+  "descriptions": {
+    "852890": "The ultimate mobile interview setup with all features you can think of crammed into one amazing product ! \n\n\ud83d\ude80Features\ud83d\ude80\n- 32 bit float recording\n- internal recording\n- time code sync\n- adaptive audio levelling\n- great 8h battery life\n- Pro Lavaliere mics\n\n\u2b50\ufe0fIncluded in this rental \u2b50\ufe0f\n2x Rode wireless Pro Transmitter\n1x Rode Receiver\n2x Pro Lavaliere microphones\n1x Various attachments\n1x carrying case\n1x Charging case\n1x Audio Cable\nVarious needed cables\n\n\u26a1\ufe0fADD-ONS\u26a1\ufe0f\nCameras:\ud83c\udfa5\nAdd the Sony a7iii 4k camera for 25\u00a3/d\nAdd the Sony a7s iii 4k camera for 40\u00a3/d\nAdd the bmpcc6k pro for 40\u00a3/d\n\nLenses:\ud83d\udcf7\nAdd the anamorphic cinema lens set from great joy 35,50,85 1.8x t2.9 lenses for 100\u00a3/d          (or individually for 35\u00a3/d per lens)\nAdd the Sony 24-70mm g master f2.8 for 10\u00a3/d\nAdd the Sony 16-35mm f4 Zeiss for 10\u00a3/d\nAdd the Sony 90mm f2.8 macro g for 10\u00a3/d\nAdd the Cannon 24-105mm f4 Lens for 10\u00a3/d\n\nGimbals: \u2699\ufe0f\nAdd the DJI RS2 gimbal system to your set for 20\u00a3/d\nAdd the DJI RS3 Pro gimbal to you set for 25\u00a3/d\n\nMicrophones:\ud83c\udf99\ufe0f\nAdd the Senheiser MKE 600 Shotgun mic with boom pole and sound recorder for 28\u00a3/d\nAdd the dji wireless mic system with 2x transmitters and 1x receivers for 20\u00a3/d\nAdd 2x lavalieres for 5\u00a3/d\n\nMonitors:\ud83d\udda5\ufe0f\nadd the Atomos shinobi 7 inch 2200nits 7 inch 4k Monitor for 20\u00a3/d\nAdd the Atomos Shogun 7 hdr 3000nits 7 inch 4k hdmi/sdi monitor for 30\u00a3/d\nAdd the Atomos Shinobi 5 inch 4k Monitor for 15\u00a3/d\n\nPower:\ud83d\udd0b\nAdd a power generator solix f2000 from Anker with 2080wah and 4000w for 60\u00a3/d\n\nAccessories:\u2692\nAdd a Heavy duty fluid head tripod for 15\u00a3/d\nAdd a matte box with variable nd filter system for 15\u00a3/d\nAdd a soft box for your light for 10\u00a3/d\nAdd image transmission wireless for 20\u00a3/d\nAdd an additional DJI Gimbal battery for 5\u00a3/d\nAdd Powerful 2x Sony Np970 batteries for all day battery life of 10\u00a3/d\nAdd a Mistfilter Moment Cinebloom for 10\u00a3/d\nAdd a VND Filter for 5\u00a3/d\nAdd a 100cm slider with carbon fibre arms for 10\u00a3/d\n\n\ud83d\udcb0\n\nWe also offer:\nSony and Blackmagic cameras\nDrones\nGimbals\nLights\nLEDS\nWireless mics\nImage Transmitters\nFollow focus\nMonitor\nSliders (motorized as well)\nMobile power generators\nLenses\nAnamorphic lenses\nTripods and stands\nsmoke machines\nfilters (vnd, mist, uv)\n\nPlease kindly note:\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary, any other charger that uses normal usb c and usb2.0 does NOT come with the cable included.\nWe try our best to ensure the items are charged when picked up but are unable to guarantee this due to partially very short times between rentals. If you have an important project please book and pickup equipment the day before your shoot or ensure you have a few hours to charge the batteries if necessary.\nSome items in the kit are labelled as \u201coptional\u201d in the kit and will only be included if explicitly requested so please make sure to let us know you would like those included at no extra cost.",
+    "852812": "DJI Mic is a ready-to-go wireless microphone that is designed for creators on the move.\nDJI Mic comes with two transmitters, each with bu\n\n\u2b50\ufe0fIncluded in this rental \u2b50\ufe0f\n2x Dji mic Transmitter\n1x Dji mic Reciever\n1x Audio Cable\n1x charging case\n1x carrying case\n2x Lavelier Lapel microphones\nAdd-on direct:  Add a third Dji Microphone to the mix for 8\u00a3/d more\n\n\u26a1\ufe0fADD-ONS\u26a1\ufe0f\nCameras:\nAdd the Sony a7iii 4k camera for 25\u00a3/d\nAdd the Sony a7s iii 4k camera for 40\u00a3/d\nAdd the bmpcc6k pro for 40\u00a3/d\n\nMicrophones:\nAdd the premium rode wireless pro set including 2x pro lavs for 28\u00a3/d\nAdd a third microphone and lavelier mic for 10\u00a3/d\n\n\ud83d\udcb0DISCOUNTS\ud83d\udcb0\nIf you are hiring for more days or renting with other items we can offer a deal up to 20% \ud83d\udcb5\n\nWe also offer:\nSony and Blackmagic cameras\nDrones\nGimbals\nLights\nLEDS\nWireless mics\nImage Transmitters\nFollow focus\nMonitor\nSliders (motorized as well)\nMobile power generators\nLenses\nAnamorphic lenses\nTripods and stands\nsmoke machines\nfilters (vnd, mist, uv)\n\nPlease kindly note:\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary, any other charger that uses normal usb c and usb2.0 does NOT come with the cable included.\nWe try our best to ensure the items are charged when picked up but are unable to guarantee this due to partially very short times between rentals. If you have an important project please book and pickup equipment the day before your shoot or ensure you have a few hours to charge the batteries if nessessary.\nSome items in the kit are labeled as \u201coptional\u201d in the kit and will only be included if explicitly requested so please make sure to let us know you would like those included at no extra cost.",
+    "936035": "The Sony a7ii mirrorless camera with full frame sensor shoots in full hd and provides great dynamic range. The dji transmitters provide internal recording and wireless transmission directly into the camera, including lavalieres for interviews. The dji mic can also be used with android or IPhones via included adapters.\n\n\u2b50\ufe0fIncluded in this rental \u2b50\ufe0f\n1x Sony a7ii camera \n1x Sony 28-70mm f3.5-5.6 lens \n3x batteries + charger\n1x 128gb sd card \n2x dji microphone wireless transmitters \n1x dji mic Reciever \n1x audio cable \n2x adapters for IPhone and Android phones \n1x charging case for mics\n2x carrying case\n\nAbout us\ud83d\udc68\ud83c\udffb\u200d\ud83d\udd27\nOperation times: 9am-12pm and 7pm-9pm\ud83d\udd50\nDelivery is always available! Please enquire for rates if interested \ud83d\ude9a\ud83d\udccd\nLocated 3 min away from Tottenham court road Station \ud83d\ude89 \ud83c\udf0d\nWe\u00b4re a London based commercial and equipment rental company since 2019 \ud83c\udfa5\n\n\u26a1\ufe0fADD-ONS\u26a1\ufe0f\nWe also offer:\n\n- Sony, Cannon, Arri and Blackmagic cameras\n- Drones\n- Party and event equipment\n- Speakers\n- Gimbals\n- Lights\n- LEDS\n- Wireless mics\n- Image Transmitters\n- Follow focus\n- Monitor\n- Sliders (motorized as well)\n- Mobile power generators\n- Lenses\n- Anamorphic lenses\n- Tripods and stands\n- Smoke machines\n- Filters (vnd, mist, uv)\n\n\nPlease kindly note:\n- We always provide chargers with the equipment but only supply the needed cable if it is proprietary, any other charger that uses normal usb c and usb2.0 does NOT come with the cable included.\n- We try our best to ensure the items are charged when picked up but are unable to guarantee this due to partially very short times between rentals. If you have an important project please book and pickup equipment the day before your shoot or ensure you have a few hours to charge the batteries if necessary.\n- Delivery is a separate charge to the rental fee charged here and will be processed separately.\n- Some items in the kit are labelled as \u201coptional\u201d in the kit and will only be included if explicitly requested so please make sure to let us know you would like those included at no extra cost."
+  }
+}
