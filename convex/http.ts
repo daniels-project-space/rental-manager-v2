@@ -130,6 +130,7 @@ export const storefrontRead = httpAction(async (ctx, request) => {
     ? Object.keys(args).length === 1 && args[key] === "dbcinema"
     : Object.keys(args).length === 0;
   const calls = {
+    "hygglo_products:catalogueForStorefront": { ref: internal.hygglo_products.__service_catalogueForStorefront, key: "accountSlug" },
     "hygglo_products:list": { ref: internal.hygglo_products.__service_listForStorefront, key: "accountSlug" },
     "items:listForReconcile": { ref: internal.items.__service_listForStorefront, key: undefined },
     "reservations:listActiveForStorefront": { ref: internal.reservations.__service_listActiveForStorefront, key: "account_slug" },
@@ -143,12 +144,13 @@ export const storefrontRead = httpAction(async (ctx, request) => {
     const rows = await ctx.runQuery(selected.ref, args);
     const pick = (row: any, fields: string[]) => Object.fromEntries(fields.filter(k => row[k] !== undefined).map(k => [k, row[k]]));
     const value = rows.map((row: any) => {
-      if (path === "hygglo_products:list") return pick(row, ["productId", "name", "isPublished", "isMarketingOnly", "valuation", "minimumRentalDays", "prices", "images", "unavailableDates", "listings", "masterItemId"]);
+      if (path === "hygglo_products:list" || path === "hygglo_products:catalogueForStorefront") return pick(row, ["productId", "name", "isPublished", "isMarketingOnly", "valuation", "minimumRentalDays", "prices", "images", "unavailableDates", "listings", "masterItemId", ...(path === "hygglo_products:catalogueForStorefront" ? ["stockMapping"] : [])]);
       if (path === "items:listForReconcile") return pick(row, ["_id", "name", "display_name", "aliases", "qty", "status", "is_marketing_only"]);
       return {
         ...pick(row, ["_id", "hygglo_order_id", "start_date", "end_date", "pickup_date", "return_date", "order_step", "status", "is_obsolete"]),
         items: (row.items ?? []).map((item: any) => pick(item, ["product_id", "item_name", "qty"])),
         resolved_items: (row.resolved_items ?? []).map((item: any) => pick(item, ["item_id", "item_name_canonical", "qty"])),
+        ...(Array.isArray(row.physical_items) ? {physical_items:row.physical_items.map((item:any) => pick(item,["item_id","qty"]))} : {}),
       };
     });
     return reply(200, { protocolVersion: 1, status: "success", path, value });

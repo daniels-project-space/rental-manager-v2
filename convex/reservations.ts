@@ -938,6 +938,11 @@ export const listActiveForStorefront = query({
       .withIndex("by_account_order_step", q => q.eq("account_slug", account_slug).eq("order_step", "DELIVERED")).collect())
       .filter(r => r.account_slug === account_slug && r.status === "confirmed" && !r.is_obsolete);
     const rows = [...new Map([...dated, ...delivered].map(r => [r._id, r])).values()];
+    const [inventory, indexRows, overrideRows] = await Promise.all([
+      ctx.db.query("items").collect(),ctx.db.query("hygglo_product_index").collect(),
+      ctx.db.query("listing_resolution_override").withIndex("by_account_product", q => q.eq("account_slug", account_slug)).collect(),
+    ]);
+    const productIndex = buildProductIndexMap(indexRows), overrides = buildOverrideMap(overrideRows);
     return rows.map((r) => ({
       _id: r._id,
       hygglo_order_id: r.hygglo_order_id,
@@ -949,6 +954,7 @@ export const listActiveForStorefront = query({
       status: r.status,
       is_obsolete: r.is_obsolete,
       items: r.items,
+      physical_items: [...reservationItemUnits(r,productIndex,overrides,inventory)].map(([item_id,qty]) => ({item_id,qty})),
       resolved_items: (r as { resolved_items?: Array<{ item_id: string; item_name_canonical?: string; qty?: number }> }).resolved_items,
     }));
   },

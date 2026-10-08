@@ -16,8 +16,8 @@ describe("storefront custody feed", () => {
       { _id: "returned", account_slug: "dbcinema", status: "completed", order_step: "RETURNED", end_date: "2026-08-02" },
     ];
     const indexes: string[] = [];
-    const ctx: any = { auth: { getUserIdentity: async () => null }, db: { query: () => {
-      let selected = rows;
+    const ctx: any = { auth: { getUserIdentity: async () => null }, db: { query: (table:string) => {
+      let selected = table === "reservations" ? rows : [];
       const query: any = { withIndex: (index: string, select: any) => {
         indexes.push(index);
         const selector: any = { eq: (key: string, value: any) => { selected = selected.filter((r: any) => r[key] === value); return selector; }, gte: (key: string, value: any) => { selected = selected.filter((r: any) => r[key] >= value); return selector; } };
@@ -30,6 +30,6 @@ describe("storefront custody feed", () => {
     expect(result).toHaveLength(3);
     expect(result.find((r: any) => r._id === "old-away")).toMatchObject({ end_date: "2026-08-02", order_step: "DELIVERED" });
     expect(result.some((r: any) => "renter_email" in r)).toBe(false);
-    expect(indexes).toEqual(["by_account_end", "by_account_order_step"]);
+    expect(indexes).toEqual(["by_account_end", "by_account_order_step", "by_account_product"]);
   });
 });
