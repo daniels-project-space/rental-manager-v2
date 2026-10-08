@@ -1403,6 +1403,7 @@ export const getStatsDrawerData = query({
               : null),
           net_gbp: r.net_to_owner_gbp ?? null,
           order_step: r.order_step ?? null,
+          site_verification: r.account_slug === "dbcinema_web" ? r.site_verification ?? null : null,
           item_tiles: item_image_tiles_h.map((t) => {
             // 2026-05-23: prefer cached short_name (derived from Hygglo
             // SEO blob via DeepSeek). Fall back to raw name when no
@@ -1482,6 +1483,7 @@ export const getStatsDrawerData = query({
           (r.start_date && r.end_date ? daysBetween(r.start_date as string, r.end_date as string) : null),
         net_gbp: r.net_to_owner_gbp ?? null,
         order_step: r.order_step ?? null,
+          site_verification: r.account_slug === "dbcinema_web" ? r.site_verification ?? null : null,
         item_tiles: [] as Array<{ name: string; qty: number; image_url: string | null }>,
         kind,
         is_ongoing: kind === "ongoing",

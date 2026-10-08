@@ -1327,6 +1327,7 @@ export const adminPatchRichFieldsByHyggloId = mutation({
         q.eq("hygglo_order_id", args.hygglo_order_id),
       )
       .collect();
+    if (rows.some(r => r.account_slug === "dbcinema_web") && (args.order_step !== undefined || args.booking_status !== undefined)) throw Error("Website approval and collection must be managed in DB Cinema Rentals");
     let patched = 0;
     for (const r of rows) {
       const patch: Record<string, unknown> = {};

@@ -1,5 +1,7 @@
 "use client";
 
+import { websiteVerificationLabel, type WebsiteVerification } from "../../../../convex/lib/websiteVerification";
+import WebsiteVerificationPanel from "../WebsiteVerificationPanel";
 import Image from "next/image";
 import { createPortal } from "react-dom";
 import { useState, useCallback, type MouseEvent } from "react";
@@ -11,6 +13,7 @@ import { useCalendarOverlay } from "@/lib/dashboard/calendar-overlay-context";
 export type Kind = "ongoing" | "upcoming" | "pending";
 
 export interface Rental {
+  site_verification?: WebsiteVerification | null;
   reservation_id: string;
   /** Convex reservation document ID used by the full calendar's row data. */
   calendar_reservation_id?: string | null;
@@ -452,6 +455,7 @@ export function RentalRow({ r }: { r: Rental }) {
   // out among the Hygglo rows even in the "All" view; the friendlier "web" pill
   // label replaces the raw slug.
   const isWeb = r.account_slug === "dbcinema_web";
+  const [showVerification, setShowVerification] = useState(false);
   const rowRing = isWeb ? "shadow-[inset_5px_0_0_#10b981]" : s.ring;
   const acctLabel = isWeb ? "web" : r.account_slug;
   // PASS-7: v1-faithful multi-item display.
@@ -548,6 +552,7 @@ export function RentalRow({ r }: { r: Rental }) {
             {acctLabel}
           </span>
         </div>
+        {isWeb && r.calendar_reservation_id && <div className="mt-1"><button type="button" onClick={e => { e.stopPropagation(); setShowVerification(v => !v); }} className="text-[11px] text-amber-200 underline">{r.order_step === "DELIVERED" ? "Collected · rental active" : websiteVerificationLabel(r.site_verification)} · {showVerification ? "Hide checks" : "View checks"}</button>{showVerification && <WebsiteVerificationPanel key={r.calendar_reservation_id} reservationId={r.calendar_reservation_id} />}</div>}
         {/* PASS-8: additional distinct-image tiles (deduped by image_url).
             Rendered when >1 distinct images exist for the rental. Each tile
             is 40x40, rounded, hover-title shows all collapsed item names. */}
