@@ -86,3 +86,28 @@ describe("saved website per-item clocks", () => {
     expect(websiteDayIntervals({...base,site_item_windows:[{item_id:"camera",qty:1,start,end,returnTime:"23:30"}]},"2035-01-03")).toEqual([{id:"camera",a:"00:00",b:"00:30",qty:1}]);
   });
 });
+
+it('scales and aggregates partial audited kit quantities without overwriting another mapped listing',()=>{
+ const mapping:OverrideMap=new Map([['leo#10',[{item_id:'camera',qty:2}]],['leo#11',[{item_id:'camera',qty:1}]]]);
+ const res={account_slug:'leo',expanded_items:[{item_id:'camera',qty:99},{item_id:'lens',qty:3}],hygglo_items:[{product_id:10,qty:2},{product_id:11,qty:2},{product_id:12,name:'Lens',qty:3}]};
+ expect(reservationItemUnits(res,new Map([['leo#12','lens']]),mapping).get('camera')).toBe(6);
+ expect(reservationItemUnits({...res,hygglo_items:[...res.hygglo_items,{product_id:13,name:'2x camera bodies',qty:2}]},new Map([['leo#12','lens'],['leo#13','camera']]),mapping).get('camera')).toBe(10);
+ expect(reservationItemUnits({...res,hygglo_items:[...res.hygglo_items].reverse()},new Map([['leo#12','lens']]),mapping).get('camera')).toBe(6);
+ expect(reservationItemUnits(res,new Map([['leo#12','lens']]),mapping).get('lens')).toBe(3);
+});
+
+it('keeps supplied and separately booked adapter quantities in partial audits',()=>{
+ const inventory=[{_id:'ff',name_canonical:'BMPCC 6K Full Frame',kind:'camera',compatibility:{included_with_rental:['EF to L mount adapter']}},{_id:'adapter',name_canonical:'EF to L mount',aliases:['EF to L mount adapter'],kind:'adapter'}];
+ const mapping:OverrideMap=new Map([['leo#10',[{item_id:'ff',qty:1}]]]);
+ const units=reservationItemUnits({account_slug:'leo',expanded_items:[{item_id:'ff',qty:1},{item_id:'adapter',qty:1}],hygglo_items:[{product_id:10,qty:2},{product_id:12,name:'EF to L mount adapter',qty:1}]},new Map([['leo#12','adapter']]),mapping,inventory);
+ expect(Object.fromEntries(units)).toEqual({ff:2,adapter:3});
+});
+it('refuses malformed booked/audited quantities before multiplication can hide them',()=>{
+ for(const qty of [0,-1,0.5,NaN])for(const partial of [false,true])expect(()=>reservationItemUnits({account_slug:'leo',hygglo_items:[{product_id:10,qty},...(partial?[{product_id:12}]:[])]},new Map(),new Map([['leo#10',[{item_id:'camera',qty:2}]]]))).toThrow('Invalid reserved listing quantity');
+ for(const qty of [0,-1,0.5,NaN])expect(()=>reservationItemUnits({account_slug:'leo',hygglo_items:[{product_id:10,qty:2}]},new Map(),new Map([['leo#10',[{item_id:'camera',qty}]]]))).toThrow('Invalid audited kit quantity');
+});
+it('refuses overflowing multiplied or accumulated physical quantities',()=>{
+ const mapping:OverrideMap=new Map([['leo#10',[{item_id:'camera',qty:Number.MAX_SAFE_INTEGER}]]]);
+ expect(()=>reservationItemUnits({account_slug:'leo',hygglo_items:[{product_id:10,qty:2}]},new Map(),mapping)).toThrow('Invalid reserved unit quantity');
+ expect(()=>reservationItemUnits({account_slug:'leo',hygglo_items:[{product_id:10},{product_id:10}]},new Map(),mapping)).toThrow('Invalid reserved unit quantity');
+});

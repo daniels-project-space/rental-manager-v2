@@ -66,6 +66,20 @@ export function reservationItemUnits(
   inventory: AdapterInventoryItem[] = [],
   date?: string,
 ): Map<string, number> {
+  const listingQty = (h: HItem) => {
+    const qty = h.qty ?? 1;
+    if (!Number.isSafeInteger(qty) || qty < 1) throw Error("Invalid reserved listing quantity");
+    return qty;
+  };
+  const auditedComponents = (components: Array<{item_id: string; qty: number}>) => {
+    if (components.some(c => !c.item_id || !Number.isSafeInteger(c.qty) || c.qty < 1)) throw Error("Invalid audited kit quantity");
+    return withDefaultAdapters(components, inventory).components;
+  };
+  const addUnits = (map: Map<string, number>, id: string, qty: number) => {
+    const total = (map.get(id) ?? 0) + qty;
+    if (!Number.isSafeInteger(qty) || qty < 1 || !Number.isSafeInteger(total)) throw Error("Invalid reserved unit quantity");
+    map.set(id, total);
+  };
   const slug = r.account_slug ?? "";
   if (slug === "dbcinema_web" && r.site_item_windows !== undefined) return websiteWindowUnits(r.site_item_windows, date);
 
@@ -76,7 +90,8 @@ export function reservationItemUnits(
     for (const h of r.hygglo_items ?? []) {
       const comps = h.product_id != null ? overrideMap.get(`${slug}#${h.product_id}`) : undefined;
       if (!comps) { allOverridden = false; break; }
-      for (const c of withDefaultAdapters(comps,inventory).components) ov.set(c.item_id, (ov.get(c.item_id) ?? 0) + c.qty * (h.qty ?? 1));
+      const qty = listingQty(h);
+      for (const c of auditedComponents(comps)) addUnits(ov, c.item_id, c.qty * qty);
     }
     // allOverridden with an EMPTY ov = every listing is a marketing/own-nothing
     // override → the reservation has no owned items (drops mis-attributions).
@@ -96,12 +111,26 @@ export function reservationItemUnits(
     m.set(id, parseLeadingQty(h.name));
   }
 
-  // 0b. Overlay any partial overrides — authoritative for the items they name.
+  // 0b. Aggregate partial audits before replacing legacy attributions. Each
+  // component quantity is per listing; several booked listings can share it.
   if (overrideMap) {
+    const audited = new Map<string, number>();
     for (const h of r.hygglo_items ?? []) {
       const comps = h.product_id != null ? overrideMap.get(`${slug}#${h.product_id}`) : undefined;
-      if (comps) for (const c of comps) m.set(c.item_id, c.qty);
+      if (comps) {
+        const qty = listingQty(h);
+        for (const c of auditedComponents(comps)) addUnits(audited, c.item_id, c.qty * qty);
+      }
     }
+    // An unoverridden listing mapped to the same physical unit is independent
+    // demand, not another alias of the audited kit. Preserve its contribution.
+    for (const h of r.hygglo_items ?? []) {
+      const key = h.product_id != null ? `${slug}#${h.product_id}` : undefined;
+      if (!key || overrideMap.has(key)) continue;
+      const id = productIndex.get(key);
+      if (id && audited.has(id)) addUnits(audited, id, parseLeadingQty(h.name) * listingQty(h));
+    }
+    for (const [id, qty] of audited) m.set(id, qty);
   }
   return new Map(withDefaultAdapters([...m].map(([item_id,qty]) => ({item_id,qty})),inventory).components.map(c=>[c.item_id,c.qty]));
 }

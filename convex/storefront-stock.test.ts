@@ -35,6 +35,13 @@ describe("actual private shared-stock snapshot",()=>{
  it("rejects malformed occupied quantities instead of dropping their constraints",async()=>{
   const f=fixture();f.tables.reservations=[f.rental({resolved_items:[{item_id:"body",qty:1.5}]})];await expect(f.run()).rejects.toThrow("Invalid shared occupancy");
  });
+ it("counts partial audited kit quantities consistently in the real source snapshot and quote",async()=>{
+  const f=fixture();f.tables.items[0].qty=12;f.tables.items.push({_id:"lens",name_canonical:"Lens",kind:"lens",status:"active",is_marketing_only:false,qty:5});const slug="other-owned-account";
+  f.tables.listing_resolution_override=[{account_slug:slug,product_id:10,components:[{item_id:"body",qty:2}]},{account_slug:slug,product_id:11,components:[{item_id:"body",qty:1}]}];f.tables.hygglo_product_index=[{account_slug:slug,product_id:12,item_id:"lens"},{account_slug:slug,product_id:13,item_id:"body"}];
+  f.tables.reservations=[f.rental({expanded_items:[{item_id:"body",qty:99},{item_id:"lens",qty:3}],resolved_items:[],hygglo_items:[{product_id:10,qty:2},{product_id:11,qty:2},{product_id:12,name:"Lens",qty:3},{product_id:13,name:"2x camera bodies",qty:2}]})];
+  const result=await f.run();expect(result.units.find((u:any)=>u.masterItemId==="body").windows).toEqual([{start:ms("2027-01-01T00:00"),end:ms("2027-01-03T00:00"),qty:10}]);const sources=await loadStockSources({db:f.db} as any);expect(stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:"2027-01-01",end_date:"2027-01-01"}).free_units).toBe(2);
+  f.tables.reservations[0].hygglo_items.reverse();expect((await f.run()).units).toEqual(result.units);
+ });
  it("dispatches the real internal snapshot behind the registered fixed read-only route",async()=>{
   vi.stubEnv("DBCINEMA_WEBHOOK_SECRET","shared-fixture-service");const f=fixture();const ctx={runQuery:async(ref:any,args:any)=>{expect(getFunctionName(ref)).toBe("items:__service_sharedStockForStorefront");expect(args).toEqual({});return (snapshot as any)._handler({db:f.db},args)}};const req=(args:any)=>new Request("https://fixture.convex.site/dbcinema/storefront-read",{method:"POST",headers:{"x-dbcinema-sync-token":"shared-fixture-service"},body:JSON.stringify({path:"items:sharedStockForStorefront",args})});const response=await (storefrontRead as any)._handler(ctx,req({}));expect(response.status).toBe(200);expect((await response.json()).value[0]).toMatchObject({version:1,units:[{masterItemId:"body",quantityOwned:3}]});expect((await (storefrontRead as any)._handler(ctx,req({account_slug:"other"}))).status).toBe(400);
  });
