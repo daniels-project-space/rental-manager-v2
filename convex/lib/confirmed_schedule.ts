@@ -63,3 +63,11 @@ export function londonStockInstant(label: string, bound: "start" | "end") {
 }
 
 export function londonStockLabel(at:number){const p=Object.fromEntries(london.formatToParts(new Date(at)).map(x=>[x.type,x.value]));return `${p.year.padStart(4,"0")}-${p.month}-${p.day}T${p.hour}:${p.minute}`;}
+
+/** User-approved elapsed turnaround, applied to occupied endpoints once. */
+export const TURNAROUND_BUFFER_MINUTES = 60;
+export const TURNAROUND_BUFFER_MS = TURNAROUND_BUFFER_MINUTES * 60_000;
+export function bufferedStockEnd(actualEnd:string){
+ const endInstant=londonStockInstant(actualEnd,"end")+TURNAROUND_BUFFER_MS;
+ return {end:londonStockLabel(endInstant),endInstant};
+}

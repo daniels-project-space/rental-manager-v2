@@ -1,4 +1,4 @@
-import {londonStockInstant,londonStockLabel} from "../confirmed_schedule";
+import {londonStockInstant,londonStockLabel,TURNAROUND_BUFFER_MS,TURNAROUND_BUFFER_MINUTES} from "../confirmed_schedule";
 import type { Id } from "../../_generated/dataModel";
 import { withDefaultAdapters, type AdapterInventoryItem } from "../default_adapter_units";
 
@@ -7,7 +7,9 @@ type HItem = { name?: string; product_id?: number; qty?: number };
 
 export type ResolvableRes = {
   account_slug?: string;
-  site_item_windows?: Array<{item_id: string; qty: number; start: number; end: number; pickupTime?: string | null; returnTime?: string | null; endExclusive?: boolean; stockWindowVersion?:number}>;
+  pickup_time?:string;
+  return_time?:string;
+  site_item_windows?: Array<{item_id: string; qty: number; start: number; end: number; pickupTime?: string | null; returnTime?: string | null; endExclusive?: boolean; stockWindowVersion?:number; turnaroundBufferMinutes?:number}>;
   expanded_items?: XItem[] | null;
   resolved_items?: XItem[] | null;
   hygglo_items?: HItem[] | null;
@@ -82,7 +84,7 @@ export function reservationItemUnits(
     map.set(id, total);
   };
   const slug = r.account_slug ?? "";
-  if (slug === "dbcinema_web" && r.site_item_windows !== undefined) return websiteWindowUnits(r.site_item_windows, date);
+  if (slug === "dbcinema_web" && r.site_item_windows !== undefined) return websiteWindowUnits(r.site_item_windows, date,{pickupTime:r.pickup_time,returnTime:r.return_time});
 
   // 0a. Fully-overridden reservation → the override IS the answer.
   if (overrideMap && (r.hygglo_items?.length ?? 0) > 0) {
@@ -152,7 +154,7 @@ export function isStandardAccessory(kind: string | undefined, name: string | und
 }
 
 /** The saved website allocation is authoritative; extensions do not multiply bodies. */
-export function websiteWindowUnits(windows: NonNullable<ResolvableRes["site_item_windows"]>, date?: string): Map<string, number> {
+export function websiteWindowUnits(windows: NonNullable<ResolvableRes["site_item_windows"]>, date?: string,fallback:{pickupTime?:string|null;returnTime?:string|null}={}): Map<string, number> {
   const perItem=new Map<string,Array<{start:number;end:number;qty:number}>>();
   const dayStart=date?londonStockInstant(date+"T00:00","start"):undefined;
   const tomorrow=date?new Date(Date.parse(date+"T12:00Z")+86400000).toISOString().slice(0,10):undefined;
@@ -160,9 +162,11 @@ export function websiteWindowUnits(windows: NonNullable<ResolvableRes["site_item
   for(const w of windows){
     const days=websiteWindowDates(w);
     const exact=w.endExclusive===true&&w.stockWindowVersion===2;
-    const start=exact?w.start:londonStockInstant(days.start+"T"+(w.pickupTime??"00:00"),"start");
+    const pickupTime=w.pickupTime===undefined?fallback.pickupTime:w.pickupTime;
+    const returnTime=w.returnTime===undefined?fallback.returnTime:w.returnTime;
+    const start=exact?w.start:londonStockInstant(days.start+"T"+(pickupTime??"00:00"),"start");
     const nextDay=new Date(Date.parse(days.end+"T12:00Z")+86400000).toISOString().slice(0,10);
-    const end=exact?w.end:londonStockInstant(w.returnTime?days.end+"T"+w.returnTime:nextDay+"T00:00","end");
+    const end=exact?w.end+(TURNAROUND_BUFFER_MINUTES-(w.turnaroundBufferMinutes??0))*60_000:londonStockInstant(returnTime?days.end+"T"+returnTime:nextDay+"T00:00","end")+TURNAROUND_BUFFER_MS;
     if(dayStart!==undefined&&dayEnd!==undefined&&(start>=dayEnd||end<=dayStart))continue;
     const rows=perItem.get(String(w.item_id))??[];rows.push({start:dayStart===undefined?start:Math.max(start,dayStart),end:dayEnd===undefined?end:Math.min(end,dayEnd),qty:w.qty});perItem.set(String(w.item_id),rows);
   }
@@ -171,7 +175,7 @@ export function websiteWindowUnits(windows: NonNullable<ResolvableRes["site_item
   return result;
 }
 
-/** Local booking-clock intervals for the calendar, without an invented turnaround buffer. */
+/** Local booking-clock intervals for the calendar, including the approved turnaround occupancy. */
 export function websiteDayIntervals(r: ResolvableRes & {pickup_time?:string;return_time?:string}, date: string) {
   const dayStart=Date.parse(`${date}T00:00:00Z`),dayEnd=dayStart+86400000;
   const result:Array<{id:string;a:string;b:string;qty:number}>=[];
@@ -180,7 +184,7 @@ export function websiteDayIntervals(r: ResolvableRes & {pickup_time?:string;retu
     const pickupTime=w.pickupTime === undefined ? r.pickup_time : w.pickupTime;
     const returnTime=w.returnTime === undefined ? r.return_time : w.returnTime;
     const start=w.endExclusive===true&&w.stockWindowVersion===2 ? Date.parse(londonStockLabel(w.start)+":00Z") : Date.parse(`${pickup}T${pickupTime || "00:00"}:00Z`);
-    const end=w.endExclusive===true&&w.stockWindowVersion===2 ? Date.parse(londonStockLabel(w.end)+":00Z") : returnTime ? Date.parse(`${ret}T${returnTime}:00Z`) : Date.parse(`${ret}T00:00:00Z`)+86400000;
+    const end=w.endExclusive===true&&w.stockWindowVersion===2 ? Date.parse(londonStockLabel(w.end+(TURNAROUND_BUFFER_MINUTES-(w.turnaroundBufferMinutes??0))*60_000)+":00Z") : returnTime ? Date.parse(`${ret}T${returnTime}:00Z`)+TURNAROUND_BUFFER_MS : Date.parse(`${ret}T00:00:00Z`)+86400000+TURNAROUND_BUFFER_MS;
     if(start>=dayEnd || end<=dayStart)continue;
     const a=start<=dayStart?"00:00":new Date(start).toISOString().slice(11,16);
     const b=end>=dayEnd?"24:00":new Date(end).toISOString().slice(11,16);
@@ -219,6 +223,6 @@ export function websiteCalendarPeriods<T extends ResolvableRes & {
 /** v2 endpoints are genuine UTC instants; an unknown return occupies through
  * the final local day, so midnight-exclusive belongs to the preceding day. */
 function websiteWindowDates(w:NonNullable<ResolvableRes["site_item_windows"]>[number]){
- if(w.endExclusive===true&&w.stockWindowVersion===2)return {start:londonStockLabel(w.start).slice(0,10),end:londonStockLabel(w.returnTime==null?w.end-1:w.end).slice(0,10)};
+ if(w.endExclusive===true&&w.stockWindowVersion===2)return {start:londonStockLabel(w.start).slice(0,10),end:londonStockLabel(w.end-(w.turnaroundBufferMinutes??0)*60_000-(w.returnTime==null?1:0)).slice(0,10)};
  return {start:new Date(w.start).toISOString().slice(0,10),end:new Date(w.end).toISOString().slice(0,10)};
 }

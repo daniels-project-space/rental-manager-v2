@@ -21,28 +21,40 @@ describe("actual private shared-stock snapshot",()=>{
  it.each(["2026-08-22","2026-07-13"])("projects booked days when historical pickup contradicts return (%s)",async date=>{
   const f=fixture();const pickup=new Date(Date.parse(date+"T00:00Z")+86400000).toISOString().slice(0,10);
   const row=f.rental({order_step:"RETURNED",start_date:date,end_date:date,pickup_date:pickup,return_date:date});f.tables.reservations=[row];
-  const result=await f.run();expect(result.units[0].windows).toEqual([{start:ms(date+"T00:00"),end:ms(pickup+"T00:00"),qty:1}]);
+  const result=await f.run();expect(result.units[0].windows).toEqual([{start:ms(date+"T00:00"),end:ms(pickup+"T00:00")+3600000,qty:1}]);
   const sources=await loadStockSources({db:f.db} as any);expect(stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:date,end_date:date,quantity:3}).available).toBe(false);
   expect(stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:"2026-10-08",end_date:"2026-10-08",quantity:3}).available).toBe(true);
   expect(row.order_step).toBe("RETURNED");expect(row.pickup_date).toBe(pickup);
  });
  it("reads all shared accounts, omits local website mirrors and exposes only physical occupancy",async()=>{
   const f=fixture();f.tables.reservations=[f.rental({renter_name:"PRIVATE CUSTOMER",notes:"PRIVATE NOTE"}),f.rental({_id:"web",hygglo_order_id:"web",account_slug:"dbcinema_web"}),f.rental({_id:"returned",hygglo_order_id:"returned",order_step:"REVIEWED"}),f.rental({_id:"cancelled",hygglo_order_id:"cancelled",status:"cancelled"}),f.rental({_id:"obsolete",hygglo_order_id:"obsolete",is_obsolete:true})];
-  const result=await f.run();expect(f.reads).toEqual(["items","reservations","reservations","hygglo_product_index","listing_resolution_override","insurance_claims","owner_unavailability","vacation_periods"]);expect(result.units[0].windows).toEqual([{start:ms("2027-01-01T00:00"),end:ms("2027-01-03T00:00"),qty:1}]);expect(JSON.stringify(result)).not.toMatch(/PRIVATE|other-owned-account|booking|web|returned/);
+  const result=await f.run();expect(f.reads).toEqual(["items","reservations","reservations","hygglo_product_index","listing_resolution_override","insurance_claims","owner_unavailability","vacation_periods"]);expect(result.units[0].windows).toEqual([{start:ms("2027-01-01T00:00"),end:ms("2027-01-03T00:00")+3600000,qty:1}]);expect(JSON.stringify(result)).not.toMatch(/PRIVATE|other-owned-account|booking|web|returned/);
  });
  it("matches real quoting for kit extensions and independently booked shared equipment",async()=>{
   const f=fixture();f.tables.reservations=[f.rental({hygglo_order_id:"first",renter_id:"renter"}),f.rental({_id:"extension",hygglo_order_id:"second",renter_id:"renter",start_date:"2027-01-02",end_date:"2027-01-03"}),f.rental({_id:"independent",hygglo_order_id:"third",renter_id:"different",start_date:"2027-01-02",end_date:"2027-01-02"})];
   const result=await f.run();expect(result.units[0].windows.map((w:any)=>w.qty)).toEqual([1,2,1]);const sources=await loadStockSources({db:f.db} as any),quote=stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:"2027-01-02",end_date:"2027-01-02"});expect(quote.free_units).toBe(1);expect(result.units[0].quantityOwned-Math.max(...result.units[0].windows.map((w:any)=>w.qty))).toBe(quote.free_units);
  });
  it("ends forecast occupancy at the booked return without clearing custody",async()=>{
-  vi.useFakeTimers();vi.setSystemTime(new Date("2026-10-08"));const f=fixture();f.tables.reservations=[f.rental({status:"ongoing",order_step:"DELIVERED",start_date:"2026-08-01",end_date:"2026-08-02"})];let result=await f.run();expect(result.units[0].windows[0].end).toBe(ms("2026-08-03T00:00"));expect(f.tables.reservations[0].status).toBe("ongoing");f.tables.reservations[0].order_step="REVIEWED";result=await f.run();expect(result.units[0].windows).toEqual([]);
+  vi.useFakeTimers();vi.setSystemTime(new Date("2026-10-08"));const f=fixture();f.tables.reservations=[f.rental({status:"ongoing",order_step:"DELIVERED",start_date:"2026-08-01",end_date:"2026-08-02"})];let result=await f.run();expect(result.units[0].windows[0].end).toBe(ms("2026-08-03T00:00")+3600000);expect(f.tables.reservations[0].status).toBe("ongoing");f.tables.reservations[0].order_step="REVIEWED";result=await f.run();expect(result.units[0].windows).toEqual([]);
  });
  it("includes repair-held units, master-specific owner blocks and active vacations without private reasons",async()=>{
   const f=fixture();f.tables.insurance_claims=[{stage:"in_for_repair",status:"open",repair_item_ids:["body","body"],description:"PRIVATE CASE"},{stage:"added_to_revenue",status:"settled",repair_item_ids:["body"]}];f.tables.owner_unavailability=[{item_id:"body",start_date:"2027-01-01",end_date:"2027-01-02",reason:"PRIVATE REASON"},{item_id:"unrelated",start_date:"2027-02-01",end_date:"2027-02-02"}];f.tables.vacation_periods=[{is_active:true,start_date:"2027-03-01",end_date:"2027-03-02"},{is_active:false,start_date:"2027-04-01",end_date:"2027-04-02"}];
   const result=await f.run(),windows=result.units[0].windows;expect(windows.find((w:any)=>w.start===ms("2027-01-01T00:00"))?.qty).toBe(5);expect(windows.find((w:any)=>w.start===ms("2027-03-01T00:00"))?.qty).toBe(5);expect(windows.some((w:any)=>w.start===ms("2027-02-01T00:00")||w.start===ms("2027-04-01T00:00"))).toBe(false);expect(JSON.stringify(result)).not.toContain("PRIVATE");
  });
- it("preserves independently confirmed dates and releases at the exact return",async()=>{
-  const f=fixture();f.tables.reservations=[f.rental({pickup_date:"2027-01-01",pickup_time:"10:00",return_date:"2027-01-04",return_time:"23:30",pickup_time_provenance:{source:"agreed_chat",date:"2027-01-01",time:"10:00",confirmedAt:1},return_time_provenance:{source:"agreed_chat",date:"2027-01-04",time:"23:30",confirmedAt:1}})];const result=await f.run();expect(result.units[0].windows).toEqual([{start:ms("2027-01-01T10:00"),end:ms("2027-01-04T23:30"),qty:1}]);
+ it("preserves independently confirmed dates and releases after the confirmed return plus one hour",async()=>{
+  const f=fixture();f.tables.reservations=[f.rental({pickup_date:"2027-01-01",pickup_time:"10:00",return_date:"2027-01-04",return_time:"23:30",pickup_time_provenance:{source:"agreed_chat",date:"2027-01-01",time:"10:00",confirmedAt:1},return_time_provenance:{source:"agreed_chat",date:"2027-01-04",time:"23:30",confirmedAt:1}})];const result=await f.run();expect(result.units[0].windows).toEqual([{start:ms("2027-01-01T10:00"),end:ms("2027-01-04T23:30")+3600000,qty:1}]);
+ });
+ it("includes exactly one hour after an agreed 17:00 return while preserving the actual clock",async()=>{
+  const f=fixture(),row=f.rental({start_date:"2026-10-08",end_date:"2026-10-09",return_time:"17:00",return_time_provenance:{source:"agreed_chat",date:"2026-10-09",time:"17:00",confirmedAt:1}});f.tables.reservations=[row];
+  const result=await f.run();expect(result.turnaroundBufferMinutes).toBe(60);expect(result.units[0].windows[0].end).toBe(Date.UTC(2026,9,9,17));
+  const sources=await loadStockSources({db:f.db} as any),quote=(pickup_time:string)=>stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:"2026-10-09",end_date:"2026-10-09",quantity:3,pickup_time});
+  expect(quote("17:59").available).toBe(false);expect(quote("18:00").available).toBe(true);expect(row.return_time).toBe("17:00");expect(row.end_date).toBe("2026-10-09");
+ });
+ it("buffers unknown full-day endpoints once in elapsed UTC through the autumn fold",async()=>{
+  const f=fixture();f.tables.reservations=[f.rental({start_date:"2026-10-24",end_date:"2026-10-24"})];
+  // Oct25 London midnight is Oct24 23:00UTC. One elapsed hour ends at
+  // the first 01:00 London clock, not the second ambiguous 01:00.
+  expect((await f.run()).units[0].windows[0].end).toBe(Date.UTC(2026,9,25,0));
  });
  it("rejects malformed occupied quantities instead of dropping their constraints",async()=>{
   const f=fixture();f.tables.reservations=[f.rental({resolved_items:[{item_id:"body",qty:1.5}]})];await expect(f.run()).rejects.toThrow("Invalid shared occupancy");
@@ -51,11 +63,11 @@ describe("actual private shared-stock snapshot",()=>{
   const f=fixture();f.tables.items[0].qty=12;f.tables.items.push({_id:"lens",name_canonical:"Lens",kind:"lens",status:"active",is_marketing_only:false,qty:5});const slug="other-owned-account";
   f.tables.listing_resolution_override=[{account_slug:slug,product_id:10,components:[{item_id:"body",qty:2}]},{account_slug:slug,product_id:11,components:[{item_id:"body",qty:1}]}];f.tables.hygglo_product_index=[{account_slug:slug,product_id:12,item_id:"lens"},{account_slug:slug,product_id:13,item_id:"body"}];
   f.tables.reservations=[f.rental({expanded_items:[{item_id:"body",qty:99},{item_id:"lens",qty:3}],resolved_items:[],hygglo_items:[{product_id:10,qty:2},{product_id:11,qty:2},{product_id:12,name:"Lens",qty:3},{product_id:13,name:"2x camera bodies",qty:2}]})];
-  const result=await f.run();expect(result.units.find((u:any)=>u.masterItemId==="body").windows).toEqual([{start:ms("2027-01-01T00:00"),end:ms("2027-01-03T00:00"),qty:10}]);const sources=await loadStockSources({db:f.db} as any);expect(stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:"2027-01-01",end_date:"2027-01-01"}).free_units).toBe(2);
+  const result=await f.run();expect(result.units.find((u:any)=>u.masterItemId==="body").windows).toEqual([{start:ms("2027-01-01T00:00"),end:ms("2027-01-03T00:00")+3600000,qty:10}]);const sources=await loadStockSources({db:f.db} as any);expect(stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:"2027-01-01",end_date:"2027-01-01"}).free_units).toBe(2);
   f.tables.reservations[0].hygglo_items.reverse();expect((await f.run()).units).toEqual(result.units);
  });
  it("dispatches the real internal snapshot behind the registered fixed read-only route",async()=>{
-  vi.stubEnv("DBCINEMA_WEBHOOK_SECRET","shared-fixture-service");const f=fixture();const ctx={runQuery:async(ref:any,args:any)=>{expect(getFunctionName(ref)).toBe("items:__service_sharedStockForStorefront");expect(args).toEqual({});return (snapshot as any)._handler({db:f.db},args)}};const req=(args:any)=>new Request("https://fixture.convex.site/dbcinema/storefront-read",{method:"POST",headers:{"x-dbcinema-sync-token":"shared-fixture-service"},body:JSON.stringify({path:"items:sharedStockForStorefront",args})});const response=await (storefrontRead as any)._handler(ctx,req({}));expect(response.status).toBe(200);expect((await response.json()).value[0]).toMatchObject({version:2,units:[{masterItemId:"body",quantityOwned:3}]});expect((await (storefrontRead as any)._handler(ctx,req({account_slug:"other"}))).status).toBe(400);
+  vi.stubEnv("DBCINEMA_WEBHOOK_SECRET","shared-fixture-service");const f=fixture();const ctx={runQuery:async(ref:any,args:any)=>{expect(getFunctionName(ref)).toBe("items:__service_sharedStockForStorefront");expect(args).toEqual({});return (snapshot as any)._handler({db:f.db},args)}};const req=(args:any)=>new Request("https://fixture.convex.site/dbcinema/storefront-read",{method:"POST",headers:{"x-dbcinema-sync-token":"shared-fixture-service"},body:JSON.stringify({path:"items:sharedStockForStorefront",args})});const response=await (storefrontRead as any)._handler(ctx,req({}));expect(response.status).toBe(200);expect((await response.json()).value[0]).toMatchObject({version:2,turnaroundBufferMinutes:60,units:[{masterItemId:"body",quantityOwned:3}]});expect((await (storefrontRead as any)._handler(ctx,req({account_slug:"other"}))).status).toBe(400);
  });
 });
 

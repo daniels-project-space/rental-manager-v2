@@ -101,7 +101,7 @@ describe("website physical allocation dates in real quoting",()=>{
   const item={_id:"camera",name_canonical:"FX3",status:"active",qty:3};
   const day=(n:number)=>Date.UTC(2035,0,n);
   const sources={items:[item],productIndex:new Map(),overrides:new Map(),claims:[],blackouts:[],vacations:[],reservations:[{account_slug:"dbcinema_web",hygglo_order_id:"web",status:"confirmed",start_date:"2035-01-01",end_date:"2035-01-05",site_item_windows:[{item_id:"camera",qty:3,start:day(1),end:day(2)},{item_id:"camera",qty:3,start:day(4),end:day(5)}]}]};
-  const quote=(date:string)=>stockForItem(sources as any,item as any,{item_name:"FX3",start_date:date,end_date:date});
+  const quote=(date:string)=>stockForItem(sources as any,item as any,{item_name:"FX3",start_date:date,end_date:date,pickup_time:"01:00"});
   expect(quote("2035-01-01").free_units).toBe(0);expect(quote("2035-01-03").free_units).toBe(3);expect(quote("2035-01-04").free_units).toBe(0);
   expect(stockForItem(sources as any,item as any,{item_name:"FX3",start_date:"2035-01-01",end_date:"2035-01-05",thread_id:"web"}).free_units).toBe(3);
  });
@@ -116,9 +116,9 @@ describe("saved website clocks in actual quoting",()=>{
   const sources={items:[item],productIndex:new Map(),overrides:new Map(),claims:[],blackouts:[],vacations:[],reservations:[reservation]};
   return stockForItem(sources as any,item as any,{item_name:"FX3",start_date,end_date:start_date,pickup_time,return_time});
  };
- it("allows the next handover only after the saved confirmed return",()=>{
-  expect(quote(window,"2035-01-02","11:59").available).toBe(false);
-  expect(quote(window,"2035-01-02","12:00").available).toBe(true);
+ it("allows the next handover only after the saved confirmed return plus one hour",()=>{
+  expect(quote(window,"2035-01-02","12:59").available).toBe(false);
+  expect(quote(window,"2035-01-02","13:00").available).toBe(true);
  });
  it("uses the saved pickup instead of an unrelated booking clock",()=>{
   expect(quote(window,"2035-01-01","07:00","08:59").available).toBe(true);
@@ -126,16 +126,17 @@ describe("saved website clocks in actual quoting",()=>{
  });
  it("keeps an explicitly undefined return unavailable for its whole return day",()=>{
   expect(quote({...window,returnTime:null},"2035-01-02","23:59").available).toBe(false);
-  expect(quote({...window,returnTime:null},"2035-01-03","00:00").available).toBe(true);
+  expect(quote({...window,returnTime:null},"2035-01-03","00:59").available).toBe(false);
+  expect(quote({...window,returnTime:null},"2035-01-03","01:00").available).toBe(true);
  });
  it("inherits booking clocks only for older windows without those fields",()=>{
   const {pickupTime,returnTime,...legacy}=window;
   expect(quote(legacy,"2035-01-02","13:00").available).toBe(false);
   expect(quote(legacy,"2035-01-02","23:00").available).toBe(true);
  });
- it("releases exactly at a late confirmed return without inventing a buffer",()=>{
-  expect(quote({...window,returnTime:"23:30"},"2035-01-02","23:29").available).toBe(false);
-  expect(quote({...window,returnTime:"23:30"},"2035-01-02","23:30").available).toBe(true);
+ it("releases after one elapsed hour when a late return crosses midnight",()=>{
+  expect(quote({...window,returnTime:"23:30"},"2035-01-03","00:29").available).toBe(false);
+  expect(quote({...window,returnTime:"23:30"},"2035-01-03","00:30").available).toBe(true);
  });
 });
 
@@ -173,4 +174,10 @@ describe("booked-period availability and separate custody",()=>{
   expect(result.free_units).toBe(3);expect(result.per_day.map(d=>d.booked)).toEqual([0,0]);
   expect(JSON.stringify(reservation)).toBe(saved);
  });
+});
+
+describe("marked website occupied endpoints",()=>{
+ const item={_id:"camera",name_canonical:"FX3",status:"active",qty:1};
+ const quote=(pickup_time:string)=>stockForItem({items:[item],productIndex:new Map(),overrides:new Map(),claims:[],blackouts:[],vacations:[],reservations:[{account_slug:"dbcinema_web",hygglo_order_id:"web",status:"confirmed",start_date:"2026-10-09",end_date:"2026-10-09",site_item_windows:[{item_id:"camera",qty:1,start:Date.UTC(2026,9,9,8),end:Date.UTC(2026,9,9,12),endExclusive:true,stockWindowVersion:2,turnaroundBufferMinutes:60,pickupTime:"09:00",returnTime:"12:00"}]}]} as any,item as any,{item_name:"FX3",start_date:"2026-10-09",end_date:"2026-10-09",pickup_time});
+ it("blocks until13:00 for a12:00 return without adding a second hour",()=>{expect(quote("12:59").available).toBe(false);expect(quote("13:00").available).toBe(true);});
 });

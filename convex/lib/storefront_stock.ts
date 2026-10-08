@@ -1,7 +1,7 @@
 import { stockOccupancyForItem, type Occupancy, type loadStockSources } from "./renter_stock";
 import { repairHeldUnits } from "./availability";
 
-import { londonStockInstant } from "./confirmed_schedule";
+import { londonStockInstant,TURNAROUND_BUFFER_MINUTES } from "./confirmed_schedule";
 const coordinate = (value:string) => Date.parse(value+"Z");
 const from = "0001-01-01", through = "9999-12-30";
 
@@ -12,7 +12,7 @@ export function stockWindows(occupancy:Occupancy[]) {
   occupancy.forEach((row,id) => {
     if (row.end <= row.start || !Number.isSafeInteger(row.qty) || row.qty < 1) throw Error("Invalid shared occupancy");
     const group=row.extension_key ?? `independent:${id}`;
-    for(const [at,add] of [[londonStockInstant(row.start,"start"),true],[londonStockInstant(row.end,"end"),false]] as const) {
+    for(const [at,add] of [[row.startInstant??londonStockInstant(row.start,"start"),true],[row.endInstant??londonStockInstant(row.end,"end"),false]] as const) {
       const values=events.get(at)??[];values.push({id,group,qty:row.qty,add});events.set(at,values);
     }
   });
@@ -38,7 +38,7 @@ export function sharedStockSnapshot(sources:Awaited<ReturnType<typeof loadStockS
   // Website bookings already occupy the website ledger. Importing their
   // manager copies would count the same physical allocation twice.
   const upstream={...sources,reservations:sources.reservations.filter(r=>r.account_slug!=="dbcinema_web")};
-  return {version:2,checkedAt,units:sources.items.map(item=> {
+  return {version:2,turnaroundBufferMinutes:TURNAROUND_BUFFER_MINUTES,checkedAt,units:sources.items.map(item=> {
     const active=item.status==="active"&&item.is_marketing_only===false;
     const quantityOwned=active&&Number.isSafeInteger(item.qty)&&item.qty>=0?item.qty:0;
     const occupancy=stockOccupancyForItem(upstream,item,{item_name:item.name_canonical,start_date:from,end_date:through});
