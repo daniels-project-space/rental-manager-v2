@@ -1,13 +1,13 @@
 import type { Doc } from "../_generated/dataModel";
 import { isStandardAccessory } from "./reservations/itemUnits";
 import { coverReviewedSuppliedParts } from "./supplied_parts_coverage";
-import { resolveBundleMapping, declaredRentalBlockers } from "./bundle_mapping";
+import { resolveBundleMapping, declaredRentalBlockers, type BundleMappingContext } from "./bundle_mapping";
 import { withDefaultAdapters } from "./default_adapter_units";
 
 type Component = { item_id: string; qty: number };
-export function resolveListingComponents(items: Doc<"items">[], override: Component[] | undefined, primaryId?: string, quantity = 1, description?: string) {
+export function resolveListingComponents(items: Doc<"items">[], override: Component[] | undefined, primaryId?: string, quantity = 1, description?: string, context?: BundleMappingContext) {
   const validQuantity = Number.isInteger(quantity) && quantity >= 1 && quantity <= 20;
-  const rawDeclared = description ? resolveBundleMapping(description, items) : null;
+  const rawDeclared = description ? resolveBundleMapping(description, items, context) : null;
   // Exact structured contents may complete a partial mapping, using only
   // explicit active owned master records. An empty owner override still wins.
   // Without an override, the declared kit must also include its primary model:

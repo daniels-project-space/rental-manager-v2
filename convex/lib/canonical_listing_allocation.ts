@@ -1,3 +1,4 @@
+import { createBundleMappingContext } from "./bundle_mapping";
 import type { Doc } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { resolveListingComponents } from "./listing_components";
@@ -13,6 +14,7 @@ type Listing = Pick<Doc<"online_listings">,"account_slug"|"product_id"|"descript
  */
 export function canonicalListingAllocation(items: Doc<"items">[], overrides: Override[], products: Product[], listings: Listing[]): OverrideMap {
   const result: OverrideMap = new Map();
+  const context=createBundleMappingContext(items);
   for (const row of overrides) {
     const key=`${row.account_slug}#${row.product_id}`;
     if (!result.has(key)) result.set(key,row.components.map(c=>({item_id:String(c.item_id),qty:c.qty})));
@@ -30,7 +32,7 @@ export function canonicalListingAllocation(items: Doc<"items">[], overrides: Ove
     const original=result.get(key);
     if (original?.length===0)continue;
     const resolved=resolveListingComponents(items,original,product.masterItemId?String(product.masterItemId):undefined,1,
-      product.description??descriptions.get(key));
+      product.description??descriptions.get(key),context);
     // Only proved whole contents may replace legacy reservation fallbacks.
     // Partial unknown kits retain their existing audited held units.
     if (!resolved.complete || resolved.owned!==true)continue;

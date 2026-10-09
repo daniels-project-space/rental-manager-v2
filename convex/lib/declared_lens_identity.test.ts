@@ -1,8 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { resolveListingComponents } from "./listing_inventory";
 import { declaredLensIdentity } from "./declared_lens_identity";
+import { createBundleMappingContext } from "./bundle_mapping";
 const lens = {_id:"gm",kind:"lens",name_canonical:"Sony GM 70-200mm f2.8",aliases:["Sony 70-200mm f2.8 GM"],status:"active",is_marketing_only:false,qty:2};
 describe("declared lens model identity",()=>{
+ it("reuses identity within one snapshot while preserving quantities and rejecting a different snapshot",()=>{
+  const inventory=[lens],context=createBundleMappingContext(inventory);
+  const first=resolveListingComponents(inventory as any,[{item_id:"gm",qty:1}],"gm",1,"Included in this rental: • 1x Sony 70-200mm f2.8 zoom lens",context);
+  const later=resolveListingComponents(inventory as any,[{item_id:"gm",qty:1}],"gm",1,"Included in this rental: • 3x Sony 70-200mm f2.8 zoom lens",context);
+  expect(first.components[0].units_per_listing).toBe(1);expect(later.components[0].units_per_listing).toBe(3);expect(context.matches.size).toBe(1);
+  const changed=[{...lens,is_marketing_only:true}];
+  expect(()=>resolveListingComponents(changed as any,[{item_id:"gm",qty:1}],"gm",1,"Included in this rental: • 1x Sony 70-200mm f2.8 zoom lens",context)).toThrow(/different inventory snapshot/);
+  expect(resolveListingComponents(changed as any,[{item_id:"gm",qty:1}],"gm",1,"Included in this rental: • 1x Sony 70-200mm f2.8 zoom lens",createBundleMappingContext(changed)).owned).toBe(false);
+ });
  it("automatically links a complete declared kit to existing pools without creating quantities",()=>{
   const body={...lens,_id:"body",kind:"camera",name_canonical:"Sony FX3",aliases:[],qty:4};
   const inventory=[body,lens];const text="Included in this rental: • 1x Sony FX3 • 2x Sony 70-200mm f2.8 zoom lenses";

@@ -101,6 +101,7 @@ export function rankByName<T>(
   candidates: T[],
   nameOf: (c: T) => string,
   aliasesOf?: (c: T) => string[],
+  tokenCache?: Map<string, Set<string>>,
 ): Array<NameMatch<T>> {
   const q = tokenize(query);
   if (q.size === 0) return [];
@@ -112,7 +113,8 @@ export function rankByName<T>(
     let best: NameMatch<T> | null = null;
     for (const surface of surfaces) {
       if (!surface) continue;
-      const t = tokenize(surface);
+      let t = tokenCache?.get(surface);
+      if (!t) { t = tokenize(surface); tokenCache?.set(surface, t); }
       if (t.size === 0) continue;
       let inter = 0;
       const missing: string[] = [];
@@ -149,8 +151,9 @@ export function bestMatch<T>(
   candidates: T[],
   nameOf: (c: T) => string,
   aliasesOf?: (c: T) => string[],
+  tokenCache?: Map<string, Set<string>>,
 ): { match: T | null; confident: boolean; ambiguousWith: T[]; score: number } {
-  const ranked = rankByName(query, candidates, nameOf, aliasesOf);
+  const ranked = rankByName(query, candidates, nameOf, aliasesOf, tokenCache);
   if (ranked.length === 0) return { match: null, confident: false, ambiguousWith: [], score: 0 };
   const top = ranked[0];
   // Every candidate the query fully describes — if there is more than one, the

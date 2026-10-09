@@ -12,8 +12,65 @@ const tokens = (text: string) => (text.toLowerCase().replace(/\bg\s*-?\s*master\
 const bundledHardware = /^(?:(?:mounting\s+)?(?:clamps?|clips?|brackets?)|antennas?|side\s+handles?|barn\s+doors?|soft\s+diffusion(?:\s+sheets?)?|power\s+adapters?|charging\s+cases?)$/i;
 const incidental = /\b(?:batter(?:y|ies)|chargers?|cables?|carrying (?:bag|case)|uv\s+filters?|(?:camera )?cage|(?:sd|memory) cards?|(?:cfexpress|sdxc|sdhc)\b[^.;]{0,50}\bcard|ssds?|\d+\s*(?:tb|gb)\s+(?:card|media))\b/i;
 
+export type BundleMappingContext = {
+  inventory: Inventory[];
+  matches: Map<string, { item: Inventory | null; ambiguous: boolean }>;
+  tokens: Map<string, string[]>;
+  rankedTokens: Map<string, Set<string>>;
+  lenses: Map<string, { ranges: number[][]; words: Set<string> }>;
+};
+/** One immutable query snapshot. Do not reuse across inventory reads. */
+export function createBundleMappingContext(inventory: Inventory[]): BundleMappingContext {
+  return { inventory, matches: new Map(), tokens: new Map(), rankedTokens: new Map(), lenses: new Map() };
+}
+function componentIdentity(name:string,items:Inventory[],genericHardware:boolean,incidentalComponent:boolean,context?:BundleMappingContext) {
+  const cachedTokens = (text: string) => {
+    let result = context?.tokens.get(text);
+    if (!result) { result = tokens(text); context?.tokens.set(text, result); }
+    return result;
+  };
+  const lineTokens = new Set(tokens(name));
+  const explicitMount = name.match(/\bCanon\s+(EF|RF)\b|\b(EF|RF|PL|E|L)[ -]?mount\b/i);
+  const mount = (explicitMount?.[1] ?? explicitMount?.[2])?.toLowerCase();
+  const candidates = items.filter(item => {
+    const recordedMount = item.lens_mount?.toLowerCase().match(/\b(ef|rf|pl|e|l)\b/)?.[1]
+    ?? item.name_canonical.toLowerCase().match(/\b(ef|rf|pl)\b/)?.[1];
+    return !mount || !recordedMount || mount === recordedMount;
+  });
+  const lensIdentity = declaredLensIdentity(name, candidates,context?.lenses);
+  let picked: Inventory | null = null;
+  let specificity = 0;
+  let ambiguous = false;
+  for (const item of lensIdentity.explicit ? [] : candidates) {
+    if (isStandardAccessory(item.kind, item.name_canonical) && item.track_independent_stock !== true) continue;
+    const aliases = [item.name_canonical, ...(item.aliases ?? [])];
+    // A missing aperture or set size may be omitted from a contents line.
+    // Keep explicit values and require a unique manufacturer/model identity.
+    if (item.kind === "lens" && !/\b[ft]\s*\/?\d/i.test(name))
+    aliases.push(item.name_canonical.replace(/\b[ft]\s*\/?\d+(?:\.\d+)?\b/gi, ""));
+    if (!/\b\d+[ -]+lens\b/i.test(name))
+    aliases.push(item.name_canonical.replace(/\b\d+[ -]+lens\b/gi, "lens"));
+    for (const alias of aliases) {
+    const all = cachedTokens(alias);
+    const stripped = all.filter(token => !mountTokens.has(token));
+    const required = stripped.length >= 2 ? stripped : all;
+    const exactTrackedHardware = genericHardware && item.track_independent_stock === true &&
+      all.join(" ") === tokens(name).join(" ");
+    if ((!exactTrackedHardware && required.length < 2) || !required.every(token => lineTokens.has(token))) continue;
+    if (required.length > specificity) { picked = item; specificity = required.length; ambiguous = false; }
+    else if (required.length === specificity && picked?._id !== item._id) ambiguous = true;
+    }
+  }
+  // An incidental line needs the full canonical/alias identity, not a fuzzy
+  // guess from "batteries" or "card" to an unrelated stock pool.
+  const match = lensIdentity.explicit ? lensIdentity.item : !ambiguous && picked ? picked : incidentalComponent ? null : bestMatch(name, candidates, item => item.name_canonical, item => item.aliases ?? [],context?.rankedTokens);
+  const item = ambiguous || !match ? null : "name_canonical" in match ? match : match.match && match.confident ? match.match : null;
+  return {item,ambiguous};
+}
+
 /** Contents identity and stated quantities, independently of whether we own them. */
-export function resolveBundleMapping(description: string, items: Inventory[]) {
+export function resolveBundleMapping(description: string, items: Inventory[], context?: BundleMappingContext) {
+  if(context && context.inventory!==items)throw Error("Bundle context belongs to a different inventory snapshot");
   const { components, usedBullets, hasContentsSection } = extractComponents(description);
   const resolved: Array<{item_id:string;name:string;qty:number;kind:string}> = [];
   const unmatched: string[] = [];
@@ -29,42 +86,10 @@ export function resolveBundleMapping(description: string, items: Inventory[]) {
     const genericHardware = bundledHardware.test(component.name);
     const incidentalComponent = genericHardware || incidental.test(component.name) && !majorEquipment.test(component.name);
     const name = component.name.replace(/\bdzo(?:film)?\b/gi, "DZOFilm");
-    const lineTokens = new Set(tokens(name));
-    const explicitMount = name.match(/\bCanon\s+(EF|RF)\b|\b(EF|RF|PL|E|L)[ -]?mount\b/i);
-    const mount = (explicitMount?.[1] ?? explicitMount?.[2])?.toLowerCase();
-    const candidates = items.filter(item => {
-      const recordedMount = item.lens_mount?.toLowerCase().match(/\b(ef|rf|pl|e|l)\b/)?.[1]
-        ?? item.name_canonical.toLowerCase().match(/\b(ef|rf|pl)\b/)?.[1];
-      return !mount || !recordedMount || mount === recordedMount;
-    });
-    const lensIdentity = declaredLensIdentity(name, candidates);
-    let picked: Inventory | null = null;
-    let specificity = 0;
-    let ambiguous = false;
-    for (const item of lensIdentity.explicit ? [] : candidates) {
-      if (isStandardAccessory(item.kind, item.name_canonical) && item.track_independent_stock !== true) continue;
-      const aliases = [item.name_canonical, ...(item.aliases ?? [])];
-      // A missing aperture or set size may be omitted from a contents line.
-      // Keep explicit values and require a unique manufacturer/model identity.
-      if (item.kind === "lens" && !/\b[ft]\s*\/?\d/i.test(name))
-        aliases.push(item.name_canonical.replace(/\b[ft]\s*\/?\d+(?:\.\d+)?\b/gi, ""));
-      if (!/\b\d+[ -]+lens\b/i.test(name))
-        aliases.push(item.name_canonical.replace(/\b\d+[ -]+lens\b/gi, "lens"));
-      for (const alias of aliases) {
-        const all = tokens(alias);
-        const stripped = all.filter(token => !mountTokens.has(token));
-        const required = stripped.length >= 2 ? stripped : all;
-        const exactTrackedHardware = genericHardware && item.track_independent_stock === true &&
-          tokens(alias).join(" ") === tokens(name).join(" ");
-        if ((!exactTrackedHardware && required.length < 2) || !required.every(token => lineTokens.has(token))) continue;
-        if (required.length > specificity) { picked = item; specificity = required.length; ambiguous = false; }
-        else if (required.length === specificity && picked?._id !== item._id) ambiguous = true;
-      }
-    }
-    // An incidental line needs the full canonical/alias identity, not a fuzzy
-    // guess from "batteries" or "card" to an unrelated stock pool.
-    const match = lensIdentity.explicit ? lensIdentity.item : !ambiguous && picked ? picked : incidentalComponent ? null : bestMatch(name, candidates, item => item.name_canonical, item => item.aliases ?? []);
-    const item = ambiguous || !match ? null : "name_canonical" in match ? match : match.match && match.confident ? match.match : null;
+    const key=name.toLowerCase();
+    let identity=context?.matches.get(key);
+    if(!identity){identity=componentIdentity(name,items,genericHardware,incidentalComponent,context);context?.matches.set(key,identity);}
+    const {item,ambiguous}=identity;
     if (!item && incidentalComponent && !ambiguous) continue;
     if (!item || !Number.isInteger(component.qty) || component.qty < 1) { unmatched.push(`${component.qty}x ${component.name}`); continue; }
     if (isStandardAccessory(item.kind, item.name_canonical) && item.track_independent_stock !== true) continue;
