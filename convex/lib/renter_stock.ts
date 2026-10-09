@@ -6,7 +6,7 @@ import { bestMatch } from "./item_name_match";
 import { claimHoldsStock } from "./availability";
 import { effStart } from "./double_booking";
 import { dedupByLogicalRental } from "./reservations/predicates";
-import { buildProductIndexMap, reservationItemUnits } from "./reservations/itemUnits";
+import { buildProductIndexMap, reservationItemUnits, type OverrideMap } from "./reservations/itemUnits";
 import { defaultAdapterUnits } from "./default_adapter_units";
 
 export type StockRequest = {
@@ -101,7 +101,10 @@ export function evaluateStockWindow(args: {
   };
 }
 
-export async function loadStockSources(ctx: QueryCtx) {
+type StockSources = { items:Doc<"items">[]; reservations:Doc<"reservations">[]; productIndex:Map<string,string>;overrides:OverrideMap;
+  claims:Doc<"insurance_claims">[];blackouts:Doc<"owner_unavailability">[];vacations:Doc<"vacation_periods">[];
+  reservationUnits?:Map<string,Map<string,number>> };
+export async function loadStockSources(ctx: QueryCtx):Promise<StockSources> {
   const [items, confirmed, ongoing, index, overrides, claims, blackouts, vacations] = await Promise.all([
     ctx.db.query("items").collect(),
     ctx.db.query("reservations").withIndex("by_status", (q) => q.eq("status", "confirmed")).collect(),
@@ -112,7 +115,12 @@ export async function loadStockSources(ctx: QueryCtx) {
     ctx.db.query("owner_unavailability").collect(),
     ctx.db.query("vacation_periods").withIndex("by_active_start", (q) => q.eq("is_active", true)).collect(),
   ]);
-  return { items, reservations: dedupByLogicalRental([...confirmed, ...ongoing].filter((r) => !r.is_obsolete && !r.hygglo_order_id?.startsWith("__probe__"))), productIndex: buildProductIndexMap(index), overrides: await loadCanonicalListingAllocation(ctx,items,overrides), claims, blackouts, vacations };
+  const reservations=dedupByLogicalRental([...confirmed,...ongoing].filter(r=>!r.is_obsolete&&!r.hygglo_order_id?.startsWith("__probe__")));
+  const productIndex=buildProductIndexMap(index),allocation=await loadCanonicalListingAllocation(ctx,items,overrides,reservations);
+  const reservationUnits=new Map<string,Map<string,number>>();
+  for(const r of reservations)if(r.start_date && r.end_date && r.order_step!=="REVIEWED" && r.status!=="completed" && !(r.account_slug==="dbcinema_web"&&r.site_item_windows!==undefined))
+    reservationUnits.set(String(r._id),reservationItemUnits(r,productIndex,allocation,items));
+  return {items,reservations,productIndex,overrides:allocation,claims,blackouts,vacations,reservationUnits};
 }
 
 export function resolveStockItem(name: string, items: Doc<"items">[]) {
@@ -161,7 +169,7 @@ export function stockOccupancyForItem(sources: Awaited<ReturnType<typeof loadSto
       }
       continue;
     }
-    const units = reservationItemUnits(r, sources.productIndex, sources.overrides, sources.items);
+    const units = sources.reservationUnits?.get(String(r._id)) ?? reservationItemUnits(r, sources.productIndex, sources.overrides, sources.items);
     const qty = units.get(String(item._id)) ?? 0;
     if (qty <= 0) continue;
     const pickup = r.pickup_date && confirmedClock(r,"pickup",r.pickup_date) ? r.pickup_date : r.start_date;

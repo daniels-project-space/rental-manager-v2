@@ -155,7 +155,6 @@ export async function computeMissedRevenue(
       account_slug: string; product_id: number; item_id: Id<"items">;
     }>,
   );
-  const overrideMap = await loadCanonicalListingAllocation(ctx,items,pre?.overrideRows);
   // Confirmed occupancy (for the fully-booked / double-booking test).
   // Deliberately NOT preloadable from a start_date-windowed pool: confirmed
   // rows can have start_date arbitrarily far in the past (e.g. >365d-old
@@ -220,6 +219,8 @@ export async function computeMissedRevenue(
   cancelled = cancelled.filter(
     (r) => r.is_obsolete || r.status === "cancelled" || r.status === "declined",
   );
+
+  const overrideMap = await loadCanonicalListingAllocation(ctx,items,pre?.overrideRows,[...confirmed,...cancelled]);
 
   const lostRows: { name: string; value: number }[] = [];
   const marketingRows: { name: string; value: number }[] = [];

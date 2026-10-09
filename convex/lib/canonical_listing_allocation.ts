@@ -1,7 +1,7 @@
 import type { Doc } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { resolveListingComponents } from "./listing_components";
-import type { OverrideMap } from "./reservations/itemUnits";
+import type { OverrideMap, ResolvableRes } from "./reservations/itemUnits";
 
 type Override = Pick<Doc<"listing_resolution_override">,"account_slug"|"product_id"|"components">;
 type Product = Pick<Doc<"hygglo_products">,"accountSlug"|"productId"|"masterItemId"|"description">;
@@ -39,12 +39,30 @@ export function canonicalListingAllocation(items: Doc<"items">[], overrides: Ove
   return result;
 }
 
-export async function loadCanonicalListingAllocation(ctx: QueryCtx, inventory?: Doc<"items">[], overrideRows?: Override[]): Promise<OverrideMap> {
+/** Only booked listing identities need contents for occupancy. Unrelated
+ * catalogue descriptions must not be scanned for every stock/calendar query. */
+export function reservedListingKeys(rentals: ResolvableRes[]): Array<{account:string;productId:number}> {
+  const keys=new Map<string,{account:string;productId:number}>();
+  for(const r of rentals){
+    if(!r.account_slug || r.account_slug==="dbcinema_web" && r.site_item_windows!==undefined)continue;
+    for(const h of r.hygglo_items??[]){
+      if(!Number.isSafeInteger(h.product_id))continue;
+      const productId=h.product_id!;
+      keys.set(`${r.account_slug}#${productId}`,{account:r.account_slug,productId});
+    }
+  }
+  return [...keys.values()];
+}
+
+export async function loadCanonicalListingAllocation(ctx: QueryCtx, inventory?: Doc<"items">[], overrideRows?: Override[], rentals?: ResolvableRes[]): Promise<OverrideMap> {
+  const keys=rentals===undefined?undefined:reservedListingKeys(rentals);
   const [items,overrides,products,listings]=await Promise.all([
     inventory??ctx.db.query("items").collect(),
     overrideRows??ctx.db.query("listing_resolution_override").collect(),
-    ctx.db.query("hygglo_products").collect(),
-    ctx.db.query("online_listings").collect(),
+    keys===undefined?ctx.db.query("hygglo_products").collect():Promise.all(keys.map(k=>ctx.db.query("hygglo_products")
+      .withIndex("by_account_product",q=>q.eq("accountSlug",k.account).eq("productId",k.productId)).first())).then(rows=>rows.filter((r):r is Doc<"hygglo_products">=>r!==null)),
+    keys===undefined?ctx.db.query("online_listings").collect():Promise.all(keys.map(k=>ctx.db.query("online_listings")
+      .withIndex("by_account_product",q=>q.eq("account_slug",k.account).eq("product_id",k.productId)).first())).then(rows=>rows.filter((r):r is Doc<"online_listings">=>r!==null)),
   ]);
   return canonicalListingAllocation(items,overrides,products,listings);
 }

@@ -9,7 +9,7 @@ import { getFunctionName } from "convex/server";
 function fixture(){
  const items:any[]=[{_id:"body",name_canonical:"Sony FX3",kind:"camera_body",status:"active",is_marketing_only:false,qty:4,replacement_cost_gbp:4000},{_id:"lens",name_canonical:"Sony GM 24-70mm f2.8",kind:"lens",status:"active",is_marketing_only:false,qty:3,replacement_cost_gbp:2000},{_id:"battery",name_canonical:"NP-FZ100 batteries",kind:"power",track_independent_stock:true,status:"active",is_marketing_only:false,qty:12,replacement_cost_gbp:70}];
  const tables:any={items,hygglo_products:[{productId:10,accountSlug:"dbcinema",name:"Two body camera and lens kit",masterItemId:"body",private_note:"PRIVATE"}],online_listings:[{account_slug:"dbcinema",product_id:10,description:"Included in this rental: • 2x Sony FX3 • 2x Sony GM 24-70mm f2.8 • 5x NP-FZ100 batteries"}],listing_resolution_override:[{account_slug:"dbcinema",product_id:10,components:[{item_id:"body",qty:2},{item_id:"lens",qty:2},{item_id:"battery",qty:5}]}],hygglo_product_index:[],reservations:[]};
- const reads:string[]=[];const db:any={query:(table:string)=>{reads.push(table);let values=tables[table]??[];const q:any={withIndex:(_:string,fn:any)=>{const s:any={eq:(k:string,v:any)=>{values=values.filter((r:any)=>r[k]===v);return s},gte:(k:string,v:any)=>{values=values.filter((r:any)=>r[k]>=v);return s}};fn(s);return q},collect:async()=>values};return q}};return {tables,db,reads};
+ const reads:string[]=[];const operations:string[]=[];const db:any={query:(table:string)=>{reads.push(table);let values=tables[table]??[];const q:any={withIndex:(_:string,fn:any)=>{const s:any={eq:(k:string,v:any)=>{values=values.filter((r:any)=>r[k]===v);return s},gte:(k:string,v:any)=>{values=values.filter((r:any)=>r[k]>=v);return s}};fn(s);return q},collect:async()=>{operations.push(table+":collect");return values},first:async()=>{operations.push(table+":first");return values[0]??null}};return q}};return {tables,db,reads,operations};
 }
 afterEach(()=>{vi.unstubAllEnvs();vi.useRealTimers()});
 describe("actual canonical website kit snapshot and stock feed",()=>{
@@ -61,6 +61,10 @@ describe("actual canonical website kit snapshot and stock feed",()=>{
   const [row]=await (__service_listActiveForStorefront as any)._handler({db:f.db},{account_slug:"dbcinema"});
   expect(row.physical_items).toEqual([{item_id:"body",qty:2},{item_id:"lens",qty:2},{item_id:"battery",qty:5}]);
   expect(f.tables.listing_resolution_override[0].components).toEqual([{item_id:"body",qty:2}]);
+  expect(f.operations.filter(op=>op==="hygglo_products:first")).toHaveLength(2);
+  expect(f.operations).not.toContain("hygglo_products:collect");
+  expect(f.operations).not.toContain("online_listings:collect");
+  expect(sources.reservationUnits?.get("kit")).toEqual(new Map([["body",2],["lens",2],["battery",5]]));
  });
  it("keeps frozen website allocations and first-row owner exclusions authoritative",async()=>{
   const f=fixture();f.tables.listing_resolution_override.unshift({account_slug:"dbcinema",product_id:10,components:[]});
