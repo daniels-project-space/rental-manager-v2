@@ -16,7 +16,10 @@ tracked filters, mounts and other genuine equipment still consume stock.
 
 `canonical_listing_allocation.ts` applies that same resolution to occupied
 rentals. Shared availability, calendar views, returns, draft stock checks,
-missed-revenue occupancy and the website rental export use it. Existing website
+missed-revenue occupancy and the website rental export use it. Occupancy readers
+fetch descriptions by the exact distinct booked listing keys, rather than
+parsing the full catalogue on every query. Shared-stock snapshots compute each
+rental's canonical units once and reuse them across inventory rows. Existing website
 per-item allocations remain frozen. First-row overrides match indexed listing
 readers, including an explicit empty exclusion in duplicate legacy rows.
 

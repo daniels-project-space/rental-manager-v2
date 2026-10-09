@@ -12,7 +12,7 @@ const ms=(date:string)=>londonStockInstant(date,"end");
 function fixture(){
  const items:any[]=[{_id:"body",name_canonical:"Sony FX3",kind:"camera_body",status:"active",is_marketing_only:false,qty:3}];
  const tables:any={items,reservations:[],hygglo_product_index:[],listing_resolution_override:[],insurance_claims:[],owner_unavailability:[],vacation_periods:[]};
- const reads:string[]=[];const db:any={query:(table:string)=>{reads.push(table);let rows=tables[table]??[];const q:any={withIndex:(_:string,fn:any)=>{const s:any={eq:(k:string,v:any)=>{rows=rows.filter((r:any)=>r[k]===v);return s}};fn(s);return q},collect:async()=>rows};return q}};
+ const reads:string[]=[];const db:any={query:(table:string)=>{reads.push(table);let rows=tables[table]??[];const q:any={withIndex:(_:string,fn:any)=>{const s:any={eq:(k:string,v:any)=>{rows=rows.filter((r:any)=>r[k]===v);return s}};fn(s);return q},collect:async()=>rows,first:async()=>rows[0]??null};return q}};
  const rental=(extra:any={})=>({_id:"booking",_creationTime:1,account_slug:"other-owned-account",status:"confirmed",start_date:"2027-01-01",end_date:"2027-01-02",resolved_items:[{item_id:"body",qty:1}],...extra});
  const run=async()=>((snapshot as any)._handler({db},{})).then((rows:any)=>rows[0]);return {tables,db,reads,rental,run};
 }
@@ -28,7 +28,7 @@ describe("actual private shared-stock snapshot",()=>{
  });
  it("reads all shared accounts, omits local website mirrors and exposes only physical occupancy",async()=>{
   const f=fixture();f.tables.reservations=[f.rental({renter_name:"PRIVATE CUSTOMER",notes:"PRIVATE NOTE"}),f.rental({_id:"web",hygglo_order_id:"web",account_slug:"dbcinema_web"}),f.rental({_id:"returned",hygglo_order_id:"returned",order_step:"REVIEWED"}),f.rental({_id:"cancelled",hygglo_order_id:"cancelled",status:"cancelled"}),f.rental({_id:"obsolete",hygglo_order_id:"obsolete",is_obsolete:true})];
-  const result=await f.run();expect(f.reads).toEqual(["items","reservations","reservations","hygglo_product_index","listing_resolution_override","insurance_claims","owner_unavailability","vacation_periods","hygglo_products","online_listings"]);expect(result.units[0].windows).toEqual([{start:ms("2027-01-01T00:00"),end:ms("2027-01-03T00:00")+3600000,qty:1}]);expect(JSON.stringify(result)).not.toMatch(/PRIVATE|other-owned-account|booking|web|returned/);
+  const result=await f.run();expect(f.reads).toEqual(["items","reservations","reservations","hygglo_product_index","listing_resolution_override","insurance_claims","owner_unavailability","vacation_periods"]);expect(result.units[0].windows).toEqual([{start:ms("2027-01-01T00:00"),end:ms("2027-01-03T00:00")+3600000,qty:1}]);expect(JSON.stringify(result)).not.toMatch(/PRIVATE|other-owned-account|booking|web|returned/);
  });
  it("matches real quoting for kit extensions and independently booked shared equipment",async()=>{
   const f=fixture();f.tables.reservations=[f.rental({hygglo_order_id:"first",renter_id:"renter"}),f.rental({_id:"extension",hygglo_order_id:"second",renter_id:"renter",start_date:"2027-01-02",end_date:"2027-01-03"}),f.rental({_id:"independent",hygglo_order_id:"third",renter_id:"different",start_date:"2027-01-02",end_date:"2027-01-02"})];

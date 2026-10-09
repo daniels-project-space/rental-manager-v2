@@ -230,7 +230,7 @@ export const getDueReturns = query({
     // Reliable per-listing resolution (covers items the LLM bundle-resolver
     // dropped from expanded/resolved) + inventory names for the case checklist.
     const productIndex = buildProductIndexMap(await ctx.db.query("hygglo_product_index").collect());
-    const overrideMap = await loadCanonicalListingAllocation(ctx);
+    const overrideMap = await loadCanonicalListingAllocation(ctx,undefined,undefined,candidates);
     const itemNameById = new Map<string, string>();
     const stdAccIds = new Set<string>();
     const unitInventory = await ctx.db.query("items").collect();
@@ -945,7 +945,7 @@ export const listActiveForStorefront = query({
       ctx.db.query("items").collect(),ctx.db.query("hygglo_product_index").collect(),
       ctx.db.query("listing_resolution_override").withIndex("by_account_product", q => q.eq("account_slug", account_slug)).collect(),
     ]);
-    const productIndex = buildProductIndexMap(indexRows), overrides = await loadCanonicalListingAllocation(ctx,inventory,overrideRows);
+    const productIndex = buildProductIndexMap(indexRows), overrides = await loadCanonicalListingAllocation(ctx,inventory,overrideRows,rows);
     return rows.map((r) => ({
       _id: r._id,
       hygglo_order_id: r.hygglo_order_id,

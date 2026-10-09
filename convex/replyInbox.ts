@@ -443,7 +443,7 @@ async function loadAvailCtx(
     productIndex: buildProductIndexMap(
       pidx as Array<{ account_slug: string; product_id: number; item_id: Id<"items"> }>,
     ),
-    overrideMap: await loadCanonicalListingAllocation(ctx,items,ovr),
+    overrideMap: await loadCanonicalListingAllocation(ctx,items,ovr,[...confirmed,...pending]),
     itemQty,
     itemName,
     itemRows: items,

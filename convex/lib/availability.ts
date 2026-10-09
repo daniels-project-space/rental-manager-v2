@@ -27,9 +27,9 @@ import { Id, Doc } from "../_generated/dataModel";
 import { reservationItemUnits, buildProductIndexMap, type OverrideMap } from "./reservations/itemUnits";
 import type { AdapterInventoryItem } from "./default_adapter_units";
 export type UnitAllocation = {productIndex:Map<string,string>;overrides:OverrideMap;inventory:AdapterInventoryItem[]};
-async function loadUnitAllocation(ctx:QueryCtx):Promise<UnitAllocation> {
+async function loadUnitAllocation(ctx:QueryCtx,rentals:Doc<"reservations">[]):Promise<UnitAllocation> {
   const [inventory,index,overrides]=await Promise.all([ctx.db.query("items").collect(),ctx.db.query("hygglo_product_index").collect(),ctx.db.query("listing_resolution_override").collect()]);
-  return {inventory,productIndex:buildProductIndexMap(index),overrides:await loadCanonicalListingAllocation(ctx,inventory,overrides)};
+  return {inventory,productIndex:buildProductIndexMap(index),overrides:await loadCanonicalListingAllocation(ctx,inventory,overrides,rentals)};
 }
 
 export type AvailabilityResult = {
@@ -144,7 +144,7 @@ export async function isItemUnitAvailable(
     .query("reservations")
     .withIndex("by_status", (q) => q.eq("status", "confirmed"))
     .collect();
-  const bookedUnits = bookedUnitsOnDate(confirmed, itemId, date, await loadUnitAllocation(ctx));
+  const bookedUnits = bookedUnitsOnDate(confirmed, itemId, date, await loadUnitAllocation(ctx,confirmed));
 
   // Plus units out on repair (open cases) — same rule everywhere else.
   const claims = await ctx.db.query("insurance_claims").collect();
@@ -242,7 +242,7 @@ export async function diagnoseDenialAvailability(
     .withIndex("by_status", (q) => q.eq("status", "confirmed"))
     .collect();
   const claimRows = await ctx.db.query("insurance_claims").collect();
-  const allocation = await loadUnitAllocation(ctx);
+  const allocation = await loadUnitAllocation(ctx,confirmedRes);
 
   for (const ref of sourceItems) {
     const item = await ctx.db.get(ref.item_id);
