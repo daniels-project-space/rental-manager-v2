@@ -37,7 +37,8 @@ export type Occupancy = {
   endInstant?:number;
   renter_name?: string | null;
   order_id?: string;
-  /** Account + renter identity + complete physical basket, never name alone. */
+  /** Explicit shared allocation supplied by a trusted caller, never inferred
+   * from renter identity, matching baskets or overlapping booked dates. */
   extension_key?: string;
 };
 type DateBlock = { start_date: string; end_date: string };
@@ -188,12 +189,11 @@ export function stockOccupancyForItem(sources: Awaited<ReturnType<typeof loadSto
       start = `${r.start_date}T00:00`;
       end = `${shiftStockDate(r.end_date, 1)}T00:00`;
     }
-    const name = r.renter_name?.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
-    const renter = r.renter_id ? `id:${r.renter_id}` : name && !["unknown", "unknown renter", "?", "—"].includes(name) ? `name:${name}` : undefined;
-    // Preserve same-kit extensions; sharing a battery or adapter does not make
-    // two different kits one rental. Quantity is part of the complete basket.
-    const extension_key = renter && r.account_slug ? JSON.stringify([r.account_slug, renter, [...units].sort(([a], [b]) => a.localeCompare(b))]) : undefined;
-    occupancy.push({ start, startInstant:londonStockInstant(start,"start"), ...bufferedStockEnd(end), qty, renter_name: r.renter_name, order_id: r.hygglo_order_id, extension_key });
+    // loadStockSources has already deduplicated copies of the same order.
+    // Separate order IDs are separate physical commitments. The provider
+    // payload does not persist an extension relationship: a matching renter
+    // and basket cannot prove that these rows share one allocation.
+    occupancy.push({ start, startInstant:londonStockInstant(start,"start"), ...bufferedStockEnd(end), qty, renter_name: r.renter_name, order_id: r.hygglo_order_id });
   }
   return occupancy;
 }

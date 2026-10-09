@@ -84,8 +84,8 @@ describe("shared kit stock across separate reservations", () => {
     expect(result.available).toBe(false);
     expect(result.per_day.map(d=>d.booked)).toEqual([10,10]);
   });
-  it("preserves matching kit extensions with normalized names",()=>{
-    expect(check([reservation("original",1),reservation("extension",1,{renter_name:" SAME   RENTER "})]).free_units).toBe(7);
+  it("counts distinct matching-kit orders despite normalized renter names",()=>{
+    expect(check([reservation("original",1),reservation("extension",1,{renter_name:" SAME   RENTER "})]).free_units).toBe(2);
   });
   it("counts different renter IDs separately even when names match",()=>{
     expect(check([reservation("a",1,{renter_id:"person-a"}),reservation("b",1,{renter_id:"person-b"})]).free_units).toBe(2);

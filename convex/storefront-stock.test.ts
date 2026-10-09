@@ -30,9 +30,30 @@ describe("actual private shared-stock snapshot",()=>{
   const f=fixture();f.tables.reservations=[f.rental({renter_name:"PRIVATE CUSTOMER",notes:"PRIVATE NOTE"}),f.rental({_id:"web",hygglo_order_id:"web",account_slug:"dbcinema_web"}),f.rental({_id:"returned",hygglo_order_id:"returned",order_step:"REVIEWED"}),f.rental({_id:"cancelled",hygglo_order_id:"cancelled",status:"cancelled"}),f.rental({_id:"obsolete",hygglo_order_id:"obsolete",is_obsolete:true})];
   const result=await f.run();expect(f.reads).toEqual(["items","reservations","reservations","reservations","hygglo_product_index","listing_resolution_override","insurance_claims","owner_unavailability","vacation_periods"]);expect(result.units[0].windows).toEqual([{start:ms("2027-01-01T00:00"),end:ms("2027-01-03T00:00")+3600000,qty:1}]);expect(JSON.stringify(result)).not.toMatch(/PRIVATE|other-owned-account|booking|web|returned/);
  });
- it("matches real quoting for kit extensions and independently booked shared equipment",async()=>{
+ it("matches real quoting for distinct orders with overlapping periods, including the same renter",async()=>{
   const f=fixture();f.tables.reservations=[f.rental({hygglo_order_id:"first",renter_id:"renter"}),f.rental({_id:"extension",hygglo_order_id:"second",renter_id:"renter",start_date:"2027-01-02",end_date:"2027-01-03"}),f.rental({_id:"independent",hygglo_order_id:"third",renter_id:"different",start_date:"2027-01-02",end_date:"2027-01-02"})];
-  const result=await f.run();expect(result.units[0].windows.map((w:any)=>w.qty)).toEqual([1,2,1]);const sources=await loadStockSources({db:f.db} as any),quote=stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:"2027-01-02",end_date:"2027-01-02"});expect(quote.free_units).toBe(1);expect(result.units[0].quantityOwned-Math.max(...result.units[0].windows.map((w:any)=>w.qty))).toBe(quote.free_units);
+  const result=await f.run();expect(result.units[0].windows.map((w:any)=>w.qty)).toEqual([1,3,1]);const sources=await loadStockSources({db:f.db} as any),quote=stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:"2027-01-02",end_date:"2027-01-02"});expect(quote.free_units).toBe(0);expect(result.units[0].quantityOwned-Math.max(...result.units[0].windows.map((w:any)=>w.qty))).toBe(quote.free_units);
+ });
+ it("releases each same-renter order at its own agreed return plus buffer and keeps an unknown return blocked",async()=>{
+  const f=fixture(),date="2030-01-01";
+  const row=(id:string,time?:string)=>f.rental({_id:id,hygglo_order_id:id,renter_id:"one-renter",start_date:date,end_date:date,...(time?{return_time:time,return_time_provenance:{source:"agreed_chat",date,time,confirmedAt:1}}:{})});
+  f.tables.reservations=[row("early","17:00"),row("later","19:00"),row("unknown")];
+  const result=await f.run();
+  expect(result.units[0].windows).toEqual([
+   {start:ms(date+"T00:00"),end:ms(date+"T18:00"),qty:3},
+   {start:ms(date+"T18:00"),end:ms(date+"T20:00"),qty:2},
+   {start:ms(date+"T20:00"),end:ms("2030-01-02T01:00"),qty:1},
+  ]);
+  const sources=await loadStockSources({db:f.db} as any);
+  for(const [pickup_time,free] of [["17:59",0],["18:00",1],["19:59",1],["20:00",2]] as const) {
+   expect(stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:date,end_date:date,pickup_time}).free_units).toBe(free);
+  }
+  expect(stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:"2030-01-02",end_date:"2030-01-02",pickup_time:"01:00",quantity:3}).available).toBe(true);
+ });
+ it("deduplicates actual copies of the same account-bound order instead of deduplicating by renter",async()=>{
+  const f=fixture();
+  f.tables.reservations=[f.rental({_id:"copy-one",hygglo_order_id:"same-order",renter_id:"same-renter"}),f.rental({_id:"copy-two",hygglo_order_id:"same-order",renter_id:"same-renter",_creationTime:2}),f.rental({_id:"different-order",hygglo_order_id:"another-order",renter_id:"same-renter"})];
+  expect((await f.run()).units[0].windows.map((w:any)=>w.qty)).toEqual([2]);
  });
  it("ends forecast occupancy at the booked return without clearing custody",async()=>{
   vi.useFakeTimers();vi.setSystemTime(new Date("2026-10-08"));const f=fixture();f.tables.reservations=[f.rental({status:"ongoing",order_step:"DELIVERED",start_date:"2026-08-01",end_date:"2026-08-02"})];let result=await f.run();expect(result.units[0].windows[0].end).toBe(ms("2026-08-03T00:00")+3600000);expect(f.tables.reservations[0].status).toBe("ongoing");f.tables.reservations[0].order_step="REVIEWED";result=await f.run();expect(result.units[0].windows).toEqual([]);
