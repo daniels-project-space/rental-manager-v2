@@ -458,3 +458,12 @@ it("does not choose a counted kit from a declaration offering an alternative mod
  const text="Included in this rental: • 2x Wireless DJI Microphone Transmitters (or rode wireless)";
  const r=resolveBundleMapping(text,[kit]);expect(r.components).toEqual([]);expect(r.unmatched).toHaveLength(1);
 });
+
+it.each(["DJI Wireless Mics kit (or Rode wireless)","DJI Wireless Mics pair (or Rode wireless)","DJI Wireless Mics transmitters (or Rode wireless)"])("keeps explicit equipment choice unresolved: %s",name=>{
+ const kit={_id:"dji",name_canonical:"DJI Wireless Mics",kind:"audio",unit_kind:"set",status:"active",is_marketing_only:false,qty:2,compatibility:{included_with_rental:["2x transmitter"]}};
+ const r=resolveBundleMapping(`Included in this rental: • 2x ${name}`,[kit]);expect(r.components).toEqual([]);expect(r.unmatched).toEqual([`2x ${name}`]);
+});
+it("does not discard the alternative to an individually tracked camera",()=>{
+ const body={_id:"fx3",name_canonical:"Sony FX3",kind:"camera",unit_kind:"unit",status:"active",is_marketing_only:false,qty:4};
+ const r=resolveListingComponents([body] as any,[{item_id:body._id,qty:1}],body._id,1,"Included in this rental: • 1x Sony FX3 (or Sony FX6)");expect(r.complete).toBe(false);expect(r.coverage?.unresolved).toHaveLength(1);
+});
