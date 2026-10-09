@@ -1,5 +1,6 @@
 "use client";
 import { OwnerChecksPanel } from "./OwnerChecksPanel";
+import { SharedCustodyPanel } from "./SharedCustodyPanel";
 import { shortListingTitle, shortItemName } from "../../../convex/lib/item_display_name";
 import { draftReviewSummary, sameDraftApproval, type DraftApproval, type DraftReview } from "../../../convex/lib/draft_review";
 import { inclusiveRentalDays } from "../../../convex/lib/hygglo_pricing";
@@ -1718,6 +1719,7 @@ function OrderEditor({
       </div>
 
       {/* Items */}
+      <SharedCustodyPanel key={`${accountSlug}:${orderId}`} accountSlug={accountSlug} orderId={orderId} dryRun={dryRun}/>
       <div className="px-3 pb-2 space-y-1.5">
         {st.items.map((it) => (
           <div key={it.item_id ?? it.name} className="flex items-center gap-2.5 rounded-xl border border-white/[0.06] bg-white/[0.02] p-2">

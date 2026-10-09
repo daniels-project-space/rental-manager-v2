@@ -34,6 +34,7 @@ import {
   type ImageHint,
 } from "./lib/imageResolution";
 import { effEnd as effEndImpl, effStart as effStartImpl, extensionOccupancyQty } from "./lib/double_booking";
+import { confirmedCustodyGroup } from "./lib/reservation_custody";
 import { claimHoldsStock } from "./lib/availability";
 // Attribution engine (was gated by `use_new_attribution_engine` — Phase 6 cutover).
 // The rental-volume queries now reach it through ./lib/rental_volume.
@@ -1058,7 +1059,11 @@ export const getStatsDrawerData = query({
       // Concurrent qty SUM is what matters. A reservation holding 2× of the item
       // counts as 2 toward overlap.
       const sumQty = (rows: typeof matchingRes): number => extensionOccupancyQty(
-        rows.map(({ r }) => ({ renter_name: r.renter_name, qty: expandedIdsOf(r as ResRow).get(itemIdStr) ?? 0 })),
+        rows.map(({ r }) => {
+          const units=expandedIdsOf(r as ResRow);
+          return {renter_name:r.renter_name,qty:units.get(itemIdStr) ?? 0,
+            allocation_group:confirmedCustodyGroup(r as unknown as Parameters<typeof confirmedCustodyGroup>[0],units)};
+        }),
       );
       if (sumQty(matchingRes) <= effQty) continue;
 

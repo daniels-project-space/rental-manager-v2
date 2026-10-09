@@ -8,15 +8,85 @@ import {repairHeldUnits} from "./lib/availability";
 import {loadStockSources,stockForItem} from "./lib/renter_stock";
 import {getFunctionName} from "convex/server";
 import {londonStockInstant} from "./lib/confirmed_schedule";
+import {get as custodyState,confirm as confirmCustody,undo as undoCustody} from "./reservation_custody";
+import {OWNER_SERVICE_ISSUER,OWNER_SERVICE_SUBJECT} from "./lib/owner_authorization";
 const ms=(date:string)=>londonStockInstant(date,"end");
 function fixture(){
  const items:any[]=[{_id:"body",name_canonical:"Sony FX3",kind:"camera_body",status:"active",is_marketing_only:false,qty:3}];
  const tables:any={items,reservations:[],hygglo_product_index:[],listing_resolution_override:[],insurance_claims:[],owner_unavailability:[],vacation_periods:[]};
- const reads:string[]=[];const db:any={query:(table:string)=>{reads.push(table);let rows=tables[table]??[];const q:any={withIndex:(_:string,fn:any)=>{const s:any={eq:(k:string,v:any)=>{rows=rows.filter((r:any)=>r[k]===v);return s}};fn(s);return q},collect:async()=>rows,first:async()=>rows[0]??null};return q}};
+ const reads:string[]=[],jobs:any[]=[];tables.audit_log=[];
+ const db:any={get:async(id:string)=>Object.values(tables).flat().find((r:any)=>r._id===id)??null,patch:async(id:string,p:any)=>Object.assign(Object.values(tables).flat().find((r:any)=>r._id===id)!,p),insert:async(table:string,p:any)=>{(tables[table]??=[]).push({...p,_id:table+tables[table].length});return table;},query:(table:string)=>{reads.push(table);let rows=tables[table]??[];const q:any={withIndex:(_:string,fn?:any)=>{const s:any={};for(const op of ["eq","lte","gte"]){s[op]=(k:string,v:any)=>{rows=rows.filter((r:any)=>op==="eq"?r[k]===v:op==="lte"?r[k]<=v:r[k]>=v);return s;}}fn?.(s);return q},order:()=>q,collect:async()=>rows,first:async()=>rows[0]??null,take:async(n:number)=>rows.slice(0,n),paginate:async({numItems,cursor}:any)=>{const offset=Number(cursor??0);return {page:rows.slice(offset,offset+numItems),continueCursor:String(offset+numItems),isDone:offset+numItems>=rows.length}}};return q}};
  const rental=(extra:any={})=>({_id:"booking",_creationTime:1,account_slug:"other-owned-account",status:"confirmed",start_date:"2027-01-01",end_date:"2027-01-02",resolved_items:[{item_id:"body",qty:1}],...extra});
- const run=async()=>((snapshot as any)._handler({db},{})).then((rows:any)=>rows[0]);return {tables,db,reads,rental,run};
+ const ctx:any={db,auth:{getUserIdentity:async()=>({issuer:OWNER_SERVICE_ISSUER,subject:OWNER_SERVICE_SUBJECT})},scheduler:{runAfter:async(...args:any[])=>jobs.push(args)}};
+ const run=async()=>((snapshot as any)._handler(ctx,{})).then((rows:any)=>rows[0]);return {tables,db,ctx,jobs,reads,rental,run};
 }
 afterEach(()=>{vi.unstubAllEnvs();vi.useRealTimers()});
+describe("actual owner-confirmed custody and private shared stock",()=>{
+ function pair(){
+  const f=fixture();f.tables.reservations=[f.rental({_id:"original",hygglo_order_id:"original",renter_id:"renter"}),f.rental({_id:"extension",hygglo_order_id:"extension",renter_id:"renter",start_date:"2027-01-02",end_date:"2027-01-03"}),f.rental({_id:"independent",hygglo_order_id:"independent",renter_id:"renter",start_date:"2027-01-02",end_date:"2027-01-03"})];
+  const args={account_slug:"other-owned-account",order_id:"extension"};
+  const state=()=>((custodyState as any)._handler(f.ctx,args));
+  return {...f,args,state};
+ }
+ const note="Owner checked: the renter kept the same FX3 under this extension.";
+ it("shares only the explicitly confirmed allocation, retains independent demand and makes a repeated save a no-op",async()=>{
+  const f=pair(),before=await f.run();expect(Math.max(...before.units[0].windows.map((w:any)=>w.qty))).toBe(3);
+  const state=await f.state(),candidate=state.candidates.find((r:any)=>r.order_id==="original");
+  const args={...f.args,original_order_id:"original",basis:candidate.basis,note,retained_equipment:true};
+  expect(await (confirmCustody as any)._handler(f.ctx,args)).toMatchObject({changed:true,group_id:"original"});
+  expect(Math.max(...(await f.run()).units[0].windows.map((w:any)=>w.qty))).toBe(2);
+  expect(f.tables.reservations[2].stock_custody_group_id).toBeUndefined();
+  expect(f.tables.audit_log).toHaveLength(1);expect(f.jobs).toHaveLength(2);
+  expect(await (confirmCustody as any)._handler(f.ctx,args)).toMatchObject({changed:false});
+  expect(f.tables.audit_log).toHaveLength(1);expect(f.jobs).toHaveLength(2);
+ });
+ it("undoes a child link and restores the exact independent occupied quantities",async()=>{
+  const f=pair(),candidate=(await f.state()).candidates.find((r:any)=>r.order_id==="original");
+  await (confirmCustody as any)._handler(f.ctx,{...f.args,original_order_id:"original",basis:candidate.basis,note,retained_equipment:true});
+  const state=await f.state();expect(state.linked).toBe(true);
+  expect(await (undoCustody as any)._handler(f.ctx,{...f.args,basis:state.basis,note:"Separate issue confirmed: customer received another physical kit."})).toMatchObject({changed:true,count:1});
+  expect(Math.max(...(await f.run()).units[0].windows.map((w:any)=>w.qty))).toBe(3);
+  expect(f.tables.audit_log).toHaveLength(2);expect(f.jobs).toHaveLength(4);
+ });
+ it("removes the whole chain when undoing its original booking",async()=>{
+  const f=pair(),candidate=(await f.state()).candidates.find((r:any)=>r.order_id==="original");
+  await (confirmCustody as any)._handler(f.ctx,{...f.args,original_order_id:"original",basis:candidate.basis,note,retained_equipment:true});
+  const args={account_slug:f.args.account_slug,order_id:"original"};
+  const state=await (custodyState as any)._handler(f.ctx,args);
+  expect(await (undoCustody as any)._handler(f.ctx,{...args,basis:state.basis,note:"Original custody decision removed after owner reconciliation."})).toMatchObject({count:2});
+  expect(f.tables.reservations.every((r:any)=>!r.stock_custody_group_id)).toBe(true);
+ });
+ it("rejects changes to the quoted equipment or booking before any decision is persisted",async()=>{
+  const f=pair(),candidate=(await f.state()).candidates.find((r:any)=>r.order_id==="original");
+  f.tables.reservations[0].resolved_items[0].qty=2;
+  await expect((confirmCustody as any)._handler(f.ctx,{...f.args,original_order_id:"original",basis:candidate.basis,note,retained_equipment:true})).rejects.toThrow("changed");
+  expect(f.tables.audit_log).toEqual([]);expect(f.jobs).toEqual([]);
+ });
+ it.each(["account","renter","dates","equipment"])("does not suggest an incompatible original (%s)",async mismatch=>{
+  const f=pair();const original=f.tables.reservations[0];
+  if(mismatch==="account")original.account_slug="foreign-account";
+  if(mismatch==="renter")original.renter_id="different-renter";
+  if(mismatch==="dates")original.end_date="2026-01-01";
+  if(mismatch==="equipment")original.resolved_items=[{item_id:"different-physical-unit",qty:1}];
+  expect((await f.state()).candidates.some((r:any)=>r.order_id==="original")).toBe(false);
+ });
+ it("invalidates a saved relationship after the source dates or quantity changes",async()=>{
+  const f=pair(),candidate=(await f.state()).candidates.find((r:any)=>r.order_id==="original");
+  await (confirmCustody as any)._handler(f.ctx,{...f.args,original_order_id:"original",basis:candidate.basis,note,retained_equipment:true});
+  f.tables.reservations[1].end_date="2027-01-04";
+  expect((await f.state()).linked).toBe(false);
+  expect(Math.max(...(await f.run()).units[0].windows.map((w:any)=>w.qty))).toBe(3);
+ });
+ it("does not crash the owner controls when a reference is not found",async()=>{
+  const f=pair();expect((await (custodyState as any)._handler(f.ctx,{...f.args,original_order_id:"does-not-exist"})).candidates).toEqual([]);
+ });
+ it("requires live owner authorization even when the legacy rollout switch is false",async()=>{
+  const f=pair();vi.stubEnv("OWNER_AUTH_REQUIRED","false");f.ctx.auth.getUserIdentity=async()=>null;
+  await expect(f.state()).rejects.toThrow("OWNER_AUTH_REQUIRED");expect(f.reads).toEqual([]);
+  await expect((confirmCustody as any)._handler(f.ctx,{...f.args,original_order_id:"original",basis:"forged",note,retained_equipment:true})).rejects.toThrow("OWNER_AUTH_REQUIRED");
+  expect(f.tables.audit_log).toEqual([]);expect(f.jobs).toEqual([]);
+ });
+});
 describe("actual private shared-stock snapshot",()=>{
  it.each(["2026-08-22","2026-07-13"])("projects booked days when historical pickup contradicts return (%s)",async date=>{
   const f=fixture();const pickup=new Date(Date.parse(date+"T00:00Z")+86400000).toISOString().slice(0,10);

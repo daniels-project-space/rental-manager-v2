@@ -14,6 +14,7 @@ export interface DBRow {
   status?: string | null;
   renter_name?: string | null;
   qty: number; // qty of the item this row contributes
+  allocation_group?: string; // explicitly evidenced shared custody only
 }
 
 // Days of grace after end_date during which we still treat gear as "out".
@@ -131,6 +132,12 @@ export function computeWorstOverlap(
  * A renter name cannot establish that different orders are an extension of
  * one allocation. Keep the exported name for existing dashboard callers.
  */
-export function extensionOccupancyQty(rows: Array<{ renter_name?: string | null; qty: number }>): number {
-  return rows.reduce((sum, row) => sum + row.qty, 0);
+export function extensionOccupancyQty(rows: Array<{ renter_name?: string | null; qty: number; allocation_group?:string }>): number {
+  const shared = new Map<string,number>();
+  let independent = 0;
+  for (const row of rows) {
+    if (row.allocation_group) shared.set(row.allocation_group,Math.max(shared.get(row.allocation_group) ?? 0,row.qty));
+    else independent += row.qty;
+  }
+  return independent + [...shared.values()].reduce((sum,qty)=>sum+qty,0);
 }

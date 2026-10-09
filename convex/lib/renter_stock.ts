@@ -8,6 +8,7 @@ import { effStart } from "./double_booking";
 import { dedupByLogicalRental } from "./reservations/predicates";
 import { buildProductIndexMap, reservationItemUnits, type OverrideMap } from "./reservations/itemUnits";
 import { defaultAdapterUnits } from "./default_adapter_units";
+import { confirmedCustodyGroup } from "./reservation_custody";
 
 export type StockRequest = {
   item_name: string;
@@ -191,9 +192,10 @@ export function stockOccupancyForItem(sources: Awaited<ReturnType<typeof loadSto
     }
     // loadStockSources has already deduplicated copies of the same order.
     // Separate order IDs are separate physical commitments. The provider
-    // payload does not persist an extension relationship: a matching renter
-    // and basket cannot prove that these rows share one allocation.
-    occupancy.push({ start, startInstant:londonStockInstant(start,"start"), ...bufferedStockEnd(end), qty, renter_name: r.renter_name, order_id: r.hygglo_order_id });
+    // payload does not persist an extension relationship: only a saved,
+    // current owner confirmation can establish shared physical custody.
+    const extension_key = confirmedCustodyGroup(r,units);
+    occupancy.push({ start, startInstant:londonStockInstant(start,"start"), ...bufferedStockEnd(end), qty, renter_name: r.renter_name, order_id: r.hygglo_order_id, extension_key });
   }
   return occupancy;
 }

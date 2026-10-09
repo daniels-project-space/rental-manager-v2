@@ -1,5 +1,6 @@
 import { loadCanonicalListingAllocation } from "./lib/canonical_listing_allocation";
 import { confirmedClock } from "./lib/confirmed_schedule";
+import { confirmedCustodyGroup } from "./lib/reservation_custody";
 import { shortItemName } from "./lib/item_display_name";
 import { mutation, query, type QueryCtx } from "./owner_functions";
 import { v } from "convex/values";
@@ -855,14 +856,27 @@ export async function computeStripLive(
         ? buildItems(r)
         : (() => {
           const byTile = new Map<string, ChipItem>();
+          const allocations = new Map<string, Map<string,number>>();
           for (const source of sourceOrders) {
             const pickup = displayPickupDate(source), returned = effectiveReturnDate(source);
             if (!pickup || !returned || pickup > date || returned < date) continue;
+            const units = reservationItemUnits(source,productIndexStrip,overrideMapStrip,rawItemsForStrip);
+            const group = confirmedCustodyGroup(source,units) ?? `independent:${source._id}`;
+            const sourceTiles = new Map<string,ChipItem>();
             for (const item of buildItems(source)) {
               const key = JSON.stringify([item.itemId, item.itemId ? null : item.name, item.imageUrl]);
+              const own = sourceTiles.get(key);
+              if (own) own.qty += item.qty;
+              else sourceTiles.set(key,{...item});
+            }
+            for (const [key,item] of sourceTiles) {
               const existing = byTile.get(key);
-              if (existing) existing.qty += item.qty;
-              else byTile.set(key, { ...item });
+              const held = allocations.get(key) ?? new Map<string,number>();
+              held.set(group,Math.max(held.get(group) ?? 0,item.qty));
+              allocations.set(key,held);
+              const qty = [...held.values()].reduce((sum,n)=>sum+n,0);
+              if (existing) existing.qty = qty;
+              else byTile.set(key, { ...item,qty });
             }
           }
           return [...byTile.values()];

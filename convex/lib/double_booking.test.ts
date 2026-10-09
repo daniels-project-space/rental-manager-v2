@@ -250,6 +250,9 @@ describe("computeWorstOverlap — FX3 scenario", () => {
 });
 
 describe("distinct order occupancy", () => {
+  it("shares an explicitly confirmed allocation while preserving extra quantities and independent orders",()=>{
+    expect(extensionOccupancyQty([{qty:1,allocation_group:"confirmed"},{qty:2,allocation_group:"confirmed"},{qty:1}])).toBe(3);
+  });
   it("does not infer an extension relationship from normalized renter names", () => {
     expect(extensionOccupancyQty([{ renter_name: "Renter", qty: 1 }, { renter_name: "  RENTER ", qty: 1 }])).toBe(2);
   });

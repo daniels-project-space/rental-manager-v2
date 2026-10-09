@@ -402,6 +402,15 @@ const operationalSchema = defineSchema({
     v1_updated_at: v.optional(v.number()),
     imported_at: v.optional(v.number()),
     hygglo_order_id: v.optional(v.string()),   // Hygglo order ID for poll-synced reservations
+    // Owner-confirmed continuous custody across separate provider orders.
+    // This changes physical occupancy only, never either order's payment.
+    stock_custody_group_id: v.optional(v.id("reservations")),
+    stock_custody_provenance: v.optional(v.object({
+      source: v.literal("owner_confirmation"),
+      order_id: v.string(), account_slug: v.string(), renter_key: v.string(),
+      units_key: v.string(), start_date: v.string(), end_date: v.string(),
+      confirmed_at: v.number(), confirmed_by: v.string(), note: v.string(),
+    })),
     // ── Phase 1 live-polling fields ──────────────────────────────
     order_step: v.optional(v.union(
       v.literal("REQUEST"),
@@ -650,6 +659,8 @@ const operationalSchema = defineSchema({
     .index("by_renter", ["renter_id"])
     .index("by_hygglo_user_id", ["hygglo_user_id"])
     .index("by_account_slug", ["account_slug"])
+    .index("by_account_order", ["account_slug", "hygglo_order_id"])
+    .index("by_stock_custody_group", ["stock_custody_group_id"])
     .index("by_start_date", ["start_date"])
     .index("by_pickup_date", ["pickup_date"])
     .index("by_v1_rental_id", ["v1_rental_id"])

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./auth", () => ({ authComponent: { safeGetAuthUser: vi.fn(async () => null) } }));
 import { computeStripLive, computeWeeklyLive, getGanttWeek, getCalendarStrip, getWeeklyCalendar, getItemAvailabilityForChat } from "./calendar";
 import { websiteCalendarPeriods } from "./lib/reservations/itemUnits";
+import {custodyRenterKey,custodyUnitsKey} from "./lib/reservation_custody";
 const ms = (day: string) => Date.parse(`${day}T00:00:00Z`);
 const window = (id: string, start: string, end: string, clock: string | null, qty = 1) => ({ item_id: id, start: ms(start), end: ms(end), qty, pickupTime: "09:00", returnTime: clock });
 const booking = { _id: "web-rental", _creationTime: 1, account_slug: "dbcinema_web", hygglo_order_id: "paid-web-rental", status: "confirmed", order_step: "DELIVERED", start_date: "2026-10-05", end_date: "2026-10-11", pickup_time: "08:00", return_time: "22:00", renter_name: "Client", gross_paid_gbp: 99,
@@ -91,6 +92,19 @@ it('rejects caches made before paid pending commitments were included',async()=>
 
 describe("grouped calendar tiles retain separate physical orders",()=>{
  const order=(id:string,extra:Record<string,unknown>={})=>({_id:id,_creationTime:1,hygglo_order_id:id,account_slug:"leo",renter_name:"Same renter",status:"confirmed",start_date:"2026-10-05",end_date:"2026-10-06",resolved_items:[{item_id:"camera",qty:1,confidence:1}],...extra});
+ it("shows a confirmed continuous allocation once, plus an independent kit for the same renter",async()=>{
+  const shared=[order("original"),order("extension")].map(row=>({...row,stock_custody_group_id:"original",stock_custody_provenance:{source:"owner_confirmation",account_slug:"leo",order_id:row.hygglo_order_id,renter_key:custodyRenterKey(row as any),units_key:custodyUnitsKey(new Map([["camera",1]])),start_date:row.start_date,end_date:row.end_date,confirmed_at:1,confirmed_by:"owner",note:"Owner confirmed the customer retained this same physical kit."}}));
+  const days=await computeStripLive(context([...shared,order("independent")]),{accountSlug:"leo",startDate:"2026-10-05",days:2});
+  expect(days[0].pickups[0].items.map(i=>i.qty)).toEqual([2]);
+  shared[1].end_date="2026-10-07";
+  const changed=await computeStripLive(context([...shared,order("independent")]),{accountSlug:"leo",startDate:"2026-10-05",days:2});
+  expect(changed[0].pickups[0].items.map(i=>i.qty)).toEqual([3]);
+ });
+ it("sums duplicate unpictured listing lines within an individual order",async()=>{
+  const rows=[order("one",{hygglo_items:[{name:"FX3",product_id:42,qty:1},{name:"FX3",product_id:42,qty:1}]}),order("two",{hygglo_items:[{name:"FX3",product_id:42,qty:1}]})];
+  const days=await computeStripLive(context(rows),{accountSlug:"leo",startDate:"2026-10-05",days:2});
+  expect(days[0].pickups[0].items.map(i=>i.qty)).toEqual([3]);
+ });
  it("keeps one grouped tile with three independently booked bodies and an unknown return",async()=>{
   const proof=(time:string)=>({source:"agreed_chat",date:"2026-10-06",time,confirmedAt:1});
   const rows=[order("early",{return_time:"17:00",return_time_provenance:proof("17:00")}),order("later",{return_time:"19:00",return_time_provenance:proof("19:00")}),order("unknown")];
