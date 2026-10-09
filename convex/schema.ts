@@ -674,6 +674,7 @@ const operationalSchema = defineSchema({
     // Live unmapped-listing alert: read only active status rows in its bounded
     // forward horizon, rather than every reservation sharing that date range.
     .index("by_status_start_date", ["status", "start_date"])
+    .index("by_status_end_date", ["status", "end_date"])
     // Pass 8b (2026-05-31): the stats_drawer MV dirty-probe needs to detect ANY
     // reservation mutation cheaply. The poller bumps last_polled_at on every
     // touched row, so an indexed max(last_polled_at) lets the probe catch status
@@ -1168,6 +1169,11 @@ const operationalSchema = defineSchema({
   }).index("by_account", ["account"]),
 
   // ── Sync state (freshness tracking, Phase 1 live-data upgrade) ─
+  schedule_reconciliation_state: defineTable({
+    key: v.literal("handover-evidence-v1"), status: v.union(v.literal("confirmed"),v.literal("ongoing")),
+    cursor: v.union(v.string(),v.null()), cutoff: v.string(), checkedAt: v.number(),
+  }).index("by_key",["key"]),
+
   sync_state: defineTable({
     source: v.string(),         // e.g. "hygglo_poller"
     lastRunAt: v.number(),       // ms since epoch

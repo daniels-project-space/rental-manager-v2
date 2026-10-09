@@ -186,11 +186,10 @@ crons.interval(
   {},
 );
 
-// Copy a confirmed handover time recorded on one order onto the other orders of
-// the same renter+period rental (so a multi-listing booking sits in the right
-// calendar slot even though the time was only agreed in one chat). 2026-06-25.
+// Reconcile exact agreement in each rental's own conversation. Never borrow a
+// handover from another overlapping order; website contracts are immutable.
 crons.interval(
-  "propagate grouped handover times",
+  "reconcile confirmed handover evidence",
   { minutes: 30 },
   internal.reservations.propagateGroupedTimesCron,
   {},

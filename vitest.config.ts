@@ -55,6 +55,7 @@ export default defineConfig({
       "convex/lib/renter_stock.test.ts",
       "convex/lib/confirmed_schedule.test.ts",
       "convex/extract_booking_times_q.test.ts",
+      "convex/schedule-reconciliation.test.ts",
       "convex/lib/stock_claims.test.ts",
       "convex/lib/catalogue_readiness.test.ts",
       "convex/lib/claim_date_scope.test.ts",

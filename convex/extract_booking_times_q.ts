@@ -9,15 +9,12 @@ import { internal } from "./_generated/api";
 import { confirmedChatClock, recoverConfirmedChatClock } from "../src/lib/booking-schedule-evidence";
 import { hashBookingTimeTranscript } from "../src/lib/booking-time-transcript";
 import type { MutationCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Id, Doc } from "./_generated/dataModel";
+import type { BookingTimeMessage } from "../src/lib/booking-time-transcript";
 
 /** Re-read the real stored transcript; model/client confidence is not evidence.
  * A stale asynchronous model response must never overwrite a newer agreement. */
-async function persistTimes(ctx:MutationCtx,id:Id<"reservations">,hash:string,patch:{pickup_time?:string;return_time?:string;pickup_date?:string;return_date?:string;pickup_method?:string;return_method?:string}) {
- const row=await ctx.db.get(id);if(!row?.hygglo_order_id)return false;
- const rows=await ctx.db.query("hygglo_messages").withIndex("by_thread",q=>q.eq("thread_id",row.hygglo_order_id!)).order("desc").take(32);
- const messages=rows.reverse().map(m=>({sender:m.sender,body_text:m.body_text,hygglo_sent_at:m.hygglo_sent_at??m.fetched_at}));
- if(hashBookingTimeTranscript(messages)!==hash)return false;
+function timeProofs(row:Doc<"reservations">,patch:Partial<Doc<"reservations">>,messages:BookingTimeMessage[],hash:string) {
  const next={...row,...patch};
  let pickup=confirmedChatClock(messages,"pickup",next.pickup_time,next.pickup_date??next.start_date,next.start_date,hash);
  let returned=confirmedChatClock(messages,"return",next.return_time,next.return_date??next.end_date,next.end_date,hash);
@@ -29,7 +26,18 @@ async function persistTimes(ctx:MutationCtx,id:Id<"reservations">,hash:string,pa
   const context=endpoint==="pickup"?/\b(?:pickup|pick up|collect)/i:/\b(?:return|drop.?off|back)/i;
   return proof.time===time&&proof.date===date&&!messages.some(m=>(m.hygglo_sent_at??0)>proof.confirmedAt&&context.test(m.body_text)&&/\d|morning|evening|afternoon|noon|midday|midnight|day|tonight|tomorrow/i.test(m.body_text))?proof:undefined;
  };
- pickup??=keep(row.pickup_time_provenance,"pickup");returned??=keep(row.return_time_provenance,"return");
+ const keptPickup=keep(row.pickup_time_provenance,"pickup"),keptReturn=keep(row.return_time_provenance,"return");
+ if(!pickup||keptPickup&&keptPickup.confirmedAt>pickup.confirmedAt)pickup=keptPickup;
+ if(!returned||keptReturn&&keptReturn.confirmedAt>returned.confirmedAt)returned=keptReturn;
+ return {pickup,returned};
+}
+
+async function persistTimes(ctx:MutationCtx,id:Id<"reservations">,hash:string,patch:{pickup_time?:string;return_time?:string;pickup_date?:string;return_date?:string;pickup_method?:string;return_method?:string}) {
+ const row=await ctx.db.get(id);if(!row?.hygglo_order_id)return false;
+ const rows=await ctx.db.query("hygglo_messages").withIndex("by_thread",q=>q.eq("thread_id",row.hygglo_order_id!)).order("desc").take(32);
+ const messages=rows.reverse().map(m=>({sender:m.sender,body_text:m.body_text,hygglo_sent_at:m.hygglo_sent_at??m.fetched_at}));
+ if(hashBookingTimeTranscript(messages)!==hash)return false;
+ const {pickup,returned}=timeProofs(row,patch,messages,hash);
  await ctx.db.patch(id,{...patch,pickup_time_provenance:pickup,return_time_provenance:returned,times_transcript_hash:hash,times_extracted_at:Date.now()});
  return true;
 }
@@ -318,25 +326,39 @@ export const admin_setExtractedTimes = mutation({
 
 /** Owner/service recovery of existing clocks from saved correspondence only.
  * No model/provider call and no rental status, payment or return mutation. */
+/** Recover each rental from its own agreed conversation, never another renter-period row.
+ * This deterministic pass must not stamp the LLM extraction watermark: doing so
+ * would suppress a still-needed model extraction for the same new messages. */
+export async function reconcileReservationTimeProvenance(ctx:MutationCtx,id:Id<"reservations">) {
+ const row=await ctx.db.get(id);
+ if(!row?.hygglo_order_id||row.is_obsolete||row.account_slug==="dbcinema_web")return null;
+ const rows=await ctx.db.query("hygglo_messages").withIndex("by_thread",q=>q.eq("thread_id",row.hygglo_order_id!)).order("desc").take(32);
+ const messages=rows.reverse().map(m=>({sender:m.sender,body_text:m.body_text,hygglo_sent_at:m.hygglo_sent_at??m.fetched_at}));
+ const hash=hashBookingTimeTranscript(messages);
+ const pickup=row.start_date?recoverConfirmedChatClock(messages,"pickup",row.start_date,hash):undefined;
+ const returned=row.end_date?recoverConfirmedChatClock(messages,"return",row.end_date,hash):undefined;
+ const newer=(candidate:typeof pickup,proof:typeof pickup,time:string|undefined,date:string|undefined)=>candidate&&
+  !(proof&&proof.time===time&&proof.date===date&&proof.confirmedAt>=candidate.confirmedAt);
+ const patch={...(newer(pickup,row.pickup_time_provenance,row.pickup_time,row.pickup_date??row.start_date)?{pickup_time:pickup!.time,pickup_date:pickup!.date}:{}),...(newer(returned,row.return_time_provenance,row.return_time,row.return_date??row.end_date)?{return_time:returned!.time,return_date:returned!.date}:{})};
+ const proofs=timeProofs(row,patch,messages,hash);
+ const next={...row,...patch,pickup_time_provenance:proofs.pickup,return_time_provenance:proofs.returned};
+ const basis=(r:Doc<"reservations">)=>JSON.stringify([r.pickup_time,r.pickup_date,r.return_time,r.return_date,r.pickup_time_provenance,r.return_time_provenance]);
+ const changed=basis(row)!==basis(next);
+ if(changed){
+  await ctx.db.patch(id,{...patch,pickup_time_provenance:proofs.pickup,return_time_provenance:proofs.returned});
+  await ctx.db.insert("audit_log",{table_name:"reservations",actor:"system:confirmed-schedule-reconciliation",op:"update",count:1,note:JSON.stringify({reservation_id:id,evidenceHash:hash,pickupConfirmed:!!proofs.pickup,returnConfirmed:!!proofs.returned}),ts:Date.now()});
+ }
+ return {reservation_id:id,changed,pickupConfirmed:!!proofs.pickup,returnConfirmed:!!proofs.returned};
+}
 export const reconcileTimeProvenance = mutation({
  args:{reservation_ids:v.array(v.id("reservations"))},
  handler:async(ctx,{reservation_ids})=>{
   if(reservation_ids.length>50)throw Error("Maximum 50 reservations per reconciliation");
   const results=[];
   for(const id of [...new Set(reservation_ids)]){
-   const row=await ctx.db.get(id);if(!row?.hygglo_order_id||row.is_obsolete)continue;
-   const rows=await ctx.db.query("hygglo_messages").withIndex("by_thread",q=>q.eq("thread_id",row.hygglo_order_id!)).order("desc").take(32);
-   const messages=rows.reverse().map(m=>({sender:m.sender,body_text:m.body_text,hygglo_sent_at:m.hygglo_sent_at??m.fetched_at}));
-   const hash=hashBookingTimeTranscript(messages);
-   const pickup=row.start_date?recoverConfirmedChatClock(messages,"pickup",row.start_date,hash):undefined;
-   const returned=row.end_date?recoverConfirmedChatClock(messages,"return",row.end_date,hash):undefined;
-   await persistTimes(ctx,id,hash,{...(pickup?{pickup_time:pickup.time,pickup_date:pickup.date}:{}),...(returned?{return_time:returned.time,return_date:returned.date}:{})});
-   const next=await ctx.db.get(id);
-   const changed=JSON.stringify([row.pickup_time_provenance,row.return_time_provenance])!==JSON.stringify([next?.pickup_time_provenance,next?.return_time_provenance]);
-   if(changed)await ctx.db.insert("audit_log",{table_name:"reservations",actor:"system:confirmed-schedule-reconciliation",op:"update",count:1,note:JSON.stringify({reservation_id:id,evidenceHash:hash,pickupConfirmed:!!next?.pickup_time_provenance,returnConfirmed:!!next?.return_time_provenance}),ts:Date.now()});
-   results.push({reservation_id:id,changed,pickupConfirmed:!!next?.pickup_time_provenance,returnConfirmed:!!next?.return_time_provenance});
+   const result=await reconcileReservationTimeProvenance(ctx,id);if(result)results.push(result);
   }
-  await ctx.scheduler.runAfter(0,internal.mv.calendar.refresh,{});
+  if(results.some(r=>r.changed))await ctx.scheduler.runAfter(0,internal.mv.calendar.refresh,{force:true});
   return results;
  }
 });
