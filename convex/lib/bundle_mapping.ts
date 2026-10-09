@@ -82,6 +82,11 @@ export function resolveBundleMapping(description: string, items: Inventory[], co
     if (/^\d{1,2}\s*x\s+/i.test(component.name)) {
       unmatched.push(`Ambiguous quantity: ${component.qty}x ${component.name}`); continue;
     }
+    // A model choice is not a resolved stock identity, even if one offered
+    // alternative is owned. Whole kits and individual units use the same gate.
+    if (/\(\s*or\b/i.test(component.name)) {
+      unmatched.push(`${component.qty}x ${component.name}`); continue;
+    }
     // Generic bundled accessories must not become battery-pack rentals.
     // Named independently tracked pools still participate in kit coverage.
     const majorEquipment = /\b(?:camera(?!\s+(?:batter|cage))|bmpcc|blackmagic|fx\d|a7\w*|gimbal|lens(?:es)?|tripod|mic(?:rophone)?|rig|monitor|lights?|led)\b/i;
