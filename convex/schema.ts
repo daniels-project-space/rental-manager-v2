@@ -57,6 +57,11 @@ const operationalSchema = defineSchema({
     auth_user_id: v.string(),
     email: v.string(),
     created_at: v.number(),
+    recovery_mail_requested_at: v.optional(v.number()),
+    recovery_mail_window_started_at: v.optional(v.number()),
+    recovery_mail_window_count: v.optional(v.number()),
+    recovery_tokens: v.optional(v.array(v.object({ hash: v.string(), expires_at: v.number() }))),
+    recovery_token_consumed_at: v.optional(v.number()),
   }).index("by_auth_user", ["auth_user_id"]),
   // ── To-Do lists (owner personal checklists) ──────────────────
   todo_lists: defineTable({
