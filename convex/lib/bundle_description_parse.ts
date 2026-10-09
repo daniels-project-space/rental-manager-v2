@@ -20,11 +20,16 @@ const NOISE_RE =
   /^(various|needed|cables?|carrying|carry|bag|bags|case|cases|packaged|all items|charger|chargers|cable)\b/i;
 /** Protective caps and lens hoods are supplied packaging, not separate rented
  * lenses. Match the whole component so mixed gear lines remain unresolved. */
-const PROTECTIVE_PACKAGING_RE = /^(?:(?:front(?:\s+(?:and|&)\s+rear)?|rear)\s+)?(?:lens\s+(?:mount\s+)?|body\s+)?caps?$|^lens\s+hoods?$/i;
+const PROTECTIVE_PACKAGING_RE = /^(?:(?:front(?:\s+(?:and|&)\s+rear)?|rear)\s+)?(?:lens\s+(?:mount\s+)?|(?:camera\s+)?body\s+)?caps?$|^lens\s+hoods?$/i;
 /** A model-specific carry case is still a case, not a second copy of that
  * model. Mixed equipment lines must remain visible to identity review. */
 function isProtectivePackaging(name:string):boolean {
-  return PROTECTIVE_PACKAGING_RE.test(name) || /^(?:(?:protective|hard)\s+)?(?:lens\s+)?(?:pouch(?:es)?(?:\/cases?)?|cases?(?:\/pouch(?:es)?)?)$/i.test(name) ||
+  // Known purpose suffixes do not turn packaging into another camera/lens.
+  // Match the whole remaining line: mixed equipment must remain unresolved.
+  const packaging = name.replace(/\s+for (?:safe transport|safe handling|sensor protection)$/i, "");
+  return PROTECTIVE_PACKAGING_RE.test(packaging) ||
+    /^(?:original\s+)?(?:[a-z0-9-]+\s+)?camera straps?$|^protective transport cover$/i.test(packaging) ||
+    /^(?:(?:protective|hard)\s+)?(?:lens\s+)?(?:pouch(?:es)?(?:\/cases?)?|cases?(?:\/pouch(?:es)?)?)$/i.test(packaging) ||
     /\bcarry(?:ing)?\s+(?:case|bag)\s*$/i.test(name) && !/\b(?:with|and|plus)\b|[+]/i.test(name);
 }
 
@@ -53,6 +58,9 @@ export function extractComponents(desc: string): {
   body = body.split(
     /\bAbout (?:th(?:is|e)|us|me)\b|\bWe (?:also offer|offer a variety)\b|\bWhat you see on the picture\b|\(\s*No batteries or special cables required\b|\bA quick note\b|\bPlease(?: kindly)? note\b|\bI do my best\b|\busually available\b/i,
   )[0];
+  // A notes heading starts prose, not further supplied equipment. Requiring
+  // a structural boundary preserves counted names such as "1x Notes recorder".
+  body = body.split(/(?:^|\s\*\s)(?:rental |return )?notes\s*:/i)[0];
   // STOP AT THE ADD-ON SECTION. Several listings follow the kit list with a
   // long menu of PAID extras ("Direct Add-on Upgrades:", "ADD-ONS"). Those are
   // not in the rental. diogo#1173566 is a 3-item kit followed by 25 add-on
@@ -127,6 +135,7 @@ export function extractComponents(desc: string): {
     // Pocket Cinema Camera 6K Pro" and "My Blackmagic Pocket Cinema Camera
     // 6K Full Frame". A bullet with no number is exactly one of that thing.
     const q = p.match(/^(\d{1,2})\s*x?\s+(.*)$/);
+    if (!q && /^(?:please\s+return\b|[([]\s*compatible\s+with\b)/i.test(p)) continue;
     const qty = q ? parseInt(q[1], 10) : 1;
     let name = (q ? q[2] : p).trim().replace(/[.,;]+$/, "");
     if (!usedBullets) {

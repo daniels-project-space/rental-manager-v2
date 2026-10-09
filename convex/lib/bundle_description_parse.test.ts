@@ -400,3 +400,21 @@ describe("complete kit component identity",()=>{
     expect(parsed.unmatched).toEqual([]);
   });
 });
+
+describe("kit packing and return notes",()=>{
+  it("keeps the actual kit while ignoring uncounted instructions and whole protective items",()=>{
+    const description="Included in this rental:\n• 3x Sony FX3\n• Original Sony camera straps\n• Camera body caps for sensor protection\n• Lens pouch/case for safe transport\n• Protective transport cover for safe handling\n• Please return with all included accessories to avoid replacement charges\n(Compatible with all Sony E-Mount lenses — pair with my GM lenses for a complete package.)";
+    expect(extractComponents(description).components).toEqual([{qty:3,name:"Sony FX3"}]);
+  });
+  it("preserves mixed equipment and explicitly counted compatibility labels for review",()=>{
+    const description="Included in this rental:\n• 1x Camera body caps + Unknown camera\n• 1x Lens pouch/case + Sony FX6\n• 1x Protective transport cover with wireless transmitter\n• 1x Compatible with Sony E-Mount lenses";
+    const names=extractComponents(description).components.map(c=>c.name);
+    expect(names).toHaveLength(4);
+    expect(names).toContain("Camera body caps + Unknown camera");
+    expect(names).toContain("Compatible with Sony E-Mount lenses");
+  });
+  it("ends the contents block at an uncounted notes heading but preserves counted equipment called Notes",()=>{
+    const description="Included in this rental:\n• 1x Sony FX3\n• 1x Notes field recorder\nNotes:\n• Bring the kit back charged\n• Sony FX6 is available separately";
+    expect(extractComponents(description).components).toEqual([{qty:1,name:"Sony FX3"},{qty:1,name:"Notes field recorder"}]);
+  });
+});
