@@ -38,6 +38,12 @@ describe("actual canonical website kit snapshot and stock feed",()=>{
   await (upsertProductsBatch as any)._handler({db},{products:[{...product,description:""}]});
   expect(stored.description).toBe("");
  });
+ it("projects only storefront fields before serializing private source descriptions",async()=>{
+  const f=fixture();Object.assign(f.tables.hygglo_products[0],{description:"Included in this rental: • 2x Sony FX3",descriptionSyncedAt:123,privateNote:"internal"});
+  const [row]=await (__service_catalogueForStorefront as any)._handler({db:f.db},{accountSlug:"dbcinema"});
+  expect(row).not.toHaveProperty("description");expect(row).not.toHaveProperty("descriptionSyncedAt");expect(row).not.toHaveProperty("privateNote");
+  expect(row.productId).toBe(10);expect(row).toHaveProperty("stockMapping");
+ });
  it("uses one indexed snapshot with exact physical quantities and audited per-kit contents",async()=>{
   const f=fixture();const [row]=await (__service_catalogueForStorefront as any)._handler({db:f.db},{accountSlug:"dbcinema"});
   expect(row.stockMapping).toMatchObject({version:1,complete:true,owned:true});expect(row.stockMapping.components.map((c:any)=>[c.masterItemId,c.qty,c.quantityOwned,c.replacementCost])).toEqual([["body",2,4,4000],["lens",2,3,2000],["battery",5,12,70]]);expect(f.reads).toEqual(["hygglo_products","items","listing_resolution_override","online_listings"]);

@@ -1,3 +1,4 @@
+import { createBundleMappingContext } from "./lib/bundle_mapping";
 /**
  * convex/hygglo_products — the marketing-listings layer (Phase 3, ADDITIVE).
  *
@@ -178,11 +179,12 @@ export const __service_catalogueForStorefront = internalQuery({
     for (const row of overrides) if (!mapping.has(row.product_id)) mapping.set(row.product_id, row);
     for (const row of listings) if (!descriptions.has(row.product_id)) descriptions.set(row.product_id, row);
     const byId = new Map(inventory.map(i => [String(i._id), i]));
+    const context=createBundleMappingContext(inventory);
     return products.map(product => {
       const resolved = resolveListingComponents(inventory,
         mapping.get(product.productId)?.components.map(c => ({item_id:String(c.item_id),qty:c.qty})),
         product.masterItemId ? String(product.masterItemId) : undefined, 1,
-        product.description ?? descriptions.get(product.productId)?.description);
+        product.description ?? descriptions.get(product.productId)?.description,context);
       const components = resolved.components.filter(c => c.stock_required && byId.has(c.item_id)).map(c => {
         const item = byId.get(c.item_id)!;
         const active = item.status === "active" && item.is_marketing_only === false;
@@ -192,7 +194,10 @@ export const __service_catalogueForStorefront = internalQuery({
           quantityOwned, active, replacementCost:typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0 };
       });
       const complete = resolved.complete && components.length > 0 && components.every(c => Number.isSafeInteger(c.qty) && c.qty > 0);
-      return { ...product, stockMapping:{version:1,complete,owned:resolved.owned,components} };
+      // Match the public bridge projection here, before serializing rich private descriptions.
+      const {productId,name,isPublished,isMarketingOnly,valuation,minimumRentalDays,prices,images,unavailableDates,listings,masterItemId}=product;
+      return {productId,name,isPublished,isMarketingOnly,valuation,minimumRentalDays,prices,images,unavailableDates,listings,masterItemId,
+        stockMapping:{version:1,complete,owned:resolved.owned,components} };
     });
   },
 });

@@ -33,3 +33,13 @@ handlers, known physical capacity, exclusions, frozen website allocations,
 failed detail reads, and genuine kit accessories. A public-source snapshot audit
 is separate from live availability: a complete owned mapping alone does not
 prove that the equipment is free for a requested period.
+
+## Rich catalogue query performance
+
+Each inventory read owns its matching context. Repeated component identities,
+alias token sets and exact lens metadata are reused only within that snapshot;
+quantities, coverage, ownership and ambiguity rules remain unchanged. A context
+from another inventory array is rejected. No global cache can retain stale stock.
+The storefront query projects the existing public bridge fields before returning
+its result, keeping retained provider descriptions out of the serialized feed.
+The 405-record live snapshot comparison must stay identical with caching enabled.

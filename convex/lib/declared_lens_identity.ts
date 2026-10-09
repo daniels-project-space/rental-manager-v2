@@ -12,7 +12,7 @@ function focalLengths(text: string) {
 /** A supplied lens label may omit "GM" or add "zoom lens". Require its exact
  * focal range and every stated model token, then a unique master identity.
  * No ranking, ownership preference, generation guess or zoom/prime substitution. */
-export function declaredLensIdentity<T extends Lens>(name: string, items: T[]) {
+export function declaredLensIdentity<T extends Lens>(name: string, items: T[], cache?:Map<string,{ranges:number[][];words:Set<string>}>) {
   if (!/\blens(?:es)?\b|\bzoom\b|\b[ft]\s*\/?\d/i.test(name)) return { explicit:false, item:null as T | null };
   const focal = focalLengths(name);
   if (!focal.length) return { explicit: false, item: null as T | null };
@@ -24,12 +24,15 @@ export function declaredLensIdentity<T extends Lens>(name: string, items: T[]) {
     ?? (/\bSony\s+FE\b/i.test(name)?"e":undefined);
   const query = [...tokenize(normalize(name))].filter(t => !labels.has(t) && t!==mount);
   const matches = items.filter(item => item.kind === "lens" && [item.name_canonical, ...(item.aliases ?? [])].some(alias => {
-    const ranges = focalLengths(alias);
+    const key=JSON.stringify([alias,item.lens_mount]);
+    let prepared=cache?.get(key);
+    if(!prepared){prepared={ranges:focalLengths(alias),words:tokenize(normalize(alias) + " " + (item.lens_mount ? item.lens_mount + " mount" : ""))};cache?.set(key,prepared);}
+    const ranges = prepared.ranges;
     if (ranges.length !== 1 || ranges[0][0] !== focal[0][0] || ranges[0][1] !== focal[0][1]) return false;
     const recordedMount=item.lens_mount?.match(/\b(ef|rf|pl|e|l)\b/i)?.[1]?.toLowerCase()
       ?? normalize(alias).match(/\b(ef|rf|pl|e|l)\b/i)?.[1]?.toLowerCase();
     if(mount && recordedMount && mount!==recordedMount)return false;
-    const words = tokenize(normalize(alias) + " " + (item.lens_mount ? item.lens_mount + " mount" : ""));
+    const words = prepared.words;
     return query.every(t => words.has(t));
   }));
   return { explicit: true, item: matches.length === 1 ? matches[0] : null };
