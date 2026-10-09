@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { authClient } from "@/lib/auth-client";
+import { ownerReturnTo } from "@/lib/owner-navigation";
 
 export default function OwnerLogin() {
   const [invite, setInvite] = useState<string | null>(null);
@@ -11,7 +12,7 @@ export default function OwnerLogin() {
     if (token) {
       setInvite(token);
       // The setup secret stays in memory, outside logs, history and browser storage.
-      window.history.replaceState(null, "", window.location.pathname);
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
     }
   }, []);
 
@@ -31,7 +32,7 @@ export default function OwnerLogin() {
         return;
       }
       setInvite(null);
-      window.location.assign("/");
+      window.location.assign(ownerReturnTo(new URLSearchParams(window.location.search).get("returnTo")));
     } catch {
       setError("Unable to connect. Please try again.");
     } finally {

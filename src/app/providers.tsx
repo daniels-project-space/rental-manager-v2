@@ -4,14 +4,17 @@ import { authClient } from "@/lib/auth-client";
 import { convex } from "@/lib/convex";
 import { AccountProvider } from "@/lib/account-context";
 import { EditModeProvider } from "@/lib/dashboard/edit-mode-context";
+import { OwnerAccessGate } from "@/components/auth/OwnerAccessGate";
 
-export function Providers({ children }: { children: React.ReactNode }) {
+export function Providers({ children, enforceOwner = false }: { children: React.ReactNode; enforceOwner?: boolean }) {
   const client = convex;
   return (
     <ConvexBetterAuthProvider client={client} authClient={authClient}>
-      <AccountProvider>
-        <EditModeProvider>{children}</EditModeProvider>
-      </AccountProvider>
+      <OwnerAccessGate enforce={enforceOwner} login={children}>
+        <AccountProvider>
+          <EditModeProvider>{children}</EditModeProvider>
+        </AccountProvider>
+      </OwnerAccessGate>
     </ConvexBetterAuthProvider>
   );
 }

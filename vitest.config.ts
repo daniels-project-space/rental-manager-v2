@@ -17,6 +17,7 @@ export default defineConfig({
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
+  esbuild: { jsx: "automatic" },
   css: { postcss: { plugins: [] } },
   test: {
     environment: "node",
@@ -39,6 +40,8 @@ export default defineConfig({
       "src/lib/convex-request-context.test.ts",
       "src/lib/convex-query-session.test.ts",
       "src/lib/owner-http-route.test.ts",
+      "src/lib/owner-navigation.test.ts",
+      "src/components/auth/OwnerAccessGate.test.tsx",
       "src/app/api/renter-bot-ab/route.test.ts",
       "src/app/api/push/renew/route.test.ts",
       "src/mastra/**/*.test.ts",
