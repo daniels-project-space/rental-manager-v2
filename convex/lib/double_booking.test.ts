@@ -249,21 +249,21 @@ describe("computeWorstOverlap — FX3 scenario", () => {
   });
 });
 
-describe("extension occupancy", () => {
-  it("counts the live extension pair once with normalized names", () => {
-    expect(extensionOccupancyQty([{ renter_name: "Gwilym Lewis-Brooke", qty: 1 }, { renter_name: "  GWILYM   Lewis-Brooke ", qty: 1 }])).toBe(1);
+describe("distinct order occupancy", () => {
+  it("does not infer an extension relationship from normalized renter names", () => {
+    expect(extensionOccupancyQty([{ renter_name: "Renter", qty: 1 }, { renter_name: "  RENTER ", qty: 1 }])).toBe(2);
   });
-  it("still detects an independent renter colliding with the extension", () => {
-    expect(extensionOccupancyQty([{ renter_name: "A", qty: 1 }, { renter_name: "A", qty: 1 }, { renter_name: "B", qty: 1 }])).toBe(2);
+  it("counts all distinct orders regardless of who rented them", () => {
+    expect(extensionOccupancyQty([{ renter_name: "A", qty: 1 }, { renter_name: "A", qty: 1 }, { renter_name: "B", qty: 1 }])).toBe(3);
   });
-  it("keeps the largest requested quantity for an extension", () => {
-    expect(extensionOccupancyQty([{ renter_name: "A", qty: 1 }, { renter_name: "A", qty: 2 }])).toBe(2);
+  it("counts every requested unit in separate orders for one renter", () => {
+    expect(extensionOccupancyQty([{ renter_name: "A", qty: 1 }, { renter_name: "A", qty: 2 }])).toBe(3);
   });
   it("never merges missing or placeholder names", () => {
     expect(extensionOccupancyQty([{ qty: 1 }, { renter_name: "", qty: 1 }, { renter_name: "Unknown", qty: 1 }, { renter_name: "unknown", qty: 1 }])).toBe(4);
   });
-  it("applies the extension rule during the date sweep", () => {
+  it("counts the overlap but not the disjoint days during the date sweep", () => {
     const rows = [{ start_date: "2026-10-01", end_date: "2026-10-02", renter_name: "A", qty: 1 }, { start_date: "2026-10-02", end_date: "2026-10-03", renter_name: "A", qty: 1 }];
-    expect(computeWorstOverlap(rows, "2026-10-01", "2026-10-04").worstCount).toBe(1);
+    expect(computeWorstOverlap(rows, "2026-10-01", "2026-10-04").worstCount).toBe(2);
   });
 });
