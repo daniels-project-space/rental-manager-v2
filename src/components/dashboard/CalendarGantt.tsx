@@ -17,7 +17,7 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 interface Block {
-  site_verification?: Pick<WebsiteVerification, "approved" | "status"> | null;
+  site_verification?: Pick<WebsiteVerification, "approved" | "documentsApproved" | "status"> | null;
   reservation_id: string;
   qty?: number;
   start_date: string | undefined;
@@ -612,7 +612,7 @@ function BlockDetail({ block, items, accent, onClose }: { block: Block; items: R
   const fmtDay = (d: string | null | undefined) =>
     d ? new Date(d + "T00:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }) : null;
   const rows: Array<[string, string | null | undefined]> = [
-    ["Status", block.account_slug === "dbcinema_web" && !block.order_step ? websiteVerificationLabel(block.site_verification) : orderStepLabel(block.order_step)],
+    ["Status", block.account_slug === "dbcinema_web" && !["DELIVERED","REVIEWED"].includes(block.order_step ?? "") ? websiteVerificationLabel(block.site_verification) : orderStepLabel(block.order_step)],
     ["Renter", block.renter_name && block.renter_name !== "?" ? block.renter_name : "—"],
     // Effective (negotiated) return so an extended rental's detail matches its bar.
     ["↑ Out", [fmtDay(block.start_date), block.pickup_time?.slice(0, 5), fmtMethod(block.pickup_method)].filter(Boolean).join(" · ") || null],

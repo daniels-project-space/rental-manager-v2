@@ -42,7 +42,7 @@ describe("vacation candidates use the renter stock source", () => {
     expect(result.before).toEqual({start:"2026-10-18",end:"2026-10-19"});
     expect(result.alternative_stock_scope).toBe("physical_item");
     expect(reads.filter(t=>t==="items")).toHaveLength(1);
-    expect(reads.filter(t=>t==="reservations")).toHaveLength(2); // confirmed and ongoing
+    expect(reads.filter(t=>t==="reservations")).toHaveLength(3); // confirmed and ongoing
   });
   it("keeps fully occupied units out of alternatives", async () => {
     const {ctx} = setup({ reservations: [reservation("confirmed",3)] });

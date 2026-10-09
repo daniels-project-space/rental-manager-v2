@@ -209,22 +209,27 @@ export const upsertSiteBookingsBatch = internalMutation({
       const b = raw;
       if (!b || !b.id || !Number.isFinite(b.start) || !Number.isFinite(b.end) || b.end < b.start) continue;
       if (b.revision !== undefined && (!Number.isSafeInteger(b.revision) || b.revision < 0)) throw Error("Invalid website rental revision");
-      // status → RMv2 status + order_step (so due-returns / Return Hub / the
+      // Paid lifecycle + authenticated approval → RMv2 status and next action (so due-returns / Return Hub / the
       // ongoing-vs-upcoming split treat web rentals like Hygglo ones).
       // Unknown / non-actionable (pending_payment) → skip, never default.
-      const status = SITE_STATUS_MAP[b.status];
-      if (!status) {
+      const sourceStatus = SITE_STATUS_MAP[b.status];
+      if (!sourceStatus) {
         skipped++;
         if (b.status === "pending_payment") receipts.push({ bookingId: b.id, receivedRevision: b.revision ?? 0, appliedRevision: null, outcome: "ignored", reason: "unpaid" });
         continue;
       }
       const verification = parseWebsiteVerification(b.verification);
+      // Payment and document approval are separate. A scheduled pickup hold is
+      // a collection requirement, not a reason to invent failed verification.
+      const documentsApproved = verification?.documentsApproved ?? verification?.approved ?? false;
+      const status = b.status === "confirmed" && !documentsApproved ? "pending_review" : sourceStatus;
       if (b.damageCases !== undefined) validateWebsiteCases(b.damageCases);
       const startISO = new Date(b.start).toISOString().slice(0, 10);
       const endISO = new Date(b.end).toISOString().slice(0, 10);
       const order_step =
         b.status === "active" ? "DELIVERED"
         : b.status === "returned" ? "REVIEWED"
+        : b.status === "confirmed" ? documentsApproved ? "BOOKED_AFTER_VERIFIED" : "VERIFIED"
         : undefined;
 
       // Decompose to physical RMv2 items so availability/conflict count these.
@@ -360,6 +365,7 @@ export const upsertSiteBookingsBatch = internalMutation({
         source_filter: "dbcinema_web_site",
         booking_status: b.status,
         platform_close_pending:false,
+        site_projection_version: verification?.documentsApproved === undefined ? 2 : 3,
         site_revision: b.revision ?? 0,
         site_verification: verification,
         site_item_windows,
@@ -394,7 +400,30 @@ export const upsertSiteBookingsBatch = internalMutation({
           skipped++;
           continue;
         }
-        if ((b.revision ?? 0) === (mine.site_revision ?? 0) && (b.revision ?? 0) > 0) throw Error("Conflicting website rental revision");
+        if ((b.revision ?? 0) === (mine.site_revision ?? 0) && (b.revision ?? 0) > 0) {
+          // Upgrade a prior receiver projection only when recomputing its exact
+          // old write-set proves the authenticated source otherwise unchanged.
+          const priorVersion = mine.site_projection_version;
+          const upgradingDocuments = priorVersion === 2 && fields.site_projection_version === 3;
+          if (priorVersion !== undefined && !upgradingDocuments) throw Error("Conflicting website rental revision");
+          const legacyFields: Record<string, unknown> = { ...fields };
+          if (priorVersion === undefined) {
+            delete legacyFields.site_projection_version;
+            legacyFields.status = sourceStatus;
+            legacyFields.order_step = b.status === "active" ? "DELIVERED" : b.status === "returned" ? "REVIEWED" : undefined;
+          } else {
+            legacyFields.site_projection_version = 2;
+            legacyFields.status = b.status === "confirmed" && !verification?.approved ? "pending_review" : sourceStatus;
+            legacyFields.order_step = b.status === "confirmed" ? verification?.approved ? "BOOKED_AFTER_VERIFIED" : "VERIFIED" : order_step;
+          }
+          if (verification) {
+            const legacyVerification = { ...verification };
+            delete legacyVerification.documentsApproved;
+            legacyFields.site_verification = legacyVerification;
+          }
+          const legacyHash = computePollHash(JSON.stringify({ ...legacyFields, ...(b.damageCases !== undefined ? { damageCases: b.damageCases } : {}) }));
+          if (mine.poll_hash !== legacyHash) throw Error("Conflicting website rental revision");
+        }
         await ctx.db.patch(mine._id, {
           ...fields,
           image_hints,

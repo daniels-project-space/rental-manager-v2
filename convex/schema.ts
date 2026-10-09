@@ -487,6 +487,7 @@ const operationalSchema = defineSchema({
      *  hint so future runs can re-link without refetching the order. */
     hygglo_user_id: v.optional(v.string()),
     booking_status: v.optional(v.string()),         // raw Hygglo booking status (e.g. "pending_review", "confirmed")
+    site_projection_version: v.optional(v.number()), // versioned receiver-only lifecycle derivation
     site_revision: v.optional(v.number()), // monotonically ordered website updates
     site_verification: v.optional(websiteVerificationValidator),
     site_item_windows: v.optional(v.array(v.object({ item_id: v.id("items"), qty: v.number(), start: v.number(), end: v.number(), endExclusive:v.optional(v.boolean()),stockWindowVersion:v.optional(v.number()),turnaroundBufferMinutes:v.optional(v.number()),pickupDate:v.optional(v.string()),returnDate:v.optional(v.string()), pickupTime: v.optional(v.union(v.string(), v.null())), returnTime: v.optional(v.union(v.string(), v.null())) }))), // saved per-component hire periods and agreed clocks

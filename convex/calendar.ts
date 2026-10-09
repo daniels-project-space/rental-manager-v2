@@ -1711,7 +1711,7 @@ export const getGanttWeek = query({
           // frontend groups by reservation and colours from this.
           account_slug: (r as { account_slug?: string | null }).account_slug ?? null,
           order_step: rType.order_step ?? null,
-          site_verification: r.account_slug === "dbcinema_web" && r.site_verification ? { approved: r.site_verification.approved, status: r.site_verification.status } : null,
+          site_verification: r.account_slug === "dbcinema_web" && r.site_verification ? { approved: r.site_verification.approved, documentsApproved: r.site_verification.documentsApproved, status: r.site_verification.status } : null,
           pickup_time: confirmedClock(r,"pickup",r.pickup_date??r.start_date??"") ?? null,
           return_time: confirmedClock(r,"return",r.return_date??r.end_date??"") ?? null,
           pickup_method: rType.pickup_method ?? null,
