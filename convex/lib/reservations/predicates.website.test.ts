@@ -12,7 +12,7 @@ describe('website booking identities in grouping',()=>{
 
 
 it('inventory commitments include only confirmed dates or paid website verification and never change the revenue predicate',()=>{
- const base={_id:'web',account_slug:'dbcinema_web',status:'pending_review',order_step:'VERIFIED',start_date:'2035-01-01',end_date:'2035-01-02'};
+ const base={_id:'web',_creationTime:1,account_slug:'dbcinema_web',status:'pending_review',order_step:'VERIFIED',start_date:'2035-01-01',end_date:'2035-01-02'};
  expect(isInventoryCommittedWithDates(base)).toBe(true);
  for(const patch of [{account_slug:'leo'},{order_step:'FUNDS_RESERVED'},{status:'cancelled'},{status:'completed'},{is_obsolete:true},{end_date:undefined}])expect(isInventoryCommittedWithDates({...base,...patch})).toBe(false);
  expect(isInventoryCommittedWithDates({...base,status:'confirmed',order_step:'BOOKED_AFTER_VERIFIED'})).toBe(true);
