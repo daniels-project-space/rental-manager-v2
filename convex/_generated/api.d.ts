@@ -145,6 +145,7 @@ import type * as lib_co_occurrence from "../lib/co_occurrence.js";
 import type * as lib_confirmed_schedule from "../lib/confirmed_schedule.js";
 import type * as lib_conversation_funnel from "../lib/conversation_funnel.js";
 import type * as lib_conversation_stage_validator from "../lib/conversation_stage_validator.js";
+import type * as lib_counted_piece_requirements from "../lib/counted_piece_requirements.js";
 import type * as lib_current_kit_evidence from "../lib/current_kit_evidence.js";
 import type * as lib_customer_metrics from "../lib/customer_metrics.js";
 import type * as lib_declared_lens_identity from "../lib/declared_lens_identity.js";
@@ -545,6 +546,7 @@ declare const fullApi: ApiFromModules<{
   "lib/confirmed_schedule": typeof lib_confirmed_schedule;
   "lib/conversation_funnel": typeof lib_conversation_funnel;
   "lib/conversation_stage_validator": typeof lib_conversation_stage_validator;
+  "lib/counted_piece_requirements": typeof lib_counted_piece_requirements;
   "lib/current_kit_evidence": typeof lib_current_kit_evidence;
   "lib/customer_metrics": typeof lib_customer_metrics;
   "lib/declared_lens_identity": typeof lib_declared_lens_identity;
