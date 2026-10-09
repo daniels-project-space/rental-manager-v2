@@ -2,6 +2,7 @@
 import { useMemo, useState, type ReactElement } from "react";
 import { useReportingMonth } from "@/lib/dashboard/use-reporting-month";
 import { useStableQuery } from "@/lib/dashboard/use-stable-query";
+import { useStockNow } from "@/lib/dashboard/use-stock-now";
 import {
   DndContext,
   KeyboardSensor,
@@ -184,6 +185,7 @@ export function StatsGrid() {
   const rawData = useStableQuery(api.dashboard.getStatsDrawerData, {
     accountSlug: activeAccountSlug,
   });
+  const stockNow = useStockNow((rawData as {stockNowInputs?:import("@/lib/stock-now").StockNowInput[]}|undefined)?.stockNowInputs);
   const reportingMonth = useReportingMonth();
   const verificationLosses = useStableQuery(api.dashboard.getMonthlyVerificationLosses, {
     accountSlug: activeAccountSlug, month: reportingMonth,
@@ -229,6 +231,7 @@ export function StatsGrid() {
     };
     const data = {
       ...rawData,
+      out_of_stock: stockNow ?? rawAsAny.out_of_stock,
       monthly: { ...rawAsAny.monthly, missed: verificationLosses ?? rawAsAny.monthly.missed },
       active: { ...rawAsAny.active, rentals: pickRentals("active") },
       ongoing: { ...rawAsAny.ongoing, rentals: pickRentals("ongoing") },
@@ -692,7 +695,7 @@ export function StatsGrid() {
       walle: <WallE accountSlug={activeAccountSlug} />,
       todos: <TodoWidget />,
     };
-  }, [rawData, rentalsRow, scannerLive, verificationLosses, expandedId, activeAccountSlug, catVolExpanded]);
+  }, [rawData, rentalsRow, scannerLive, verificationLosses, expandedId, activeAccountSlug, catVolExpanded, stockNow]);
 
   if (!cards) return <StatsGridSkeleton />;
 

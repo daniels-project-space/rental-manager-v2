@@ -17,6 +17,39 @@ const stats=(ctx:any)=> (getStatsDrawerData as any)._handler(ctx,{accountSlug:nu
 beforeEach(()=>{vi.stubEnv("OWNER_AUTH_REQUIRED","false");vi.useFakeTimers();vi.setSystemTime(new Date("2026-10-09T12:00:00Z"));});
 afterEach(()=>{vi.useRealTimers();vi.unstubAllEnvs();});
 describe("actual dashboard conflicts share checkout stock windows",()=>{
+ it("releases the NOW card at the agreed return plus buffer using the same cached snapshot",async()=>{
+  vi.setSystemTime(new Date("2026-10-09T16:59:59Z"));
+  const snapshot=await stats(context([rental("lens-rental",{return_time:"17:00",return_time_provenance:proof("2026-10-09","17:00")})]));
+  expect(snapshot.out_of_stock).toMatchObject({count:1,items:[{heldNow:1}]});
+  expect(JSON.stringify(snapshot.stockNowInputs)).not.toContain("lens-rental");
+  const cached=context([],{mv_stats_drawer:[{account:"all",payload:snapshot}]});
+  vi.setSystemTime(new Date("2026-10-09T17:00:00Z"));
+  const refreshed=await (getStatsDrawerData as any)._handler(cached,{accountSlug:null});
+  expect(refreshed.out_of_stock).toEqual({count:0,items:[]});
+ });
+ it("does not count future confirmed pickups or unpaid provider requests as out now",async()=>{
+  const rows=[rental("future",{pickup_time:"18:00",pickup_time_provenance:proof("2026-10-09","18:00")}),rental("request",{status:"pending_review",order_step:"VERIFIED"})];
+  expect((await stats(context(rows))).out_of_stock.count).toBe(0);
+  const web=rental("paid-web",{account_slug:"dbcinema_web",status:"pending_review",order_step:"VERIFIED"});
+  expect((await stats(context([web]))).out_of_stock.count).toBe(1);
+ });
+ it("updates shared repair holds live even when the dashboard snapshot is cached",async()=>{
+  const snapshot=await stats(context([]));
+  const claim={_id:"repair",claim_date:"2026-10-09",account_slug:"dbcinema",stage:"in_for_repair",status:"open",repair_item_ids:["lens"]};
+  const read=(c:any)=> (getStatsDrawerData as any)._handler(context([],{mv_stats_drawer:[{account:"leo",payload:snapshot}],insurance_claims:[c]}),{accountSlug:"leo"});
+  expect((await read(claim)).out_of_stock).toMatchObject({count:1,items:[{inRepair:1,heldNow:0}]});
+  expect((await read({...claim,status:"closed"})).out_of_stock.count).toBe(0);
+ });
+ it("keeps NOW counts canonical when legacy resolved quantities disagree",async()=>{
+  const r=rental("kit",{hygglo_items:[{name:"One GM lens",product_id:42,qty:1}],resolved_items:[{item_id:"lens",qty:9}]});
+  const result=await stats(context([r],{items:[{...item,qty:2}],listing_resolution_override:[{account_slug:"leo",product_id:42,components:[{item_id:"lens",qty:1}]}]}));
+  expect(result.out_of_stock.count).toBe(0);
+ });
+ it("reports the full unavailable count while keeping the drawer's fifteen-row limit",async()=>{
+  const inputs=Array.from({length:20},(_,i)=>({item_id:String(i),name:"Lens",qty:1,inRepair:1,windows:[]}));
+  const result=await (getStatsDrawerData as any)._handler(context([],{mv_stats_drawer:[{account:"all",payload:{stockConflictVersion:3,stockNowInputs:inputs,conflicts:[]}}],insurance_claims:[{stage:"in_for_repair",repair_item_ids:inputs.map(i=>i.item_id)}]}),{accountSlug:null});
+  expect(result.out_of_stock.count).toBe(20);expect(result.out_of_stock.items).toHaveLength(15);
+ });
  it("blocks the full turnaround hour, then allows a confirmed evening handover",async()=>{
   const first=rental("first",{return_time:"17:00",return_time_provenance:proof("2026-10-09","17:00")});
   const second=rental("second",{pickup_time:"17:30",pickup_time_provenance:proof("2026-10-09","17:30")});
@@ -68,6 +101,6 @@ describe("actual dashboard conflicts share checkout stock windows",()=>{
  });
  it("rejects cached conflicts computed with the old clock rules",async()=>{
   const result=await (getStatsDrawerData as any)._handler(context([],{mv_stats_drawer:[{account:"all",payload:{stockConflictVersion:1,conflicts:[{conflict_key:"obsolete"}]}}]}),{accountSlug:null});
-  expect(result.stockConflictVersion).toBe(2);expect(result.conflicts).toEqual([]);
+  expect(result.stockConflictVersion).toBe(3);expect(result.conflicts).toEqual([]);
  });
 });

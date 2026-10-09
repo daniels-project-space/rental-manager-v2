@@ -39,6 +39,7 @@ import { londonStockLabel } from "./lib/confirmed_schedule";
 import { loadCanonicalListingAllocation } from "./lib/canonical_listing_allocation";
 import { buildProductIndexMap, reservationItemUnits } from "./lib/reservations/itemUnits";
 import type { Doc } from "./_generated/dataModel";
+import {stockNowCard,type StockNowInput} from "../src/lib/stock-now";
 import { claimHoldsStock } from "./lib/availability";
 // Attribution engine (was gated by `use_new_attribution_engine` — Phase 6 cutover).
 // The rental-volume queries now reach it through ./lib/rental_volume.
@@ -370,14 +371,21 @@ export const getStatsDrawerData = query({
         // hourly MV refresh, which made the drawer's "Advance" button appear to
         // do nothing. Mirrors the conflict-dismissal/scanner read-time overlays.
         const freshInsurance = await liveInsuranceCard(ctx, accountSlug);
+        // Physical inventory is shared across accounts. Read only the two
+        // repair stages, including closed statuses so claimHoldsStock decides.
+        const repairRows=(await Promise.all(["quote_received","in_for_repair"].map(stage=>ctx.db.query("insurance_claims").withIndex("by_stage",q=>q.eq("stage",stage)).take(1001)))).flat();
+        if(repairRows.length>1000)throw Error("Repair inventory requires paged reconciliation");
+        const liveRepair=new Map<string,number>();
+        for(const c of repairRows.filter(claimHoldsStock))for(const id of c.repair_item_ids??[])liveRepair.set(String(id),(liveRepair.get(String(id))??0)+1);
         const applyDismissals = (p: unknown): unknown => {
           const pp = p as
             | { conflicts?: Array<{ conflict_key: string }>; insurance?: unknown }
             | null;
           if (!pp) return p;
           const base = pp as Record<string, unknown>;
+          const inputs=(base.stockNowInputs as StockNowInput[]|undefined)?.map(i=>({...i,inRepair:liveRepair.get(i.item_id)??0}));
           // Always overlay the freshly-computed insurance card.
-          const withInsurance: Record<string, unknown> = { ...base, insurance: freshInsurance };
+          const withInsurance: Record<string, unknown> = { ...base, insurance: freshInsurance,...(inputs?{stockNowInputs:inputs,out_of_stock:stockNowCard(inputs,Date.now())}:{}) };
           if (!Array.isArray(pp.conflicts) || dismissedNow.size === 0) return withInsurance;
           return {
             ...withInsurance,
@@ -1870,57 +1878,21 @@ export const getStatsDrawerData = query({
       ] as Array<{ label: string; count: number; gbp: number; weight: number }>,
     };
 
-    // ── card: out_of_stock ────────────────────────────────────────
-    // NOW-based (not next-30d): items whose currently-active rentals
-    // (isOngoing predicate — confirmed + today ∈ [start, end]) hold qty
-    // equal to or greater than the item's total stock. Zero units
-    // physically available right now.
-    //
-    // Per Daniel: "things that are rented rn and currently out of stock
-    // as there is no longer inventory for it".
-    //
-    // Source of truth: reservations.expanded_items[].item_id — the
-    // bundle-decomposed, master-inventory-linked item list. Schema
-    // comment on reservations.expanded_items: "Conflict + out-of-stock
-    // + sell-reco read this, not resolved_items." Falls back to
-    // resolved_items when expanded_items is not yet populated.
-    //
-    // We MUST match by item_id, not by name. The resolver appends a
-    // "[kind]" suffix to item_name_canonical (e.g. "Sony FX3 [camera]")
-    // which never equals the bare items.name_canonical ("Sony FX3"),
-    // and r.items[].item_name is the raw Hygglo listing title that
-    // matches nothing canonical.
-    const heldNowByItemId = new Map<string, number>();
-    for (const r of ongoingRentals) {
-      const expanded = (r as { expanded_items?: Array<{ item_id: string; qty: number }> }).expanded_items;
-      const resolved = (r as { resolved_items?: Array<{ item_id: string; qty?: number }> }).resolved_items;
-      const source: Array<{ item_id: string; qty?: number }> =
-        expanded && expanded.length > 0
-          ? expanded
-          : resolved ?? [];
-      for (const it of source) {
-        if (!it.item_id) continue;
-        const qty = it.qty ?? 1;
-        heldNowByItemId.set(
-          it.item_id as string,
-          (heldNowByItemId.get(it.item_id as string) ?? 0) + qty,
-        );
-      }
-    }
-    const oosItems = activeItems
-      .filter((i) => ((heldNowByItemId.get(i._id as string) ?? 0) + (repairByItem.get(i._id as string) ?? 0)) >= i.qty)
-      .slice(0, 15)
-      .map((i) => ({
-        item_id: i._id as string,
-        name: i.name_canonical,
-        qty: i.qty,
-        heldNow: heldNowByItemId.get(i._id as string) ?? 0,
-        inRepair: repairByItem.get(i._id as string) ?? 0,
-      }));
-    const out_of_stock = {
-      count: oosItems.length,
-      items: oosItems,
-    };
+    // Current physical availability is shared across accounts. Provider
+    // requests do not hold stock until confirmed; verified website bookings
+    // already have a paid, committed allocation. Keep only anonymous windows
+    // in the materialized payload so clocks can advance without database scans.
+    const nowSources={...conflictSources,reservations:conflictReservations.filter(r=>r.status!=="pending_review"||r.account_slug==="dbcinema_web")};
+    const stockNowInputs:StockNowInput[]=activeItems.map(item=>{
+      const groups=new Map<string,number>();
+      const windows=stockOccupancyForItem(nowSources,item,{item_name:item.name_canonical,start_date:activeToday,end_date:activeToday}).map(w=>{
+        let group:number|undefined;
+        if(w.extension_key){if(!groups.has(w.extension_key))groups.set(w.extension_key,groups.size);group=groups.get(w.extension_key);}
+        return {start:w.startInstant!,end:w.endInstant!,qty:w.qty,...(group===undefined?{}:{group})};
+      });
+      return {item_id:String(item._id),name:item.name_canonical,qty:item.qty,inRepair:repairByItem.get(String(item._id))??0,windows};
+    });
+    const out_of_stock=stockNowCard(stockNowInputs,now.getTime());
 
     // ── card: vacation ────────────────────────────────────────────
     // owner_unavailability joined with items for name
@@ -2212,6 +2184,7 @@ export const getStatsDrawerData = query({
 
     return {
       stockConflictVersion: STOCK_CONFLICT_VERSION,
+      stockNowInputs,
       active: {
         total: activeTotal,
         ongoing_count: ongoingGroupRows.length,

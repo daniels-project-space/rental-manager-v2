@@ -1073,6 +1073,7 @@ const operationalSchema = defineSchema({
     repair_item_ids: v.optional(v.array(v.id("items"))),
   }).index("by_account", ["account_slug"])
     .index("by_claim_date", ["claim_date"])
+    .index("by_stage", ["stage"])
     .index("by_site_case", ["site_case_id"]),
 
   // ── Conflict dismissals — per-event flags so an owner can suppress

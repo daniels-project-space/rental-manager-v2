@@ -1,7 +1,7 @@
 import type { Occupancy } from "./renter_stock";
 import { londonStockInstant } from "./confirmed_schedule";
 import { extensionOccupancyQty } from "./double_booking";
-export const STOCK_CONFLICT_VERSION = 2;
+export const STOCK_CONFLICT_VERSION = 3;
 
 /** Dashboard warnings use the same elapsed, buffered windows as checkout.
  * Pending requests are included in the possible peak, separately from the
