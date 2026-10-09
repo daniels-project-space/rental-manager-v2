@@ -138,7 +138,9 @@ export function extractComponents(desc: string): {
     // component: a lone "*" survived the numeric-split fallback.
     if (!/[a-z0-9]/i.test(name)) continue;
     if (!name || NOISE_RE.test(name) || isProtectivePackaging(name) || ADDON_RE.test(name) || /\(\s*optional\s*\)\s*$/i.test(name)) continue;
-    out.push({ qty, name: name.slice(0, 60) });
+    // Model and mount suffixes participate in identity and ambiguity checks.
+    // Truncating here can silently turn a different kit into available stock.
+    out.push({ qty, name });
   }
   return { components: out, usedBullets, hasContentsSection: !!m };
 }

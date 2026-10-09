@@ -378,3 +378,25 @@ describe("reviewed master sets and recorded supplied-parts counts", () => {
     expect(resolve("Included in this kit:\n- 1x Sony a7siii camera",[a7,a7s]).owned).toBe(false);
   });
 });
+
+describe("complete kit component identity",()=>{
+  it("preserves distinct model suffixes beyond the former 60-character boundary",()=>{
+    const prefix="Professional full frame cinema camera package supplied with camera body ";
+    const {components}=extractComponents(`Included in this rental: • 1x ${prefix}Sony FX3 • 2x ${prefix}Sony FX6`);
+    expect(components).toEqual([{qty:1,name:prefix+"Sony FX3"},{qty:2,name:prefix+"Sony FX6"}]);
+  });
+  it("does not certify only the first body when another model occurs after that boundary",()=>{
+    const name="Sony FX3 camera body with matching cinema production equipment including Sony FX6";
+    const inventory=[{_id:"fx3",name_canonical:"Sony FX3",kind:"camera"},{_id:"fx6",name_canonical:"Sony FX6",kind:"camera"}];
+    const parsed=resolveBundleMapping(`Included in this rental: • 1x ${name}`,inventory);
+    expect(parsed.components).toEqual([]);
+    expect(parsed.unmatched).toEqual(["1x "+name]);
+  });
+  it("keeps an explicit mount at the end of a long lens label",()=>{
+    const name="Canon 24-70mm f2.8 full frame telephoto zoom lens full frame RF mount";
+    const inventory=[{_id:"ef",name_canonical:"Canon EF 24-70mm f2.8",kind:"lens",lens_mount:"EF"},{_id:"rf",name_canonical:"Canon RF 24-70mm f2.8",kind:"lens",lens_mount:"RF"}];
+    const parsed=resolveBundleMapping(`Included in this rental: • 1x ${name}`,inventory);
+    expect(parsed.components.map(c=>c.item_id)).toEqual(["rf"]);
+    expect(parsed.unmatched).toEqual([]);
+  });
+});
