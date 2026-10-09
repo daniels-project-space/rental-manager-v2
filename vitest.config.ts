@@ -45,6 +45,7 @@ export default defineConfig({
       "convex/lib/item_matcher.test.ts",
       "convex/lib/item_resolution.test.ts",
       "convex/lib/lens_set_resolution.test.ts",
+      "convex/lib/declared_lens_identity.test.ts",
       "convex/lib/renter_stock.test.ts",
       "convex/lib/confirmed_schedule.test.ts",
       "convex/extract_booking_times_q.test.ts",

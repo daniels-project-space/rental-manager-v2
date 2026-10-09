@@ -20,11 +20,11 @@ const NOISE_RE =
   /^(various|needed|cables?|carrying|carry|bag|bags|case|cases|packaged|all items|charger|chargers|cable)\b/i;
 /** Protective caps and lens hoods are supplied packaging, not separate rented
  * lenses. Match the whole component so mixed gear lines remain unresolved. */
-const PROTECTIVE_PACKAGING_RE = /^(?:(?:front(?:\s+and\s+rear)?|rear)\s+)?(?:lens\s+|body\s+)?caps?$|^lens\s+hoods?$/i;
+const PROTECTIVE_PACKAGING_RE = /^(?:(?:front(?:\s+(?:and|&)\s+rear)?|rear)\s+)?(?:lens\s+(?:mount\s+)?|body\s+)?caps?$|^lens\s+hoods?$/i;
 /** A model-specific carry case is still a case, not a second copy of that
  * model. Mixed equipment lines must remain visible to identity review. */
 function isProtectivePackaging(name:string):boolean {
-  return PROTECTIVE_PACKAGING_RE.test(name) || /^(?:protective\s+)?(?:lens\s+)?(?:pouches?|cases?(?:\/pouch)?)$/i.test(name) ||
+  return PROTECTIVE_PACKAGING_RE.test(name) || /^(?:(?:protective|hard)\s+)?(?:lens\s+)?(?:pouch(?:es)?(?:\/cases?)?|cases?(?:\/pouch(?:es)?)?)$/i.test(name) ||
     /\bcarry(?:ing)?\s+(?:case|bag)\s*$/i.test(name) && !/\b(?:with|and|plus)\b|[+]/i.test(name);
 }
 
@@ -37,6 +37,7 @@ export function extractComponents(desc: string): {
   // Preserve structural Unicode before the ASCII cleanup. Removing bullets
   // here made every real “• 1× …” kit look unstructured to callers.
   const clean = desc.replace(/\r?\n+/g, " * ").replace(/[•‣●]/g, " * ").replace(/×/g, "x")
+    .replace(/(\d)\s*[–—−]\s*(?=\d)/g, "$1-")
     .replace(/[^\x20-\x7E]/g, " ").replace(/\s+/g, " ");
   // Where does the component list actually start? Owners phrase this several
   // ways. Missing the marker leaves the marketing intro in the list, and an

@@ -30,6 +30,7 @@ export interface ProductUpsertArg {
   accountSlug: string;
   productId: number;
   name?: string;
+  description?: string;
   isPublished?: boolean;
   valuation?: number;
   minimumRentalDays?: number;
@@ -205,6 +206,7 @@ export function toUpsertArg(
   detail: HyggloProductDetail | undefined,
   match: { itemId: Id<"items">; score: number } | null,
 ): ProductUpsertArg {
+  if (detail && detail.id !== list.id) throw new Error("Catalogue detail identity does not match its product");
   const src: HyggloProductDetail | HyggloProductListItem = detail ?? list;
   const unavailableDates =
     detail && Array.isArray(detail.unavailableDates)
@@ -215,6 +217,7 @@ export function toUpsertArg(
     accountSlug,
     productId: list.id,
     name: src.name,
+    ...(typeof detail?.description === "string" ? { description: detail.description } : {}),
     isPublished: src.isPublished,
     valuation: src.valuation,
     minimumRentalDays: src.minimumRentalDays,

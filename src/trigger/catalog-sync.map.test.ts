@@ -71,6 +71,17 @@ describe("matchProduct", () => {
 });
 
 describe("toUpsertArg", () => {
+  it("retains the complete verified detail description, including an explicit clear",()=>{
+    const list=product({id:31,name:"Sony FX3"});
+    const description="Included in this rental: • 1x Sony FX3 • 2x Sony GM 24-70mm f2.8";
+    expect(toUpsertArg("dbcinema",list,{...list,description},null).description).toBe(description);
+    expect(toUpsertArg("dbcinema",list,{...list,description:""},null).description).toBe("");
+    expect(toUpsertArg("dbcinema",list,undefined,null)).not.toHaveProperty("description");
+    expect(toUpsertArg("dbcinema",list,{...list},null)).not.toHaveProperty("description");
+  });
+  it("rejects another product's detail before creating any batch write",()=>{
+    expect(()=>toUpsertArg("dbcinema",product({id:31}),product({id:32}),null)).toThrow(/identity/);
+  });
   it("flags isMarketingOnly when no match and omits masterItemId", () => {
     const arg = toUpsertArg("leo", product({ id: 20, name: "Random thing" }), undefined, null);
     expect(arg.isMarketingOnly).toBe(true);

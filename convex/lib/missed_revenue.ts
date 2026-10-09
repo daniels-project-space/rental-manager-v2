@@ -1,3 +1,4 @@
+import { loadCanonicalListingAllocation } from "./canonical_listing_allocation";
 /**
  * ──────────────────────────────────────────────────────────────────────────
  *  Missed Revenue — shared helper (single source of truth).
@@ -35,7 +36,6 @@ import { bookedUnitsOnDate } from "./availability";
 import {
   reservationItemUnits,
   buildProductIndexMap,
-  buildOverrideMap,
 } from "./reservations/itemUnits";
 
 export { OWNER_SHARE };
@@ -155,13 +155,7 @@ export async function computeMissedRevenue(
       account_slug: string; product_id: number; item_id: Id<"items">;
     }>,
   );
-  const overrideMap = buildOverrideMap(
-    (pre?.overrideRows ??
-      (await ctx.db.query("listing_resolution_override").collect())) as Array<{
-      account_slug: string; product_id: number;
-      components: Array<{ item_id: Id<"items"> | string; qty: number }>;
-    }>,
-  );
+  const overrideMap = await loadCanonicalListingAllocation(ctx,items,pre?.overrideRows);
   // Confirmed occupancy (for the fully-booked / double-booking test).
   // Deliberately NOT preloadable from a start_date-windowed pool: confirmed
   // rows can have start_date arbitrarily far in the past (e.g. >365d-old

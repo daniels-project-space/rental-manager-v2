@@ -1,3 +1,4 @@
+import { loadCanonicalListingAllocation } from "./canonical_listing_allocation";
 /**
  * Per-unit availability — Phase 4.
  *
@@ -23,12 +24,12 @@
 
 import { QueryCtx } from "../_generated/server";
 import { Id, Doc } from "../_generated/dataModel";
-import { reservationItemUnits, buildOverrideMap, buildProductIndexMap, type OverrideMap } from "./reservations/itemUnits";
+import { reservationItemUnits, buildProductIndexMap, type OverrideMap } from "./reservations/itemUnits";
 import type { AdapterInventoryItem } from "./default_adapter_units";
 export type UnitAllocation = {productIndex:Map<string,string>;overrides:OverrideMap;inventory:AdapterInventoryItem[]};
 async function loadUnitAllocation(ctx:QueryCtx):Promise<UnitAllocation> {
   const [inventory,index,overrides]=await Promise.all([ctx.db.query("items").collect(),ctx.db.query("hygglo_product_index").collect(),ctx.db.query("listing_resolution_override").collect()]);
-  return {inventory,productIndex:buildProductIndexMap(index),overrides:buildOverrideMap(overrides)};
+  return {inventory,productIndex:buildProductIndexMap(index),overrides:await loadCanonicalListingAllocation(ctx,inventory,overrides)};
 }
 
 export type AvailabilityResult = {

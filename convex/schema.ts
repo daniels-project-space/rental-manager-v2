@@ -1957,6 +1957,8 @@ const operationalSchema = defineSchema({
     accountSlug: v.string(),
     productId: v.number(),
     name: v.optional(v.string()),
+    description: v.optional(v.string()),
+    descriptionSyncedAt: v.optional(v.number()),
     isPublished: v.optional(v.boolean()),
     valuation: v.optional(v.number()),
     minimumRentalDays: v.optional(v.number()),

@@ -50,6 +50,7 @@ const productArg = v.object({
   accountSlug: v.string(),
   productId: v.number(),
   name: v.optional(v.string()),
+  description: v.optional(v.string()),
   isPublished: v.optional(v.boolean()),
   valuation: v.optional(v.number()),
   minimumRentalDays: v.optional(v.number()),
@@ -93,6 +94,9 @@ export const upsertProductsBatch = mutation({
         accountSlug: p.accountSlug,
         productId: p.productId,
         name: p.name,
+        // A failed detail read must not erase the last verified contents.
+        // An explicitly empty provider description does clear older text.
+        ...(p.description !== undefined ? {description:p.description,descriptionSyncedAt:now} : {}),
         isPublished: p.isPublished,
         valuation: p.valuation,
         minimumRentalDays: p.minimumRentalDays,
@@ -178,7 +182,7 @@ export const __service_catalogueForStorefront = internalQuery({
       const resolved = resolveListingComponents(inventory,
         mapping.get(product.productId)?.components.map(c => ({item_id:String(c.item_id),qty:c.qty})),
         product.masterItemId ? String(product.masterItemId) : undefined, 1,
-        descriptions.get(product.productId)?.description);
+        product.description ?? descriptions.get(product.productId)?.description);
       const components = resolved.components.filter(c => c.stock_required && byId.has(c.item_id)).map(c => {
         const item = byId.get(c.item_id)!;
         const active = item.status === "active" && item.is_marketing_only === false;

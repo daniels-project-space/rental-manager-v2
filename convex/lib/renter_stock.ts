@@ -1,3 +1,4 @@
+import { loadCanonicalListingAllocation } from "./canonical_listing_allocation";
 import { confirmedClock, londonStockLabel, londonStockInstant, bufferedStockEnd, TURNAROUND_BUFFER_MINUTES } from "./confirmed_schedule";
 import type { QueryCtx } from "../_generated/server";
 import type { Doc } from "../_generated/dataModel";
@@ -5,7 +6,7 @@ import { bestMatch } from "./item_name_match";
 import { claimHoldsStock } from "./availability";
 import { effStart } from "./double_booking";
 import { dedupByLogicalRental } from "./reservations/predicates";
-import { buildOverrideMap, buildProductIndexMap, reservationItemUnits } from "./reservations/itemUnits";
+import { buildProductIndexMap, reservationItemUnits } from "./reservations/itemUnits";
 import { defaultAdapterUnits } from "./default_adapter_units";
 
 export type StockRequest = {
@@ -111,7 +112,7 @@ export async function loadStockSources(ctx: QueryCtx) {
     ctx.db.query("owner_unavailability").collect(),
     ctx.db.query("vacation_periods").withIndex("by_active_start", (q) => q.eq("is_active", true)).collect(),
   ]);
-  return { items, reservations: dedupByLogicalRental([...confirmed, ...ongoing].filter((r) => !r.is_obsolete && !r.hygglo_order_id?.startsWith("__probe__"))), productIndex: buildProductIndexMap(index), overrides: buildOverrideMap(overrides), claims, blackouts, vacations };
+  return { items, reservations: dedupByLogicalRental([...confirmed, ...ongoing].filter((r) => !r.is_obsolete && !r.hygglo_order_id?.startsWith("__probe__"))), productIndex: buildProductIndexMap(index), overrides: await loadCanonicalListingAllocation(ctx,items,overrides), claims, blackouts, vacations };
 }
 
 export function resolveStockItem(name: string, items: Doc<"items">[]) {
