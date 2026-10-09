@@ -202,3 +202,13 @@ it('upgrades the documents-only approval projection without changing source revi
  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[current],reconcile:false});expect(row()).toMatchObject({status:'confirmed',site_projection_version:3,site_revision:1});
  await expect(invoke(upsertSiteBookingsBatch,ctx,{bookings:[{...current,verification:{...current.verification,documentsApproved:false}}],reconcile:false})).rejects.toThrow('Conflicting website rental revision');
 });
+
+
+it('imports legacy not-required cancellation history without granting verification or collection approval',async()=>{
+ const {ctx,rows}=database();const legacy=verification({status:'not_required'});
+ await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({id:'legacy-cancelled',status:'cancelled',verification:legacy}),booking({id:'legacy-paid',verification:legacy})],reconcile:false});
+ const cancelled=[...rows.values()].find(r=>r.hygglo_order_id==='legacy-cancelled');const paid=[...rows.values()].find(r=>r.hygglo_order_id==='legacy-paid');
+ expect(cancelled).toMatchObject({status:'cancelled',is_obsolete:true,site_verification:{status:'not_required',approved:false}});
+ expect(paid).toMatchObject({status:'pending_review',order_step:'VERIFIED'});expect(realisedMonthRevenue([paid],'2035-01','dbcinema_web').netGbp).toBe(0);expect(queueNotificationEvents).not.toHaveBeenCalled();
+ for(const flag of ['approved','documentsApproved'])await expect(invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({revision:2,verification:{...legacy,archiveReady:true,[flag]:true}})],reconcile:false})).rejects.toThrow(/Inconsistent website/);
+});

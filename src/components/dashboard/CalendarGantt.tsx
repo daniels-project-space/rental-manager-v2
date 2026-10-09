@@ -327,7 +327,8 @@ function groupByReservation(items: GanttItem[], weekStart: string, xAt: (dayFloa
     if (!geom) continue;
     const ongoing = !!startMember.start_date && startMember.start_date <= today && today <= spanEnd;
     const accColor: "blue" | "purple" | "orange" | "emerald" =
-      rep.account_slug === "leo" ? "purple"
+      rep.account_slug === "dbcinema_web" && rep.order_step === "VERIFIED" ? "orange"
+      : rep.account_slug === "leo" ? "purple"
       : rep.account_slug === "diogo" ? "orange"
       : rep.account_slug === "dbcinema_web" ? "emerald"
       : "blue";

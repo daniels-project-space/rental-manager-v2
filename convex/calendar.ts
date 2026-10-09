@@ -5,7 +5,7 @@ import { mutation, query, type QueryCtx } from "./owner_functions";
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import {
-  isConfirmedWithDates,
+  isInventoryCommittedWithDates,
   dedupByLogicalRental as deduplicateRentals,
   logicalGroupIds,
   renterPeriodGroupIds,
@@ -375,12 +375,11 @@ export async function computeStripLive(
       // feeding dedup/merge — byte-identity risk, so left as-is for now.
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
-    // Calendar mirrors the Active Rentals tab: only confirmed bookings with
-    // dates set, deduped per logical rental. Drops pending_review (awaiting
-    // payment), obsolete, cancelled, declined.
+    // Paid website kit remains committed while verification is pending.
+    // Other unpaid/pending enquiries, cancelled and obsolete rows stay excluded.
     reservations = dedupByLogicalRental(
       (reservations as ReservationRow[]).filter(
-        (r) => isConfirmedWithDates(r),
+        (r) => isInventoryCommittedWithDates(r),
       ),
     ) as typeof reservations;
 
@@ -942,7 +941,7 @@ export async function computeStripLive(
           status: h.status,
         }));
 
-      return { calendarWindowVersion: 3 as const, date, pickups, returns, away, holds: dayHolds };
+      return { calendarWindowVersion: 4 as const, date, pickups, returns, away, holds: dayHolds };
     });
 }
 
@@ -966,7 +965,7 @@ export const getCalendarStrip = query({
       // Cast the stored v.any() payload back to the live compute's exact type
       // (returning `any` from one branch would widen the whole query return
       // type to `any`). Same pattern as getWeeklyCalendar.
-      if (mv && mv.anchor === startDate && mv.days === days && Array.isArray(mv.payload) && mv.payload.every((d: { calendarWindowVersion?: number }) => d.calendarWindowVersion === 3))
+      if (mv && mv.anchor === startDate && mv.days === days && Array.isArray(mv.payload) && mv.payload.every((d: { calendarWindowVersion?: number }) => d.calendarWindowVersion === 4))
         return mv.payload as Awaited<ReturnType<typeof computeStripLive>>;
     }
     return computeStripLive(ctx, { accountSlug, startDate, days });
@@ -1213,11 +1212,11 @@ export async function computeWeeklyLive(
       // feeding dedup/merge — byte-identity risk, so left as-is for now.
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
-    // Calendar mirrors the Active Rentals tab — confirmed bookings with
-    // dates, deduped per logical rental.
+    // Calendar commitments include paid website verification, keeping the
+    // physical reservation visible without counting it as confirmed revenue.
     reservations = dedupByLogicalRental(
       (reservations as ReservationRow[]).filter(
-        (r) => isConfirmedWithDates(r),
+        (r) => isInventoryCommittedWithDates(r),
       ),
     ) as typeof reservations;
 
@@ -1333,7 +1332,7 @@ export async function computeWeeklyLive(
     }
 
     return {
-      calendarWindowVersion: 3 as const,
+      calendarWindowVersion: 4 as const,
       days: dates.map((date) => ({
         date,
         reservations: reservations
@@ -1437,7 +1436,7 @@ export const getWeeklyCalendar = query({
       // type — otherwise returning `any` from one branch widens the whole
       // query's inferred return type to `any` and the frontend's typed
       // `data.days.map(...)` breaks (noImplicitAny).
-      if (mv && mv.anchor === weekStartDate && mv.payload?.calendarWindowVersion === 3)
+      if (mv && mv.anchor === weekStartDate && mv.payload?.calendarWindowVersion === 4)
         return mv.payload as Awaited<ReturnType<typeof computeWeeklyLive>>;
     }
     return computeWeeklyLive(ctx, { accountSlug, weekStartDate });
@@ -1513,11 +1512,11 @@ export const getGanttWeek = query({
     if (accountSlug) {
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
-    // Calendar mirrors the Active Rentals tab — confirmed bookings with
-    // dates, deduped per logical rental.
+    // Calendar commitments include paid website verification, keeping the
+    // physical reservation visible without counting it as confirmed revenue.
     reservations = dedupByLogicalRental(
       (reservations as ReservationRow[]).filter(
-        (r) => isConfirmedWithDates(r),
+        (r) => isInventoryCommittedWithDates(r),
       ),
     ) as typeof reservations;
 
@@ -1875,7 +1874,7 @@ export const searchCalendarInventory = query({
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
     const confirmed = dedupByLogicalRental(
-      (reservations as ReservationRow[]).filter((r) => isConfirmedWithDates(r)),
+      (reservations as ReservationRow[]).filter((r) => isInventoryCommittedWithDates(r)),
     ) as typeof reservations;
 
     // Units committed per item per date. Built from EFFECTIVE occupancy dates
@@ -1928,7 +1927,7 @@ export const searchCalendarInventory = query({
 
     // PENDING (status pending_review) occupancy — same time-aware build, kept
     // separate so the UI can show "(-N)" alongside the real free count.
-    const pendingResv = reservations.filter((r) => (r as { status?: string }).status === "pending_review" && (r as { order_step?: string }).order_step === "VERIFIED" && !(r as { is_obsolete?: boolean }).is_obsolete);
+    const pendingResv = reservations.filter((r) => (r as { status?: string }).status === "pending_review" && r.account_slug !== "dbcinema_web" && (r as { order_step?: string }).order_step === "VERIFIED" && !(r as { is_obsolete?: boolean }).is_obsolete);
     const pendingIntervals = new Map<string, Array<{ a: string; b: string; qty: number }>>();
     for (const r of pendingResv) {
       const effPick = displayPickupDate(r) || r.start_date;
@@ -2119,15 +2118,9 @@ export const getItemAvailabilityForChat = query({
 
     // ── Confirmed reservations overlapping [today, lastDate] ──
     const scanStart = shiftIsoDate(today, -CALENDAR_LOOKBACK_DAYS);
-    // PERF (2026-07-13): scan by_status("confirmed") instead of the 120-day
-    // by_start_date window. The window read every status in range (~3MB of
-    // cancelled/completed history per bot-draft/chat call — the top read
-    // burner in live usage data); only isConfirmedWithDates rows survive the
-    // filter below, and isConfirmedWithDates ⇒ status === "confirmed", so
-    // the confirmed set (~0.2MB) is a strict superset of the survivors.
-    // The date bounds move in-memory with identical semantics: string
-    // compares on start_date, and rows with UNDEFINED start_date were
-    // excluded by both the old index range and these guards.
+    // Load confirmed rows by status and paid website pending rows by the
+    // existing account/status index below. Avoid cancelled/completed history;
+    // preserve the same in-memory date bounds for both commitment sets.
     let reservations = (
       await ctx.db
         .query("reservations")
@@ -2139,6 +2132,9 @@ export const getItemAvailabilityForChat = query({
         r.start_date >= scanStart &&
         r.start_date <= lastDate,
     );
+    const websitePending = await ctx.db.query("reservations")
+      .withIndex("by_account_status", q => q.eq("account_slug", "dbcinema_web").eq("status", "pending_review")).collect();
+    reservations.push(...websitePending.filter(r => !!r.start_date && r.start_date >= scanStart && r.start_date <= lastDate));
     // accountSlug intentionally NOT used to filter reservations. DANIEL RULE 2
     // — Cross-Account Stock (priority 10): "Items are listed multiple times
     // across accounts BUT share the same physical pool... only the master
@@ -2152,7 +2148,7 @@ export const getItemAvailabilityForChat = query({
     // item correctly; do not reintroduce an account filter on top of it.
     void accountSlug;
     const confirmed = dedupByLogicalRental(
-      (reservations as ReservationRow[]).filter((r) => isConfirmedWithDates(r)),
+      (reservations as ReservationRow[]).filter((r) => isInventoryCommittedWithDates(r)),
     ) as typeof reservations;
 
     const productIndex = buildProductIndexMap(await ctx.db.query("hygglo_product_index").collect());
