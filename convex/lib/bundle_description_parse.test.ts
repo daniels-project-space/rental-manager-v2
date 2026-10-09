@@ -418,3 +418,43 @@ describe("kit packing and return notes",()=>{
     expect(extractComponents(description).components).toEqual([{qty:1,name:"Sony FX3"},{qty:1,name:"Notes field recorder"}]);
   });
 });
+
+describe("recorded physical pieces in counted inventory",()=>{
+  const tubes={_id:"tubes",name_canonical:"Ambitful RGB light tubes 2x set",kind:"lighting",unit_kind:"set",status:"active",is_marketing_only:false,qty:2,compatibility:{included_with_rental:["2x Ambitful RGB LED tube light"]}};
+  const dji={_id:"dji",name_canonical:"DJI Wireless Mics",kind:"audio",unit_kind:"set",status:"active",is_marketing_only:false,qty:2,compatibility:{included_with_rental:["2x transmitter","1x receiver"]}};
+  const parse=(body:string,inventory:any[]=[tubes])=>resolveBundleMapping("Included in this rental:\n"+body,inventory);
+  it.each([[2,1],[4,2],[5,3]])("counts %i physical tubes as %i sets",(pieces,sets)=>{
+    const before=JSON.stringify(tubes);expect(parse(`• ${pieces}x Ambitful RGB light tube`).components[0].qty).toBe(sets);expect(JSON.stringify(tubes)).toBe(before);
+  });
+  it("aggregates repeated pieces before rounding, preserving separate whole sets",()=>{
+    expect(parse("• 1x Ambitful RGB light tube\n• 1x Ambitful RGB light tube").components[0].qty).toBe(1);
+    expect(parse("• 2x Ambitful RGB light tubes 2x set").components[0].qty).toBe(2);
+    expect(parse("• 1x Ambitful RGB light tubes 2x set\n• 2x Ambitful RGB light tube").components[0].qty).toBe(2);
+  });
+  it("uses the largest kit requirement across recorded audio parts",()=>{
+    expect(parse("• 2x DJI Wireless Mics transmitters\n• 2x DJI Wireless Mics transmitters\n• 2x DJI Wireless Mics receiver",[dji]).components[0].qty).toBe(2);
+  });
+  it("preserves one-piece sets, unknown equipment and invalid recorded counts",()=>{
+    const jbl={...dji,_id:"jbl",name_canonical:"JBL wireless microphones",compatibility:{included_with_rental:["1x wireless microphone"]}};
+    expect(parse("• 2x JBL wireless microphone",[jbl]).components[0].qty).toBe(2);
+    const invalid={...tubes,compatibility:{included_with_rental:["0x Ambitful RGB light tube"]}};
+    expect(parse("• 2x Ambitful RGB light tube",[invalid]).unmatched).toHaveLength(1);
+    const uncertain=parse("• 2x Ambitful RGB light tube\n• 1x Unknown transmitter");expect(uncertain.components[0].qty).toBe(1);expect(uncertain.unmatched).toHaveLength(1);
+  });
+  it("keeps non-owned inventory and owner exclusions unavailable",()=>{
+    const text="Included in this rental:\n• 2x Ambitful RGB light tube";
+    expect(resolveListingComponents([tubes] as any,[],tubes._id,1,text).owned).toBe(false);
+    expect(resolveListingComponents([{...tubes,is_marketing_only:true}] as any,[{item_id:tubes._id,qty:1}],tubes._id,1,text).owned).toBe(false);
+    expect(resolveListingComponents([tubes] as any,undefined,tubes._id,1,text+"\n• 1x Unknown transmitter").complete).toBe(false);
+  });
+  it("leaves individual PavoTube inventory in physical units",()=>{
+    const individual={...tubes,_id:"nano",name_canonical:"Nanlite Pavotube 30x II",unit_kind:"unit",qty:4};
+    expect(parse("• 4x Nanlite Pavotube 30x II",[individual]).components[0].qty).toBe(4);
+  });
+});
+
+it("does not choose a counted kit from a declaration offering an alternative model",()=>{
+ const kit={_id:"dji",name_canonical:"DJI Wireless Mics",kind:"audio",unit_kind:"set",status:"active",is_marketing_only:false,qty:2,compatibility:{included_with_rental:["2x transmitter"]}};
+ const text="Included in this rental: • 2x Wireless DJI Microphone Transmitters (or rode wireless)";
+ const r=resolveBundleMapping(text,[kit]);expect(r.components).toEqual([]);expect(r.unmatched).toHaveLength(1);
+});

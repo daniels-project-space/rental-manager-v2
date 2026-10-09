@@ -1,9 +1,10 @@
+import { countedPieceBasis, type CountedMaster } from "./counted_piece_requirements";
 import { bestMatch } from "./item_name_match";
 import { isStandardAccessory } from "./reservations/itemUnits";
 import { extractComponents } from "./bundle_description_parse";
 import { declaredLensIdentity } from "./declared_lens_identity";
 
-type Inventory = { _id: unknown; name_canonical: string; kind?: string; qty?: number; aliases?: string[]; lens_mount?: string | null; status?: string; is_marketing_only?: boolean; track_independent_stock?: boolean };
+type Inventory = CountedMaster & { _id: unknown; name_canonical: string; kind?: string; qty?: number; aliases?: string[]; lens_mount?: string | null; status?: string; is_marketing_only?: boolean; track_independent_stock?: boolean };
 const mountTokens = new Set(["ef", "l", "rf", "e", "pl", "mount"]);
 const tokens = (text: string) => (text.toLowerCase().replace(/\bg\s*-?\s*master\b/g, "gm").replace(/\bfx\s+(\d+)\b/g, "fx$1").replace(/\ba7\s*(s|r)?\s*(iii|iv|ii|v)\b/g, "a7$1$2").match(/[a-z0-9]+/g) ?? [])
   .map(token => token.length > 3 && token.endsWith("s") ? token.slice(0, -1) : token);
@@ -74,6 +75,7 @@ export function resolveBundleMapping(description: string, items: Inventory[], co
   const { components, usedBullets, hasContentsSection } = extractComponents(description);
   const resolved: Array<{item_id:string;name:string;qty:number;kind:string}> = [];
   const unmatched: string[] = [];
+  const counted = new Map<string,{whole:number;parts:Map<string,{qty:number;pieces:number}>}>();
   for (const component of components) {
     // A second leading count is malformed/ambiguous contents, not a model
     // token to discard while adopting the outer quantity (e.g. 1x 3x cameras).
@@ -93,10 +95,16 @@ export function resolveBundleMapping(description: string, items: Inventory[], co
     if (!item && incidentalComponent && !ambiguous) continue;
     if (!item || !Number.isInteger(component.qty) || component.qty < 1) { unmatched.push(`${component.qty}x ${component.name}`); continue; }
     if (isStandardAccessory(item.kind, item.name_canonical) && item.track_independent_stock !== true) continue;
-    const existing = resolved.find(row => row.item_id === String(item._id));
-    // Explicit contents bullets state units; stock capacity must not reduce them.
-    if (existing) existing.qty += component.qty;
-    else resolved.push({ item_id: String(item._id), name: item.name_canonical, qty: component.qty, kind: item.kind ?? "unknown" });
+    const id=String(item._id),basis=countedPieceBasis(name,item);
+    if(basis==="invalid"){unmatched.push(`${component.qty}x ${component.name}`);continue;}
+    let demand=counted.get(id);
+    if(!demand){demand={whole:0,parts:new Map()};counted.set(id,demand);}
+    if(basis){const part=demand.parts.get(basis.key);if(part)part.qty+=component.qty;else demand.parts.set(basis.key,{qty:component.qty,pieces:basis.pieces});}
+    else demand.whole+=component.qty;
+    const qty=demand.whole+Math.max(0,...[...demand.parts.values()].map(p=>Math.ceil(p.qty/p.pieces)));
+    const existing=resolved.find(row=>row.item_id===id);
+    if(existing)existing.qty=qty;
+    else resolved.push({item_id:id,name:item.name_canonical,qty,kind:item.kind??"unknown"});
   }
   return { components: resolved, unmatched, structured: usedBullets, explicit: hasContentsSection };
 }

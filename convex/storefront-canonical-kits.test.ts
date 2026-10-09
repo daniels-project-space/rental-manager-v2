@@ -94,3 +94,16 @@ describe("actual canonical website kit snapshot and stock feed",()=>{
   vi.useFakeTimers();vi.setSystemTime(new Date("2026-10-08"));const f=fixture();f.tables.reservations=[{_id:"booked",account_slug:"dbcinema",status:"confirmed",start_date:"2027-01-01",end_date:"2027-01-02",hygglo_items:[{product_id:10,qty:2}],resolved_items:[{item_id:"body",qty:1}],expanded_items:[{item_id:"body",qty:1}]}];let [row]=await (__service_listActiveForStorefront as any)._handler({db:f.db},{account_slug:"dbcinema"});expect(row.physical_items).toEqual([{item_id:"body",qty:4},{item_id:"lens",qty:4},{item_id:"battery",qty:10}]);f.tables.listing_resolution_override[0].components=[];[row]=await (__service_listActiveForStorefront as any)._handler({db:f.db},{account_slug:"dbcinema"});expect(row.physical_items).toEqual([]);
  });
 });
+
+it("uses recorded counted units for offered kits, occupied stock and the actual rental feed",async()=>{
+ const f=fixture(),tube={_id:"tubes",name_canonical:"Ambitful RGB light tubes 2x set",kind:"lighting",unit_kind:"set",status:"active",is_marketing_only:false,qty:2,replacement_cost_gbp:200,compatibility:{included_with_rental:["2x Ambitful RGB LED tube light"]}};
+ f.tables.items=[tube];f.tables.hygglo_products=[{productId:10,accountSlug:"dbcinema",name:"Two tubes",masterItemId:"tubes",description:"Included in this rental: • 2x Ambitful RGB light tube"}];f.tables.online_listings=[];f.tables.listing_resolution_override=[];
+ f.tables.reservations=[{_id:"r",account_slug:"dbcinema",status:"confirmed",start_date:"2027-01-01",end_date:"2027-01-02",hygglo_items:[{product_id:10,qty:1}],expanded_items:[{item_id:"tubes",qty:2}]}];
+ const before=JSON.stringify(f.tables.items);
+ const [product]=await (__service_catalogueForStorefront as any)._handler({db:f.db},{accountSlug:"dbcinema"});
+ expect(product.stockMapping).toMatchObject({complete:true,owned:true});expect(product.stockMapping.components[0]).toMatchObject({qty:1,quantityOwned:2});
+ const sources=await loadStockSources({db:f.db} as any);
+ expect(stockForItem(sources,tube as any,{item_name:tube.name_canonical,start_date:"2027-01-01",end_date:"2027-01-01",quantity:2})).toMatchObject({available:false,free_units:1});
+ const [rental]=await (__service_listActiveForStorefront as any)._handler({db:f.db},{account_slug:"dbcinema"});expect(rental.physical_items).toEqual([{item_id:"tubes",qty:1}]);
+ expect(JSON.stringify(f.tables.items)).toBe(before);expect(f.tables.reservations[0].expanded_items).toEqual([{item_id:"tubes",qty:2}]);
+});
