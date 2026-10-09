@@ -48,9 +48,9 @@ describe("saved website calendar windows",()=>{
   expect(days[2].returns).toHaveLength(1);expect(days[2].away).toHaveLength(1);expect(days[2].away[0].items[0].itemId).toBe("lens");
  });
  it("reuses compatible period-aware caches",async()=>{
-  const cache=[{calendarWindowVersion:3,date:"2026-10-05",pickups:[],returns:[],away:[],holds:[]}];
+  const cache=[{calendarWindowVersion:4,date:"2026-10-05",pickups:[],returns:[],away:[],holds:[]}];
   expect(await (getCalendarStrip as any)._handler(context([booking],cache),{accountSlug:null,startDate:"2026-10-05",days:7})).toEqual(cache);
-  const weekly={calendarWindowVersion:3,days:[]};expect(await (getWeeklyCalendar as any)._handler(context([booking],weekly),{accountSlug:null,weekStartDate:"2026-10-05"})).toEqual(weekly);
+  const weekly={calendarWindowVersion:4,days:[]};expect(await (getWeeklyCalendar as any)._handler(context([booking],weekly),{accountSlug:null,weekStartDate:"2026-10-05"})).toEqual(weekly);
  });
  it("chat availability reports the real gap and only upcoming physical periods",async()=>{
   const result=await (getItemAvailabilityForChat as any)._handler(context(),{query:"FX3",horizonDays:5,accountSlug:"leo"});
@@ -66,4 +66,25 @@ describe("saved website calendar windows",()=>{
   expect(strip[0].pickups).toHaveLength(1);
   const weekly=await (getWeeklyCalendar as any)._handler(context([booking],{days:[]}),{accountSlug:null,weekStartDate:"2026-10-05"});expect(weekly.days).toHaveLength(7);
  });
+});
+
+
+it('keeps paid website verification periods in strip, week, Gantt and chat stock while excluding unrelated pending enquiries',async()=>{
+ const pending={...booking,status:'pending_review',order_step:'VERIFIED'};
+ const unpaid={...pending,_id:'unpaid-other',account_slug:'leo',hygglo_order_id:'unpaid-other'};
+ const ctx=context([pending,unpaid]);
+ const strip=await computeStripLive(ctx,{accountSlug:null,startDate:'2026-10-05',days:7});expect(strip[0].pickups).toHaveLength(1);expect(strip[2].away).toEqual([]);
+ const week=await computeWeeklyLive(ctx,{accountSlug:null,weekStartDate:'2026-10-05'});expect(week.days[0].reservations).toHaveLength(1);
+ const gantt=await (getGanttWeek as any)._handler(ctx,{accountSlug:null,weekStartIso:'2026-10-05'});
+ const blocks=gantt.items.flatMap((item:any)=>item.blocks);expect(blocks).toHaveLength(4);expect(blocks.every((b:any)=>b.reservation_id===booking._id && b.order_step==='VERIFIED')).toBe(true);
+ vi.setSystemTime(new Date('2026-10-05T10:00:00Z'));
+ const stock=await (getItemAvailabilityForChat as any)._handler(ctx,{query:'FX3',horizonDays:7});expect(stock.items[0].free_units_today).toBe(0);
+});
+
+
+it('rejects caches made before paid pending commitments were included',async()=>{
+ const pending={...booking,status:'pending_review',order_step:'VERIFIED'};
+ const strip=await (getCalendarStrip as any)._handler(context([pending],[{calendarWindowVersion:3,date:'2026-10-05',pickups:[],returns:[],away:[],holds:[]}]),{accountSlug:null,startDate:'2026-10-05',days:7});
+ expect(strip[0].pickups).toHaveLength(1);expect(strip[0].calendarWindowVersion).toBe(4);
+ const week=await (getWeeklyCalendar as any)._handler(context([pending],{calendarWindowVersion:3,days:[]}),{accountSlug:null,weekStartDate:'2026-10-05'});expect(week.calendarWindowVersion).toBe(4);expect(week.days[0].reservations).toHaveLength(1);
 });

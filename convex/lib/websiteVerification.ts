@@ -3,13 +3,13 @@ import { v, type Infer } from "convex/values";
 const check = v.union(v.literal("waiting"), v.literal("processing"), v.literal("approved"), v.literal("requires_input"), v.literal("review"), v.literal("rejected"));
 export const websiteVerificationValidator = v.object({
   version: v.literal(1), provider: v.string(),
-  status: v.union(v.literal("required"), v.literal("processing"), v.literal("manual_review"), v.literal("requires_input"), v.literal("rejected"), v.literal("verified")),
+  status: v.union(v.literal("not_required"), v.literal("required"), v.literal("processing"), v.literal("manual_review"), v.literal("requires_input"), v.literal("rejected"), v.literal("verified")),
   checks: v.object({ identity: check, selfie: check, address: check }),
   accountId: v.union(v.string(), v.null()), sessionId: v.union(v.string(), v.null()), updatedAt: v.union(v.number(), v.null()),
   securityReady: v.boolean(), archiveReady: v.boolean(), requiresDroneLicence: v.boolean(), droneLicenceStatus: v.string(), approved: v.boolean(), documentsApproved: v.optional(v.boolean()),
 });
 export type WebsiteVerification = Infer<typeof websiteVerificationValidator>;
-const statuses = new Set(["required", "processing", "manual_review", "requires_input", "rejected", "verified"]);
+const statuses = new Set(["not_required", "required", "processing", "manual_review", "requires_input", "rejected", "verified"]);
 const checks = new Set(["waiting", "processing", "approved", "requires_input", "review", "rejected"]);
 /** Only consumed behind the authenticated website bridge, never from an owner approval form. */
 export function parseWebsiteVerification(raw: unknown): WebsiteVerification | undefined {

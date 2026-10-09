@@ -131,6 +131,14 @@ export function isConfirmedWithDates(r: ReservationRow): boolean {
       && r.start_date !== undefined && r.end_date !== undefined;
 }
 
+/** Paid website kit remains physically reserved while documents are pending.
+ * This predicate is for calendars/stock only; confirmed revenue remains strict. */
+export function isInventoryCommittedWithDates(r: ReservationRow): boolean {
+  return isConfirmedWithDates(r) || (r.account_slug === "dbcinema_web" &&
+    r.status === "pending_review" && r.order_step === "VERIFIED" && !r.is_obsolete &&
+    !!r.start_date && !!r.end_date);
+}
+
 /**
  * Confirmed AND today falls within [effective pickup, effective return].
  * Honors the negotiated pickup_date / return_date (display dates) so an early/
