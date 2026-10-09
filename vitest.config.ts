@@ -26,6 +26,7 @@ export default defineConfig({
       "convex/lib/finance/*.test.ts",
       "convex/finance.test.ts",
       "convex/calendar.website-windows.test.ts",
+      "convex/dashboard.stock-conflicts.test.ts",
       "convex/invoices.test.ts",
       "convex/reconcile_usage.test.ts",
       "convex/lib/item_technical_context.test.ts",

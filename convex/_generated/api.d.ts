@@ -280,6 +280,7 @@ import type * as lib_sent_inquiry_offer from "../lib/sent_inquiry_offer.js";
 import type * as lib_sent_rental_request from "../lib/sent_rental_request.js";
 import type * as lib_shadow_compare from "../lib/shadow_compare.js";
 import type * as lib_stock_claims from "../lib/stock_claims.js";
+import type * as lib_stock_conflict_peak from "../lib/stock_conflict_peak.js";
 import type * as lib_storefront_stock from "../lib/storefront_stock.js";
 import type * as lib_supplied_parts_coverage from "../lib/supplied_parts_coverage.js";
 import type * as lib_telegram_convex from "../lib/telegram_convex.js";
@@ -684,6 +685,7 @@ declare const fullApi: ApiFromModules<{
   "lib/sent_rental_request": typeof lib_sent_rental_request;
   "lib/shadow_compare": typeof lib_shadow_compare;
   "lib/stock_claims": typeof lib_stock_claims;
+  "lib/stock_conflict_peak": typeof lib_stock_conflict_peak;
   "lib/storefront_stock": typeof lib_storefront_stock;
   "lib/supplied_parts_coverage": typeof lib_supplied_parts_coverage;
   "lib/telegram_convex": typeof lib_telegram_convex;
