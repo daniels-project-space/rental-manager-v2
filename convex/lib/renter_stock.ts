@@ -105,17 +105,18 @@ type StockSources = { items:Doc<"items">[]; reservations:Doc<"reservations">[]; 
   claims:Doc<"insurance_claims">[];blackouts:Doc<"owner_unavailability">[];vacations:Doc<"vacation_periods">[];
   reservationUnits?:Map<string,Map<string,number>> };
 export async function loadStockSources(ctx: QueryCtx):Promise<StockSources> {
-  const [items, confirmed, ongoing, index, overrides, claims, blackouts, vacations] = await Promise.all([
+  const [items, confirmed, ongoing, websitePending, index, overrides, claims, blackouts, vacations] = await Promise.all([
     ctx.db.query("items").collect(),
     ctx.db.query("reservations").withIndex("by_status", (q) => q.eq("status", "confirmed")).collect(),
     ctx.db.query("reservations").withIndex("by_status", (q) => q.eq("status", "ongoing")).collect(),
+    ctx.db.query("reservations").withIndex("by_account_status", q => q.eq("account_slug", "dbcinema_web").eq("status", "pending_review")).collect(),
     ctx.db.query("hygglo_product_index").collect(),
     ctx.db.query("listing_resolution_override").collect(),
     ctx.db.query("insurance_claims").collect(),
     ctx.db.query("owner_unavailability").collect(),
     ctx.db.query("vacation_periods").withIndex("by_active_start", (q) => q.eq("is_active", true)).collect(),
   ]);
-  const reservations=dedupByLogicalRental([...confirmed,...ongoing].filter(r=>!r.is_obsolete&&!r.hygglo_order_id?.startsWith("__probe__")));
+  const reservations=dedupByLogicalRental([...confirmed,...ongoing,...websitePending.filter(r=>r.order_step==="VERIFIED")].filter(r=>!r.is_obsolete&&!r.hygglo_order_id?.startsWith("__probe__")));
   const productIndex=buildProductIndexMap(index),allocation=await loadCanonicalListingAllocation(ctx,items,overrides,reservations);
   const reservationUnits=new Map<string,Map<string,number>>();
   for(const r of reservations)if(r.start_date && r.end_date && r.order_step!=="REVIEWED" && r.status!=="completed" && !(r.account_slug==="dbcinema_web"&&r.site_item_windows!==undefined))

@@ -13,7 +13,7 @@ import { useCalendarOverlay } from "@/lib/dashboard/calendar-overlay-context";
 export type Kind = "ongoing" | "upcoming" | "pending";
 
 export interface Rental {
-  site_verification?: Pick<WebsiteVerification, "approved" | "status"> | null;
+  site_verification?: Pick<WebsiteVerification, "approved" | "documentsApproved" | "status"> | null;
   reservation_id: string;
   /** Convex reservation document ID used by the full calendar's row data. */
   calendar_reservation_id?: string | null;
