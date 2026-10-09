@@ -11,12 +11,12 @@ describe('real Sony G Master catalogue declarations',()=>{
   expect(result).toMatchObject({complete:true,owned:true,coverage:{missing:[],unresolved:[],structured:true}});
   expect(result.components).toMatchObject([{item_id:'lens',units_per_listing:qty,stock_required:true}]);
  });
- it('does not reduce the three-lens declaration to a one-lens override',()=>{
-  expect(resolveListingComponents([lens],[{item_id:'lens',qty:1}],'lens',1,description(1103079))).toMatchObject({complete:false,coverage:{missing:[{item_id:'lens',qty:3}]}});
+ it('expands a verified three-lens declaration without changing the owned quantity',()=>{
+  expect(resolveListingComponents([lens],[{item_id:'lens',qty:1}],'lens',1,description(1103079))).toMatchObject({complete:true,components:[{item_id:'lens',units_per_listing:3}],coverage:{missing:[]}});
  });
  it('keeps the independently stocked ND filter required in the newline contents',()=>{
   expect(resolveListingComponents([lens,nd],[{item_id:'lens',qty:1},{item_id:'nd',qty:1}],'lens',1,description(1048233))).toMatchObject({complete:true,components:[{item_id:'lens',stock_required:true},{item_id:'nd',stock_required:true}]});
-  expect(resolveListingComponents([lens,nd],[{item_id:'lens',qty:1}],'lens',1,description(1048233))).toMatchObject({complete:false,coverage:{missing:[{item_id:'nd',qty:1}]}});
+  expect(resolveListingComponents([lens,nd],[{item_id:'lens',qty:1}],'lens',1,description(1048233))).toMatchObject({complete:true,components:[{item_id:'lens',stock_required:true},{item_id:'nd',units_per_listing:1,stock_required:true}],coverage:{missing:[]}});
  });
  it('does not certify the two-lens listing from its primary match alone',()=>{
   expect(resolveListingComponents([lens],undefined,'lens',1,description(971143))).toMatchObject({complete:false,owned:null});
@@ -24,7 +24,7 @@ describe('real Sony G Master catalogue declarations',()=>{
  });
  it('never discards a recorded independently stocked UV filter',()=>{
   const uv:any={_id:'uv',name_canonical:'UV filter',kind:'accessory',qty:1,status:'active',is_marketing_only:false,track_independent_stock:true};
-  expect(resolveListingComponents([lens,uv],[{item_id:'lens',qty:1}],'lens',1,description(973616))).toMatchObject({complete:false,coverage:{missing:[{item_id:'uv',qty:1}]}});
+  expect(resolveListingComponents([lens,uv],[{item_id:'lens',qty:1}],'lens',1,description(973616))).toMatchObject({complete:true,components:[{item_id:'lens',stock_required:true},{item_id:'uv',units_per_listing:1,stock_required:true}],coverage:{missing:[]}});
   expect(resolveListingComponents([lens,{...uv,is_marketing_only:true}],[{item_id:'lens',qty:1}],'lens',1,description(973616))).toMatchObject({owned:false,ownership_blockers:[{item_id:'uv',reason:'marketing_only'}]});
  });
  it('keeps duplicate G Master aliases ambiguous rather than choosing a stock pool',()=>{

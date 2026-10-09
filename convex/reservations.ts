@@ -1,3 +1,4 @@
+import { loadCanonicalListingAllocation } from "./lib/canonical_listing_allocation";
 import { withoutWebsiteVerification } from "./lib/websiteVerification";
 import { action, internalAction, internalMutation, internalQuery, mutation, query, internalQueryOf, internalMutationOf } from "./owner_functions";
 import { anyApi } from "convex/server";
@@ -60,7 +61,7 @@ export const getRecentActivity = query({
 import { renterMaps, renterForReservation, trustOf } from "./lib/renters";
 import { renderDiscountMessage, reviewOnlyMessageFor } from "./lib/return_messages";
 import { resolveReturnDiscount } from "./lib/return_discounts";
-import { reservationItemUnits, buildProductIndexMap, buildOverrideMap, isStandardAccessory, type ResolvableRes } from "./lib/reservations/itemUnits";
+import { reservationItemUnits, buildProductIndexMap, isStandardAccessory, type ResolvableRes } from "./lib/reservations/itemUnits";
 import { groupLogicalRentals, displayReturnDate, displayPickupDate, renterPeriodGroupIds, type ReservationRow } from "./lib/reservations/predicates";
 import {
   filterByCurrentOrderPresence,
@@ -229,7 +230,7 @@ export const getDueReturns = query({
     // Reliable per-listing resolution (covers items the LLM bundle-resolver
     // dropped from expanded/resolved) + inventory names for the case checklist.
     const productIndex = buildProductIndexMap(await ctx.db.query("hygglo_product_index").collect());
-    const overrideMap = buildOverrideMap(await ctx.db.query("listing_resolution_override").collect());
+    const overrideMap = await loadCanonicalListingAllocation(ctx);
     const itemNameById = new Map<string, string>();
     const stdAccIds = new Set<string>();
     const unitInventory = await ctx.db.query("items").collect();
@@ -944,7 +945,7 @@ export const listActiveForStorefront = query({
       ctx.db.query("items").collect(),ctx.db.query("hygglo_product_index").collect(),
       ctx.db.query("listing_resolution_override").withIndex("by_account_product", q => q.eq("account_slug", account_slug)).collect(),
     ]);
-    const productIndex = buildProductIndexMap(indexRows), overrides = buildOverrideMap(overrideRows);
+    const productIndex = buildProductIndexMap(indexRows), overrides = await loadCanonicalListingAllocation(ctx,inventory,overrideRows);
     return rows.map((r) => ({
       _id: r._id,
       hygglo_order_id: r.hygglo_order_id,

@@ -1,3 +1,4 @@
+import { loadCanonicalListingAllocation } from "./lib/canonical_listing_allocation";
 import { confirmedClock } from "./lib/confirmed_schedule";
 import { shortItemName } from "./lib/item_display_name";
 import { mutation, query, type QueryCtx } from "./owner_functions";
@@ -10,7 +11,7 @@ import {
   renterPeriodGroupIds,
   type ReservationRow,
 } from "./lib/reservations/predicates";
-import { websiteCalendarPeriods, websiteDayIntervals, reservationItemUnits, buildProductIndexMap, buildOverrideMap, isStandardAccessory } from "./lib/reservations/itemUnits";
+import { websiteCalendarPeriods, websiteDayIntervals, reservationItemUnits, buildProductIndexMap, isStandardAccessory } from "./lib/reservations/itemUnits";
 import {
   isTrackableLine,
   lineResolvesToSomething,
@@ -647,9 +648,7 @@ export async function computeStripLive(
     const productIndexStrip = buildProductIndexMap(
       pre?.productIndexRows ?? (await ctx.db.query("hygglo_product_index").collect()),
     );
-    const overrideMapStrip = buildOverrideMap(
-      pre?.overrideRows ?? (await ctx.db.query("listing_resolution_override").collect()),
-    );
+    const overrideMapStrip = await loadCanonicalListingAllocation(ctx,pre?.items,pre?.overrideRows);
     const imageByResItemStrip = new Map<string, string>();
     for (const rr of reservations) {
       const acct = (rr as { account_slug?: string }).account_slug ?? "";
@@ -1278,9 +1277,7 @@ export async function computeWeeklyLive(
     const productIndexW = buildProductIndexMap(
       pre?.productIndexRows ?? (await ctx.db.query("hygglo_product_index").collect()),
     );
-    const overrideMapW = buildOverrideMap(
-      pre?.overrideRows ?? (await ctx.db.query("listing_resolution_override").collect()),
-    );
+    const overrideMapW = await loadCanonicalListingAllocation(ctx,allItemsWeekly,pre?.overrideRows);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const itemByIdW = new Map<string, any>(allItemsWeekly.map((it) => [String(it._id), it]));
     const resolvedNamesByResW = new Map<string, string[]>();
@@ -1544,7 +1541,7 @@ export const getGanttWeek = query({
     // Override-resolved item names per reservation (memoized) — Gantt rows key
     // off the corrected inventory items, not raw listing/item-name strings.
     const productIndexG = buildProductIndexMap(await ctx.db.query("hygglo_product_index").collect());
-    const overrideMapG = buildOverrideMap(await ctx.db.query("listing_resolution_override").collect());
+    const overrideMapG = await loadCanonicalListingAllocation(ctx);
     const itemByIdG = new Map<string, GanttItemDoc>(allItems.filter((it) => it._id).map((it) => [String(it._id), it]));
     const resolvedNamesByRes = new Map<string, Set<string>>();
     for (const r of reservations) {
@@ -1890,7 +1887,7 @@ export const searchCalendarInventory = query({
     // expanded_items.qty (kit-decomposed) > resolved_items.qty; only matched
     // items are summed.
     const productIndex = buildProductIndexMap(await ctx.db.query("hygglo_product_index").collect());
-    const overrideMap = buildOverrideMap(await ctx.db.query("listing_resolution_override").collect());
+    const overrideMap = await loadCanonicalListingAllocation(ctx);
     const commit = new Map<string, number>();
     // Time-aware occupancy per (item, date): the clamped [a,b) "HH:MM" window the
     // unit is actually out on that date. Lets us tell the owner an item that
@@ -2159,7 +2156,7 @@ export const getItemAvailabilityForChat = query({
     ) as typeof reservations;
 
     const productIndex = buildProductIndexMap(await ctx.db.query("hygglo_product_index").collect());
-    const overrideMap = buildOverrideMap(await ctx.db.query("listing_resolution_override").collect());
+    const overrideMap = await loadCanonicalListingAllocation(ctx);
 
     // Units committed per (item, date) + the booking list per item.
     const commit = new Map<string, number>();

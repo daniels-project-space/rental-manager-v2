@@ -1,3 +1,4 @@
+import { loadCanonicalListingAllocation } from "./lib/canonical_listing_allocation";
 import {nativeInformationForText,nativeInformationClaimRequest} from "./lib/native_information_blocks";
 import {ownedItemHirePriceReader} from "./lib/owned_item_hire_price";
 import {currentKitEvidence} from "./lib/current_kit_evidence";
@@ -64,7 +65,6 @@ import { bookedUnitsOnDate } from "./lib/availability";
 import {
   reservationItemUnits,
   buildProductIndexMap,
-  buildOverrideMap,
   type OverrideMap,
 } from "./lib/reservations/itemUnits";
 import { profileRenter } from "./lib/renter_dna";
@@ -443,13 +443,7 @@ async function loadAvailCtx(
     productIndex: buildProductIndexMap(
       pidx as Array<{ account_slug: string; product_id: number; item_id: Id<"items"> }>,
     ),
-    overrideMap: buildOverrideMap(
-      ovr as Array<{
-        account_slug: string;
-        product_id: number;
-        components: Array<{ item_id: Id<"items"> | string; qty: number }>;
-      }>,
-    ),
+    overrideMap: await loadCanonicalListingAllocation(ctx,items,ovr),
     itemQty,
     itemName,
     itemRows: items,

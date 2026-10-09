@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { resolveBundleMapping } from "./bundle_mapping";
-import { resolveListingComponents } from "./listing_inventory";
+import { resolveListingComponents, listingStock } from "./listing_inventory";
 import countedKitParts from "../fixtures/reviewed-counted-kit-parts.json";
 import cameraSpacing from "../fixtures/sony-camera-model-spacing.json";
 import supportDescriptions from "../fixtures/bundled-support-accessories.json";
@@ -263,12 +263,23 @@ describe("supplied hardware and independently tracked stock", () => {
 
 
 describe("bundled hardware listing safety", () => {
+  it("distinguishes protective mount caps from actual adapters and mixed equipment",()=>{
+    const packaging="Included in this rental: • 1x Sony FX3 • 1x Lens mount cap • 1x Protective pouch/case • 1x Hard case • Front & Rear Lens Caps";
+    expect(extractComponents(packaging).components.map(c=>c.name)).toEqual(["Sony FX3"]);
+    for(const line of ["Lens mount adapter","Protective case with Sony FX3","Hard case + ND filter"]){
+      expect(extractComponents(`Included in this rental: • 1x ${line}`).components).toEqual([expect.objectContaining({name:line})]);
+    }
+  });
   const tubes={_id:"tubes",name_canonical:"Nanlite Pavotube 30x II",kind:"lighting",qty:4,status:"active",is_marketing_only:false};
   const clamp={_id:"clamps",name_canonical:"Studio clamp",aliases:["clamp"],kind:"grip",qty:1,status:"active",is_marketing_only:false,track_independent_stock:true};
-  it("fails closed when a reviewed kit has too few of an independently tracked clamp pool", () => {
+  it("counts all declared tracked clamps and blocks a kit exceeding the physical pool", () => {
     const r=resolveListingComponents([tubes,clamp] as any,[{item_id:"tubes",qty:4},{item_id:"clamps",qty:1}],undefined,1,supportDescriptions["1048231"]);
-    expect(r.complete).toBe(false);
-    expect(r.coverage?.missing).toEqual([{item_id:"clamps",name:"Studio clamp",qty:4}]);
+    expect(r.complete).toBe(true);
+    expect(r.components.find(c=>c.item_id==="clamps")?.units_per_listing).toBe(4);
+    const stock=listingStock({items:[tubes,clamp],reservations:[],productIndex:new Map(),overrides:new Map(),claims:[],blackouts:[],vacations:[]} as any,
+      {...r,product_id:1048231,listing_name:"Four PavoTubes"},{item_name:"Four PavoTubes",start_date:"2027-01-01",end_date:"2027-01-02"});
+    expect(stock).toMatchObject({available:false,total_units:0,reason:"component_unavailable"});
+    expect(clamp.qty).toBe(1);
   });
   it("keeps marketing-only independently tracked hardware blocked", () => {
     const r=resolveListingComponents([tubes,{...clamp,is_marketing_only:true}] as any,[{item_id:"tubes",qty:4},{item_id:"clamps",qty:4}],undefined,1,supportDescriptions["1048231"]);

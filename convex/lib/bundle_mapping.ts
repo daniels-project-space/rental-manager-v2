@@ -1,6 +1,7 @@
 import { bestMatch } from "./item_name_match";
 import { isStandardAccessory } from "./reservations/itemUnits";
 import { extractComponents } from "./bundle_description_parse";
+import { declaredLensIdentity } from "./declared_lens_identity";
 
 type Inventory = { _id: unknown; name_canonical: string; kind?: string; qty?: number; aliases?: string[]; lens_mount?: string | null; status?: string; is_marketing_only?: boolean; track_independent_stock?: boolean };
 const mountTokens = new Set(["ef", "l", "rf", "e", "pl", "mount"]);
@@ -36,10 +37,11 @@ export function resolveBundleMapping(description: string, items: Inventory[]) {
         ?? item.name_canonical.toLowerCase().match(/\b(ef|rf|pl)\b/)?.[1];
       return !mount || !recordedMount || mount === recordedMount;
     });
+    const lensIdentity = declaredLensIdentity(name, candidates);
     let picked: Inventory | null = null;
     let specificity = 0;
     let ambiguous = false;
-    for (const item of candidates) {
+    for (const item of lensIdentity.explicit ? [] : candidates) {
       if (isStandardAccessory(item.kind, item.name_canonical) && item.track_independent_stock !== true) continue;
       const aliases = [item.name_canonical, ...(item.aliases ?? [])];
       // A missing aperture or set size may be omitted from a contents line.
@@ -61,7 +63,7 @@ export function resolveBundleMapping(description: string, items: Inventory[]) {
     }
     // An incidental line needs the full canonical/alias identity, not a fuzzy
     // guess from "batteries" or "card" to an unrelated stock pool.
-    const match = !ambiguous && picked ? picked : incidentalComponent ? null : bestMatch(name, candidates, item => item.name_canonical, item => item.aliases ?? []);
+    const match = lensIdentity.explicit ? lensIdentity.item : !ambiguous && picked ? picked : incidentalComponent ? null : bestMatch(name, candidates, item => item.name_canonical, item => item.aliases ?? []);
     const item = ambiguous || !match ? null : "name_canonical" in match ? match : match.match && match.confident ? match.match : null;
     if (!item && incidentalComponent && !ambiguous) continue;
     if (!item || !Number.isInteger(component.qty) || component.qty < 1) { unmatched.push(`${component.qty}x ${component.name}`); continue; }
