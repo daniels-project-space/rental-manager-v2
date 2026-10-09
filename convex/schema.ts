@@ -353,6 +353,7 @@ const operationalSchema = defineSchema({
     created_at: v.number(),
   })
     .index("by_hygglo_user_id", ["hygglo_user_id"])
+    .index("by_email", ["email"])
     .index("by_v1_renter_profile_id", ["v1_renter_profile_id"])
     .index("by_blacklisted", ["blacklisted"])
     .index("by_total_spend", ["total_spend_gbp"])

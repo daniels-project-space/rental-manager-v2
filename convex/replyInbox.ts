@@ -654,6 +654,8 @@ async function assembleTile(
 
   return {
     thread_id: threadId,
+    source: "hygglo" as const,
+    renter_identity: renterId ? `hygglo:${renterId}` : null,
     account_slug: slug ?? null,
     renter_name:
       renter?.display_name ??
@@ -745,6 +747,107 @@ function leanTile(t: ReplyTile): ReplyTile {
     items: t.items.map((i) => ({ name: i.name, qty: i.qty })) as ReplyTile["items"],
   };
 }
+
+/** Bounded lookup for DB Cinema chat rows already mirrored into reservations. */
+export const dbCinemaReservationEarnings = internalQuery({
+  args: { bookingIds: v.array(v.string()) },
+  handler: async (ctx, { bookingIds }) => {
+    const boundedIds = [...new Set(bookingIds)].slice(0, 100);
+    const rows = await Promise.all(boundedIds.map(async (bookingId) => {
+      const reservations = await ctx.db
+        .query("reservations")
+        .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", bookingId))
+        .collect();
+      const reservation = reservations.find((row) => row.account_slug === "dbcinema_web");
+      return reservation ? {
+        bookingId,
+        net_to_owner_gbp: reservation.net_to_owner_gbp ?? null,
+        gross_paid_gbp: reservation.gross_paid_gbp ?? null,
+        currency: reservation.currency ?? "GBP",
+      } : null;
+    }));
+    return rows.filter((row): row is NonNullable<typeof row> => row !== null);
+  },
+});
+
+async function dbCinemaRenterByVerifiedEmail(ctx: QueryCtx, email: string) {
+  const trimmed = email.trim();
+  const normalized = trimmed.toLowerCase();
+  if (!normalized || !normalized.includes("@")) return null;
+  const variants = [...new Set([trimmed, normalized])];
+  const pages = await Promise.all(variants.map((value) => ctx.db
+    .query("renters")
+    .withIndex("by_email", (q) => q.eq("email", value))
+    .take(3)));
+  const matches = new Map<string, Doc<"renters">>();
+  for (const row of pages.flat()) {
+    if (row.email?.trim().toLowerCase() === normalized) matches.set(String(row._id), row);
+  }
+  return matches.size === 1 ? [...matches.values()][0] : null;
+}
+
+/** Cross-platform renter trust only links a verified DB Cinema email to one
+ *  exact Rental Manager renter record; display names never participate. */
+export const dbCinemaRenterTrustByEmails = internalQuery({
+  args: { emails: v.array(v.string()) },
+  handler: async (ctx, { emails }) => {
+    const unique = [...new Set(emails.map((email) => email.trim().toLowerCase()).filter(Boolean))].slice(0, 100);
+    const matches = await Promise.all(unique.map(async (email) => {
+      const renter = await dbCinemaRenterByVerifiedEmail(ctx, email);
+      if (!renter) return {
+        email, renter_identity: null, rating: null, review_count: null,
+        blacklisted: false, flagged: false,
+      };
+      const trusted = renter.trust_checked_at != null && (renter.hygglo_review_count ?? 0) > 0;
+      return {
+        email,
+        renter_identity: `hygglo:${renter._id}`,
+        rating: trusted ? renter.hygglo_rating ?? null : null,
+        review_count: trusted ? renter.hygglo_review_count ?? null : null,
+        blacklisted: !!(renter.blacklisted || renter.blacklist),
+        flagged: !!renter.flag_on_request,
+      };
+    }));
+    return matches;
+  },
+});
+
+/** Owner-action detail lookup for a DB Cinema renter's linked Hygglo reviews. */
+export const dbCinemaRenterTrustDetails = internalQuery({
+  args: { email: v.string() },
+  handler: async (ctx, { email }) => {
+    const renter = await dbCinemaRenterByVerifiedEmail(ctx, email);
+    if (!renter) return { linked: false as const, reviews: [], lowCount: 0 };
+    const reservations = await ctx.db.query("reservations")
+      .withIndex("by_renter", (q) => q.eq("renter_id", renter._id))
+      .order("desc")
+      .take(100);
+    const thread_id = reservations.find((row) => !!row.hygglo_order_id && !!row.account_slug)?.hygglo_order_id ?? null;
+    const rows = renter.trust_checked_at == null
+      ? []
+      : await ctx.db.query("renter_reviews")
+          .withIndex("by_renter", (q) => q.eq("renter_id", renter._id))
+          .take(50);
+    rows.sort((a, b) =>
+      (a.rating ?? 5) - (b.rating ?? 5) ||
+      (b.created_at ?? "").localeCompare(a.created_at ?? ""),
+    );
+    const reviews = rows.map((row) => ({
+      id: String(row._id), rating: row.rating ?? null, text: row.text ?? null,
+      author: row.author ?? null, created_at: row.created_at ?? null,
+    }));
+    const trusted = renter.trust_checked_at != null && (renter.hygglo_review_count ?? 0) > 0;
+    return {
+      linked: true as const,
+      renter_identity: `hygglo:${renter._id}`,
+      rating: trusted ? renter.hygglo_rating ?? null : null,
+      review_count: trusted ? renter.hygglo_review_count ?? null : null,
+      thread_id,
+      reviews,
+      lowCount: reviews.filter((review) => review.rating != null && review.rating < 4).length,
+    };
+  },
+});
 
 export const getReplyQueue = query({
   args: {

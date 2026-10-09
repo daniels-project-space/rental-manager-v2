@@ -13,7 +13,7 @@ import { inclusiveRentalDays } from "../../../convex/lib/hygglo_pricing";
  * ALLOW_MANUAL_ORDER_ACTIONS). Click a card → a body-portaled modal (escapes the
  * widget's clipping) with the full thread + AI draft + Send.
  */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -26,6 +26,12 @@ import { accountAccent, accountLabel } from "@/lib/account-theme";
 import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
+
+const dbCinemaInboxRef = makeFunctionReference<"action">("dbcinema_chat:inbox");
+const dbCinemaThreadRef = makeFunctionReference<"action">("dbcinema_chat:thread");
+const dbCinemaSendRef = makeFunctionReference<"action">("dbcinema_chat:sendOwnerReply");
+const dbCinemaDraftRef = makeFunctionReference<"action">("dbcinema_chat:draftReply");
+const dbCinemaReviewsRef = makeFunctionReference<"action">("dbcinema_chat:renterReviews");
 
 // canned_responses is a NEW convex module not yet in the committed _generated/api
 // type map (only existing modules are picked up via `typeof import`), so the
@@ -47,7 +53,7 @@ const resolveTrustRef = makeFunctionReference<"action">("renter_trust:resolveFor
 // the order detail) — NOT the old owner-side product-reviews source.
 const reviewsRefreshRef = makeFunctionReference<"action">("renter_trust:resolveForThread");
 type RenterReview = { id: string; rating: number | null; text: string | null; author: string | null; created_at: string | null };
-type RenterReviewsResult = { reviews: RenterReview[]; lowCount: number; fetched: boolean };
+type RenterReviewsResult = { reviews: RenterReview[]; lowCount: number; fetched: boolean; unavailable?: boolean };
 
 // Order-edit + online-listings (new convex modules) — referenced by name so
 // `next build`'s typecheck stays green against the committed (lagging) _generated
@@ -58,6 +64,7 @@ const itemUnavailRef = makeFunctionReference<"action">("order_edit:itemUnavailab
 const addItemRef = makeFunctionReference<"action">("order_edit:addItem");
 const removeOrderItemRef = makeFunctionReference<"action">("order_edit:removeItem");
 const setPriceRef = makeFunctionReference<"action">("order_edit:setPrice");
+const refundRef = makeFunctionReference<"action">("order_edit:refund");
 const setDatesRef = makeFunctionReference<"action">("order_edit:setDates");
 const onlineListingsRef = makeFunctionReference<"query">("online_listings:list");
 
@@ -115,7 +122,7 @@ interface ItemAvail {
   available: boolean;
 }
 interface TileAvailability {
-  status: "available" | "conflict";
+  status: "available" | "conflict" | "unknown";
   include_pending: boolean;
   items: ItemAvail[];
 }
@@ -127,10 +134,18 @@ export interface DraftFlag {
 }
 export interface ReplyTileData {
   thread_id: string;
+  source?: "hygglo" | "dbcinema_web";
+  source_booking_id?: string;
+  start_at?: number | null;
+  end_at?: number | null;
+  renter_image_url?: string | null;
+  renter_identity?: string | null;
+  verification_status?: string | null;
   account_slug: string | null;
   renter_name: string;
   renter_rating: number | null;
   renter_review_count: number | null;
+  renter_rating_source?: "hygglo" | null;
   renter_blacklisted: boolean;
   renter_flagged: boolean;
   has_reservation: boolean;
@@ -424,6 +439,15 @@ function stageIndex(t: ReplyTileData): number {
 /** Small, minimal progress bar: 5 segments filled up to the current stage. */
 function StageBar({ t }: { t: ReplyTileData }) {
   if (!t.has_reservation) return null;
+  if (t.source === "dbcinema_web") {
+    const raw = (t.verification_status ?? "required").toLowerCase();
+    const failed = /fail|reject|declin/.test(raw);
+    const verified = /verified|complete|approved/.test(raw);
+    const reviewing = /pending|progress|submitted|review/.test(raw);
+    const step = failed || verified ? 3 : reviewing ? 2 : 1;
+    const label = failed ? "Identity check · needs attention" : verified ? "Identity verified" : reviewing ? "Identity check · under review" : "Identity check · required";
+    return <div className="flex flex-col gap-1 pt-0.5"><div className="flex items-center gap-[3px]">{[0,1,2].map((i) => <div key={i} className="h-[3px] flex-1 rounded-full" style={{background:failed?"rgba(248,113,113,0.7)":i<step?"#b28cff":"rgba(255,255,255,0.10)"}} />)}</div><span className={`text-[9px] uppercase tracking-[0.08em] leading-none ${failed?"text-red-300":"text-[#a898c7]"}`}>{label}</span></div>;
+  }
   const cancelled = isResolvedClosed(t);
   const idx = stageIndex(t);
   const accent = accountAccent(t.account_slug);
@@ -514,6 +538,7 @@ function itemLineShort(t: ReplyTileData): string {
  * pending` tag appears when not-yet-confirmed bookings were counted.
  */
 function AvailabilityBadge({ a, compact }: { a: TileAvailability; compact?: boolean }) {
+  if (a.status === "unknown") return <span className="inline-flex rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-[#a6adbb]">Availability not verified</span>;
   const ok = a.status === "available";
   // Tightest item drives the message (smallest free-minus-requested margin).
   const worst =
@@ -642,12 +667,14 @@ function ReviewsOverlay({
   rating,
   count,
   reviews,
+  source,
   onClose,
 }: {
   renterName: string;
   rating: number | null;
   count: number | null;
   reviews: RenterReviewsResult | undefined;
+  source?: ReplyTileData["source"];
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -694,7 +721,11 @@ function ReviewsOverlay({
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
-          {reviews === undefined ? (
+          {source === "dbcinema_web" && reviews?.unavailable ? (
+            <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-3 text-xs leading-relaxed text-[#9aa0ad]">
+              No verified renter profile is linked to this DB Cinema account, so there is no trusted renter score or review history to show.
+            </div>
+          ) : reviews === undefined ? (
             <div className="text-xs text-[#6b7280] py-3 text-center">Loading reviews…</div>
           ) : reviews.reviews.length === 0 ? (
             <div className="text-xs text-[#6b7280] py-3 text-center">No reviews found for this renter.</div>
@@ -758,8 +789,8 @@ function StarRating({ rating, size = 12 }: { rating: number; size?: number }) {
     </span>
   );
 }
-function Stars({ rating, count, size = 12 }: { rating: number | null; count: number | null; size?: number }) {
-  if (rating == null) return <span className="text-[11px] text-[#64748b]">no rating</span>;
+function Stars({ rating, count, size = 12, emptyLabel = "no rating" }: { rating: number | null; count: number | null; size?: number; emptyLabel?: string }) {
+  if (rating == null) return <span className="text-[10px] text-[#8790a0]">☆ {emptyLabel}</span>;
   const low = rating < 4;
   return (
     <span
@@ -797,8 +828,11 @@ function Thumb({ src, accent, size = 56 }: { src: string | null; accent: string;
   );
 }
 
-function AccountTag({ slug }: { slug: string | null }) {
-  const accent = accountAccent(slug);
+function tileAccent(tile: Pick<ReplyTileData, "source" | "account_slug">): string {
+  return tile.source === "dbcinema_web" ? "#b28cff" : accountAccent(tile.account_slug);
+}
+function AccountTag({ slug, source }: { slug: string | null; source?: ReplyTileData["source"] }) {
+  const accent = source === "dbcinema_web" ? "#b28cff" : accountAccent(slug);
   return (
     <span
       className="inline-flex items-center text-[10px] font-semibold px-1.5 py-[3px] rounded-md lowercase tracking-wide"
@@ -817,12 +851,14 @@ function ReplyCard({
   onOpen,
   onActed,
   dryRun,
+  duplicate = false,
 }: {
   tile: ReplyTileData;
   now: number;
   onOpen: () => void;
   onActed: (id: string) => void;
   dryRun: boolean;
+  duplicate?: boolean;
 }) {
   const aw = awaitingMe(tile);
   const ds = decideState(tile);
@@ -841,6 +877,10 @@ function ReplyCard({
   // gone across reloads, and let it re-surface only when the renter messages again.
   async function onDismiss() {
     onActed(tile.thread_id);
+    if (tile.source === "dbcinema_web") {
+      try { window.localStorage.setItem(`rm-quick-reply-dismissed:${tile.thread_id}`, String(tile.last_activity_at)); } catch { /* browser storage can be disabled */ }
+      return;
+    }
     try {
       await dismiss({ thread_id: tile.thread_id });
     } catch {
@@ -880,9 +920,9 @@ function ReplyCard({
   return (
     <div
       onClick={onOpen}
-      className="group relative cursor-pointer rounded-2xl border bg-gradient-to-b from-[#171a21] to-[#12151c] hover:from-[#1a1e27] hover:to-[#14181f] transition-colors p-4 pl-[18px] flex flex-col gap-2.5"
+      className={`group relative cursor-pointer rounded-xl border bg-[#151820] hover:bg-[#191d26] transition-colors p-3.5 pl-[18px] flex flex-col gap-2 ${tile.source === "dbcinema_web" ? "ring-1 ring-inset ring-[#b28cff]/10" : ""} ${duplicate ? "opacity-45 grayscale" : ""}`}
       style={{
-        borderColor: u?.glow ? `${u.color}40` : "rgba(255,255,255,0.07)",
+        borderColor: u?.glow ? `${u.color}40` : tile.source === "dbcinema_web" ? "rgba(178,140,255,0.32)" : "rgba(255,255,255,0.07)",
         boxShadow: u?.glow
           ? `inset 0 1px 0 rgba(255,255,255,0.04), 0 0 0 1px ${u.color}22, 0 0 26px -10px ${u.color}66`
           : "inset 0 1px 0 rgba(255,255,255,0.04), 0 10px 24px -16px rgba(0,0,0,0.55)",
@@ -891,7 +931,7 @@ function ReplyCard({
       {/* account-colour identity strip */}
       <div
         className="absolute left-0 top-3.5 bottom-3.5 w-[3px] rounded-r-full"
-        style={{ background: accountAccent(tile.account_slug) }}
+        style={{ background: tileAccent(tile) }}
       />
       {/* × close — hides this thread until the renter messages again */}
       <button
@@ -907,8 +947,11 @@ function ReplyCard({
           <path d="M6 6l12 12M18 6L6 18" />
         </svg>
       </button>
-      <div className="flex gap-3">
-        <Thumb src={tile.image_url} accent={accountAccent(tile.account_slug)} size={46} />
+      <div className="flex gap-3 min-w-0">
+        <div className="relative shrink-0">
+          <Thumb src={tile.image_url} accent={tileAccent(tile)} size={48} />
+          {tile.renter_image_url && <img src={tile.renter_image_url} alt="Renter profile" className="absolute -right-1.5 -bottom-1.5 h-6 w-6 rounded-full border-2 border-[#151820] object-cover" />}
+        </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-start gap-1.5">
             <span className="text-[14px] font-semibold text-[#f1f3f5] truncate leading-tight min-w-0">
@@ -957,7 +1000,8 @@ function ReplyCard({
             </span>
           </div>
           <div className="flex items-center gap-2 mt-1">
-            <AccountTag slug={tile.account_slug} />
+            <AccountTag slug={tile.account_slug} source={tile.source} />
+            {tile.source === "dbcinema_web" && <span className="rounded-md border border-[#b28cff]/30 bg-[#b28cff]/10 px-1.5 py-[3px] text-[10px] font-semibold text-[#c9adff]">DB Cinema</span>}
             {tile.renter_review_count != null && (
               <span className="text-[10px] text-[#64748b]">
                 {tile.renter_review_count} review{tile.renter_review_count === 1 ? "" : "s"}
@@ -981,6 +1025,7 @@ function ReplyCard({
       >
         {statusText(tile)}
       </span>
+      {duplicate && <span className="w-fit rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-[#9ca3af]">Duplicate · lower value</span>}
 
       <StageBar t={tile} />
 
@@ -999,11 +1044,11 @@ function ReplyCard({
           <MoneyHeadline tile={tile} compact />
         </div>
       )}
-      {tile.availability && (
+      {tile.availability ? (
         <div className="pt-0.5">
           <AvailabilityBadge a={tile.availability} compact />
         </div>
-      )}
+      ) : tile.source === "dbcinema_web" ? <AvailabilityBadge a={{status:"unknown",include_pending:false,items:[]}} compact /> : null}
 
       <div className="flex items-center gap-2 mt-auto pt-1" onClick={(e) => e.stopPropagation()}>
         <button
@@ -1483,6 +1528,7 @@ function OrderEditor({
   const addItem = useAction(addItemRef);
   const removeItem = useAction(removeOrderItemRef);
   const setPrice = useAction(setPriceRef);
+  const refund = useAction(refundRef);
   const setDates = useAction(setDatesRef);
 
   const [st, setSt] = useState<OrderEditState | null>(null);
@@ -1494,6 +1540,8 @@ function OrderEditor({
   const [editingPrice, setEditingPrice] = useState(false);
   const [priceInput, setPriceInput] = useState("");
   const [pricePreview, setPricePreview] = useState<string | null>(null);
+  const [editingRefund, setEditingRefund] = useState(false);
+  const [refundInput, setRefundInput] = useState("");
   const [showCal, setShowCal] = useState(false);
   const [unavail, setUnavail] = useState<{ dates: Set<string>; minDays: number }>({ dates: new Set(), minDays: 1 });
   // Collapsed by default so the conversation stays visible — expand to edit.
@@ -1572,6 +1620,22 @@ function OrderEditor({
       if (ok(r, "Price changed")) {
         setEditingPrice(false);
         setPricePreview(null);
+        await refresh();
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+  async function onApplyRefund() {
+    const amount = Number(refundInput);
+    if (!Number.isFinite(amount) || amount <= 0) return setNote("Enter a refund amount greater than zero.");
+    setBusy("refund");
+    setNote(null);
+    try {
+      const r = (await refund({ account_slug: accountSlug, hygglo_order_id: orderId, amount, dryRun })) as WriteOut;
+      if (ok(r, `Refunded ${money(amount, st?.currency)}`)) {
+        setEditingRefund(false);
+        setRefundInput("");
         await refresh();
       }
     } finally {
@@ -1758,9 +1822,51 @@ function OrderEditor({
             </div>
           </div>
         )}
-        {editingPrice && !a.change_price && a.partial_refund && (
-          <div className="rounded-xl border border-white/10 bg-black/30 p-2.5 text-[11px] text-[#9aa0ad]">
-            This booking is already paid — use Hygglo’s partial-refund on the order to discount it.
+        {a.partial_refund && (
+          <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-2.5">
+            {!editingRefund ? (
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 text-[11px] text-[#8b93a3]">Refund part of the payment through Hygglo.</span>
+                <button
+                  disabled={!!busy}
+                  onClick={() => { setEditingRefund(true); setRefundInput(""); setNote(null); }}
+                  className="shrink-0 rounded-lg border border-white/10 bg-white/[0.05] px-3 py-1.5 text-[11px] font-semibold text-[#d7dce5] hover:bg-white/[0.09] disabled:opacity-40"
+                >
+                  Refund…
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <label htmlFor={`refund-${orderId}`} className="min-w-0 flex-1 text-[11px] text-[#aeb5c2]">Refund amount</label>
+                  <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-black/40 px-2">
+                    <span className="text-[12px] text-[#9aa0ad]">{st.currency === "GBP" ? "£" : st.currency}</span>
+                    <input
+                      id={`refund-${orderId}`}
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      inputMode="decimal"
+                      value={refundInput}
+                      onChange={(e) => setRefundInput(e.target.value)}
+                      placeholder="0.00"
+                      className="w-24 bg-transparent py-1.5 text-[15px] text-[#eef1f5] focus:outline-none"
+                    />
+                  </div>
+                </div>
+                <p className="text-[10.5px] leading-relaxed text-[#737b89]">This sends a partial refund to the renter’s original payment method.</p>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => { setEditingRefund(false); setRefundInput(""); }} className="rounded-lg bg-white/[0.06] px-2.5 py-1.5 text-[11px] text-[#a0a6b2]">Cancel</button>
+                  <button
+                    disabled={busy === "refund" || !refundInput || Number(refundInput) <= 0}
+                    onClick={() => void onApplyRefund()}
+                    className="ml-auto rounded-lg bg-rose-600 px-3.5 py-1.5 text-[11px] font-semibold text-white hover:bg-rose-500 disabled:opacity-40"
+                  >
+                    {busy === "refund" ? "Processing…" : `Refund ${refundInput ? money(Number(refundInput), st.currency) : "payment"}`}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
         <div className="flex items-center gap-2 text-[12.5px]">
@@ -1825,11 +1931,28 @@ export function ReplyModal({
   dryRun: boolean;
   zClass?: string;
 }) {
-  const accent = accountAccent(tile.account_slug);
+  const accent = tileAccent(tile);
   const ds = decideState(tile);
-  const thread = useQuery(api.hygglo.listByThread, { thread_id: tile.thread_id });
+  const hyggloThread = useQuery(api.hygglo.listByThread, tile.source === "dbcinema_web" ? "skip" : { thread_id: tile.thread_id });
+  const loadDbCinemaThread = useAction(dbCinemaThreadRef);
+  const sendDbCinemaReply = useAction(dbCinemaSendRef);
+  const draftDbCinemaReply = useAction(dbCinemaDraftRef);
+  const [dbCinemaMessages, setDbCinemaMessages] = useState<Array<{id:string;role:"owner"|"renter";content:string;timestamp:number}>>([]);
+  const [dbCinemaLoading, setDbCinemaLoading] = useState(tile.source === "dbcinema_web");
+  const [dbCinemaRefresh, setDbCinemaRefresh] = useState(0);
+  useEffect(() => {
+    if (tile.source !== "dbcinema_web" || !tile.source_booking_id) return;
+    let alive = true;
+    void loadDbCinemaThread({ booking_id: tile.source_booking_id }).then((result) => {
+      if (alive) setDbCinemaMessages(result.messages);
+    }).catch(() => {
+      if (alive) setNote("DB Cinema chat history is temporarily unavailable.");
+    }).finally(() => { if (alive) setDbCinemaLoading(false); });
+    return () => { alive = false; };
+  }, [loadDbCinemaThread, tile.source, tile.source_booking_id, dbCinemaRefresh]);
+  const thread = tile.source === "dbcinema_web" ? (dbCinemaLoading ? undefined : dbCinemaMessages) : hyggloThread;
   // Live tile (reactive) so the location overlay appears the moment it resolves.
-  const liveTile = useQuery(api.replyInbox.getThreadById, {
+  const liveTile = useQuery(api.replyInbox.getThreadById, tile.source === "dbcinema_web" ? "skip" : {
     thread_id: tile.thread_id,
   });
   const loc = (liveTile?.location ?? tile.location) as TileLocation | null;
@@ -1837,12 +1960,13 @@ export function ReplyModal({
   const resolveTrust = useAction(resolveTrustRef);
   const locResolvedRef = useRef(false);
   useEffect(() => {
+    if (tile.source === "dbcinema_web") return;
     if (locResolvedRef.current) return;
     locResolvedRef.current = true;
     void resolveLoc({ thread_id: tile.thread_id });
     // Pull the renter's real rating + reviews (Hygglo order detail) on open.
     void resolveTrust({ thread_id: tile.thread_id });
-  }, [resolveLoc, resolveTrust, tile.thread_id]);
+  }, [resolveLoc, resolveTrust, tile.thread_id, tile.source]);
   const generateDraft = useAction(api.replyInbox_actions.generateDraft);
   const sendReply = useAction(api.replyInbox_actions.sendRenterReply);
   const approve = useAction(api.replyInbox_actions.approveOrder);
@@ -1888,22 +2012,64 @@ export function ReplyModal({
   // in this modal's own body wrapper instead of LocationBadge's default
   // full-viewport overlay. See LocationBadge's onOpenMap prop.
   const [showMap, setShowMap] = useState(false);
-  const reviews = useQuery(
+  const queriedReviews = useQuery(
     reviewsGetRef,
-    showReviews ? { thread_id: tile.thread_id } : "skip",
+    showReviews && tile.source !== "dbcinema_web" ? { thread_id: tile.thread_id } : "skip",
   ) as RenterReviewsResult | undefined;
+  const [dbCinemaReviews, setDbCinemaReviews] = useState<RenterReviewsResult | undefined>();
+  const dbCinemaReviewsRequested = useRef(false);
+  const getDbCinemaReviews = useAction(dbCinemaReviewsRef);
+  useEffect(() => {
+    if (showReviews && tile.source === "dbcinema_web" && !dbCinemaReviewsRequested.current) {
+      dbCinemaReviewsRequested.current = true;
+      const bookingId = tile.source_booking_id ?? tile.thread_id.replace(/^dbcinema:/, "");
+      void getDbCinemaReviews({ booking_id: bookingId }).then(setDbCinemaReviews).catch(() => {
+        setDbCinemaReviews({ reviews: [], lowCount: 0, fetched: false, unavailable: true });
+      });
+    }
+  }, [showReviews, tile.source, tile.source_booking_id, tile.thread_id, getDbCinemaReviews]);
+  const reviews = tile.source === "dbcinema_web"
+    ? dbCinemaReviews
+    : queriedReviews;
   const refreshReviews = useAction(reviewsRefreshRef);
   const reviewsRefreshedRef = useRef(false);
   useEffect(() => {
-    if (showReviews && !reviewsRefreshedRef.current) {
+    if (showReviews && tile.source !== "dbcinema_web" && !reviewsRefreshedRef.current) {
       reviewsRefreshedRef.current = true;
       void refreshReviews({ thread_id: tile.thread_id });
     }
-  }, [showReviews, refreshReviews, tile.thread_id]);
+  }, [showReviews, refreshReviews, tile.source, tile.thread_id]);
   // Per-account canned "quick texts" — tapping one PASTES into the box.
+  const cannedAccountSlug = tile.account_slug === "dbcinema_web" ? "dbcinema" : tile.account_slug;
   const canned = (useQuery(cannedListRef, {
-    account_slug: tile.account_slug ?? undefined,
+    account_slug: cannedAccountSlug ?? undefined,
   }) ?? []) as Canned[];
+  const createCanned = useMutation(cannedCreateRef);
+  const updateCanned = useMutation(cannedUpdateRef);
+  const [quickSlot, setQuickSlot] = useState<"location" | "times" | "delivery" | null>(null);
+  const [quickDraft, setQuickDraft] = useState("");
+  const quickPreset = quickSlot
+    ? canned.find((c) => quickSlot === "location" ? /location|address|pickup/i.test(c.label) : quickSlot === "times" ? /time|hour|availability/i.test(c.label) : /delivery|courier|shipping/i.test(c.label))
+    : undefined;
+  function openQuickSlot(slot: "location" | "times" | "delivery") {
+    setQuickSlot(slot);
+    const found = canned.find((c) => slot === "location" ? /location|address|pickup/i.test(c.label) : slot === "times" ? /time|hour|availability/i.test(c.label) : /delivery|courier|shipping/i.test(c.label));
+    setQuickDraft(found?.text ?? "");
+  }
+  function pasteQuickSlot(slot: "location" | "times" | "delivery") {
+    const found = canned.find((c) => slot === "location" ? /location|address|pickup/i.test(c.label) : slot === "times" ? /time|hour|availability/i.test(c.label) : /delivery|courier|shipping/i.test(c.label));
+    if (found) pasteText(found.text);
+    else openQuickSlot(slot);
+  }
+  async function saveQuickPreset() {
+    if (!quickSlot || !quickDraft.trim() || !cannedAccountSlug) return;
+    const label = quickSlot === "location" ? "Location" : quickSlot === "times" ? "Times" : "Delivery info";
+    const symbol = quickSlot === "location" ? "📍" : quickSlot === "times" ? "🕒" : "🚚";
+    if (quickPreset) await updateCanned({ id: quickPreset._id, label, symbol, text: quickDraft.trim() });
+    else await createCanned({ account_slug: cannedAccountSlug, label, symbol, text: quickDraft.trim() });
+    pasteText(quickDraft.trim());
+    setQuickSlot(null);
+  }
 
   // Paste a snippet into the compose box (never sends). Appends with a blank
   // line if there's already text, so you can stack delivery + bank + your own.
@@ -1928,6 +2094,14 @@ export function ReplyModal({
     setDrafting(true);
     setNote(null);
     try {
+      if (tile.source === "dbcinema_web") {
+        if (!tile.source_booking_id) throw new Error("Missing DB Cinema booking reference.");
+        const result = await draftDbCinemaReply({ booking_id: tile.source_booking_id });
+        setDraft(result.draft);
+        setDraftConfidence(null);
+        setDraftFlags([]);
+        return;
+      }
       const r = await generateDraft({ thread_id: tile.thread_id, retry_review: true });
       if (r.status === "ok" && r.draft) {
         setDraftReview(null);
@@ -1949,6 +2123,13 @@ export function ReplyModal({
       setDrafting(false);
     }
   }
+  function onCopyDraft() {
+    if (tile.source === "dbcinema_web") {
+      if (draft) pasteText(draft);
+      return;
+    }
+    copyAIDraft();
+  }
   // Shared send used by the compose box AND the canned quick-text buttons.
   // Returns true on success. clearBox=true also empties the textarea.
   async function sendBody(body: string, clearBox: boolean): Promise<boolean> {
@@ -1963,6 +2144,21 @@ export function ReplyModal({
     setSending(true);
     setNote(null);
     try {
+      if (tile.source === "dbcinema_web") {
+        if (dryRun) {
+          if (clearBox) setText("");
+          setDryRunSentMsgs((prev) => [...prev, body.trim()]);
+          setNote("✓ Reply OK (test — nothing sent)");
+          return true;
+        }
+        if (!tile.source_booking_id) throw new Error("Missing DB Cinema booking reference.");
+        await sendDbCinemaReply({ booking_id: tile.source_booking_id, text: body.trim() });
+        setDbCinemaMessages((prev) => [...prev, { id: `sent-${Date.now()}`, role: "owner", content: body.trim(), timestamp: Date.now() }]);
+        if (clearBox) setText("");
+        setNote("Reply sent to the DB Cinema rental chat.");
+        setDbCinemaRefresh((value) => value + 1);
+        return true;
+      }
       const r = await sendReply({ thread_id: tile.thread_id, account_slug: tile.account_slug, text: body.trim(), dryRun, ...(clearBox && composeApproval ? {draft_approval:composeApproval} : {}) });
       if (r.status === "sent") {
         // Keep the chat OPEN so you can also approve/decline or keep texting.
@@ -2020,12 +2216,15 @@ export function ReplyModal({
 
   return createPortal(
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Conversation with ${tile.renter_name}`}
       className={`fixed inset-0 ${zClass} flex items-center justify-center bg-black/70 backdrop-blur-sm p-0 sm:p-4`}
     >
       {/* Backdrop click does NOT close — only the × button (or Esc) closes, so
           you can text AND approve/decline in one session without losing it. */}
       <div
-        className="relative w-full max-w-2xl h-full sm:h-auto max-h-screen sm:max-h-[88vh] flex flex-col rounded-none sm:rounded-[20px] border bg-[#101216] shadow-[0_40px_100px_-30px_rgba(0,0,0,0.85)] overflow-hidden"
+        className="relative w-full max-w-3xl h-[100dvh] sm:h-auto max-h-[100dvh] sm:max-h-[90vh] flex flex-col rounded-none sm:rounded-[20px] border bg-[#101216] shadow-[0_40px_100px_-30px_rgba(0,0,0,0.85)] overflow-hidden"
         style={{ borderColor: `${accent}4d` }}
       >
         {/* Accent top line */}
@@ -2038,25 +2237,27 @@ export function ReplyModal({
             paddingTop: "max(0.625rem, env(safe-area-inset-top))",
           }}
         >
-          <Thumb src={tile.image_url} accent={accent} size={40} />
+          <div className="relative shrink-0">
+            <Thumb src={tile.image_url} accent={accent} size={42} />
+            {tile.renter_image_url && <img src={tile.renter_image_url} alt="Renter profile" className="absolute -right-1 -bottom-1 h-6 w-6 rounded-full border-2 border-[#101216] object-cover" />}
+          </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 min-w-0">
               <span className="text-[13.5px] font-semibold text-[#f1f3f5] truncate min-w-0 flex-1">{tile.renter_name}</span>
               <button
                 onClick={() => setShowReviews((s) => !s)}
                 className="shrink-0 inline-flex items-center gap-0.5 hover:opacity-80"
-                title="See this renter's reviews"
+                title={tile.source === "dbcinema_web" && tile.renter_rating_source !== "hygglo" ? "See whether this renter has a verified linked rating" : "See this renter's reviews"}
               >
-                <Stars rating={tile.renter_rating} count={tile.renter_review_count} />
-                {tile.renter_rating != null && (
-                  <span className="text-[9px] text-[#6b7280]">{showReviews ? "▴" : "▾"}</span>
-                )}
+                <Stars rating={tile.renter_rating} count={tile.renter_review_count} emptyLabel={tile.source === "dbcinema_web" ? tile.renter_rating_source === "hygglo" ? "no score" : "not rated" : undefined} />
+                <span className="text-[9px] text-[#6b7280]">{showReviews ? "▴" : "▾"}</span>
               </button>
             </div>
             {/* One compact horizontal meta row — earnings + dates to the side,
                 not stacked, so the chat gets the room. */}
             <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-              <AccountTag slug={tile.account_slug} />
+              <AccountTag slug={tile.account_slug} source={tile.source} />
+              {tile.source === "dbcinema_web" && <span className="text-[9px] font-semibold text-[#c9adff]">DB CINEMA</span>}
               <span
                 className="text-[10px] uppercase tracking-wide font-medium"
                 style={{ color: tile.is_request ? "#fdba74" : "#7a8190" }}
@@ -2079,43 +2280,15 @@ export function ReplyModal({
                 ⚠ Low-rated ({tile.renter_rating.toFixed(1)}★) — vet before accepting.
               </div>
             )}
-            {/* Availability: hidden unless it's a problem — only surface a
-                double-booking warning, never the "available" case. */}
-            {tile.availability?.status === "conflict" && (
-              <div className="mt-1.5 flex items-start gap-1.5 rounded-lg border border-red-400/40 bg-red-500/[0.12] px-2 py-1.5">
-                <span className="text-red-400 text-[12px] leading-none mt-px">⚠</span>
-                <span className="text-[11px] text-red-200/95 leading-snug">
-                  Double-booking —{" "}
-                  {tile.availability.items
-                    .filter((i) => !i.available)
-                    .map((i) => `${shortListing(i.name)}: ${Math.max(0, i.free)}/${i.requested} free`)
-                    .join(" · ")}
-                </span>
-              </div>
-            )}
+            <div className="mt-1.5">{tile.availability ? <AvailabilityBadge a={tile.availability} compact /> : tile.source === "dbcinema_web" ? <AvailabilityBadge a={{status:"unknown",include_pending:false,items:[]}} compact /> : null}</div>
           </div>
           <button
             type="button"
-            onPointerDown={(e) => {
-              e.stopPropagation();
-              if (e.pointerType !== "mouse") e.currentTarget.setPointerCapture(e.pointerId);
-            }}
-            onPointerUp={(e) => {
-              e.stopPropagation();
-              if (e.pointerType !== "mouse") {
-                e.preventDefault();
-                onClose();
-              }
-            }}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onClose();
-            }}
+            onClick={onClose}
             aria-label="Close conversation"
             data-testid="quick-reply-close"
-            style={{ touchAction: "none", top: "max(0.5rem, env(safe-area-inset-top))" }}
-            className="absolute right-2 z-30 w-12 h-12 rounded-xl flex items-center justify-center text-[#c4c8d0] hover:text-white active:bg-white/[0.16] hover:bg-white/[0.08] text-[30px] leading-none select-none"
+            style={{ touchAction: "manipulation", top: "max(0.5rem, env(safe-area-inset-top))" }}
+            className="absolute right-2 z-30 w-12 h-12 rounded-xl flex items-center justify-center text-[#c4c8d0] hover:text-white active:bg-white/[0.16] hover:bg-white/[0.08] text-[30px] leading-none"
           >
             ×
           </button>
@@ -2135,10 +2308,11 @@ export function ReplyModal({
         <div className="relative flex-1 min-h-0 flex flex-col">
           {/* Order editor — live items + add/remove + price + dates (has_reservation
               threads only; inquiries with no booking have nothing to edit). */}
-          {tile.has_reservation && tile.account_slug && (
-            tile.thread_id.startsWith("__probe__")
-              ? <LabOrderSummary threadId={tile.thread_id} />
-              : <OrderEditor accountSlug={tile.account_slug} orderId={tile.thread_id} dryRun={dryRun} />
+          {tile.has_reservation && tile.account_slug && tile.source !== "dbcinema_web" && (
+            <details className="relative z-10 shrink-0 border-b border-white/[0.07] bg-[#14171d]">
+              <summary className="cursor-pointer list-none px-4 py-2.5 text-[11px] font-semibold text-[#c7cbd4] marker:hidden">▸ Booking actions <span className="ml-1 font-normal text-[#7a8190]">Change dates · items · price · refund</span></summary>
+              <div className="max-h-[42vh] overflow-y-auto px-2 pb-2">{tile.thread_id.startsWith("__probe__") ? <LabOrderSummary threadId={tile.thread_id} /> : <OrderEditor accountSlug={tile.account_slug} orderId={tile.thread_id} dryRun={dryRun} />}</div>
+            </details>
           )}
 
           {/* Renter reviews — confined panel, opened by tapping the stars.
@@ -2149,6 +2323,7 @@ export function ReplyModal({
               rating={tile.renter_rating}
               count={tile.renter_review_count}
               reviews={reviews}
+              source={tile.source}
               onClose={() => setShowReviews(false)}
             />
           )}
@@ -2162,7 +2337,7 @@ export function ReplyModal({
 
         {/* Thread — flex-1 + min-h-0 so it shrinks and the compose dock below
             (with Send) is ALWAYS visible, never clipped off-screen on mobile. */}
-        <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3 bg-black/25">
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 space-y-4 bg-black/25">
           {thread === undefined ? (
             <SkeletonBlock className="h-24 w-full" />
           ) : thread.length === 0 ? (
@@ -2173,7 +2348,7 @@ export function ReplyModal({
               return (
                 <div key={i} className={`flex flex-col ${m.role === "owner" ? "items-end" : "items-start"}`}>
                   <div
-                    className={`max-w-[78%] px-3.5 py-2.5 text-[13.5px] leading-relaxed ${
+                    className={`max-w-[88%] sm:max-w-[76%] px-3.5 py-3 text-[14px] leading-relaxed ${
                       m.role === "owner"
                         ? "rounded-2xl rounded-tr-md text-[#eef1f5]"
                         : "rounded-2xl rounded-tl-md bg-white/[0.06] text-[#d8dce3]"
@@ -2204,7 +2379,7 @@ export function ReplyModal({
         </div>
 
         {/* Compose + decisions — shrink-0 so it never gets compressed/clipped. */}
-        <div className="shrink-0 p-4 border-t border-white/[0.07] space-y-3 bg-[#0e1014]">
+        <div className="relative shrink-0 p-3 sm:p-4 border-t border-white/[0.07] space-y-2.5 bg-[#0e1014] pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           {(ds.canApprove || ds.canDecline || decided) && (
             <div className="flex items-center gap-2 flex-wrap">
               {decided ? (
@@ -2245,43 +2420,7 @@ export function ReplyModal({
             </div>
           )}
 
-          {/* Quick texts — tap a chip to PASTE into the box. Never auto-sends:
-              edit it, add/remove, then hit Send yourself. The amber "Ask to
-              request" chip shows only on inquiry threads with no booking yet. */}
-          {(canned.length > 0 || !tile.has_reservation) && (
-            <div className="flex items-center gap-1 flex-wrap">
-              <span className="text-[9px] uppercase tracking-[0.12em] text-[#5f6675] font-semibold mr-0.5 select-none">
-                Insert
-              </span>
-              {!tile.has_reservation && (
-                <button
-                  type="button"
-                  onClick={() => pasteText(ASK_REQUEST_TEXT)}
-                  title={`Paste: ${ASK_REQUEST_TEXT}`}
-                  className="group/q flex items-center gap-1 pl-1 pr-2 py-0.5 rounded-full border border-amber-400/30 bg-gradient-to-b from-amber-500/[0.18] to-amber-600/[0.08] hover:border-amber-300/60 hover:from-amber-500/[0.28] transition-colors"
-                >
-                  <span className="flex items-center justify-center w-4 h-4 rounded-full bg-amber-400/20 text-[10px] leading-none">📩</span>
-                  <span className="text-[10px] font-semibold text-amber-200/90">Ask to request</span>
-                </button>
-              )}
-              {canned.map((c) => (
-                <button
-                  key={c._id}
-                  type="button"
-                  onClick={() => pasteText(c.text)}
-                  title={`Paste: ${c.text}`}
-                  className="group/q flex items-center gap-1 pl-1 pr-2 py-0.5 rounded-full border border-white/10 bg-white/[0.05] hover:border-white/25 hover:bg-white/[0.12] transition-colors"
-                >
-                  <span className="flex items-center justify-center w-4 h-4 rounded-full bg-white/[0.08] group-hover/q:bg-white/[0.16] text-[10px] leading-none transition-colors">
-                    {c.symbol}
-                  </span>
-                  <span className="text-[10px] font-medium text-[#cbd5e1] group-hover/q:text-white transition-colors">
-                    {c.label}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
+          {!tile.has_reservation && <button type="button" onClick={() => pasteText(ASK_REQUEST_TEXT)} className="mb-1 rounded-full border border-amber-400/25 bg-amber-500/10 px-3 py-1.5 text-[11px] font-medium text-amber-200">📩 Ask to request</button>}
 
           {/* AI draft — its OWN box. Tap to copy it into the message box below;
               it never auto-fills the compose box and is never sent on its own. */}
@@ -2327,7 +2466,7 @@ export function ReplyModal({
               {draft && (
                 <button
                   type="button"
-                  onClick={copyAIDraft}
+                  onClick={onCopyDraft}
                   title="Copy this draft into the message box"
                   className={`block w-full text-left px-3 pb-2.5 ${
                     draft.length > 400 ? "text-[12px]" : draft.length > 240 ? "text-[13px]" : "text-sm"
@@ -2397,33 +2536,20 @@ export function ReplyModal({
           {copiedDraftStale && <div role="alert" className="mb-2 rounded-lg border border-amber-400/30 bg-amber-500/10 p-2 text-xs text-amber-100">
             The copied AI reply is out of date. Your text is kept. Clear it to write your reply, or clear it and copy a fresh draft.
           </div>}
-          <textarea
-            value={text}
-            onChange={(e) => {setText(e.target.value);if(!e.target.value.trim())setComposeApproval(null);}}
-            placeholder="Write a reply…"
-            rows={3}
-            // text-[16px]: iOS Safari zooms the page when a focused input is
-            // <16px — keep it exactly 16 to stop the zoom-on-type.
-            className="w-full resize-y rounded-xl bg-black/35 border border-white/10 px-3.5 py-2.5 text-[16px] text-[#eef1f5] placeholder-[#5b6170] focus:outline-none focus:border-white/25 focus:ring-2 focus:ring-white/[0.04]"
-          />
-          <div className="flex items-center gap-2">
-            {!draft && !drafting && (
-              <button
-                onClick={onGenerate}
-                className="text-xs px-3 py-2 rounded-lg bg-white/[0.06] text-[#c5cad3] hover:bg-white/[0.12] disabled:opacity-50"
-              >
-                {draftReview ? "↻ Retry after review" : "✨ Draft (AI)"}
-              </button>
-            )}
-            <span className="text-[11px] text-[#6b7280] hidden sm:block">Nothing sends until you hit Send</span>
-            <button
-              onClick={onSend}
-              disabled={sending || !text.trim() || copiedDraftStale}
-              className="ml-auto text-[13px] font-semibold px-6 py-2 rounded-lg text-white disabled:opacity-40 transition-transform active:scale-[0.98]"
-              style={{ background: accent, boxShadow: `0 4px 14px -4px ${accent}99` }}
-            >
-              {sending ? "Sending…" : "Send"}
-            </button>
+          <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
+            {([ ["location","📍","Location"], ["times","🕒","Times"], ["delivery","🚚","Delivery info"] ] as const).map(([key, icon, label]) => <button key={key} type="button" onClick={() => pasteQuickSlot(key)} className="shrink-0 rounded-full border border-white/10 bg-white/[0.045] px-3 py-1.5 text-[11px] font-medium text-[#cbd0d8] hover:border-white/20 hover:bg-white/[0.09]">{icon} {label}</button>)}
+            <button type="button" onClick={() => openQuickSlot("location")} title="Customize these quick replies for this account" className="shrink-0 rounded-full border border-white/10 px-2.5 py-1.5 text-[11px] text-[#9299a7]">Customize</button>
+          </div>
+          {quickSlot && <div className="absolute bottom-[calc(100%+0.5rem)] left-3 right-3 z-30 rounded-2xl border border-white/10 bg-[#191c24] p-3 shadow-2xl sm:left-auto sm:right-4 sm:w-[min(24rem,calc(100vw-2rem))]">
+            <div className="mb-2 flex items-center justify-between"><div className="text-xs font-semibold text-white">Account quick replies</div><button type="button" onClick={() => setQuickSlot(null)} aria-label="Close quick reply editor" className="h-8 w-8 rounded-lg text-xl text-[#9aa0ad] hover:bg-white/10">×</button></div>
+            <div className="mb-2 flex gap-1">{([ ["location","Location"], ["times","Times"], ["delivery","Delivery"] ] as const).map(([key,label]) => <button key={key} type="button" onClick={() => openQuickSlot(key)} className={`rounded-full px-2.5 py-1 text-[10px] ${quickSlot===key?"bg-white/15 text-white":"bg-white/[0.04] text-[#969eae]"}`}>{label}</button>)}</div>
+            <textarea value={quickDraft} onChange={(e) => setQuickDraft(e.target.value)} rows={4} placeholder="Write account-specific text…" className="w-full rounded-xl border border-white/10 bg-black/30 p-3 text-[15px] text-white placeholder:text-[#697080] focus:outline-none focus:border-white/25" />
+            <div className="mt-2 flex items-center justify-between gap-2"><span className="text-[10px] text-[#7d8492]">Saved for {accountLabel(cannedAccountSlug)}</span><button type="button" onClick={() => void saveQuickPreset()} disabled={!quickDraft.trim()} className="rounded-full bg-white px-4 py-2 text-[11px] font-semibold text-[#17191f] disabled:opacity-40">Save & insert</button></div>
+          </div>}
+          <button type="button" onClick={onGenerate} disabled={drafting} title="Draft a reply from this conversation context" className="inline-flex min-h-10 items-center justify-center gap-2 rounded-full border border-[#9b7cff]/35 bg-[#9b7cff]/12 px-4 text-[12px] font-semibold text-[#d2c2ff] hover:bg-[#9b7cff]/20 disabled:opacity-45">{drafting ? "Drafting…" : draftReview ? "↻ Retry AI reply" : "✨ AI reply draft"}</button>
+          <div className="rounded-[1.4rem] border border-white/10 bg-black/25 p-2 focus-within:border-white/20">
+            <textarea value={text} onChange={(e) => {setText(e.target.value);if(!e.target.value.trim())setComposeApproval(null);}} placeholder="Write a reply…" rows={3} className="w-full resize-y bg-transparent px-3 py-2 text-[16px] leading-relaxed text-[#eef1f5] placeholder-[#697080] focus:outline-none" />
+            <div className="flex items-center gap-2 px-1 pb-1"><span className="hidden text-[10px] text-[#6b7280] sm:block">Nothing sends until you tap Send</span><button onClick={onSend} disabled={sending || !text.trim() || copiedDraftStale} className="ml-auto min-h-10 rounded-full px-6 text-[13px] font-semibold text-white disabled:opacity-40 active:scale-[0.98]" style={{ background: accent, boxShadow: `0 4px 14px -4px ${accent}99` }}>{sending ? "Sending…" : "Send"}</button></div>
           </div>
           {note && (
             <div className={`text-xs ${note.startsWith("✓") ? "text-emerald-400" : "text-amber-400"}`}>{note}</div>
@@ -2440,6 +2566,7 @@ export function ReplyModal({
 
 export function ReplyInbox() {
   const { activeAccountSlug } = useAccount();
+  const loadDbCinemaInbox = useAction(dbCinemaInboxRef);
   // Persisted "count pending bookings in the double-booking check" toggle.
   const settings = useQuery(api.settings.get, {});
   const updateSettings = useMutation(api.settings.update);
@@ -2455,12 +2582,39 @@ export function ReplyInbox() {
     messagesWithinDays: 5,
     includePending,
   }) as ReplyTileData[] | undefined;
+  const [dbCinemaRows, setDbCinemaRows] = useState<ReplyTileData[]>([]);
+  const [dbCinemaLoadFailed, setDbCinemaLoadFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const refresh = async () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const rows = await loadDbCinemaInbox({});
+        if (alive) {
+          setDbCinemaRows(rows as ReplyTileData[]);
+          setDbCinemaLoadFailed(false);
+        }
+      } catch {
+        if (alive) setDbCinemaLoadFailed(true);
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 120_000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [loadDbCinemaInbox]);
 
   const [openId, setOpenId] = useState<string | null>(null);
+  const closeModal = useCallback(() => setOpenId(null), []);
   // Last-known row for the open thread, so the overlay survives the thread
   // leaving the queue after a send/approve (see `open` below).
   const openCacheRef = useRef<ReplyTileData | null>(null);
   const [acted, setActed] = useState<Set<string>>(new Set());
+  const [dbDismissedAt, setDbDismissedAt] = useState<Record<string, number>>({});
   const [now, setNow] = useState(() => Date.now());
   // Renters with a pickup/return within ±60 min — the pinned current-rental bar. Bump
   // `_tick` each minute (via `now`) so the time-window query re-runs live.
@@ -2470,15 +2624,46 @@ export function ReplyInbox() {
   }) as
     | Array<{ thread_id: string | null; renter_name: string; items: string[]; kind: "pickup" | "return"; date: string; time: string; minutes_away: number }>
     | undefined;
+  const dbHandoffs = dbCinemaRows.flatMap((tile) => ([
+    { timestamp: tile.start_at, kind: "pickup" as const },
+    { timestamp: tile.end_at, kind: "return" as const },
+  ]).flatMap(({ timestamp, kind }) => {
+    if (!timestamp) return [];
+    const minutes = Math.round((timestamp - now) / 60_000);
+    if (Math.abs(minutes) > 60) return [];
+    const when = new Date(timestamp);
+    return [{
+      thread_id: tile.thread_id,
+      renter_name: tile.renter_name,
+      items: tile.items.map((item) => item.name),
+      kind,
+      date: when.toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
+      time: when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      minutes_away: minutes,
+    }];
+  }));
+  const currentHandoffs = [...(handoffs ?? []), ...dbHandoffs];
   const [mounted, setMounted] = useState(false);
   // Default to "To reply" so chats I already answered (owner spoke last) DON'T
   // clutter the view — only new requests + renters waiting on me.
   const [filter, setFilter] = useState<"todo" | "requests" | "all">("todo");
-  const [sortBy, setSortBy] = useState<"newest" | "oldest" | "waiting">("newest");
+  const [sortBy, setSortBy] = useState<"newest" | "oldest" | "waiting">("waiting");
   const [testMode, setTestMode] = useState(false);
   const [showManager, setShowManager] = useState(false);
 
   useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    try {
+      const restored: Record<string, number> = {};
+      for (let index = 0; index < window.localStorage.length; index++) {
+        const key = window.localStorage.key(index);
+        if (!key?.startsWith("rm-quick-reply-dismissed:dbcinema:")) continue;
+        const value = Number(window.localStorage.getItem(key));
+        if (Number.isFinite(value)) restored[key.slice("rm-quick-reply-dismissed:".length)] = value;
+      }
+      setDbDismissedAt(restored);
+    } catch { /* browser storage can be disabled */ }
+  }, []);
   // Yield to a tapped notification: when the SW asks to deep-link to a thread,
   // close this widget's own modal so the deep-link host (z-[300]) is the only
   // chat showing — otherwise a stale widget modal would sit behind it.
@@ -2507,7 +2692,11 @@ export function ReplyInbox() {
   }, []);
 
   const onActed = (id: string) => setActed((p) => new Set(p).add(id));
-  const all = (queue ?? []).filter((t) => !acted.has(t.thread_id));
+  const all = [...(queue ?? []), ...dbCinemaRows].filter((t) => {
+    if (acted.has(t.thread_id)) return false;
+    const dismissedAt = dbDismissedAt[t.thread_id];
+    return t.source !== "dbcinema_web" || dismissedAt == null || t.last_activity_at > dismissedAt;
+  });
   // A request still "needs me" only until I've replied/approved (owner-last).
   const pendingRequest = (t: ReplyTileData) =>
     t.kind === "request" && t.last_sender !== "owner" && !isResolvedClosed(t);
@@ -2519,12 +2708,31 @@ export function ReplyInbox() {
   const sorted = [...visible].sort((a, b) => {
     if (sortBy === "newest") return (b.last_activity_at ?? 0) - (a.last_activity_at ?? 0);
     if (sortBy === "oldest") return (a.last_activity_at ?? 0) - (b.last_activity_at ?? 0);
-    // "waiting": longest-unanswered first — renters waiting on me, oldest message up top.
+    // "waiting": longest-unanswered first, then the highest owner earnings.
     const aw = a.last_sender === "renter" ? 0 : 1;
     const bw = b.last_sender === "renter" ? 0 : 1;
     if (aw !== bw) return aw - bw;
-    return (a.last_renter_msg_at ?? 0) - (b.last_renter_msg_at ?? 0);
+    const waiting = (a.last_renter_msg_at ?? 0) - (b.last_renter_msg_at ?? 0);
+    if (waiting) return waiting;
+    const earnings = (b.net_to_owner_gbp ?? b.estimate_earnings_gbp ?? -1) - (a.net_to_owner_gbp ?? a.estimate_earnings_gbp ?? -1);
+    return earnings || ((b.last_activity_at ?? 0) - (a.last_activity_at ?? 0));
   });
+  const duplicateIds = new Set<string>();
+  const requestGroups = new Map<string, ReplyTileData[]>();
+  for (const row of sorted) {
+    if (!pendingRequest(row) || !row.renter_identity) continue;
+    const group = requestGroups.get(row.renter_identity) ?? [];
+    group.push(row);
+    requestGroups.set(row.renter_identity, group);
+  }
+  for (const group of requestGroups.values()) {
+    if (group.length < 2) continue;
+    const ranked = [...group].sort((a, b) =>
+      (b.net_to_owner_gbp ?? b.estimate_earnings_gbp ?? -1) - (a.net_to_owner_gbp ?? a.estimate_earnings_gbp ?? -1),
+    );
+    ranked.slice(1).forEach((row) => duplicateIds.add(row.thread_id));
+  }
+  const displayRows = [...sorted.filter((row) => !duplicateIds.has(row.thread_id)), ...sorted.filter((row) => duplicateIds.has(row.thread_id))];
   // `open` resolves against the RAW queue (not `all`/visible) so approving or
   // declining a card — which drops it from `all` via onActed — does NOT close
   // the chat overlay. Sending ALSO drops the thread from the queue (owner now
@@ -2572,6 +2780,8 @@ export function ReplyInbox() {
             {requests} request{requests > 1 ? "s" : ""}
           </span>
         )}
+        {dbCinemaRows.length > 0 && <span className="text-[10px] font-semibold px-2 py-1 rounded-full bg-[#b28cff]/10 text-[#c9adff] ring-1 ring-[#b28cff]/25">DB Cinema · {dbCinemaRows.length}</span>}
+        {dbCinemaLoadFailed && <span title="Could not refresh DB Cinema chats" className="text-[10px] px-2 py-1 rounded-full bg-amber-500/10 text-amber-300">DB Cinema offline</span>}
         <div className="ml-auto flex items-center gap-1.5 flex-wrap justify-end">
           <button
             onClick={() => updateSettings({ availability_include_pending: !includePending })}
@@ -2609,13 +2819,13 @@ export function ReplyInbox() {
       </div>
 
       {/* Current rentals — automatic cards from one hour before through one hour after. */}
-      {handoffs && handoffs.length > 0 && (
+      {currentHandoffs.length > 0 && (
         <div className="mb-3 rounded-xl border border-amber-400/30 bg-amber-500/[0.08] p-2">
           <div className="text-[10.5px] font-semibold uppercase tracking-wide text-amber-300/90 mb-1.5 px-1">
             📍 Current rentals — tap to text
           </div>
           <div className="flex gap-2 overflow-x-auto pb-0.5">
-            {handoffs.map((h) => (
+            {currentHandoffs.map((h) => (
               <button
                 key={`${h.thread_id}-${h.kind}-${h.date}-${h.time}`}
                 onClick={() => h.thread_id && setOpenId(h.thread_id)}
@@ -2676,11 +2886,11 @@ export function ReplyInbox() {
         >
           <option value="newest">Newest first</option>
           <option value="oldest">Oldest first</option>
-          <option value="waiting">Longest waiting</option>
+          <option value="waiting">Longest waiting · best earnings</option>
         </select>
       </div>
       {queue === undefined ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+        <div className="grid grid-cols-1 gap-2.5">
           {Array.from({ length: 6 }).map((_, i) => (
             <SkeletonBlock key={i} className="h-44 w-full rounded-2xl" />
           ))}
@@ -2697,8 +2907,8 @@ export function ReplyInbox() {
           icon="✅"
         />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 max-h-[44rem] overflow-y-auto p-0.5">
-          {sorted.map((tile) => (
+        <div className="grid grid-cols-1 gap-2.5 max-h-[54rem] overflow-y-auto p-0.5">
+          {displayRows.map((tile) => (
             <ReplyCard
               key={tile.thread_id}
               tile={tile}
@@ -2706,12 +2916,13 @@ export function ReplyInbox() {
               onOpen={() => setOpenId(tile.thread_id)}
               onActed={onActed}
               dryRun={testMode}
+              duplicate={duplicateIds.has(tile.thread_id)}
             />
           ))}
         </div>
       )}
       {mounted && open && (
-        <ReplyModal tile={open} onClose={() => setOpenId(null)} onActed={onActed} dryRun={testMode} />
+        <ReplyModal tile={open} onClose={closeModal} onActed={onActed} dryRun={testMode} />
       )}
       {mounted && showManager && (
         <CannedManager accountSlug={activeAccountSlug} onClose={() => setShowManager(false)} />
