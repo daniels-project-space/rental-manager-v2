@@ -1,3 +1,4 @@
+import { displayImageMappings } from "./listing_display_catalog";
 import { describe, it, expect } from "vitest";
 import {
   requestedImageItems,
@@ -108,5 +109,61 @@ describe("exact equipment image identity", () => {
     );
     expect(rows).toHaveLength(1);
     expect(rows[0].image_urls).toEqual(["/old", "/fx6", "/fresh", "/second"]);
+  });
+});
+
+describe("exact mapped model image fallback", () => {
+  const map = (
+    id: number,
+    components: Array<{ item_id: string; qty: number }>,
+    account_slug = "leo",
+  ) => ({ product_id: id, account_slug, components });
+  it("falls back to real kit photographs for the exact model without confusing look-alikes", () => {
+    const choices = displayImageMappings("fx3", "leo", [
+      map(1, [{ item_id: "blackmagic", qty: 1 }]),
+      map(3, [
+        { item_id: "fx3", qty: 1 },
+        { item_id: "lens", qty: 1 },
+      ]),
+      map(2, [{ item_id: "fx3", qty: 1 }]),
+      map(4, [{ item_id: "fx30", qty: 1 }]),
+    ]);
+    expect(choices.map((c) => c.product_id)).toEqual([2, 3]);
+  });
+  it("accepts exact multi-copy mappings for display while preserving their quantities", () => {
+    const original = map(5, [
+      { item_id: "osmo5", qty: 2 },
+      { item_id: "card", qty: 2 },
+    ]);
+    expect(displayImageMappings("osmo5", "leo", [original])).toEqual([
+      original,
+    ]);
+    expect(original.components[0].qty).toBe(2);
+  });
+  it("prefers exact primary-model images over a kit that only contains that accessory", () => {
+    expect(
+      displayImageMappings("lens", "leo", [
+        map(1, [
+          { item_id: "camera", qty: 1 },
+          { item_id: "lens", qty: 1 },
+        ]),
+        map(2, [
+          { item_id: "lens", qty: 1 },
+          { item_id: "card", qty: 1 },
+        ]),
+      ])[0].product_id,
+    ).toBe(2);
+  });
+  it("excludes invalid quantities and bounds indexed image reads to two mappings", () => {
+    const all = [
+      map(0, [{ item_id: "fx3", qty: 0 }]),
+      map(1, [{ item_id: "fx3", qty: NaN }]),
+      ...Array.from({ length: 10 }, (_, i) =>
+        map(i + 2, [{ item_id: "fx3", qty: 1 }]),
+      ),
+    ];
+    expect(
+      displayImageMappings("fx3", "leo", all).map((c) => c.product_id),
+    ).toEqual([2, 3]);
   });
 });

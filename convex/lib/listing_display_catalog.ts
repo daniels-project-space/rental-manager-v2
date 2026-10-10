@@ -3,6 +3,35 @@ import type { QueryCtx } from "../_generated/server";
 import { listingDisplayName } from "./item_display_name";
 
 /** One shared catalog per query; never an N-per-card database lookup. */
+/** A bundle may supply a photograph of its exact mapped model. This is display
+ * context only: neither quantities nor the stock identity change. */
+export function displayImageMappings<
+  T extends {
+    account_slug: string;
+    product_id: number;
+    components?: Array<{ item_id: string; qty: number }>;
+  },
+>(itemId: string, slug: string, mappings: T[]): T[] {
+  const primary = (m: T) => m.components?.[0]?.item_id === itemId;
+  const single = (m: T) =>
+    m.components?.length === 1 && m.components[0].qty === 1;
+  return mappings
+    .filter((m) =>
+      m.components?.some(
+        (c) => c.item_id === itemId && Number.isFinite(c.qty) && c.qty > 0,
+      ),
+    )
+    .sort(
+      (a, b) =>
+        Number(single(b)) - Number(single(a)) ||
+        Number(b.account_slug === slug) - Number(a.account_slug === slug) ||
+        Number(primary(b)) - Number(primary(a)) ||
+        (a.components?.length ?? 0) - (b.components?.length ?? 0) ||
+        a.product_id - b.product_id,
+    )
+    .slice(0, 2);
+}
+
 export async function listingDisplayCatalog(ctx: QueryCtx, account?: string) {
   const [items, mappings, names] = await Promise.all([
     ctx.db.query("items").collect(),
@@ -76,22 +105,10 @@ export async function listingDisplayCatalog(ctx: QueryCtx, account?: string) {
     const item = requestedDisplayMatch(name, items);
     if (!item) return Promise.resolve([] as string[]);
     const key = `${slug}#${item._id}`;
-    // Display fallback: at most two exact one-item owner mappings per canonical
+    // Display fallback: at most two exact model owner mappings per canonical
     // model, cached across the queue. No fuzzy match or stock identity inference.
     if (!canonicalImageReads.has(key)) {
-      const exact = mappings
-        .filter(
-          (m) =>
-            m.components?.length === 1 &&
-            m.components[0].item_id === item._id &&
-            m.components[0].qty === 1,
-        )
-        .sort(
-          (a, b) =>
-            Number(b.account_slug === slug) - Number(a.account_slug === slug) ||
-            a.product_id - b.product_id,
-        )
-        .slice(0, 2);
+      const exact = displayImageMappings(String(item._id), slug, mappings);
       canonicalImageReads.set(
         key,
         Promise.all(
