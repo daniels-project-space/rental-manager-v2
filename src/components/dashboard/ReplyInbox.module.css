@@ -2218,3 +2218,14 @@
 .conversation{background:radial-gradient(at top left,#252b32,#11161c 65%)}
 .chatHeader{background:linear-gradient(150deg,#222931,#171e26)}
 @media(min-width:641px){.messages{gap:23px}.bubble{font-size:15px;line-height:1.4}.ownerMessage .bubble{font-size:15px}}
+
+/* Focused conversations use half of the desktop workspace. */
+.expandedChat { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.expandedChat .tableHeader, .expandedChat .row { min-width: 0; grid-template-columns: minmax(0,1.2fr) minmax(0,1fr) minmax(0,1.1fr) minmax(0,1fr); gap: 8px; }
+.expandedChat .row { min-height: 146px; }
+.expandedChat .tableHeader { row-gap: 10px; }
+.expandedChat .row > div { min-width: 0; }
+.expandedChat .handoffIntro { flex-shrink: 0; }
+.chatClose { opacity: 1; }
+.rowReplacement { display:block; margin-top:6px; border:1px solid #3e607d; border-radius:6px; padding:5px 6px; color:#9cd0ff; background:#1a2b3c; font-size:11px; line-height:1.2; }
+.rowReplacement:hover { background:#243f58; }

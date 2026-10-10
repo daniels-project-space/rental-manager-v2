@@ -75,11 +75,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       `[...([...document.querySelectorAll('[role=dialog]')].at(-1)??document).querySelectorAll('button')].find(e=>e.offsetParent!==null&&e.textContent.includes(${JSON.stringify(text)}))`;
     const close = `document.querySelector('[aria-label="Close conversation"]')`,
       marcus = `document.querySelector('[aria-label="Open conversation with Marcus Lee"]')`;
-    await tap(button("Test mode"));
-    await ok(
-      "test mode enabled",
-      `document.querySelector('button[aria-pressed=true]')!==null`,
-    );
+    await ok("test toggle removed", `![...document.querySelectorAll('button')].some(e=>e.textContent.includes('Test mode'))`);
     await tap(button("Pending off"));
     await ok(
       "pending stock toggle",
@@ -89,12 +85,22 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       await tap(button(filter));
       checks.push("filter " + filter);
     }
-    for (const sort of ["newest", "oldest", "waiting"]) {
+    await ev(`{window.__fixture.rows[2].last_sender='owner';window.__fixture.changed();}`);
+    await tap(button("To reply"));
+    await ok("To reply excludes answered requests", `!document.querySelector('[aria-label="Open conversation with Daniel Kim"]')`);
+    await tap(button("Requests"));
+    await ok("Requests retains requests awaiting a decision", `!!document.querySelector('[aria-label="Open conversation with Daniel Kim"]')`);
+    await ev(`{window.__fixture.rows[2].last_sender='renter';window.__fixture.rows[0].renter_image_url=null;window.__fixture.changed();}`);
+    await tap(button("All"));
+    await pause(150);
+    await ok("missing portrait loads from provider read", `window.__calls.some(c=>c.name==='renter_trust:profilePhotos')&&document.querySelector('[aria-label="Open conversation with Marcus Lee"] img').src.endsWith('/face0.png')`);
+    for (const sort of ["newest", "oldest", "waiting", "earnings", "priority"]) {
       await ev(
         `{const e=document.querySelector('[aria-label="Sort conversations"]');e.value='${sort}';e.dispatchEvent(new Event('change',{bubbles:true}));}`,
       );
       await pause(30);
       checks.push("sort " + sort);
+      if(sort==='earnings') await ok("highest earnings is first", `document.querySelector('[aria-label^="Open conversation"]').getAttribute('aria-label')==='Open conversation with Marcus Lee'`);
     }
     await tap(contains("Quick texts"));
     await ok(
@@ -150,6 +156,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       "conversation opens",
       `document.querySelector('[role=dialog]')!==null`,
     );
+    if(width===1192) await ok("chat expands to half the workspace",`(()=>{const dock=document.querySelector('[role=dialog]').parentElement,r=dock.getBoundingClientRect(),split=dock.parentElement.getBoundingClientRect();return Math.abs(r.width-(split.width-10)/2)<2})()`);
     await ok(
       "composer visible without opening drawer",
       `document.querySelector('textarea[placeholder="Write a reply…"]').offsetParent!==null`,
@@ -249,8 +256,8 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     await pause(30);
     await tap(button("Send"));
     await ok(
-      "send stays in test mode",
-      `window.__calls.some(c=>c.name==='replyInbox_actions:sendRenterReply'&&c.args.dryRun===true)`,
+      "manual send reaches native provider transport",
+      `window.__calls.some(c=>c.name==='replyInbox_actions:sendRenterReply'&&c.args.dryRun===false)`,
     );
     await tap(close);
 
@@ -278,13 +285,13 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     await tap(button("Remove"));
     await ok(
       "remove item dry run",
-      `window.__calls.some(c=>c.name==='order_edit:removeItem'&&c.args.dryRun===true)`,
+      `window.__calls.some(c=>c.name==='order_edit:removeItem'&&c.args.dryRun===false)`,
     );
     await tap(contains("Add item"));
     await tap(button("Add"));
     await ok(
       "add item dry run",
-      `window.__calls.some(c=>c.name==='order_edit:addItem'&&c.args.dryRun===true)`,
+      `window.__calls.some(c=>c.name==='order_edit:addItem'&&c.args.dryRun===false)`,
     );
     await tap(
       `document.querySelector('[title="Change the price (discount or increase)"]')`,
@@ -296,7 +303,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     await tap(button("Apply price"));
     await ok(
       "discount apply dry run",
-      `window.__calls.some(c=>c.name==='order_edit:setPrice'&&c.args.dryRun===true)`,
+      `window.__calls.some(c=>c.name==='order_edit:setPrice'&&c.args.dryRun===false)`,
     );
     await tap(button("Refund…"));
     await ev(
@@ -306,7 +313,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     await tap(contains("Refund £"));
     await ok(
       "refund dry run",
-      `window.__calls.some(c=>c.name==='order_edit:refund'&&c.args.dryRun===true)`,
+      `window.__calls.some(c=>c.name==='order_edit:refund'&&c.args.dryRun===false)`,
     );
     await tap(`document.querySelector('[title="Change the rental dates"]')`);
     await tap(button("›"));
@@ -316,7 +323,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     await tap(button("Apply dates"));
     await ok(
       "reschedule dry run",
-      `window.__calls.some(c=>c.name==='order_edit:setDates'&&c.args.dryRun===true)`,
+      `window.__calls.some(c=>c.name==='order_edit:setDates'&&c.args.dryRun===false)`,
     );
     await tap(`document.querySelector('[aria-label="Close booking editor"]')`);
     checks.push("close booking editor");
@@ -337,11 +344,11 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       }
     }
     await tap(close);
-    // Safe replacement preview/use/accept controls use only the intercepted fixture transport.
-    await tap(
-      `document.querySelector('[aria-label="Open conversation with Elena Rossi"]')`,
-    );
-    await tap(contains("Find replacement"));
+    // The list button opens a prepared proposal, with no booking or message write.
+    await ev(`{window.__fixture.rows[3].can_accept=true;window.__fixture.changed();}`);
+    await ok("unavailable row has no approve", `![...document.querySelector('[aria-label="Open conversation with Elena Rossi"]').querySelectorAll('button')].some(b=>b.textContent.trim()==='Approve')`);
+    await tap(`[...document.querySelector('[aria-label="Open conversation with Elena Rossi"]').querySelectorAll('button')].find(b=>b.textContent.trim()==='Find replacement')`);
+    await ok("two available alternatives", `document.body.textContent.includes('Sony FX3 replacement')&&document.body.textContent.includes('Canon C70 replacement')`);
     await ok(
       "replacement card and AI draft",
       `document.body.textContent.includes('Sony FX3 replacement')&&document.querySelector('textarea[placeholder="Writing a reply from this conversation…"]').value.includes('So sorry')`,
@@ -352,10 +359,10 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       `document.querySelector('textarea[placeholder="Write a reply…"]').value.includes('So sorry')`,
     );
     await tap(contains("Find replacement"));
-    await tap(button("Check replacement"));
+    await tap(button("Accept & replace item"));
     await ok(
-      "replacement accept is dry run",
-      `window.__calls.some(c=>c.name==='quick_reply_replacements:accept'&&c.args.dryRun===true)`,
+      "replacement accept uses actual operator arguments",
+      `window.__calls.some(c=>c.name==='quick_reply_replacements:accept'&&c.args.dryRun===false)`,
     );
     await tap(close);
 
@@ -418,11 +425,11 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     );
     await tap(button("Send"));
     await ok(
-      "DB Cinema send is dry run",
-      `!window.__calls.some(c=>c.name==='dbcinema_chat:sendOwnerReply')&&document.body.textContent.includes('test')`,
+      "DB Cinema send reaches website transport",
+      `window.__calls.some(c=>c.name==='dbcinema_chat:sendOwnerReply')`,
     );
     await ev(
-      `{window.__fixture.rows[1].booking_status='pending_payment';document.dispatchEvent(new Event('visibilitychange'));}`,
+      `{window.__fixture.rows[1].booking_status='confirmed';window.__fixture.rows[1].paid=true;window.__fixture.rows[1].verification_started=true;window.__fixture.rows[1].platform_booking_confirmed=false;document.dispatchEvent(new Event('visibilitychange'));}`,
     );
     await pause(150);
     await ok(
@@ -430,7 +437,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       `document.querySelector('[role=dialog] [aria-label="Booking progress: Pending"]')!==null`,
     );
     await ev(
-      `{window.__fixture.rows[1].booking_status='confirmed';document.dispatchEvent(new Event('visibilitychange'));}`,
+      `{window.__fixture.rows[1].booking_status='confirmed';window.__fixture.rows[1].platform_booking_confirmed=true;document.dispatchEvent(new Event('visibilitychange'));}`,
     );
     await pause(150);
     await ok(
@@ -459,8 +466,8 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
             x.name,
           ),
         )
-        .every((x) => x.args.dryRun === true),
-      "business operations must be fixtures with dryRun",
+        .every((x) => x.args.dryRun !== true),
+      "business operations use normal arguments through isolated fixture transport",
     );
     results.push({ width, checks, calls, errors });
     await c.closePage();

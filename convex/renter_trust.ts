@@ -1,3 +1,4 @@
+import { profileImageUrl } from "./lib/profile_image";
 /**
  * Renter trust resolver (2026-06-27) — THE correct rating source.
  *
@@ -46,6 +47,7 @@ export const applyTrust = internalMutation({
   args: {
     renter_id: v.id("renters"),
     rating: v.optional(v.number()),
+    profile_image_url: v.optional(v.string()),
     review_count: v.optional(v.number()),
     total_rentals: v.optional(v.number()),
     reviews: v.array(
@@ -57,8 +59,9 @@ export const applyTrust = internalMutation({
       }),
     ),
   },
-  handler: async (ctx, { renter_id, rating, review_count, total_rentals, reviews }) => {
+  handler: async (ctx, { renter_id, rating, profile_image_url, review_count, total_rentals, reviews }) => {
     const patch: Record<string, unknown> = { trust_checked_at: Date.now() };
+    if (profile_image_url) patch.profile_image_url = profile_image_url;
     // A 0-review renter has rating 0 on Hygglo — that's "new", NOT bad. Only
     // record a star rating when there are actually reviews behind it.
     const hasReviews = (review_count ?? 0) > 0;
@@ -152,6 +155,7 @@ export const resolveForThread = action({
       : [];
     await ctx.runMutation(internal.renter_trust.applyTrust, {
       renter_id: inp.renter_id,
+      profile_image_url: profileImageUrl(other.profileImage),
       rating,
       review_count,
       total_rentals,
@@ -175,7 +179,7 @@ export const untrustedThreads = internalQuery({
       if (!thread_id || !renter_id || out.length >= limit) return;
       if (seen.has(String(renter_id))) return;
       const renter = await ctx.db.get(renter_id);
-      if (renter && renter.trust_checked_at == null) {
+      if (renter && (renter.trust_checked_at == null || (!renter.profile_image_url && (renter.trust_checked_at ?? 0) < Date.now() - 24 * 60 * 60 * 1000))) {
         seen.add(String(renter_id));
         out.push(thread_id);
       }
@@ -216,3 +220,18 @@ export const resolveActiveTrust = internalAction({
 
 // Privileged caller counterpart; shares the original handler and validators.
 export const __service_resolveForThread = internalActionOf(resolveForThread);
+
+/** Bounded read-only portrait hydration for the visible Quick Reply queue. */
+export const profilePhotos = action({args:{thread_ids:v.array(v.string())},handler:async(ctx,{thread_ids}):Promise<Array<{thread_id:string;image_url:string|null}>>=>{
+ if(thread_ids.length>12)throw Error("At most twelve portraits per page");
+ const results:Array<{thread_id:string;image_url:string|null}>=[];
+ for(const thread_id of [...new Set(thread_ids)]) {
+   const input=await ctx.runQuery(internal.renter_trust.trustInput,{thread_id});
+   const tile = input ? null : await ctx.runQuery(internal.replyInbox.__service_getThreadById,{thread_id});
+   const account = input?.account_slug ?? tile?.account_slug;
+   if(!account){results.push({thread_id,image_url:null});continue;}
+   const detail=await fetchOrder(account,thread_id);
+   results.push({thread_id,image_url:profileImageUrl(detail?.users?.otherPart?.profileImage)??null});
+ }
+ return results;
+}});

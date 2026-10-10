@@ -594,6 +594,9 @@ export async function corePoll(
       latest_activity: payload.latest_activity,
       hygglo_system_signal: payload.hygglo_system_signal,
       hygglo_system_signal_text: payload.hygglo_system_signal_text,
+      paid: payload.paid,
+      verification_started: payload.verification_started,
+      platform_booking_confirmed: payload.platform_booking_confirmed,
     });
     // Recovery GETs are not evidence that an archived order is in the provider
     // current bucket; do not fabricate current-presence rows for them.

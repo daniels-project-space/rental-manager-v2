@@ -4,7 +4,7 @@
  * symbol button that only pastes into the composer; Daniel still presses Send.
  * The manage overlay lists/edits them. All per `account_slug`.
  */
-import { query, mutation } from "./owner_functions";
+import { query, mutation, internalMutation } from "./owner_functions";
 import { v } from "convex/values";
 
 /** All canned responses for an account, ordered. */
@@ -70,3 +70,13 @@ export const remove = mutation({
     await ctx.db.delete(id);
   },
 });
+
+/** Copy the business's existing DB Cinema texts into its independent website account once. */
+export const seedWebsite = internalMutation({args:{},handler:async(ctx)=>{
+ const existing=await ctx.db.query("canned_responses").withIndex("by_account",q=>q.eq("account_slug","dbcinema_web")).take(100);
+ const labels=new Set(existing.map(row=>row.label.trim().toLowerCase()));
+ const source=await ctx.db.query("canned_responses").withIndex("by_account",q=>q.eq("account_slug","dbcinema")).take(100);
+ let copied=0;
+ for(const row of source) {if(labels.has(row.label.trim().toLowerCase()))continue;labels.add(row.label.trim().toLowerCase());copied++;await ctx.db.insert("canned_responses",{account_slug:"dbcinema_web",label:row.label,symbol:row.symbol,text:row.text,sort:row.sort,created_at:Date.now(),updated_at:Date.now()});}
+ return {copied};
+}});

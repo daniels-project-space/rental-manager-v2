@@ -84,7 +84,7 @@ export interface HyggloOrderDetail {
   activities?: HyggloActivity[];
   users?: {
     me?: { id?: number | string; name?: string };
-    otherPart?: { name?: string; id?: number | string };
+    otherPart?: { name?: string; id?: number | string; profileImage?: unknown };
   };
   labels?: { otherPart?: string };
   rentalPeriod?: { startDateUTC?: string; endDateUTC?: string };
@@ -314,6 +314,9 @@ export interface ReservationUpsertArgs {
   latest_activity?: number | string;
   hygglo_system_signal?: HyggloSystemSignal;
   hygglo_system_signal_text?: string;
+  paid?: boolean;
+  verification_started?: boolean;
+  platform_booking_confirmed?: boolean;
 }
 
 /**
@@ -348,6 +351,9 @@ export interface ReservationPayload {
   order: HyggloOrderDetail;
   hygglo_system_signal?: HyggloSystemSignal;
   hygglo_system_signal_text?: string;
+  paid?: boolean;
+  verification_started?: boolean;
+  platform_booking_confirmed?: boolean;
 }
 
 /** Mirror of one element of `messageArgs` (convex/hygglo.ts upsertMessages). */
@@ -364,6 +370,7 @@ export interface MessagePayload {
 
 /** Mirror of one element of `upsertRentersBatch({ renters: [...] })`. */
 export interface RenterPayload {
+  profile_image_url?: string;
   hygglo_user_id?: string;
   display_name: string;
 }

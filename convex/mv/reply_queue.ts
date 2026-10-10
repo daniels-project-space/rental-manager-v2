@@ -39,7 +39,7 @@ import {
 // Even with no new message, rebuild at least this often so Hygglo-side status
 // changes (renter paid → confirmed, etc.) that arrive with no chat message still
 // reconcile. Bounds the worst-case staleness of the status badge.
-const REPLY_QUEUE_BACKSTOP_MS = 30 * 60 * 1000;
+const REPLY_QUEUE_BACKSTOP_MS = 5 * 60 * 1000;
 
 export const refresh = internalAction({
   // `force` bypasses skip-when-clean (used by the user-action kicks so a
