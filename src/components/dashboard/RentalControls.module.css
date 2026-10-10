@@ -381,7 +381,7 @@
   color: #a9c9df;
   line-height: 1.6;
 }
-@media (min-width: 1100px) {
+@media (min-width: 1050px) {
   .panel {
     width: 300px;
   }
@@ -438,4 +438,156 @@
     bottom: 0;
     max-height: calc(100% - 55px);
   }
+}
+.header button {
+  width: auto;
+  height: auto;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.setItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  min-width: 0;
+}
+.cards .setItem img,
+.cards .setItem > .noImage {
+  width: 60px;
+  height: 64px;
+  flex-shrink: 0;
+  object-fit: contain;
+}
+.setItem > span {
+  min-width: 0;
+}
+.setItem b,
+.setItem small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.setItem b {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.originals {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+@media (min-width: 1050px) {
+  [data-docked="true"] .panel {
+    position: static;
+    inset: auto;
+    width: 100%;
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+    height: 100%;
+    box-shadow: none;
+    border-radius: 10px;
+  }
+  .cards {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 1099px) {
+  .header {
+    padding-right: 60px;
+    align-items: flex-start;
+  }
+  .header button {
+    white-space: normal;
+  }
+}
+/* Pass 2: measured sections with typography inherited from the conversation. */
+.panel {
+  background: #101820;
+  border-color: #2c4050;
+  font-family: "Quick Reply Inter", Arial, sans-serif;
+}
+.header {
+  padding: 18px 16px;
+}
+.header h3 {
+  font-size: 18px;
+  font-weight: 600;
+}
+.scroll {
+  padding: 16px;
+}
+.identity strong {
+  font-size: 15px;
+}
+.identity {
+  gap: 12px;
+}
+.progress {
+  padding: 12px 0;
+  margin: 12px 0;
+  border-bottom: 1px solid #253440;
+}
+.scroll h4 {
+  margin: 16px 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.cards button {
+  border-radius: 10px;
+  background: #17232e;
+  padding: 14px;
+  gap: 12px;
+}
+.footer {
+  padding: 14px;
+  background: #17232e;
+  border-color: #253440;
+}
+/* Pass 3: section rhythm and complete-set hierarchy. */
+.scroll {
+  padding: 16px;
+}
+.progress {
+  margin: 10px 0;
+  padding: 8px 0 14px;
+}
+.scroll h4 {
+  margin: 12px 0 8px;
+  line-height: 1.4;
+}
+.header small {
+  display: none;
+}
+.header h3 {
+  margin: 0;
+}
+.cards {
+  gap: 10px;
+}
+.original {
+  padding: 12px;
+  background: #17232e;
+  border-radius: 10px;
+}
+.original strong {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.original small {
+  color: #99afc0;
+}
+.footer h4 {
+  display: none;
+}
+.footer > div {
+  gap: 6px;
+}
+.footer button {
+  font-size: 11px;
+  border-radius: 8px;
+  padding: 8px 10px;
 }

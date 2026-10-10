@@ -18,7 +18,7 @@ import { validateRenterBotOutput } from "../src/lib/renter-bot-output";
 import { describe, expect, it, vi } from "vitest";
 import { setDraftReview, setDraft, threadsNeedingDraft, claimDraftGeneration, releaseDraftGeneration, getDraftApprovalContext, recheckCopiedDraftStock } from "./replyInbox";
 import { generateDraft, sendRenterReply } from "./replyInbox_actions";
-import {get_renter_context,select_rental_request,performJointStockCheck,check_availability,get_negotiation_stance,get_listing_context,find_owned_alternatives,lookup_pricing} from './renter_bot_tools';
+import {get_renter_context,select_rental_request,performJointStockCheck,check_availability,get_negotiation_stance,get_listing_context,find_owned_alternatives,__service_basket_replacement_candidates,lookup_pricing} from './renter_bot_tools';
 import { draftContextKey } from "./lib/draft_review";
 import { canonicalGenerationError, generationFailure } from "./lib/canonical_generation_error";
 
@@ -62,6 +62,32 @@ describe("Native independent hire budget qualification",()=>{
   const args={account_slug:"leo",kind:"camera",item_name:"Sony FX3",lens_mount:"E",camera_requirements:{sensor_format:"full_frame",recording:{resolution:"uhd_4k",min_fps:30,full_width:true,internal:true}},start_date:"2026-10-20",end_date:"2026-10-21",quantity:1,booking_use:"standalone",max_rental_total_gbp:65};
   return {...f,ids,args};
  }
+ it("quick reply infers camera requirements without also requiring a lens",async()=>{
+  const f=await fixture();
+  for(const row of f.rows.values())if(row.table==="items")await f.ctx.db.patch(row._id,{replacement_cost_gbp:row.name_canonical==="Sony FX3"?2500:1000});
+  const {max_rental_total_gbp,booking_use,camera_requirements,...args}=f.args;
+  const result=await invoke(__service_basket_replacement_candidates,f.ctx,args);
+  expect(result.alternatives.map((a:any)=>a.name)).toEqual(expect.arrayContaining(["Sony A7 V","Sony A7 III"]));
+  expect(result.lens_requirements_specified).toBe(false);
+  expect(result.alternatives.some((a:any)=>a.name==="Canon R5")).toBe(false);
+  // The old caller supplied both empty requirement objects, requiring a camera to also be a lens.
+  const contradictory=await invoke(find_owned_alternatives,f.ctx,{...args,camera_requirements:{},lens_requirements:{}});
+  expect(contradictory.alternatives).toEqual([]);
+ });
+ it("basket replacement uses the freshly read order identities and omits all unavailable originals",async()=>{
+  const f=await fixture();
+  for(const row of f.rows.values())if(row.table==="items")await f.ctx.db.patch(row._id,{replacement_cost_gbp:row.name_canonical==="Sony FX3"?2500:1000});
+  const booking=await f.ctx.db.insert("reservations",{hygglo_order_id:"basket-thread",account_slug:"leo",status:"confirmed",start_date:"2026-10-20",end_date:"2026-10-21",hygglo_items:[{name:"Sony FX3",qty:1},{name:"Unavailable lens",qty:1}]});
+  const {max_rental_total_gbp,booking_use,camera_requirements,...args}=f.args;
+  const query={...args,thread_id:"basket-thread",booking_use:"replacement",omit_product_ids:[10,99]};
+  expect((await invoke(__service_basket_replacement_candidates,f.ctx,query)).alternatives).toEqual([]);
+  const fresh={...query,basket_lines:[{name:"Sony FX3",qty:1,product_id:10},{name:"Unavailable lens",qty:1,product_id:99}]};
+  const options=await invoke(__service_basket_replacement_candidates,f.ctx,fresh);
+  expect(options.alternatives.length).toBeGreaterThan(0);
+  expect(options.alternatives.every((item:any)=>item.availability?.available===true)).toBe(true);
+  await f.ctx.db.patch(booking,{status:"cancelled"});
+  expect((await invoke(__service_basket_replacement_candidates,f.ctx,fresh)).alternatives).toEqual([]);
+ });
  it("filters a verified over-budget offer while retaining an exactly priced suitable alternative",async()=>{
   const f=await fixture(),r=await invoke(find_owned_alternatives,f.ctx,f.args);
   expect(r.alternatives.map((a:any)=>[a.name,a.quote.listed_total_gbp])).toEqual([["Sony A7 III",56]]);

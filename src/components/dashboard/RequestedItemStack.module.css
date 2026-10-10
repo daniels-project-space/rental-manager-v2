@@ -43,76 +43,46 @@
   display: grid;
   place-items: center;
 }
-.popover {
-  position: fixed;
-  z-index: 610;
-  width: min(340px, calc(100vw - 16px));
-  display: flex;
-  flex-direction: column;
-  border: 1px solid #465d70;
-  border-radius: 13px;
-  background: #14212b;
-  color: #eff5fb;
-  box-shadow: 0 14px 50px #0009;
-  overflow: hidden;
+.container {
+  min-width: 0;
+  width: 100%;
+}
+.container[data-expanded="true"] .stack {
+  margin-bottom: 8px;
+}
+.expansion {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(70px, 1fr));
+  gap: 10px;
+  padding: 6px 0;
+  width: 100%;
   text-align: left;
 }
-.popover header {
+.expansion article {
+  min-width: 0;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px;
-  border-bottom: 1px solid #304351;
-  font-size: 13px;
+  flex-direction: column;
+  gap: 5px;
 }
-.popover header button {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: 1px solid #41576a;
-  background: #21323f;
-  color: white;
-  font-size: 23px;
-  cursor: pointer;
-}
-.popover > div {
-  overflow: auto;
-  overscroll-behavior: contain;
-  padding: 4px 12px;
-}
-.popover article {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 0;
-  border-bottom: 1px solid #2b3d4b;
-}
-.popover article:last-child {
-  border: 0;
-}
-.popover article img,
-.missing {
-  width: 56px;
-  height: 56px;
+.expansion img,
+.expansion .missing {
+  width: 100%;
+  height: 72px;
   object-fit: contain;
-  flex-shrink: 0;
   border-radius: 8px;
   background: #20313d;
-}
-.missing {
   display: grid;
   place-items: center;
 }
-.popover article strong {
-  display: block;
-  font-size: 12px;
-  line-height: 1.5;
+.expansion strong {
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
-.popover article small {
-  display: block;
+.expansion small {
   font-size: 10px;
   color: #a1b8c8;
-  margin-top: 5px;
+  line-height: 1.4;
 }
 .empty {
   display: grid;
@@ -120,4 +90,30 @@
   width: 38px;
   height: 38px;
   color: #89a2b6;
+}
+.collapse {
+  grid-column: 1/-1;
+  border: 0;
+  background: transparent;
+  color: #91b6d3;
+  font-size: 10px;
+  text-align: left;
+  padding: 4px 0;
+  cursor: pointer;
+}
+.expansion {
+  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
+}
+.expansion article img {
+  height: 86px;
+}
+
+.expandedAnchor {
+  display: block;
+  width: 100%;
+  height: 28px;
+  text-align: left;
+  color: #a6c0d5;
+  font: inherit;
+  font-size: 10px;
 }

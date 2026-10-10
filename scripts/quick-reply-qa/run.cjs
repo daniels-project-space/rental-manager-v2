@@ -52,6 +52,27 @@ let browser, server;
   );
   server = http.createServer((request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
+    if (
+      /^\/(face|gear)\d+\.png$/.test(url.pathname) &&
+      process.env.RM_QA_IMAGE_FILES
+    ) {
+      const photo = path.join(
+        process.env.RM_QA_IMAGE_FILES,
+        path.basename(url.pathname),
+      );
+      if (fs.existsSync(photo)) {
+        const data = fs.readFileSync(photo);
+        response.setHeader(
+          "Content-Type",
+          data[0] === 0xff && data[1] === 0xd8
+            ? "image/jpeg"
+            : data.toString("ascii", 0, 4) === "RIFF"
+              ? "image/webp"
+              : "image/png",
+        );
+        return response.end(data);
+      }
+    }
     if (/^\/(face|gear)\d+\.png$/.test(url.pathname)) {
       response.setHeader("Content-Type", "image/svg+xml");
       return response.end(
@@ -76,9 +97,11 @@ let browser, server;
         ? "text/css"
         : file.endsWith(".js")
           ? "text/javascript"
-          : file.endsWith(".ttf")
-            ? "font/ttf"
-            : "text/html",
+          : file.endsWith(".woff2")
+            ? "font/woff2"
+            : file.endsWith(".ttf")
+              ? "font/ttf"
+              : "text/html",
     );
     response.end(fs.readFileSync(file));
   });
@@ -117,10 +140,13 @@ let browser, server;
   console.log(
     "Testing Quick Reply with fixture-only transport and external DNS disabled.",
   );
-  await child(process.execPath, [__dirname + "/controls.cjs"], { env });
-  await child(process.execPath, [__dirname + "/phone-close.cjs"], { env });
+  if (!process.env.RM_QA_DESIGN_ONLY) {
+    await child(process.execPath, [__dirname + "/controls.cjs"], { env });
+    await child(process.execPath, [__dirname + "/phone-close.cjs"], { env });
+  }
+  await child(process.execPath, [__dirname + "/design.cjs"], { env });
   console.log(
-    "Quick Reply controls and phone close checks passed. Receipts: " + output,
+    "Quick Reply selected fixture checks passed. Receipts: " + output,
   );
 })()
   .catch((error) => {

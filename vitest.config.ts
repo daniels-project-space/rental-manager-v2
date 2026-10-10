@@ -23,6 +23,8 @@ export default defineConfig({
     environment: "node",
     globals: false,
     include: [
+      "convex/lib/replacement_sets.test.ts",
+      "convex/quick_reply_replacements.test.ts",
       "convex/dbcinema_chat.test.ts",
       "convex/replyInbox.availability.test.ts",
       "convex/renter_trust.cache.test.ts",
