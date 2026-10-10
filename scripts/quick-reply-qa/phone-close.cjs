@@ -59,27 +59,23 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       btn = (t) =>
         `[...document.querySelector('[role=dialog]').querySelectorAll('button')].find(e=>e.offsetParent!==null&&e.textContent.includes(${JSON.stringify(t)}))`;
     const states = [];
-    for (const state of ["composer", "quick text", "calendar", "reviews"]) {
-      await tap(open);
+    for (const state of ["composer", "quick text", "calendar", "reviews", "replacement"]) {
+      await tap(state === "replacement" ? `document.querySelector('[aria-label="Open conversation with Elena Rossi"]')` : open);
+      if (state === "replacement") await tap(btn("Find replacement"));
       if (state === "reviews")
         await tap(
           `document.querySelector('[title="View all renter reviews"]')`,
         );
-      else {
+      else if (state !== "replacement") {
         await tap(
           `document.querySelector('[aria-label="Write reply or insert text file"]')`,
         );
         if (state === "quick text") await tap(btn("Customize"));
         if (state === "calendar") {
-          if (width <= 640) await tap(btn("Booking actions"));
-          else {
-            await tap(`document.querySelector('summary')`);
-            await tap(btn("Reschedule"));
-          }
-          if (width <= 640)
-            await tap(
-              `document.querySelector('[title="Change the rental dates"]')`,
-            );
+          await tap(`document.querySelector('[aria-label="Open rental controls"]')`);
+          if (!await ev(`!!document.querySelector('[aria-label="Rental controls"]')`)) throw Error("Controls did not open: "+width+"x"+height+" "+await ev(`document.body.innerText`));
+          await tap(btn("Reschedule"));
+          await tap(`document.querySelector('[title="Change the rental dates"]')`);
         }
       }
       if (mockKeyboard) {
