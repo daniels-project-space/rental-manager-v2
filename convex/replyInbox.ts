@@ -1,3 +1,4 @@
+import {requestedImageItems} from "./lib/quick_reply_requested_items";
 import {currentQuickReplyCache} from "./lib/quick_reply_cache";
 import {canonicalListingAllocation,reservedListingKeys} from "./lib/canonical_listing_allocation";
 import {resolveListingComponents} from "./lib/listing_components";
@@ -536,14 +537,14 @@ async function assembleTile(
   const renterId = reservation?.renter_id ?? conv?.renter_id ?? undefined;
   const renter = renterId ? await ctx.db.get(renterId) : null;
 
-  const latestMsg = await ctx.db
-    .query("hygglo_messages")
-    .withIndex("by_thread", (q) => q.eq("thread_id", threadId))
-    .order("desc")
-    .first();
+  // One bounded indexed read supplies the existing preview and gear mentions.
+  const mentionMessages=await ctx.db.query("hygglo_messages").withIndex("by_thread",q=>q.eq("thread_id",threadId)).order("desc").take(40);
+  const latestMsg=mentionMessages[0]??null;
 
   const sourceItems: RichItem[] = simOrder ? simOrder.items.map(i => ({ name: i.name, qty: i.qty, product_id: i.product_id, image_url: null })) : buildRichItems(reservation, conv);
   const richItems = sourceItems.map(i => ({ ...i, display_name: i.product_id != null && slug && display ? display.name(slug, i.product_id, i.name) : shortItemName(shortListingTitle(i.name)) }));
+  // Only renter text supplements display context.
+  const requestedItems=requestedImageItems(richItems,(conv?.inquiry_items??[]).map(i=>({...i,qty:i.qty??1,image_url:i.image_url??null})),mentionMessages.filter(m=>m.sender==="renter").map(m=>m.body_text??""),display?.items??[]);
   const primaryImage =
     richItems.find((i) => i.image_url)?.image_url ??
     reservation?.photos_urls?.[0] ??
@@ -690,6 +691,7 @@ async function assembleTile(
     availability,
     currency: reservation?.currency ?? "GBP",
     items: richItems,
+    requested_items: requestedItems,
     item_count: richItems.length,
     image_url: primaryImage,
     last_renter_msg_at: lastRenterAt,
@@ -783,6 +785,12 @@ async function dbCinemaRenterByVerifiedEmail(ctx: QueryCtx, email: string) {
   }
   return matches.size === 1 ? [...matches.values()][0] : null;
 }
+
+/** One catalogue read for the bounded website inbox, not one per message. */
+export const dbCinemaRequestedImages = internalQuery({
+ args:{requests:v.array(v.object({id:v.string(),items:v.array(v.object({name:v.string(),qty:v.number(),image_url:v.union(v.string(),v.null())})),texts:v.array(v.string())}))},
+ handler:async(ctx,{requests})=>{const display=await listingDisplayCatalog(ctx);return requests.slice(0,100).map(request=>({id:request.id,items:requestedImageItems(request.items,[],request.texts.slice(-40),display.items)}));},
+});
 
 /** Cross-platform renter trust only links a verified DB Cinema email to one
  *  exact Rental Manager renter record; display names never participate. */

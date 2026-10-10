@@ -1,4 +1,5 @@
 "use client";
+import {RequestedItemStack} from "./RequestedItemStack";
 import type {CSSProperties} from "react";
 import { OwnerChecksPanel } from "./OwnerChecksPanel";
 import { shortListingTitle, shortItemName } from "../../../convex/lib/item_display_name";
@@ -185,6 +186,7 @@ export interface ReplyTileData {
   availability: TileAvailability | null;
   currency: string;
   items: RichItem[];
+  requested_items?: (RichItem & {origin?:"basket"|"chat"})[];
   item_count: number;
   image_url: string | null;
   last_renter_msg_at: number;
@@ -470,7 +472,7 @@ function ItemAvailability({tile}: {tile:ReplyTileData}) {
     const check=tile.availability?.items.find(item=>item.item_index===index)??tile.availability?.items.find(item=>item.name===line.name);
     const state=check?.available;
     return <div key={`${index}-${line.name}`}><span>{line.qty}× {line.display_name??line.name}</span><strong className={state===true?styles.stockYes:state===false?styles.stockNo:styles.stockUnknown}>{state===true?"Available":state===false?"Unavailable":check?.reason??tile.availability?.reason??"Checking stock"}</strong></div>;
-  })}{tile.availability?.checked_at&&<small>Stock checked {new Date(tile.availability.checked_at).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}</small>}</div>;
+  })}{tile.requested_items?.filter(item=>item.origin==="chat").map((line,index)=><div key={`chat-${index}`}><span>{line.qty}× {line.display_name??line.name}</span><strong className={styles.stockUnknown}>Mentioned in chat · not in basket</strong></div>)}{tile.availability?.checked_at&&<small>Stock checked {new Date(tile.availability.checked_at).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}</small>}</div>;
 }
 
 function fmtDate(iso?: string | null): string | null {
@@ -814,6 +816,7 @@ function Thumb({ src, accent, size = 56 }: { src: string | null; accent: string;
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
+      data-no-zoom
       src={src}
       alt=""
       onError={() => setBroken(true)}
@@ -926,7 +929,7 @@ function ReplyCard({
         <div className="min-w-0"><strong className={styles.renterName}>{tile.renter_name}</strong><button type="button" className={styles.rating} onClick={(e) => {e.stopPropagation();onReviews();}} title="View renter reviews">{tile.renter_rating?.toFixed(1) ?? "Unrated"} <span>★</span></button>{(tile.renter_blacklisted || tile.renter_flagged) && <span className="block text-[10px] text-red-300">{tile.renter_blacklisted ? "Blacklisted" : "Flagged"}</span>}{duplicate && <span className={styles.duplicateLabel}>Duplicate · lower value</span>}</div>
       </div>
       <div className={styles.previewCell}><p>{tile.preview || statusText(tile)}</p>{tile.ai_draft_review && <span className="text-[10px] text-amber-300">Reply needs review</span>}</div>
-      <div className={styles.gearCell}><AccountTag slug={tile.account_slug} source={tile.source} /><div className={styles.gearLine}><Thumb src={tile.image_url} accent={tileAccent(tile)} size={38} /><span>{itemLineShort(tile) || "General inquiry"}</span></div></div>
+      <div className={styles.gearCell}><AccountTag slug={tile.account_slug} source={tile.source} /><div className={styles.gearLine}><RequestedItemStack items={tile.requested_items??tile.items} /><span>{itemLineShort(tile) || "General inquiry"}</span></div></div>
       <div className={styles.datesCell}>{tile.start_date ? <><span>{fmtDate(tile.start_date)}</span><span>– {fmtDate(tile.end_date ?? tile.start_date)}</span></> : <span>Dates pending</span>}</div>
       <div className={styles.waitCell}>{aw ? <><span>Waiting</span><strong style={{color:u?.glow ? u.color : "#f6be55"}}>{waited(tile.last_renter_msg_at, now)}</strong></> : <><span>Replied</span><strong className="text-emerald-300">✓</strong></>}</div>
       <div className={styles.earnCell}><span>{tile.net_to_owner_gbp != null ? "Owner earns" : "Est. earn"}</span><strong>{fmtMoney(tile.net_to_owner_gbp ?? tile.estimate_earnings_gbp) ?? "—"}</strong></div>
@@ -1808,9 +1811,10 @@ export function ReplyModal({
   const replacementStockVersion=useRef(0);
   const chooseReplacement=async(candidate:ReplacementOption,index:number)=>{
     const version=++replacementDraftVersion.current;
+    setReplacementBusy("draft");
     setReplacementChoice(candidate);setReplacementText("");setReplacementError(null);replacementRequest.current=crypto.randomUUID();
     try{const result=await draftReplacement({thread_id:tile.thread_id,item_index:index,replacement_id:candidate.id,source:tile.source,booking_id:tile.source_booking_id});if(version===replacementDraftVersion.current)setReplacementText(result.draft);}
-    catch(error){if(version===replacementDraftVersion.current)setReplacementError(error instanceof Error?error.message:"Replacement draft is unavailable.");}
+    catch(error){if(version===replacementDraftVersion.current)setReplacementError(error instanceof Error?error.message:"Replacement draft is unavailable.");}finally{if(version===replacementDraftVersion.current)setReplacementBusy(null);}
   };
   const findReplacements=async(index:number)=>{
     if(replacementBusy === "apply")return;
@@ -2183,14 +2187,14 @@ export function ReplyModal({
           progress={<StageBar t={tile}/>}
           tab={controlTab} onTab={tab=>{setControlTab(tab);setBookingAction(tab==="dates"?"dates":tab==="pricing"?"discount":null);}}
           onClose={()=>{setControlsOpen(false);setBookingAction(null);}}
-          gear={<><div className={styles.controlGear}><Thumb src={tile.image_url} accent={accent} size={68}/><div><strong>{itemLineShort(tile)||"General inquiry"}</strong><small>{tile.start_date?`${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date??tile.start_date)}`:"Dates pending"}</small><QueueAvailability tile={tile}/><b>{fmtMoney(tile.net_to_owner_gbp??tile.estimate_earnings_gbp)??"—"}</b></div></div><ItemAvailability tile={tile}/></>}
+          gear={<><div className={styles.controlGear}><RequestedItemStack items={tile.requested_items??tile.items} size={60}/><div><strong>{itemLineShort(tile)||"General inquiry"}</strong><small>{tile.start_date?`${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date??tile.start_date)}`:"Dates pending"}</small><QueueAvailability tile={tile}/><b>{fmtMoney(tile.net_to_owner_gbp??tile.estimate_earnings_gbp)??"—"}</b></div></div><ItemAvailability tile={tile}/></>}
           replacement={replacementOpen?{
-            choices:replacementChoices,selected:replacementChoice?.id??null,text:replacementText,busy:replacementBusy,error:replacementError,applied:replacementApplied,sending,
+            original:{...tile.items[replacementIndex],image_url:liveTile?.items[replacementIndex]?.image_url??tile.requested_items?.find(item=>item.origin==="basket"&&item.name===tile.items[replacementIndex]?.name)?.image_url??tile.items[replacementIndex]?.image_url??(replacementIndex===0?tile.image_url:null)},choices:replacementChoices,selected:replacementChoice?.id??null,text:replacementText,busy:replacementBusy,error:replacementError,applied:replacementApplied,sending,
             onSend:()=>{if(sending||replacementBusy||!replacementText.trim())return;void sendBody(replacementText,false).then(ok=>{if(ok){setText("");setComposeApproval(null);setControlsOpen(false);setReplacementOpen(false);}else setReplacementError("Message was not sent. Your draft is kept; review the chat error before retrying.");});},
             onChoose:id=>{const candidate=replacementChoices.find(choice=>choice.id===id);if(candidate)void chooseReplacement(candidate,replacementIndex);},
             onText:setReplacementText,onApply:()=>void applyReplacement(),
             onUseReply:()=>{setText(replacementText);setComposeApproval(null);setComposeOpen(true);setControlsOpen(false);requestAnimationFrame(()=>replyInputRef.current?.focus());},
-            itemPicker:tile.items.length>1?<label>Requested item<select aria-label="Requested replacement item" value={replacementIndex} disabled={!!replacementBusy||replacementApplied} onChange={event=>void findReplacements(Number(event.target.value))}>{tile.items.map((item,index)=><option key={index} value={index}>{item.name}</option>)}</select></label>:undefined,
+            itemPicker:tile.items.length>1?<label>Item to replace<select aria-label="Requested replacement item" value={replacementIndex} disabled={!!replacementBusy||replacementApplied} onChange={event=>void findReplacements(Number(event.target.value))}>{tile.items.map((item,index)=><option key={index} value={index} disabled={tile.availability?.items.find(check=>check.item_index===index)?.available!==false}>{item.name}{tile.availability?.items.find(check=>check.item_index===index)?.available===false?" · Unavailable":""}</option>)}</select></label>:undefined,
           }:undefined}
           editor={bookingAction&&tile.has_reservation&&tile.account_slug?<section className={styles.controlEditor}><header><strong>{({change:"Change rental",dates:"Reschedule",discount:"Discount",refund:"Refund"})[bookingAction]}</strong><button type="button" aria-label="Close booking editor" onClick={()=>{setBookingAction(null);setControlTab("gear");}}>×</button></header>{tile.source==="dbcinema_web"?<div className={styles.sourceActions}><p>Review this change in the DB Cinema rental workspace.</p>{dryRun?<p>Workspace disabled in test mode.</p>:<a target="_blank" rel="noopener noreferrer" href={`https://dbcinemarentals.com/admin?rental=${encodeURIComponent(tile.source_booking_id??"")}&action=${bookingAction}`}>Open {({change:"kit editor",dates:"reschedule",discount:"discount / refund review",refund:"refund review"})[bookingAction]} ↗</a>}<small>Changes keep DB Cinema’s payment and approval checks.</small></div>:<OrderEditor key={bookingAction} accountSlug={tile.account_slug} orderId={tile.thread_id} dryRun={dryRun} initialAction={bookingAction}/>}</section>:undefined}
           actions={<div>{tile.availability?.status==="conflict"&&!replacementOpen&&<button type="button" onClick={()=>void findReplacements(Math.max(0,tile.availability?.items.findIndex(item=>item.available===false)??0))}>Find replacement</button>}{tile.has_reservation&&tile.account_slug&&([["change","Change rental"],["dates","Reschedule"],["discount","Discount"],["refund","Refund"]] as const).map(([action,label])=><button type="button" key={action} onClick={()=>{setBookingAction(action);setControlTab(action==="dates"?"dates":action==="change"?"gear":"pricing");}}>{label}</button>)}</div>}
@@ -2203,7 +2207,7 @@ export function ReplyModal({
           </div>
           {!controlsOpen && <button type="button" className={styles.headerControls} aria-label="Open rental controls" title="Rental controls" onClick={()=>{setControlsOpen(true);setControlTab("gear");}}>⚙</button>}
           <button type="button" onClick={onClose} aria-label="Close conversation" data-testid="quick-reply-close" className={styles.chatClose}><span>×</span><small>Close</small></button>
-          <div className={styles.chatGear}><Thumb src={tile.image_url} accent={accent} size={140} /><div className={styles.chatGearDetails}><strong>{itemLineShort(tile) || "General inquiry"}</strong><div className={styles.chatDates}>{tile.start_date ? `${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date ?? tile.start_date)}` : "Dates pending"}</div><div className={styles.chatGearMeta}><QueueAvailability tile={tile} /><span>{tile.net_to_owner_gbp != null ? "Owner earns" : "Est. earn"} <b>{fmtMoney(tile.net_to_owner_gbp ?? tile.estimate_earnings_gbp) ?? "—"}</b></span></div></div></div>
+          <div className={styles.chatGear}><RequestedItemStack items={tile.requested_items??tile.items} size={100} /><div className={styles.chatGearDetails}><strong>{itemLineShort(tile) || "General inquiry"}</strong><div className={styles.chatDates}>{tile.start_date ? `${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date ?? tile.start_date)}` : "Dates pending"}</div><div className={styles.chatGearMeta}><QueueAvailability tile={tile} /><span>{tile.net_to_owner_gbp != null ? "Owner earns" : "Est. earn"} <b>{fmtMoney(tile.net_to_owner_gbp ?? tile.estimate_earnings_gbp) ?? "—"}</b></span></div></div></div>
 
           {tile.availability?.status==="conflict" && <button type="button" className={styles.replacementButton} onClick={()=>void findReplacements(Math.max(0,tile.availability?.items.findIndex(item=>item.available===false)??0))}>Find replacement <span>↗</span></button>}
           {loc && <div className={styles.chatLocation}><LocationBadge loc={loc} onOpenMap={() => setShowMap(true)} /></div>}

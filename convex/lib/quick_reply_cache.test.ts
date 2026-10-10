@@ -10,6 +10,7 @@ describe("Quick Reply cache compatibility", () => {
       currentQuickReplyCache([
         {
           request_created_at: 1,
+          requested_items: [],
           items: [{}, {}],
           availability: { items: [{}] },
         },
@@ -20,6 +21,7 @@ describe("Quick Reply cache compatibility", () => {
       currentQuickReplyCache([
         {
           request_created_at: 1,
+          requested_items: [],
           items: [{}],
           availability: {
             items: [{ available: null, reason: "Dates needed" }],

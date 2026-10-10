@@ -94,6 +94,7 @@ export function ProfilePortrait({
       >
         {photo ? (
           <img
+            data-no-zoom
             src={src}
             alt={name}
             onError={() => {
@@ -147,6 +148,7 @@ export function ProfilePortrait({
                 ×
               </button>
               <img
+                data-no-zoom
                 src={src}
                 alt={name}
                 className={styles.full}
@@ -163,6 +165,7 @@ export function ProfilePortrait({
           ) : (
             <div
               className={styles.preview}
+              data-profile-preview
               style={{ left: preview.left, top: preview.top }}
               aria-hidden="true"
             >

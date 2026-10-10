@@ -69,6 +69,7 @@ export const inbox = action({
         unreadOwner?: number;
         lastMessage?: string | null;
         lastSender?: string | null;
+        requestedGearTexts?: string[];
         createdAt?: number;
         updatedAt?: number;
       }>;
@@ -97,6 +98,8 @@ export const inbox = action({
       email: string; renter_identity: string | null; rating: number | null;
       review_count: number | null; blacklisted: boolean; flagged: boolean;
     }>;
+    const imageContexts=await ctx.runQuery(internal.replyInbox.dbCinemaRequestedImages,{requests:recentChats.map(booking=>({id:booking._id,items:(booking.items??[]).map(item=>({name:item.name?.trim()||"Rental item",qty:item.qty??1,image_url:item.heroImage??null})),texts:booking.requestedGearTexts??(booking.lastSender==="renter"?[booking.lastMessage??""]:[])}))});
+    const imagesById=new Map(imageContexts.map((row:any)=>[row.id,row.items]));
     const earningsById = new Map(earnings.map((entry) => [entry.bookingId, entry]));
     const trustByEmail = new Map(trustSummaries.map((entry) => [entry.email, entry]));
 
@@ -165,6 +168,7 @@ export const inbox = action({
           qty: Number.isSafeInteger(item.qty) && (item.qty ?? 0) > 0 ? item.qty! : 1,
           image_url: item.heroImage ?? null,
         })),
+        requested_items: imagesById.get(booking._id)??[],
         unread_owner: booking.unreadOwner ?? 0,
         last_message: booking.lastMessage!,
         last_sender: booking.lastSender ?? null,
