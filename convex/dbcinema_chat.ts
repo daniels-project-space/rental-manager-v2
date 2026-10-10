@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import {websiteSwapSnapshot} from "./lib/quick_reply_swap";
 import { action, requireOwner } from "./owner_functions";
 import { internal } from "./_generated/api";
 
@@ -7,7 +8,7 @@ type LinkedRenterReviews = { reviews: RenterTrustReview[]; lowCount: number; fet
 
 type RemoteResult<T> = { status?: string; value?: T; errorMessage?: string };
 
-async function callDbCinema<T>(kind: "query" | "mutation", path: string, args: unknown): Promise<T> {
+export async function callDbCinema<T>(kind: "query" | "mutation", path: string, args: unknown): Promise<T> {
   const url = process.env.DBCINEMA_CONVEX_URL;
   const token = process.env.DBCINEMA_ADMIN_TOKEN;
   if (!url || !token) throw new Error("DB Cinema chat is not configured.");
@@ -161,7 +162,7 @@ export const inbox = action({
         last_activity_at: booking.updatedAt!,
         last_msg_at: booking.updatedAt!,
         preview: booking.lastMessage!,
-        kind: "message" as const,
+        kind: booking.status === "pending_payment" ? "request" as const : "message" as const,
         is_request: false,
         has_reservation: true,
         can_decide: false,
@@ -299,3 +300,19 @@ export const draftReply = action({
     return { draft: result.draft.trim() };
   },
 });
+
+/** Replacement reads and explicit operator acceptance stay behind the server bridge. */
+export const replacementOptions=action({args:{booking_id:v.string(),item_index:v.number()},handler:async(ctx,a)=>{
+  await requireOwner(ctx,true);
+  return await callDbCinema<any>("query","rentalReplacements:options",{bookingId:a.booking_id,lineIndex:a.item_index});
+}});
+export const acceptReplacement=action({args:{booking_id:v.string(),replacement_id:v.string(),original:v.any(),request_id:v.string(),dryRun:v.optional(v.boolean())},handler:async(ctx,a)=>{
+  await requireOwner(ctx,true);
+  if(a.dryRun){
+    const fresh=await callDbCinema<any>("query","rentalReplacements:options",{bookingId:a.booking_id,lineIndex:a.original.lineIndex});
+    const candidate=fresh.options.find((i:any)=>i.id===a.replacement_id);
+    if(!candidate?.can_apply||websiteSwapSnapshot(candidate.original)!==websiteSwapSnapshot(a.original))throw Error("Kit or availability changed. Refresh the replacement choices.");
+    return {ok:true,dryRun:true};
+  }
+  return await callDbCinema<any>("mutation","rentalReplacements:accept",{bookingId:a.booking_id,requestId:a.request_id,lineIndex:a.original.lineIndex,oldListingId:a.original.listingId,newListingId:a.replacement_id,qty:a.original.qty,start:a.original.start,end:a.original.end});
+}});

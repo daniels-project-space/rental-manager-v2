@@ -204,3 +204,5 @@ export const replaceForAccount = internalMutation({
 
 // Privileged caller counterpart; shares the original handler and validators.
 export const __service_factsForProducts = internalQueryOf(factsForProducts);
+
+export const __service_list=internalQueryOf(list);

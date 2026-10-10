@@ -1306,6 +1306,7 @@ export const find_owned_alternatives = query({
       const verified = verifiedItemSpec(spec, it.name_canonical);
       alternatives.push({
         item_id:String(it._id),
+        image_url:it.image_url??null,
         product_id:altPid??null,
         quote: quote ? { ...quote, start_date, end_date, product_id: altPid, matched_listing: altListing?.name } : null,
         price_tiers: altTiers,

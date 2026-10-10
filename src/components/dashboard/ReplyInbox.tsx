@@ -1,4 +1,5 @@
 "use client";
+import type {CSSProperties} from "react";
 import { OwnerChecksPanel } from "./OwnerChecksPanel";
 import { shortListingTitle, shortItemName } from "../../../convex/lib/item_display_name";
 import { draftReviewSummary, sameDraftApproval, type DraftApproval, type DraftReview } from "../../../convex/lib/draft_review";
@@ -6,7 +7,7 @@ import { inclusiveRentalDays } from "../../../convex/lib/hygglo_pricing";
 /**
  * Reply Inbox (2026-06-22 v3) — cross-account "renters waiting on me".
  *
- * Minimal card grid: each card = item thumbnail + renter ★ + account + booking/
+ * Reference-matched split inbox: each card = item thumbnail + renter ★ + account + booking/
  * request context, with a large "unanswered for" timer. Urgency: calm < 20h →
  * amber ≥ 20h → red ≥ 30h → blinking red ≥ 48h. Pending rental REQUESTs always
  * surface with Approve / Decline (live, verified `accept`/`deny` verbs, gated by
@@ -24,6 +25,8 @@ import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import { useAccount } from "@/lib/account-context";
 import { accountAccent, accountLabel } from "@/lib/account-theme";
 import { Card } from "@/components/ui/Card";
+import styles from "./ReplyInbox.module.css";
+import { quickReplyStage, quickReplyDuplicateIds } from "../../../convex/lib/quick_reply_presentation";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 
@@ -438,42 +441,17 @@ function stageIndex(t: ReplyTileData): number {
 }
 /** Small, minimal progress bar: 5 segments filled up to the current stage. */
 function StageBar({ t }: { t: ReplyTileData }) {
-  if (!t.has_reservation) return null;
-  if (t.source === "dbcinema_web") {
-    const raw = (t.verification_status ?? "required").toLowerCase();
-    const failed = /fail|reject|declin/.test(raw);
-    const verified = /verified|complete|approved/.test(raw);
-    const reviewing = /pending|progress|submitted|review/.test(raw);
-    const step = failed || verified ? 3 : reviewing ? 2 : 1;
-    const label = failed ? "Identity check · needs attention" : verified ? "Identity verified" : reviewing ? "Identity check · under review" : "Identity check · required";
-    return <div className="flex flex-col gap-1 pt-0.5"><div className="flex items-center gap-[3px]">{[0,1,2].map((i) => <div key={i} className="h-[3px] flex-1 rounded-full" style={{background:failed?"rgba(248,113,113,0.7)":i<step?"#b28cff":"rgba(255,255,255,0.10)"}} />)}</div><span className={`text-[9px] uppercase tracking-[0.08em] leading-none ${failed?"text-red-300":"text-[#a898c7]"}`}>{label}</span></div>;
-  }
-  const cancelled = isResolvedClosed(t);
-  const idx = stageIndex(t);
-  const accent = accountAccent(t.account_slug);
-  return (
-    <div className="flex flex-col gap-1 pt-0.5">
-      <div className="flex items-center gap-[3px]">
-        {RENTAL_STAGES.map((_, i) => (
-          <div
-            key={i}
-            className="h-[3px] flex-1 rounded-full transition-colors"
-            style={{
-              background: cancelled
-                ? "rgba(248,113,113,0.30)"
-                : i <= idx
-                  ? accent
-                  : "rgba(255,255,255,0.10)",
-            }}
-          />
-        ))}
-      </div>
-      <span className="text-[9px] uppercase tracking-[0.08em] text-[#7a8190] leading-none">
-        {cancelled ? "Cancelled" : `${RENTAL_STAGES[idx]} · ${idx + 1}/${RENTAL_STAGES.length}`}
-      </span>
-    </div>
-  );
+  const labels = ["Enquiry", "Pending", "Confirmed"] as const;
+  const stage = quickReplyStage(t);
+  const index = stage === "closed" ? -1 : stage === "confirmed" ? 2 : stage === "pending" ? 1 : 0;
+  return <div className={styles.stepper} aria-label={`Booking progress: ${stage[0].toUpperCase()+stage.slice(1)}`}><div className={styles.steps}>{labels.map((label,i) => <div key={label} className={`${styles.step} ${i<=index ? styles.completeStep : ""}`}><small>{label}</small><span title={`${label}: ${i<=index ? "reached" : "pending"}`}>{i<=index ? "✓" : ""}</span></div>)}</div>{stage === "closed" && <small className={styles.closedStage}>Booking closed</small>}</div>;
 }
+
+function QueueAvailability({tile}: {tile:ReplyTileData}) {
+  const status = tile.availability?.status ?? "unknown";
+  return <span className={`${styles.availability} ${status === "available" ? styles.available : status === "conflict" ? styles.unavailable : styles.unknown}`} title={tile.availability?.items.map((item) => `${item.name}: ${item.free} free / ${item.requested} requested`).join("; ") || "Availability has not been confirmed"}>{status === "available" ? "Available" : status === "conflict" ? "Unavailable" : "Not checked"}</span>;
+}
+
 function fmtDate(iso?: string | null): string | null {
   if (!iso) return null;
   const d = new Date(`${iso}T00:00:00`);
@@ -489,7 +467,7 @@ function waited(ts: number, now: number): string {
   const mins = Math.max(0, Math.floor((now - ts) / 60000));
   if (mins < 60) return `${mins}m`;
   const h = Math.floor(mins / 60);
-  if (h < 24) return `${h}h`;
+  if (h < 24) return mins % 60 ? `${h}h ${mins % 60}m` : `${h}h`;
   const d = Math.floor(h / 24);
   const rh = h % 24;
   return rh ? `${d}d ${rh}h` : `${d}d`;
@@ -829,16 +807,16 @@ function Thumb({ src, accent, size = 56 }: { src: string | null; accent: string;
 }
 
 function tileAccent(tile: Pick<ReplyTileData, "source" | "account_slug">): string {
-  return tile.source === "dbcinema_web" ? "#b28cff" : accountAccent(tile.account_slug);
+  return tile.source === "dbcinema_web" ? "#b28cff" : tile.account_slug === "leo" ? "#59d6b5" : accountAccent(tile.account_slug);
 }
 function AccountTag({ slug, source }: { slug: string | null; source?: ReplyTileData["source"] }) {
-  const accent = source === "dbcinema_web" ? "#b28cff" : accountAccent(slug);
+  const accent = tileAccent({source,account_slug:slug});
   return (
     <span
-      className="inline-flex items-center text-[10px] font-semibold px-1.5 py-[3px] rounded-md lowercase tracking-wide"
-      style={{ background: `${accent}22`, color: accent }}
+      className="inline-flex items-center text-[10px] font-semibold px-1.5 py-[3px] rounded-md tracking-wide border"
+      style={{ background: `${accent}22`, color: accent, borderColor: `${accent}55` }}
     >
-      {accountLabel(slug)}
+      {source === "dbcinema_web" ? "DB Cinema" : accountLabel(slug)}
     </span>
   );
 }
@@ -852,6 +830,8 @@ function ReplyCard({
   onActed,
   dryRun,
   duplicate = false,
+  selected = false,
+  onReviews,
 }: {
   tile: ReplyTileData;
   now: number;
@@ -859,6 +839,8 @@ function ReplyCard({
   onActed: (id: string) => void;
   dryRun: boolean;
   duplicate?: boolean;
+  selected?: boolean;
+  onReviews: () => void;
 }) {
   const aw = awaitingMe(tile);
   const ds = decideState(tile);
@@ -918,199 +900,23 @@ function ReplyCard({
   }
 
   return (
-    <div
-      onClick={onOpen}
-      className={`group relative cursor-pointer rounded-xl border bg-[#151820] hover:bg-[#191d26] transition-colors p-3.5 pl-[18px] flex flex-col gap-2 ${tile.source === "dbcinema_web" ? "ring-1 ring-inset ring-[#b28cff]/10" : ""} ${duplicate ? "opacity-45 grayscale" : ""}`}
-      style={{
-        borderColor: u?.glow ? `${u.color}40` : tile.source === "dbcinema_web" ? "rgba(178,140,255,0.32)" : "rgba(255,255,255,0.07)",
-        boxShadow: u?.glow
-          ? `inset 0 1px 0 rgba(255,255,255,0.04), 0 0 0 1px ${u.color}22, 0 0 26px -10px ${u.color}66`
-          : "inset 0 1px 0 rgba(255,255,255,0.04), 0 10px 24px -16px rgba(0,0,0,0.55)",
-      }}
-    >
-      {/* account-colour identity strip */}
-      <div
-        className="absolute left-0 top-3.5 bottom-3.5 w-[3px] rounded-r-full"
-        style={{ background: tileAccent(tile) }}
-      />
-      {/* × close — hides this thread until the renter messages again */}
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          onDismiss();
-        }}
-        title="Close — hides this thread until the renter messages again"
-        aria-label="Close thread"
-        className="absolute top-1.5 right-1.5 z-10 w-7 h-7 sm:w-6 sm:h-6 rounded-full flex items-center justify-center text-[#9aa0ad] sm:text-[#7b8190] bg-white/[0.07] sm:bg-[#12151c]/80 ring-1 ring-white/10 sm:ring-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 hover:bg-white/12 hover:text-[#eef1f5] transition-all"
-      >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round">
-          <path d="M6 6l12 12M18 6L6 18" />
-        </svg>
-      </button>
-      <div className="flex gap-3 min-w-0">
-        <div className="relative shrink-0">
-          <Thumb src={tile.image_url} accent={tileAccent(tile)} size={48} />
-          {tile.renter_image_url && <img src={tile.renter_image_url} alt="Renter profile" className="absolute -right-1.5 -bottom-1.5 h-6 w-6 rounded-full border-2 border-[#151820] object-cover" />}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-start gap-1.5">
-            <span className="text-[14px] font-semibold text-[#f1f3f5] truncate leading-tight min-w-0">
-              {tile.renter_name}
-            </span>
-            {tile.renter_rating != null && (
-              <span className="shrink-0 mt-[3px]">
-                <Stars rating={tile.renter_rating} count={null} size={10} />
-              </span>
-            )}
-            {tile.renter_blacklisted && (
-              <span className="text-[9px] px-1 rounded bg-red-500/20 text-red-400 mt-0.5">BL</span>
-            )}
-            {!tile.renter_blacklisted && tile.renter_flagged && (
-              <span
-                title="Flagged renter"
-                className="text-[9px] px-1 rounded bg-amber-500/20 text-amber-400 mt-0.5"
-              >
-                ⚑
-              </span>
-            )}
-            <span className="ml-auto flex flex-col items-end leading-none flex-shrink-0 transition-[margin] mr-7 sm:mr-0 sm:group-hover:mr-6">
-              {u ? (
-                <>
-                  <span
-                    className="text-[18px] font-bold tabular-nums leading-none"
-                    style={{ color: u.color, animation: u.blink ? "rgBlink 1s step-end infinite" : undefined }}
-                  >
-                    {waited(tile.last_renter_msg_at, now)}
-                  </span>
-                  <span
-                    className="text-[9px] uppercase tracking-[0.08em] mt-1"
-                    style={{ color: `${u.color}b3` }}
-                  >
-                    {u.caption}
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span className="text-[13px] font-semibold text-emerald-400/90 leading-none">✓ replied</span>
-                  <span className="text-[9px] uppercase tracking-[0.08em] text-[#6b7280] mt-1.5">
-                    awaiting renter
-                  </span>
-                </>
-              )}
-            </span>
-          </div>
-          <div className="flex items-center gap-2 mt-1">
-            <AccountTag slug={tile.account_slug} source={tile.source} />
-            {tile.source === "dbcinema_web" && <span className="rounded-md border border-[#b28cff]/30 bg-[#b28cff]/10 px-1.5 py-[3px] text-[10px] font-semibold text-[#c9adff]">DB Cinema</span>}
-            {tile.renter_review_count != null && (
-              <span className="text-[10px] text-[#64748b]">
-                {tile.renter_review_count} review{tile.renter_review_count === 1 ? "" : "s"}
-              </span>
-            )}
-          </div>
-        </div>
+    <div onClick={onOpen} className={`${styles.row} ${selected ? styles.selected : ""} ${duplicate ? styles.duplicate : ""}`} role="button" tabIndex={0} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onOpen(); } }} aria-label={`Open conversation with ${tile.renter_name}`}>
+      <div className={styles.renterCell}>
+        <div className={styles.avatar}>{tile.renter_image_url ? <img src={tile.renter_image_url} alt={tile.renter_name} /> : <span>{tile.renter_name.split(" ").map((part) => part[0]).slice(0,2).join("")}</span>}</div>
+        <div className="min-w-0"><strong className={styles.renterName}>{tile.renter_name}</strong><button type="button" className={styles.rating} onClick={(e) => {e.stopPropagation();onReviews();}} title="View renter reviews">{tile.renter_rating?.toFixed(1) ?? "Unrated"} <span>★</span></button>{(tile.renter_blacklisted || tile.renter_flagged) && <span className="block text-[10px] text-red-300">{tile.renter_blacklisted ? "Blacklisted" : "Flagged"}</span>}{duplicate && <span className={styles.duplicateLabel}>Duplicate · lower value</span>}</div>
       </div>
-
-      <span
-        className="self-start text-[11px] font-medium px-2 py-[3px] rounded-full"
-        style={
-          tile.is_request
-            ? {
-                background: "rgba(251,191,36,0.14)",
-                color: "#fcd34d",
-                boxShadow: "inset 0 0 0 1px rgba(251,191,36,0.20)",
-              }
-            : { background: "rgba(255,255,255,0.06)", color: "#9aa0ad" }
-        }
-      >
-        {statusText(tile)}
-      </span>
-      {duplicate && <span className="w-fit rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-[#9ca3af]">Duplicate · lower value</span>}
-
-      <StageBar t={tile} />
-
-      {itemLine(tile) && (
-        <div className="text-[13px] text-[#cbd0d8] truncate">{itemLine(tile)}</div>
-      )}
-      {tile.has_reservation && contextLine(tile) && (
-        <div className="text-[11px] text-[#7a8190]">{contextLine(tile)}</div>
-      )}
-      {tile.preview && (
-        <div className="text-[12px] leading-[1.45] text-[#a3aab8] line-clamp-2">“{tile.preview}”</div>
-      )}
-      {tile.location && <LocationBadge loc={tile.location} compact />}
-      {(tile.net_to_owner_gbp != null || tile.estimate_earnings_gbp != null) && (
-        <div className="self-start">
-          <MoneyHeadline tile={tile} compact />
-        </div>
-      )}
-      {tile.availability ? (
-        <div className="pt-0.5">
-          <AvailabilityBadge a={tile.availability} compact />
-        </div>
-      ) : tile.source === "dbcinema_web" ? <AvailabilityBadge a={{status:"unknown",include_pending:false,items:[]}} compact /> : null}
-
-      <div className="flex items-center gap-2 mt-auto pt-1" onClick={(e) => e.stopPropagation()}>
-        <button
-          onClick={onOpen}
-          className="text-xs px-3 py-1.5 rounded-lg bg-white/[0.06] text-[#cbd5e1] hover:bg-white/[0.12] transition-colors"
-        >
-          💬 Reply{tile.ai_draft_review ? " · Needs review" : tile.has_draft ? " ✨" : ""}
-        </button>
-        {optimistic ? (
-          <span
-            className="ml-auto text-[11px] font-semibold"
-            style={{ color: optimistic === "approve" ? "#34d399" : "#f87171" }}
-          >
-            {optimistic === "approve" ? "✓ Approved" : "✓ Declined"}
-            {dryRun ? " (test)" : ""}
-          </span>
-        ) : (ds.canApprove || ds.canDecline) &&
-          (confirming ? (
-            <div className="ml-auto flex items-center gap-1.5">
-              <span className="text-[11px] text-[#9aa0ad] capitalize">{confirming}?</span>
-              <button
-                disabled={busy}
-                onClick={() => act(confirming)}
-                className="text-xs px-2.5 py-1.5 rounded-lg bg-white/20 text-white disabled:opacity-50"
-              >
-                Confirm
-              </button>
-              <button
-                disabled={busy}
-                onClick={() => setConfirming(null)}
-                className="text-xs px-2 py-1.5 rounded-lg bg-white/5 text-[#8b8fa3]"
-              >
-                ✗
-              </button>
-            </div>
-          ) : (
-            <div className="ml-auto flex items-center gap-1.5">
-              {ds.approved && (
-                <span className="text-[11px] font-medium text-emerald-400">✓ Approved</span>
-              )}
-              {ds.canApprove && (
-                <button
-                  onClick={() => setConfirming("approve")}
-                  className="text-[12px] font-medium px-3.5 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 shadow-[0_2px_8px_-2px_rgba(16,185,129,0.5)]"
-                >
-                  Approve
-                </button>
-              )}
-              {ds.canDecline && (
-                <button
-                  onClick={() => setConfirming("decline")}
-                  className="text-[12px] font-medium px-3 py-1.5 rounded-lg bg-white/[0.06] text-red-300 hover:bg-red-500/15"
-                >
-                  Decline
-                </button>
-              )}
-            </div>
-          ))}
+      <div className={styles.previewCell}><p>{tile.preview || statusText(tile)}</p>{tile.ai_draft_review && <span className="text-[10px] text-amber-300">Reply needs review</span>}</div>
+      <div className={styles.gearCell}><AccountTag slug={tile.account_slug} source={tile.source} /><div className={styles.gearLine}><Thumb src={tile.image_url} accent={tileAccent(tile)} size={38} /><span>{itemLineShort(tile) || "General inquiry"}</span></div></div>
+      <div className={styles.datesCell}>{tile.start_date ? <><span>{fmtDate(tile.start_date)}</span><span>– {fmtDate(tile.end_date ?? tile.start_date)}</span></> : <span>Dates pending</span>}</div>
+      <div className={styles.waitCell}>{aw ? <><span>Waiting</span><strong style={{color:u?.glow ? u.color : "#f6be55"}}>{waited(tile.last_renter_msg_at, now)}</strong></> : <><span>Replied</span><strong className="text-emerald-300">✓</strong></>}</div>
+      <div className={styles.earnCell}><span>{tile.net_to_owner_gbp != null ? "Owner earns" : "Est. earn"}</span><strong>{fmtMoney(tile.net_to_owner_gbp ?? tile.estimate_earnings_gbp) ?? "—"}</strong></div>
+      <div className={styles.availCell}><QueueAvailability tile={tile} /></div>
+      <div className={styles.progressCell}><StageBar t={tile} />
+        <div className={styles.rowActions} onClick={(e) => e.stopPropagation()}>
+          {optimistic ? <span className="text-[10px] text-emerald-300">{optimistic === "approve" ? "Approved" : "Declined"}</span> : confirming ? <><button disabled={busy} onClick={() => act(confirming)}>Confirm {confirming}</button><button onClick={() => setConfirming(null)}>Cancel</button></> : <>{ds.canApprove && <button onClick={() => setConfirming("approve")}>Approve</button>}{ds.canDecline && <button onClick={() => setConfirming("decline")}>Decline</button>}</>}
+        </div>{note && <span className="text-[10px] text-amber-300">{note}</span>}
       </div>
-      {note && (
-        <div className={`text-[10px] ${note.startsWith("✓") ? "text-emerald-400" : "text-amber-400"}`}>{note}</div>
-      )}
+      <button type="button" onClick={(e) => {e.stopPropagation();void onDismiss();}} aria-label="Close thread" title="Hide until the renter messages again" className={styles.dismiss}>×</button>
     </div>
   );
 }
@@ -1126,7 +932,7 @@ type Canned = {
   sort: number;
 };
 
-const CANNED_ACCOUNTS = ["dbcinema", "leo", "diogo"];
+const CANNED_ACCOUNTS = ["dbcinema", "leo", "diogo", "dbcinema_web"];
 
 /** Pasted into the box (not sent) when a thread has no booking request yet. */
 const ASK_REQUEST_TEXT =
@@ -1165,8 +971,8 @@ function CannedManager({ accountSlug, onClose }: { accountSlug: string | null; o
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-[210] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="w-full max-w-lg max-h-[88vh] flex flex-col rounded-2xl border border-white/10 bg-[#101216] shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-[210] flex items-stretch justify-end bg-black/70 backdrop-blur-sm">
+      <div className="w-full max-w-[420px] h-[100dvh] flex flex-col border-l border-white/10 bg-[#17212b] shadow-2xl overflow-hidden">
         <div className="p-4 border-b border-white/10 flex items-center gap-3">
           <span className="text-base font-semibold text-[#f1f3f5]">Quick texts</span>
           <select
@@ -1178,7 +984,7 @@ function CannedManager({ accountSlug, onClose }: { accountSlug: string | null; o
               <option key={a} value={a}>{accountLabel(a)}</option>
             ))}
           </select>
-          <button onClick={onClose} className="ml-auto text-[#8b8fa3] hover:text-white text-2xl leading-none">×</button>
+          <button aria-label="Close quick texts" onClick={onClose} className="ml-auto text-[#8b8fa3] hover:text-white text-2xl leading-none">×</button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
@@ -1516,10 +1322,12 @@ function OrderEditor({
   accountSlug,
   orderId,
   dryRun,
+  initialAction,
 }: {
   accountSlug: string;
   orderId: string;
   dryRun: boolean;
+  initialAction?: "change" | "dates" | "discount" | "refund";
 }) {
   const accent = accountAccent(accountSlug);
   const getState = useAction(getOrderStateRef);
@@ -1545,7 +1353,7 @@ function OrderEditor({
   const [showCal, setShowCal] = useState(false);
   const [unavail, setUnavail] = useState<{ dates: Set<string>; minDays: number }>({ dates: new Set(), minDays: 1 });
   // Collapsed by default so the conversation stays visible — expand to edit.
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(!!initialAction);
 
   async function refresh() {
     try {
@@ -1656,6 +1464,15 @@ function OrderEditor({
       setShowCal(true);
     }
   }
+  const initialActionApplied = useRef(false);
+  useEffect(() => {
+    if (!st?.ok || initialActionApplied.current || !initialAction) return;
+    initialActionApplied.current = true;
+    if (initialAction === "discount") {setEditingPrice(true);setPriceInput(String(st.price.order_price));}
+    if (initialAction === "refund") setEditingRefund(true);
+    if (initialAction === "dates") void openCalendar();
+  }, [st, initialAction]);
+
   async function onApplyDates(start: string, end: string) {
     setBusy("dates");
     setNote(null);
@@ -1924,15 +1741,72 @@ export function ReplyModal({
   onActed,
   dryRun,
   zClass = "z-[200]",
+  dockTarget,
+  initialShowReviews = false,
 }: {
   tile: ReplyTileData;
   onClose: () => void;
   onActed: (id: string) => void;
   dryRun: boolean;
   zClass?: string;
+  dockTarget?: HTMLElement | null;
+  initialShowReviews?: boolean;
 }) {
   const accent = tileAccent(tile);
   const ds = decideState(tile);
+  const [viewport,setViewport]=useState<{height:number;width:number;top:number;left:number}|null>(null);
+  useEffect(()=>{
+    if(dockTarget)return;
+    const visible=window.visualViewport;
+    const update=()=>setViewport({height:visible?.height??window.innerHeight,width:visible?.width??window.innerWidth,top:visible?.offsetTop??0,left:visible?.offsetLeft??0});
+    update();visible?.addEventListener("resize",update);visible?.addEventListener("scroll",update);window.addEventListener("resize",update);
+    return ()=>{visible?.removeEventListener("resize",update);visible?.removeEventListener("scroll",update);window.removeEventListener("resize",update);};
+  },[dockTarget]);
+  const [bookingAction, setBookingAction] = useState<"change" | "dates" | "discount" | "refund" | null>(null);
+  const [composeOpen, setComposeOpen] = useState(false);
+  type ReplacementOption={id:string;name:string;image_url:string|null;available:boolean;original:Record<string,unknown>;can_apply:boolean;price_note:string};
+  const replacementOptions=useAction(makeFunctionReference<"action">("quick_reply_replacements:options"));
+  const dbReplacementOptions=useAction(makeFunctionReference<"action">("dbcinema_chat:replacementOptions"));
+  const acceptReplacement=useAction(makeFunctionReference<"action">("quick_reply_replacements:accept"));
+  const dbAcceptReplacement=useAction(makeFunctionReference<"action">("dbcinema_chat:acceptReplacement"));
+  const draftReplacement=useAction(makeFunctionReference<"action">("quick_reply_replacements:draft"));
+  const [replacementOpen,setReplacementOpen]=useState(false);
+  const [replacementIndex,setReplacementIndex]=useState(0);
+  const [replacementChoices,setReplacementChoices]=useState<ReplacementOption[]>([]);
+  const [replacementChoice,setReplacementChoice]=useState<ReplacementOption|null>(null);
+  const [replacementText,setReplacementText]=useState("");
+  const [replacementBusy,setReplacementBusy]=useState<string|null>(null);
+  const [replacementError,setReplacementError]=useState<string|null>(null);
+  const replacementRequest=useRef<string|null>(null);
+  const replacementDraftVersion=useRef(0);
+  const replacementStockVersion=useRef(0);
+  const chooseReplacement=async(candidate:ReplacementOption,index:number)=>{
+    const version=++replacementDraftVersion.current;
+    setReplacementChoice(candidate);setReplacementText("");setReplacementError(null);replacementRequest.current=crypto.randomUUID();
+    try{const result=await draftReplacement({thread_id:tile.thread_id,item_index:index,replacement_id:candidate.id,source:tile.source,booking_id:tile.source_booking_id});if(version===replacementDraftVersion.current)setReplacementText(result.draft);}
+    catch(error){if(version===replacementDraftVersion.current)setReplacementError(error instanceof Error?error.message:"Replacement draft is unavailable.");}
+  };
+  const findReplacements=async(index:number)=>{
+    const stockVersion=++replacementStockVersion.current;
+    ++replacementDraftVersion.current;
+    setReplacementOpen(true);setReplacementIndex(index);setReplacementBusy("stock");setReplacementError(null);setReplacementChoices([]);setReplacementChoice(null);setReplacementText("");
+    try{const result=tile.source==="dbcinema_web"?await dbReplacementOptions({booking_id:tile.source_booking_id,item_index:index}):await replacementOptions({thread_id:tile.thread_id,item_index:index});
+      if(stockVersion!==replacementStockVersion.current)return;
+      setReplacementChoices(result.options);if(result.options.length)await chooseReplacement(result.options[0],index);else setReplacementError(result.reason??"No suitable replacement with verified stock is available.");}
+    catch(error){if(stockVersion===replacementStockVersion.current)setReplacementError(error instanceof Error?error.message:"Replacement stock check failed.");}finally{if(stockVersion===replacementStockVersion.current)setReplacementBusy(null);}
+  };
+  const applyReplacement=async()=>{
+    if(!replacementChoice||!replacementRequest.current||replacementBusy)return;
+    setReplacementBusy("apply");setReplacementError(null);
+    try{const shared={replacement_id:replacementChoice.id,original:replacementChoice.original,request_id:replacementRequest.current,dryRun};
+      const result=tile.source==="dbcinema_web"?await dbAcceptReplacement({...shared,booking_id:tile.source_booking_id}):await acceptReplacement({...shared,thread_id:tile.thread_id,item_index:replacementIndex});
+      if(!result.ok)throw Error(result.message??"Replacement could not be verified. Check the original order.");
+      setNote(result.dryRun?"✓ Replacement checked in test mode — nothing changed.":"✓ Replacement applied. Review and send the reply separately.");
+      setReplacementOpen(false);setReplacementChoice(null);setDbCinemaRefresh(value=>value+1);
+    }catch(error){setReplacementError(error instanceof Error?error.message:"Replacement failed.");}finally{setReplacementBusy(null);}
+  };
+
+  const fileRef = useRef<HTMLInputElement>(null);
   const hyggloThread = useQuery(api.hygglo.listByThread, tile.source === "dbcinema_web" ? "skip" : { thread_id: tile.thread_id });
   const loadDbCinemaThread = useAction(dbCinemaThreadRef);
   const sendDbCinemaReply = useAction(dbCinemaSendRef);
@@ -1950,6 +1824,13 @@ export function ReplyModal({
     }).finally(() => { if (alive) setDbCinemaLoading(false); });
     return () => { alive = false; };
   }, [loadDbCinemaThread, tile.source, tile.source_booking_id, dbCinemaRefresh]);
+  useEffect(() => {
+    if (tile.source !== "dbcinema_web") return;
+    const refresh = () => {if(document.visibilityState === "visible")setDbCinemaRefresh(value=>value+1);};
+    const timer = window.setInterval(refresh,15_000);
+    document.addEventListener("visibilitychange",refresh);
+    return () => {window.clearInterval(timer);document.removeEventListener("visibilitychange",refresh);};
+  },[tile.source]);
   const thread = tile.source === "dbcinema_web" ? (dbCinemaLoading ? undefined : dbCinemaMessages) : hyggloThread;
   // Live tile (reactive) so the location overlay appears the moment it resolves.
   const liveTile = useQuery(api.replyInbox.getThreadById, tile.source === "dbcinema_web" ? "skip" : {
@@ -2007,7 +1888,7 @@ export function ReplyModal({
   const [deciding, setDeciding] = useState(false);
   const [confirming, setConfirming] = useState<"approve" | "decline" | null>(null);
   // Renter reviews — fetched live from Hygglo on first star-click, then cached.
-  const [showReviews, setShowReviews] = useState(false);
+  const [showReviews, setShowReviews] = useState(initialShowReviews);
   // Map — owned here (not by LocationBadge) so it renders as a confined panel
   // in this modal's own body wrapper instead of LocationBadge's default
   // full-viewport overlay. See LocationBadge's onOpenMap prop.
@@ -2074,6 +1955,7 @@ export function ReplyModal({
   // Paste a snippet into the compose box (never sends). Appends with a blank
   // line if there's already text, so you can stack delivery + bank + your own.
   function copyAIDraft() {
+    if(tile.source === "dbcinema_web"){pasteText(draft);return;}
     const approval=liveTile?.ai_draft_approval;
     if (!approval || liveTile?.ai_draft_text!==draft) {setNote("Waiting for the latest draft. Try again in a moment.");return;}
     if (composeApproval && !sameDraftApproval(composeApproval,approval)) {setNote("Clear the previous copied reply before copying the latest draft. Your text has been kept.");return;}
@@ -2217,81 +2099,30 @@ export function ReplyModal({
   return createPortal(
     <div
       role="dialog"
-      aria-modal="true"
+      aria-modal={dockTarget ? false : true}
       aria-label={`Conversation with ${tile.renter_name}`}
-      className={`fixed inset-0 ${zClass} flex items-center justify-center bg-black/70 backdrop-blur-sm p-0 sm:p-4`}
+      className={dockTarget ? styles.dockedDialog : `${styles.overlay} fixed inset-0 ${zClass}`}
+      style={dockTarget||!viewport?undefined:({height:viewport.height,width:viewport.width,top:viewport.top,left:viewport.left,right:"auto",bottom:"auto","--quick-reply-viewport-height":`${viewport.height}px`} as CSSProperties)}
     >
       {/* Backdrop click does NOT close — only the × button (or Esc) closes, so
           you can text AND approve/decline in one session without losing it. */}
       <div
-        className="relative w-full max-w-3xl h-[100dvh] sm:h-auto max-h-[100dvh] sm:max-h-[90vh] flex flex-col rounded-none sm:rounded-[20px] border bg-[#101216] shadow-[0_40px_100px_-30px_rgba(0,0,0,0.85)] overflow-hidden"
+        className={styles.conversation}
+        data-composing={composeOpen}
+        data-short-viewport={viewport ? viewport.height<500 : undefined}
         style={{ borderColor: `${accent}4d` }}
       >
-        {/* Accent top line */}
-        <div className="h-[3px] w-full" style={{ background: `linear-gradient(90deg, ${accent}, ${accent}1a)` }} />
-        {/* Context header — kept compact so the conversation gets the room. */}
-        <div
-          className="relative pl-3 pr-14 py-2.5 border-b border-white/[0.07] flex gap-2.5"
-          style={{
-            background: `linear-gradient(180deg, ${accent}0f, transparent)`,
-            paddingTop: "max(0.625rem, env(safe-area-inset-top))",
-          }}
-        >
-          <div className="relative shrink-0">
-            <Thumb src={tile.image_url} accent={accent} size={42} />
-            {tile.renter_image_url && <img src={tile.renter_image_url} alt="Renter profile" className="absolute -right-1 -bottom-1 h-6 w-6 rounded-full border-2 border-[#101216] object-cover" />}
+        <div className={styles.chatHeader}>
+          <div className={styles.chatIdentity}>
+            <div className={styles.chatAvatar}>{tile.renter_image_url ? <img src={tile.renter_image_url} alt={tile.renter_name} /> : <span>{tile.renter_name.split(" ").map((part) => part[0]).slice(0,2).join("")}</span>}</div>
+            <div className="min-w-0"><h3>{tile.renter_name}</h3><button type="button" onClick={() => setShowReviews((value) => !value)} className={styles.rating} title="View all renter reviews">{tile.renter_rating?.toFixed(1) ?? "Unrated"} <span>★</span>{tile.renter_review_count != null && <small className={styles.reviewCount}> · {tile.renter_review_count} reviews</small>}</button><div className="mt-1.5"><AccountTag slug={tile.account_slug} source={tile.source} /></div><div className={styles.identityDates}>{tile.start_date ? `${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date ?? tile.start_date)}` : "Dates pending"}</div></div>
           </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="text-[13.5px] font-semibold text-[#f1f3f5] truncate min-w-0 flex-1">{tile.renter_name}</span>
-              <button
-                onClick={() => setShowReviews((s) => !s)}
-                className="shrink-0 inline-flex items-center gap-0.5 hover:opacity-80"
-                title={tile.source === "dbcinema_web" && tile.renter_rating_source !== "hygglo" ? "See whether this renter has a verified linked rating" : "See this renter's reviews"}
-              >
-                <Stars rating={tile.renter_rating} count={tile.renter_review_count} emptyLabel={tile.source === "dbcinema_web" ? tile.renter_rating_source === "hygglo" ? "no score" : "not rated" : undefined} />
-                <span className="text-[9px] text-[#6b7280]">{showReviews ? "▴" : "▾"}</span>
-              </button>
-            </div>
-            {/* One compact horizontal meta row — earnings + dates to the side,
-                not stacked, so the chat gets the room. */}
-            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-              <AccountTag slug={tile.account_slug} source={tile.source} />
-              {tile.source === "dbcinema_web" && <span className="text-[9px] font-semibold text-[#c9adff]">DB CINEMA</span>}
-              <span
-                className="text-[10px] uppercase tracking-wide font-medium"
-                style={{ color: tile.is_request ? "#fdba74" : "#7a8190" }}
-              >
-                {statusText(tile)}
-              </span>
-              <DatePill tile={tile} />
-              <EarningsChip tile={tile} />
-            </div>
-            {itemLineShort(tile) && (
-              <div className="text-[11px] text-[#c5cad3] mt-1 truncate">{itemLineShort(tile)}</div>
-            )}
-            {loc && (
-              <div className="mt-1">
-                <LocationBadge loc={loc} onOpenMap={() => setShowMap(true)} />
-              </div>
-            )}
-            {tile.renter_rating != null && tile.renter_rating < 4 && (
-              <div className="mt-1 text-[10.5px] text-red-300/90">
-                ⚠ Low-rated ({tile.renter_rating.toFixed(1)}★) — vet before accepting.
-              </div>
-            )}
-            <div className="mt-1.5">{tile.availability ? <AvailabilityBadge a={tile.availability} compact /> : tile.source === "dbcinema_web" ? <AvailabilityBadge a={{status:"unknown",include_pending:false,items:[]}} compact /> : null}</div>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close conversation"
-            data-testid="quick-reply-close"
-            style={{ touchAction: "manipulation", top: "max(0.5rem, env(safe-area-inset-top))" }}
-            className="absolute right-2 z-30 w-12 h-12 rounded-xl flex items-center justify-center text-[#c4c8d0] hover:text-white active:bg-white/[0.16] hover:bg-white/[0.08] text-[30px] leading-none"
-          >
-            ×
-          </button>
+          <button type="button" onClick={onClose} aria-label="Close conversation" data-testid="quick-reply-close" className={styles.chatClose}><span>×</span><small>Close</small></button>
+          <div className={styles.chatGear}><Thumb src={tile.image_url} accent={accent} size={140} /><div className={styles.chatGearDetails}><strong>{itemLineShort(tile) || "General inquiry"}</strong><div className={styles.chatDates}>{tile.start_date ? `${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date ?? tile.start_date)}` : "Dates pending"}</div><div className={styles.chatGearMeta}><QueueAvailability tile={tile} /><span>{tile.net_to_owner_gbp != null ? "Owner earns" : "Est. earn"} <b>{fmtMoney(tile.net_to_owner_gbp ?? tile.estimate_earnings_gbp) ?? "—"}</b></span></div></div></div>
+
+          {tile.availability?.status==="conflict" && <button type="button" className={styles.replacementButton} onClick={()=>void findReplacements(Math.max(0,tile.availability?.items.findIndex(item=>!item.available)??0))}>Find replacement <span>↗</span></button>}
+          {loc && <div className={styles.chatLocation}><LocationBadge loc={loc} onOpenMap={() => setShowMap(true)} /></div>}
+          {tile.renter_rating != null && tile.renter_rating < 4 && <div className="mt-2 text-[11px] text-red-300">Low-rated renter · review before accepting</div>}
         </div>
 
         {/* Body panel (2026-08-16) — everything below the header lives inside
@@ -2306,15 +2137,26 @@ export function ReplyModal({
             cover this body panel — the header above it, and the fact that
             this is still "the chat with renter X", stays on screen always. */}
         <div className="relative flex-1 min-h-0 flex flex-col">
+          <div className={styles.verificationStrip}><div className={styles.chatProgress}><span className={styles.sectionLabel}>Booking progress</span><StageBar t={tile} /></div>
+
           {/* Order editor — live items + add/remove + price + dates (has_reservation
               threads only; inquiries with no booking have nothing to edit). */}
-          {tile.has_reservation && tile.account_slug && tile.source !== "dbcinema_web" && (
-            <details className="relative z-10 shrink-0 border-b border-white/[0.07] bg-[#14171d]">
-              <summary className="cursor-pointer list-none px-4 py-2.5 text-[11px] font-semibold text-[#c7cbd4] marker:hidden">▸ Booking actions <span className="ml-1 font-normal text-[#7a8190]">Change dates · items · price · refund</span></summary>
-              <div className="max-h-[42vh] overflow-y-auto px-2 pb-2">{tile.thread_id.startsWith("__probe__") ? <LabOrderSummary threadId={tile.thread_id} /> : <OrderEditor accountSlug={tile.account_slug} orderId={tile.thread_id} dryRun={dryRun} />}</div>
+          {tile.has_reservation && tile.account_slug && (
+            <details className={styles.bookingMenu}>
+              <summary>Booking actions <span>⌄</span></summary>
+              <div className={styles.bookingDropdown}>{([["change","Change rental"],["dates","Reschedule"],["discount","Discount"],["refund","Refund"]] as const).map(([action,label]) => <button type="button" key={action} onClick={(event) => {setBookingAction(action);event.currentTarget.closest("details")?.removeAttribute("open");}}>{label}</button>)}</div>
             </details>
           )}
 
+          </div>
+          {replacementOpen && <section className={styles.replacementPane} aria-label="Replacement options"><header><strong>Replace unavailable item</strong><button type="button" aria-label="Close replacement options" onClick={()=>{++replacementDraftVersion.current;++replacementStockVersion.current;setReplacementBusy(null);setReplacementOpen(false);}}>×</button></header>
+            {tile.items.length>1&&<label>Requested item<select value={replacementIndex} disabled={!!replacementBusy} onChange={event=>void findReplacements(Number(event.target.value))}>{tile.items.map((item,index)=><option key={index} value={index}>{item.name}</option>)}</select></label>}
+            {replacementBusy==="stock"&&<p role="status">Checking the full basket and writing a draft…</p>}
+            <div className={styles.replacementCards}>{replacementChoices.map(candidate=><button type="button" key={candidate.id} className={candidate.id===replacementChoice?.id?styles.selectedReplacement:""} disabled={!!replacementBusy} onClick={()=>void chooseReplacement(candidate,replacementIndex)}>{candidate.image_url?<img src={candidate.image_url} alt={candidate.name}/>:<span className={styles.replacementImage}>◇</span>}<span><strong>{candidate.name}</strong><small>Available for these dates</small></span></button>)}</div>
+            {replacementChoice&&<><p>{replacementChoice.price_note}</p><label>AI replacement reply<textarea value={replacementText} onChange={event=>setReplacementText(event.target.value)} placeholder="Writing a reply from this conversation…" rows={4}/></label><div className={styles.replacementActions}><button type="button" disabled={!!replacementBusy||!replacementText.trim()} onClick={()=>{setText(replacementText);setComposeApproval(null);setComposeOpen(true);setReplacementOpen(false);}}>Use reply</button><button type="button" disabled={!!replacementBusy||!replacementChoice.can_apply} onClick={()=>void applyReplacement()}>{replacementBusy==="apply"?"Applying…":dryRun?"Check replacement":"Accept & replace item"}</button></div>{!replacementChoice.can_apply&&<p>Draft an offer now. Kit changes need an editable, upcoming booking.</p>}</>}
+            {replacementError&&<p role="alert">{replacementError}</p>}
+          </section>}
+          {bookingAction && tile.account_slug && <div className={styles.orderPane}><header><strong>{({change:"Change rental",dates:"Reschedule",discount:"Discount",refund:"Refund"})[bookingAction]}</strong><button type="button" onClick={() => setBookingAction(null)} aria-label="Close booking editor">×</button></header>{tile.source==="dbcinema_web"?<div className={styles.sourceActions}><p>Review this change in the DB Cinema rental workspace.</p>{dryRun?<p>Test mode: opening the rental workspace is disabled.</p>:<a target="_blank" rel="noopener noreferrer" href={`https://dbcinemarentals.com/admin?rental=${encodeURIComponent(tile.source_booking_id??"")}&action=${bookingAction}`}>Open {({change:"kit editor",dates:"reschedule",discount:"discount / refund review",refund:"refund review"})[bookingAction]} ↗</a>}<small>Changes keep DB Cinema’s payment and approval checks.</small></div>:<OrderEditor key={bookingAction} accountSlug={tile.account_slug} orderId={tile.thread_id} dryRun={dryRun} initialAction={bookingAction} />}</div>}
           {/* Renter reviews — confined panel, opened by tapping the stars.
               Physical stars incl. half; under-4★ highlighted. */}
           {showReviews && (
@@ -2337,7 +2179,7 @@ export function ReplyModal({
 
         {/* Thread — flex-1 + min-h-0 so it shrinks and the compose dock below
             (with Send) is ALWAYS visible, never clipped off-screen on mobile. */}
-        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 space-y-4 bg-black/25">
+        <div className={styles.messages}>
           {thread === undefined ? (
             <SkeletonBlock className="h-24 w-full" />
           ) : thread.length === 0 ? (
@@ -2346,22 +2188,15 @@ export function ReplyModal({
             thread.map((m, i) => {
               const sent = fmtMsgTime(m.timestamp);
               return (
-                <div key={i} className={`flex flex-col ${m.role === "owner" ? "items-end" : "items-start"}`}>
+                <div key={i} className={`${styles.message} ${m.role === "owner" ? styles.ownerMessage : ""}`}>
+                  <div className={styles.messageAvatar}>{m.role === "owner" ? <span>Me</span> : tile.renter_image_url ? <img src={tile.renter_image_url} alt="" /> : <span>{tile.renter_name[0]}</span>}</div>
                   <div
-                    className={`max-w-[88%] sm:max-w-[76%] px-3.5 py-3 text-[14px] leading-relaxed ${
-                      m.role === "owner"
-                        ? "rounded-2xl rounded-tr-md text-[#eef1f5]"
-                        : "rounded-2xl rounded-tl-md bg-white/[0.06] text-[#d8dce3]"
-                    }`}
-                    style={
-                      m.role === "owner"
-                        ? { background: `linear-gradient(135deg, ${accent}40, ${accent}24)` }
-                        : undefined
-                    }
+                    className={styles.bubble}
                   >
                     {m.content}
+                    {m.role === "owner" && sent && <span className={styles.messageTime}>{sent} <b>✓</b></span>}
                   </div>
-                  {sent && <span className="text-[10px] text-[#6b7280] mt-1 px-1 tabular-nums">{sent}</span>}
+                  {m.role !== "owner" && sent && <span className={styles.messageTime}>{sent}</span>}
                 </div>
               );
             })
@@ -2379,7 +2214,10 @@ export function ReplyModal({
         </div>
 
         {/* Compose + decisions — shrink-0 so it never gets compressed/clipped. */}
-        <div className="relative shrink-0 p-3 sm:p-4 border-t border-white/[0.07] space-y-2.5 bg-[#0e1014] pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className={`${styles.compose} ${composeOpen ? styles.expandedCompose : ""}`}>
+          <div className={styles.composeDrawer} hidden={!composeOpen}>
+          {tile.has_reservation && tile.account_slug && <button type="button" className={styles.mobileBookingButton} onClick={() => setBookingAction("change")}>Booking actions ⌄</button>}
+          <div className={styles.composeHeading}><strong>Reply</strong><button type="button" onClick={() => setComposeOpen(false)} aria-label="Collapse reply composer">×</button></div>
           {(ds.canApprove || ds.canDecline || decided) && (
             <div className="flex items-center gap-2 flex-wrap">
               {decided ? (
@@ -2540,16 +2378,22 @@ export function ReplyModal({
             {([ ["location","📍","Location"], ["times","🕒","Times"], ["delivery","🚚","Delivery info"] ] as const).map(([key, icon, label]) => <button key={key} type="button" onClick={() => pasteQuickSlot(key)} className="shrink-0 rounded-full border border-white/10 bg-white/[0.045] px-3 py-1.5 text-[11px] font-medium text-[#cbd0d8] hover:border-white/20 hover:bg-white/[0.09]">{icon} {label}</button>)}
             <button type="button" onClick={() => openQuickSlot("location")} title="Customize these quick replies for this account" className="shrink-0 rounded-full border border-white/10 px-2.5 py-1.5 text-[11px] text-[#9299a7]">Customize</button>
           </div>
-          {quickSlot && <div className="absolute bottom-[calc(100%+0.5rem)] left-3 right-3 z-30 rounded-2xl border border-white/10 bg-[#191c24] p-3 shadow-2xl sm:left-auto sm:right-4 sm:w-[min(24rem,calc(100vw-2rem))]">
+          {quickSlot && createPortal(<div className={styles.quickPanel} role="dialog" aria-label="Account quick replies" style={viewport ? {top:viewport.top+viewport.height*.18,height:viewport.height*.64,maxHeight:viewport.height*.64} : undefined}>
             <div className="mb-2 flex items-center justify-between"><div className="text-xs font-semibold text-white">Account quick replies</div><button type="button" onClick={() => setQuickSlot(null)} aria-label="Close quick reply editor" className="h-8 w-8 rounded-lg text-xl text-[#9aa0ad] hover:bg-white/10">×</button></div>
             <div className="mb-2 flex gap-1">{([ ["location","Location"], ["times","Times"], ["delivery","Delivery"] ] as const).map(([key,label]) => <button key={key} type="button" onClick={() => openQuickSlot(key)} className={`rounded-full px-2.5 py-1 text-[10px] ${quickSlot===key?"bg-white/15 text-white":"bg-white/[0.04] text-[#969eae]"}`}>{label}</button>)}</div>
             <textarea value={quickDraft} onChange={(e) => setQuickDraft(e.target.value)} rows={4} placeholder="Write account-specific text…" className="w-full rounded-xl border border-white/10 bg-black/30 p-3 text-[15px] text-white placeholder:text-[#697080] focus:outline-none focus:border-white/25" />
             <div className="mt-2 flex items-center justify-between gap-2"><span className="text-[10px] text-[#7d8492]">Saved for {accountLabel(cannedAccountSlug)}</span><button type="button" onClick={() => void saveQuickPreset()} disabled={!quickDraft.trim()} className="rounded-full bg-white px-4 py-2 text-[11px] font-semibold text-[#17191f] disabled:opacity-40">Save & insert</button></div>
-          </div>}
-          <button type="button" onClick={onGenerate} disabled={drafting} title="Draft a reply from this conversation context" className="inline-flex min-h-10 items-center justify-center gap-2 rounded-full border border-[#9b7cff]/35 bg-[#9b7cff]/12 px-4 text-[12px] font-semibold text-[#d2c2ff] hover:bg-[#9b7cff]/20 disabled:opacity-45">{drafting ? "Drafting…" : draftReview ? "↻ Retry AI reply" : "✨ AI reply draft"}</button>
-          <div className="rounded-[1.4rem] border border-white/10 bg-black/25 p-2 focus-within:border-white/20">
-            <textarea value={text} onChange={(e) => {setText(e.target.value);if(!e.target.value.trim())setComposeApproval(null);}} placeholder="Write a reply…" rows={3} className="w-full resize-y bg-transparent px-3 py-2 text-[16px] leading-relaxed text-[#eef1f5] placeholder-[#697080] focus:outline-none" />
-            <div className="flex items-center gap-2 px-1 pb-1"><span className="hidden text-[10px] text-[#6b7280] sm:block">Nothing sends until you tap Send</span><button onClick={onSend} disabled={sending || !text.trim() || copiedDraftStale} className="ml-auto min-h-10 rounded-full px-6 text-[13px] font-semibold text-white disabled:opacity-40 active:scale-[0.98]" style={{ background: accent, boxShadow: `0 4px 14px -4px ${accent}99` }}>{sending ? "Sending…" : "Send"}</button></div>
+          </div>,document.body)}
+
+          <div className={styles.composeInput}>
+            <textarea value={text} onChange={(e) => {setText(e.target.value);if(!e.target.value.trim())setComposeApproval(null);}} placeholder="Write a reply…" rows={2} className="w-full resize-none bg-transparent px-3 py-2 text-[16px] leading-relaxed text-[#eef1f5] placeholder-[#697080] focus:outline-none" />
+            <div className={styles.fileInsert}><button type="button" onClick={() => fileRef.current?.click()}>Insert text file</button><input ref={fileRef} type="file" accept=".txt,text/plain" className="hidden" onChange={async(event) => {const file=event.target.files?.[0];if(!file)return;if(file.size>1_000_000){setNote("Text files must be smaller than 1 MB.");return;}pasteText(await file.text());event.target.value="";}} /></div>
+          </div>
+          </div>
+          <div className={styles.footerButtons}>
+            <button type="button" onClick={() => setComposeOpen((open) => !open)} className={styles.attachButton} aria-label="Write reply or insert text file" title="Write a reply or insert a text file"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m9 17 8-8a3 3 0 0 0-4-4L5 13a5 5 0 0 0 7 7l8-8a7 7 0 0 0-10-10L3 9"/><path d="m7 15 8-8"/></svg></button>
+            <button type="button" onClick={() => {setComposeOpen(true);void onGenerate();}} disabled={drafting} className={styles.aiButton}><span>✦</span>{drafting ? "Drafting…" : draftReview ? "Retry reply" : <><span className={styles.desktopDraftLabel}>Draft reply from chat context</span><span className={styles.mobileDraftLabel}>Draft reply</span></>}</button>
+            <button type="button" onClick={() => {if(!text.trim()){setComposeOpen(true);return;}void onSend();}} disabled={sending || copiedDraftStale} className={styles.sendButton}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m21 3-7 18-4-7-7-4 18-7Z"/><path d="m10 14 6-6"/></svg>{sending ? "Sending…" : "Send"}</button>
           </div>
           {note && (
             <div className={`text-xs ${note.startsWith("✓") ? "text-emerald-400" : "text-amber-400"}`}>{note}</div>
@@ -2558,7 +2402,7 @@ export function ReplyModal({
         </div>
       </div>
     </div>,
-    document.body,
+    dockTarget ?? document.body,
   );
 }
 
@@ -2599,7 +2443,7 @@ export function ReplyInbox() {
       }
     };
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 120_000);
+    const timer = window.setInterval(() => void refresh(), 30_000);
     document.addEventListener("visibilitychange", refresh);
     return () => {
       alive = false;
@@ -2609,6 +2453,23 @@ export function ReplyInbox() {
   }, [loadDbCinemaInbox]);
 
   const [openId, setOpenId] = useState<string | null>(null);
+  const [reviewId, setReviewId] = useState<string | null>(null);
+  const widgetRef = useRef<HTMLDivElement>(null);
+  const [canDock, setCanDock] = useState(false);
+  const [dockTarget, setDockTarget] = useState<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const element = widgetRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => setCanDock(entry.contentRect.width >= 1050));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  const openThread = (tile: ReplyTileData, reviews = false) => {
+    openCacheRef.current = tile;
+    setReviewId(reviews ? tile.thread_id : null);
+    setOpenId(tile.thread_id);
+  };
+
   const closeModal = useCallback(() => setOpenId(null), []);
   // Last-known row for the open thread, so the overlay survives the thread
   // leaving the queue after a send/approve (see `open` below).
@@ -2624,13 +2485,13 @@ export function ReplyInbox() {
   }) as
     | Array<{ thread_id: string | null; renter_name: string; items: string[]; kind: "pickup" | "return"; date: string; time: string; minutes_away: number }>
     | undefined;
-  const dbHandoffs = dbCinemaRows.flatMap((tile) => ([
+  const dbHandoffs = dbCinemaRows.filter(tile => ["confirmed", "active", "ongoing", "returned", "completed"].includes((tile.booking_status ?? tile.status ?? "").toLowerCase())).flatMap((tile) => ([
     { timestamp: tile.start_at, kind: "pickup" as const },
     { timestamp: tile.end_at, kind: "return" as const },
   ]).flatMap(({ timestamp, kind }) => {
     if (!timestamp) return [];
     const minutes = Math.round((timestamp - now) / 60_000);
-    if (Math.abs(minutes) > 60) return [];
+    if (Math.abs(timestamp - now) > 3_600_000) return [];
     const when = new Date(timestamp);
     return [{
       thread_id: tile.thread_id,
@@ -2642,7 +2503,7 @@ export function ReplyInbox() {
       minutes_away: minutes,
     }];
   }));
-  const currentHandoffs = [...(handoffs ?? []), ...dbHandoffs];
+  const currentHandoffs = [...(handoffs ?? []), ...dbHandoffs].filter((entry, index, all) => all.findIndex(other => other.thread_id === entry.thread_id && other.kind === entry.kind) === index);
   const [mounted, setMounted] = useState(false);
   // Default to "To reply" so chats I already answered (owner spoke last) DON'T
   // clutter the view — only new requests + renters waiting on me.
@@ -2717,21 +2578,7 @@ export function ReplyInbox() {
     const earnings = (b.net_to_owner_gbp ?? b.estimate_earnings_gbp ?? -1) - (a.net_to_owner_gbp ?? a.estimate_earnings_gbp ?? -1);
     return earnings || ((b.last_activity_at ?? 0) - (a.last_activity_at ?? 0));
   });
-  const duplicateIds = new Set<string>();
-  const requestGroups = new Map<string, ReplyTileData[]>();
-  for (const row of sorted) {
-    if (!pendingRequest(row) || !row.renter_identity) continue;
-    const group = requestGroups.get(row.renter_identity) ?? [];
-    group.push(row);
-    requestGroups.set(row.renter_identity, group);
-  }
-  for (const group of requestGroups.values()) {
-    if (group.length < 2) continue;
-    const ranked = [...group].sort((a, b) =>
-      (b.net_to_owner_gbp ?? b.estimate_earnings_gbp ?? -1) - (a.net_to_owner_gbp ?? a.estimate_earnings_gbp ?? -1),
-    );
-    ranked.slice(1).forEach((row) => duplicateIds.add(row.thread_id));
-  }
+  const duplicateIds = quickReplyDuplicateIds(sorted.filter(pendingRequest));
   const displayRows = [...sorted.filter((row) => !duplicateIds.has(row.thread_id)), ...sorted.filter((row) => duplicateIds.has(row.thread_id))];
   // `open` resolves against the RAW queue (not `all`/visible) so approving or
   // declining a card — which drops it from `all` via onActed — does NOT close
@@ -2739,9 +2586,9 @@ export function ReplyInbox() {
   // spoke last), which used to unmount the modal = the "auto-close on send" bug.
   // Cache the last-known row and fall back to it, so the overlay stays open
   // until YOU close it (× ) or tap a notification. (Daniel, 2026-07-03)
-  const openFromCheck = useQuery(api.replyInbox.getThreadById, openId ? {thread_id:openId} : "skip") as ReplyTileData | null | undefined;
+  const openFromCheck = useQuery(api.replyInbox.getThreadById, openId && !openId.startsWith("dbcinema:") ? {thread_id:openId} : "skip") as ReplyTileData | null | undefined;
   const openFromQueue = openId
-    ? (queue ?? []).find((t) => t.thread_id === openId) ?? null
+    ? [...(queue ?? []), ...dbCinemaRows].find((t) => t.thread_id === openId) ?? null
     : null;
   if (openFromQueue) openCacheRef.current = openFromQueue;
   const open = openId
@@ -2750,7 +2597,8 @@ export function ReplyInbox() {
     : null;
 
   return (
-    <Card>
+    <Card className={styles.widget}>
+      <div ref={widgetRef} className={styles.workspace}>
       <style>{`
         @keyframes rgGlow { 0%,100% { box-shadow: 0 0 0 0 transparent; } 50% { box-shadow: 0 0 18px -4px var(--u); } }
         @keyframes rgBlink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0.3; } }
@@ -2763,132 +2611,24 @@ export function ReplyInbox() {
           50% { box-shadow: 0 0 22px -3px rgba(251,146,60,0.65), inset 0 1px 0 rgba(255,255,255,0.05); border-color: rgba(251,146,60,0.55); }
         }
       `}</style>
-      {/* Header — aperture mark + title + request pill + controls */}
-      <div className="flex items-center gap-3 mb-4">
-        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-sky-400/20 to-sky-500/[0.05] border border-sky-400/20 flex items-center justify-center shrink-0">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#56c7fb" strokeWidth="2">
-            <circle cx="12" cy="12" r="9" />
-            <path d="M12 3v3.5M12 17.5V21M3 12h3.5M17.5 12H21M6 6l2.5 2.5M18 18l-2.5-2.5M18 6l-2.5 2.5M6 18l2.5-2.5" strokeWidth="1.4" opacity="0.65" />
-          </svg>
-        </div>
-        <div>
-          <div className="text-[15.5px] font-semibold text-[#f2f4f8] leading-none tracking-[-0.01em]">Quick Reply</div>
-          <div className="text-[11px] text-[#6b7280] mt-[5px] leading-none">renters waiting on you</div>
-        </div>
-        {requests > 0 && (
-          <span className="ml-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-orange-500/12 text-orange-300 ring-1 ring-orange-400/25 tabular-nums">
-            {requests} request{requests > 1 ? "s" : ""}
-          </span>
-        )}
-        {dbCinemaRows.length > 0 && <span className="text-[10px] font-semibold px-2 py-1 rounded-full bg-[#b28cff]/10 text-[#c9adff] ring-1 ring-[#b28cff]/25">DB Cinema · {dbCinemaRows.length}</span>}
-        {dbCinemaLoadFailed && <span title="Could not refresh DB Cinema chats" className="text-[10px] px-2 py-1 rounded-full bg-amber-500/10 text-amber-300">DB Cinema offline</span>}
-        <div className="ml-auto flex items-center gap-1.5 flex-wrap justify-end">
-          <button
-            onClick={() => updateSettings({ availability_include_pending: !includePending })}
-            title="When on, not-yet-confirmed (pending) requests also count as occupying stock in the availability / double-booking check."
-            className={`text-[11px] font-medium px-2.5 py-1.5 rounded-lg transition-colors ${
-              includePending
-                ? "bg-sky-500/12 text-sky-300 ring-1 ring-sky-400/25"
-                : "bg-white/[0.05] text-[#9ca3af] hover:bg-white/[0.09]"
-            }`}
-          >
-            <span className="sm:hidden">⏳</span>
-            <span className="hidden sm:inline">{includePending ? "⏳ Pending counted" : "Pending off"}</span>
-          </button>
-          <button
-            onClick={() => setShowManager(true)}
-            title="See + edit each account's saved quick texts (delivery, location, bank details…)."
-            className="text-[11px] font-medium px-2.5 py-1.5 rounded-lg bg-white/[0.05] text-[#9ca3af] hover:bg-white/[0.09] transition-colors"
-          >
-            <span className="sm:hidden">✏️</span>
-            <span className="hidden sm:inline">✏️ Quick texts</span>
-          </button>
-          <button
-            onClick={() => setTestMode((x) => !x)}
-            title="When on, Approve/Decline/Send only simulate — nothing is sent to renters."
-            className={`text-[11px] font-medium px-2.5 py-1.5 rounded-lg transition-colors ${
-              testMode
-                ? "bg-amber-500/15 text-amber-300 ring-1 ring-amber-400/30"
-                : "bg-white/[0.05] text-[#9ca3af] hover:bg-white/[0.09]"
-            }`}
-          >
-            <span className="sm:hidden">🧪</span>
-            <span className="hidden sm:inline">{testMode ? "🧪 Test mode ON" : "Test mode"}</span>
-          </button>
-        </div>
+      <div className={styles.titleRow}><h2>Quick Reply</h2>{dbCinemaLoadFailed && <span className="text-amber-300">DB Cinema offline</span>}</div>
+      <div className={styles.toolbar}>
+        {([{k:"todo",label:"To reply",n:todo},{k:"requests",label:"Requests",n:requests},{k:"all",label:"All",n:all.length}] as const).map((item) => <button type="button" key={item.k} onClick={() => setFilter(item.k)} className={filter===item.k ? styles.activeFilter : ""}>{filter===item.k && <i />}{item.label}</button>)}
+        <select value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)} aria-label="Sort conversations"><option value="waiting">Longest waiting · best earnings</option><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select>
+        <button type="button" onClick={() => setShowManager(true)}>▤ Quick texts</button>
+        <button type="button" onClick={() => setTestMode((value) => !value)} aria-pressed={testMode} className={styles.toggle}><i data-on={testMode} />Test mode</button>
+        <button type="button" onClick={() => void updateSettings({availability_include_pending:!includePending})} aria-pressed={includePending} className={styles.toggle}><i data-on={includePending} />Pending {includePending ? "on" : "off"}</button>
       </div>
-
-      {/* Current rentals — automatic cards from one hour before through one hour after. */}
-      {currentHandoffs.length > 0 && (
-        <div className="mb-3 rounded-xl border border-amber-400/30 bg-amber-500/[0.08] p-2">
-          <div className="text-[10.5px] font-semibold uppercase tracking-wide text-amber-300/90 mb-1.5 px-1">
-            📍 Current rentals — tap to text
-          </div>
-          <div className="flex gap-2 overflow-x-auto pb-0.5">
-            {currentHandoffs.map((h) => (
-              <button
-                key={`${h.thread_id}-${h.kind}-${h.date}-${h.time}`}
-                onClick={() => h.thread_id && setOpenId(h.thread_id)}
-                // Every card here is already ±60min of its pickup/return (the
-                // query only returns imminent handoffs), so the slow orange
-                // pulse applies unconditionally to the whole list.
-                className="shrink-0 flex items-center gap-2 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border px-2.5 py-1.5 text-left transition-colors"
-                style={{ animation: "rgHandoffPulse 2.8s ease-in-out infinite" }}
-              >
-                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap ${h.kind === "pickup" ? "bg-emerald-500/20 text-emerald-300" : "bg-sky-500/20 text-sky-300"}`}>
-                  {h.kind === "pickup" ? "PICKUP" : "RETURN"} {h.time}
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-[12px] font-semibold text-[#eef1f5] truncate max-w-[9rem]">{h.renter_name}</span>
-                  <span className="block text-[10.5px] text-[#9aa0ad] truncate max-w-[9rem]">{h.items.join(", ")}</span>
-                </span>
-                <span className="text-[10px] text-amber-300/80 tabular-nums whitespace-nowrap">
-                  {h.minutes_away === 0 ? "now" : h.minutes_away > 0 ? `in ${h.minutes_away}m` : `${-h.minutes_away}m ago`}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      <div className={`${styles.split} ${canDock ? styles.withDock : ""}`}><div className={styles.inbox}>
+      {currentHandoffs.length > 0 && <div className={styles.handoffRail}><div className={styles.handoffIntro}><span>◷</span><div><strong>Next 60 min</strong><p>Rentals within 1 hour<br />before or after.</p></div></div><div className={styles.handoffs}>{currentHandoffs.map((h) => {
+        const row = all.find((candidate) => candidate.thread_id === h.thread_id);
+        return <button type="button" key={`${h.thread_id}-${h.kind}-${h.date}-${h.time}`} disabled={!h.thread_id} onClick={() => {if(row)openThread(row);else if(h.thread_id){openCacheRef.current=null;setReviewId(null);setOpenId(h.thread_id);}}} className={styles.handoffCard} aria-label={`${h.kind} with ${h.renter_name}`} title={h.renter_name}>
+          <Thumb src={row?.image_url ?? null} accent={row ? tileAccent(row) : "#86baff"} size={75} /><div><span className={h.kind === "pickup" ? styles.pickup : styles.return}>● {h.kind === "pickup" ? "PICKUP" : "RETURN"} {h.minutes_away===0 ? "now" : h.minutes_away>0 ? `${h.minutes_away}m` : `${-h.minutes_away}m ago`}</span><div className={styles.handoffIdentity}>{row?.renter_image_url && <img src={row.renter_image_url} alt={h.renter_name} />}<div>{row ? <AccountTag slug={row.account_slug} source={row.source} /> : <strong>{h.renter_name}</strong>}<small>{row?.renter_rating != null ? <>{row.renter_rating.toFixed(1)} <b>★</b></> : h.items.join(", ")}</small></div></div></div><span className={styles.handoffArrow}>›</span>
+        </button>;
+      })}</div></div>}
 
       <OwnerChecksPanel accountSlug={activeAccountSlug ?? undefined} onOpen={setOpenId} />
-      {/* Filter + sort */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
-        {/* Filter — segmented control (spreads full-width on mobile) */}
-        <div className="flex sm:inline-flex items-center justify-between sm:justify-start gap-0.5 p-1 rounded-xl bg-black/30 border border-white/[0.06]">
-          {([
-            { k: "todo", label: "To reply", n: todo },
-            { k: "requests", label: "Requests", n: requests },
-            { k: "all", label: "All", n: all.length },
-          ] as const).map((f) => (
-            <button
-              key={f.k}
-              onClick={() => setFilter(f.k)}
-              className={`text-[12px] px-3.5 py-1.5 rounded-lg transition-colors ${
-                filter === f.k
-                  ? "bg-white/[0.10] text-white font-semibold shadow-[0_1px_2px_rgba(0,0,0,0.4)]"
-                  : "text-[#8b8fa3] font-medium hover:text-white"
-              }`}
-            >
-              {f.label}
-              {f.n ? (
-                <span className={`ml-1 ${filter === f.k ? "text-[#9ca3af] font-normal" : "opacity-50"}`}>{f.n}</span>
-              ) : null}
-            </button>
-          ))}
-        </div>
-        {/* Sort */}
-        <select
-          value={sortBy}
-          onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-          title="Sort the list"
-          className="w-full sm:w-auto text-[12px] px-2.5 py-2 sm:py-1.5 rounded-lg bg-black/30 border border-white/[0.06] text-[#cbd0d8] hover:bg-white/[0.05] focus:outline-none cursor-pointer"
-        >
-          <option value="newest">Newest first</option>
-          <option value="oldest">Oldest first</option>
-          <option value="waiting">Longest waiting · best earnings</option>
-        </select>
-      </div>
+      <div className={styles.table}><div className={styles.tableHeader}>{["Renter","Last message","Account / Gear","Dates","Wait","Est. earn","Availability","Progress"].map((label) => <span key={label}>{label}</span>)}</div>
       {queue === undefined ? (
         <div className="grid grid-cols-1 gap-2.5">
           {Array.from({ length: 6 }).map((_, i) => (
@@ -2907,13 +2647,15 @@ export function ReplyInbox() {
           icon="✅"
         />
       ) : (
-        <div className="grid grid-cols-1 gap-2.5 max-h-[54rem] overflow-y-auto p-0.5">
+        <div className={styles.rows}>
           {displayRows.map((tile) => (
             <ReplyCard
               key={tile.thread_id}
               tile={tile}
               now={now}
-              onOpen={() => setOpenId(tile.thread_id)}
+              onOpen={() => openThread(tile)}
+              onReviews={() => openThread(tile, true)}
+              selected={openId === tile.thread_id}
               onActed={onActed}
               dryRun={testMode}
               duplicate={duplicateIds.has(tile.thread_id)}
@@ -2921,12 +2663,16 @@ export function ReplyInbox() {
           ))}
         </div>
       )}
+      </div></div>
+      {canDock && <div ref={setDockTarget} className={styles.chatDock}>{!open && <div className={styles.emptyChat}><span>▤</span><h3>Your conversations, in focus</h3><p>Select a renter to see the request and reply.</p></div>}</div>}
+      </div>
       {mounted && open && (
-        <ReplyModal tile={open} onClose={closeModal} onActed={onActed} dryRun={testMode} />
+        <ReplyModal key={open.thread_id} tile={open} onClose={closeModal} onActed={onActed} dryRun={testMode} dockTarget={canDock ? dockTarget : null} initialShowReviews={reviewId === open.thread_id} />
       )}
       {mounted && showManager && (
         <CannedManager accountSlug={activeAccountSlug} onClose={() => setShowManager(false)} />
       )}
+      </div>
     </Card>
   );
 }

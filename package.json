@@ -17,7 +17,8 @@
     "verify:trigger-key": "tsx scripts/verify-trigger-key.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepare": "husky"
+    "prepare": "husky",
+    "test:quick-reply-ui": "node scripts/quick-reply-qa/run.cjs"
   },
   "dependencies": {
     "@ai-sdk/react": "^3.0.193",
