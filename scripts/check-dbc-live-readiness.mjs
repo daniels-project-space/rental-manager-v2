@@ -2,6 +2,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { checkWebsiteReader } from './lib/website-live-reader.mjs';
 const cwd = fileURLToPath(new URL('../', import.meta.url));
 const deployment = 'hearty-oyster-600';
 // Require an independently verified live binding rather than silently trusting a historic deployment.
@@ -37,14 +38,21 @@ const secretValue = result => result.ok && result.value && !/not set|not found|u
 const first = secretValue(managerSecret), second = secretValue(websiteSecret);
 const digest = value => createHash('sha256').update(value).digest('hex');
 const adminTokenMatches = first && second ? digest(first) === digest(second) : null;
+const websiteReader = websiteUrl === expectedUrl
+  ? await checkWebsiteReader(expectedUrl, first)
+  : { status: 'binding-mismatch', authenticated: null, validPage: false };
+const websiteCredentialReader = websiteUrl === expectedUrl && adminTokenMatches === false && second
+  ? await checkWebsiteReader(expectedUrl, second)
+  : adminTokenMatches === true ? websiteReader : null;
 const blockers = [];
 if (!owner?.registered || !owner?.hasAuthBinding) blockers.push('private-owner-account-not-verified');
 if (required !== true) blockers.push('operational-owner-protection-not-enforced');
 if (websiteUrl !== expectedUrl) blockers.push('manager-does-not-target-live-website-backend');
 if (adminTokenMatches !== true) blockers.push(adminTokenMatches === false ? 'website-admin-credential-mismatch' : 'website-admin-credential-not-verifiable');
+if (websiteReader.status !== 'ready') blockers.push(`website-reader-${websiteReader.status}`);
 const result = { checkedAt: new Date().toISOString(), deployment, owner, ownerProtectionRequired: required,
   websiteUrl, expectedWebsiteUrl: expectedUrl, websiteAdminTokenMatches: adminTokenMatches,
-  websiteReturnWritesEnabled: returnWrites, blockers, readyForPrivateWebsiteIntegration: blockers.length === 0,
+  websiteReturnWritesEnabled: returnWrites, websiteReader, websiteCredentialReader, blockers, readyForPrivateWebsiteIntegration: blockers.length === 0,
   financialExecutionAuthorizedByThisCheck: false, productionWrites: false };
 console.log(JSON.stringify(result, null, 2));
 if (blockers.length) process.exitCode = 1;

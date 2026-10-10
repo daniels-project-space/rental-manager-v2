@@ -14,6 +14,7 @@ export interface DBRow {
   status?: string | null;
   renter_name?: string | null;
   qty: number; // qty of the item this row contributes
+  allocation_group?: string; // explicitly evidenced shared custody only
 }
 
 // Days of grace after end_date during which we still treat gear as "out".
@@ -127,20 +128,16 @@ export function computeWorstOverlap(
   return { worstDay, worstCount, overlapping: overlappingSet, earliestEnd };
 }
 
-/** Count overlapping extension orders once per renter for this inventory item.
- * The largest quantity remains held; a larger extension still consumes extra
- * stock. Unknown names stay separate, and callers retain every source order.
+/** Count physical commitments from already-deduplicated source orders.
+ * A renter name cannot establish that different orders are an extension of
+ * one allocation. Keep the exported name for existing dashboard callers.
  */
-export function extensionOccupancyQty(rows: Array<{ renter_name?: string | null; qty: number }>): number {
-  const byRenter = new Map<string, number>();
-  let unnamed = 0;
+export function extensionOccupancyQty(rows: Array<{ renter_name?: string | null; qty: number; allocation_group?:string }>): number {
+  const shared = new Map<string,number>();
+  let independent = 0;
   for (const row of rows) {
-    const name = row.renter_name?.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
-    if (!name || ["unknown", "unknown renter", "?", "—"].includes(name)) {
-      unnamed += row.qty;
-      continue;
-    }
-    byRenter.set(name, Math.max(byRenter.get(name) ?? 0, row.qty));
+    if (row.allocation_group) shared.set(row.allocation_group,Math.max(shared.get(row.allocation_group) ?? 0,row.qty));
+    else independent += row.qty;
   }
-  return unnamed + Array.from(byRenter.values()).reduce((sum, qty) => sum + qty, 0);
+  return independent + [...shared.values()].reduce((sum,qty)=>sum+qty,0);
 }

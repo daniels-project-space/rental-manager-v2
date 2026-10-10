@@ -1,35 +1,29 @@
 "use client";
 import { api } from "../../../convex/_generated/api";
 import { useStableQuery } from "@/lib/dashboard/use-stable-query";
+import { useStockForecast } from "@/lib/dashboard/use-stock-forecast";
 import { useAccount } from "@/lib/account-context";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 
-function formatDate(dateStr: string | null) {
-  if (!dateStr) return "Unknown";
-  const d = new Date(dateStr);
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-}
-
-function daysUntil(dateStr: string | null): number | null {
-  if (!dateStr) return null;
-  const diff = new Date(dateStr).getTime() - Date.now();
-  return Math.ceil(diff / (1000 * 60 * 60 * 24));
+function formatMoment(at:number){
+  return new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/London",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).format(new Date(at));
 }
 
 export function OutOfStockPanel() {
   const { activeAccountSlug } = useAccount();
 
-  const data = useStableQuery(api.items.getOutOfStockItems, {
+  const rows = useStableQuery(api.items.getOutOfStockItems, {
     accountSlug: activeAccountSlug,
     lookAheadDays: 14,
   });
+  const data = useStockForecast(rows);
 
   return (
     <Card>
       <CardHeader
-        title="Out of Stock"
+        title="Stock outlook · 14 days"
         badge={
           data ? (
             <span
@@ -51,13 +45,12 @@ export function OutOfStockPanel() {
       )}
 
       {data !== undefined && data.length === 0 && (
-        <EmptyState message="All items available" icon="✓" />
+        <EmptyState message="No fully booked periods in this outlook" icon="✓" />
       )}
 
       {data !== undefined && data.length > 0 && (
         <div className="space-y-2">
           {data.map((item) => {
-            const days = daysUntil(item.nextAvailableDate);
             return (
               <div
                 key={item.itemId as string}
@@ -84,25 +77,18 @@ export function OutOfStockPanel() {
                       {item.name}
                     </p>
                     <p className="text-xs mt-0.5" style={{ color: "#8b8fa3" }}>
-                      {item.activeReservationCount} active booking{item.activeReservationCount !== 1 ? "s" : ""}
+                      {item.activeReservationCount} of {item.ownedUnits} units committed{item.inRepair ? ` · ${item.inRepair} in repair` : ""}
                     </p>
                   </div>
                 </div>
                 <div className="text-right flex-shrink-0 ml-3">
-                  {item.nextAvailableDate ? (
-                    <>
-                      <p className="text-xs font-medium" style={{ color: "#f59e0b" }}>
-                        Free {formatDate(item.nextAvailableDate)}
-                      </p>
-                      {days !== null && (
-                        <p className="text-xs" style={{ color: "#8b8fa3" }}>
-                          {days > 0 ? `in ${days}d` : "today"}
-                        </p>
-                      )}
-                    </>
-                  ) : (
-                    <p className="text-xs" style={{ color: "#8b8fa3" }}>No date</p>
-                  )}
+                  <p className="text-xs font-medium" style={{color:item.currentlyUnavailable?"#f87171":"#f59e0b"}}>
+                    {item.currentlyUnavailable?"Unavailable now":`Fully booked from ${formatMoment(item.blockedFromAt)}`}
+                  </p>
+                  <p className="text-xs mt-0.5" style={{color:"#8b8fa3"}}>
+                    {item.nextAvailableAt===null?"Availability pending repair return":`Available again ${formatMoment(item.nextAvailableAt)}`}
+                  </p>
+                  <p className="text-[10px] mt-0.5" style={{color:"#6f727c"}}>London time · turnaround included</p>
                 </div>
               </div>
             );

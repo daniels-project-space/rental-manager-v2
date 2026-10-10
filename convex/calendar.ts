@@ -1,5 +1,6 @@
 import { loadCanonicalListingAllocation } from "./lib/canonical_listing_allocation";
 import { confirmedClock } from "./lib/confirmed_schedule";
+import { confirmedCustodyGroup } from "./lib/reservation_custody";
 import { shortItemName } from "./lib/item_display_name";
 import { mutation, query, type QueryCtx } from "./owner_functions";
 import { v } from "convex/values";
@@ -141,12 +142,24 @@ const effectiveReturnDate = displayReturnDate;
  * 20:30). Comparing dates alone silently kept the older return time.
  */
 function compareReturnMoment(
-  a: { return_date?: string; end_date?: string; return_time?: string },
-  b: { return_date?: string; end_date?: string; return_time?: string },
+  a: Parameters<typeof confirmedClock>[0] & { return_date?: string; end_date?: string },
+  b: Parameters<typeof confirmedClock>[0] & { return_date?: string; end_date?: string },
 ): number {
   const dateDiff = displayReturnDate(a).localeCompare(displayReturnDate(b));
   if (dateDiff !== 0) return dateDiff;
-  return (a.return_time ?? "").localeCompare(b.return_time ?? "");
+  // Unknown clocks occupy the whole return day. They must sort AFTER known
+  // clocks so a different order's agreement cannot hide an unconfirmed return.
+  return (confirmedClock(a,"return",displayReturnDate(a)) ?? "24:00")
+    .localeCompare(confirmedClock(b,"return",displayReturnDate(b)) ?? "24:00");
+}
+
+function comparePickupMoment(
+  a: Parameters<typeof confirmedClock>[0] & { pickup_date?: string; start_date?: string },
+  b: Parameters<typeof confirmedClock>[0] & { pickup_date?: string; start_date?: string },
+): number {
+  const dateDiff = displayPickupDate(a).localeCompare(displayPickupDate(b));
+  return dateDiff || (confirmedClock(a,"pickup",displayPickupDate(a)) ?? "00:00")
+    .localeCompare(confirmedClock(b,"pickup",displayPickupDate(b)) ?? "00:00");
 }
 
 /**
@@ -389,6 +402,9 @@ export async function computeStripLive(
     // chips. Other strip computations (renter map, holds) keep raw `reservations`.
     const stripGroupId = logicalGroupIds(reservations as unknown as ReservationRow[]);
     const stripByGroup = new Map<string, typeof reservations>();
+    // Presentation groups must retain every deduplicated source order. Sharing
+    // a renter and item list does not establish a shared physical allocation.
+    const stripSourceOrders = new Map<string, typeof reservations>();
     for (const r of reservations) {
       const gid = stripGroupId.get(r._id) ?? r._id;
       const arr = stripByGroup.get(gid);
@@ -396,11 +412,15 @@ export async function computeStripLive(
       else stripByGroup.set(gid, [r]);
     }
     const logicalMerged = Array.from(stripByGroup.values()).map((members) => {
-      if (members.length === 1) return members[0];
+      if (members.length === 1) {
+        stripSourceOrders.set(String(members[0]._id), members);
+        return members[0];
+      }
       const sorted = members
         .slice()
-        .sort((a, b) => displayPickupDate(a).localeCompare(displayPickupDate(b)));
+        .sort(comparePickupMoment);
       const startM = sorted[0];
+      stripSourceOrders.set(String(startM._id), members);
       let endM = sorted[0];
       for (const m of sorted) if (compareReturnMoment(m, endM) > 0) endM = m;
       const grossSum = members.reduce(
@@ -413,7 +433,9 @@ export async function computeStripLive(
         return_date: displayReturnDate(endM),
         end_date: endM.end_date,
         pickup_time: startM.pickup_time,
+        pickup_time_provenance: startM.pickup_time_provenance,
         return_time: endM.return_time,
+        return_time_provenance: endM.return_time_provenance,
         pickup_method: preferDeliveryMethod(
           members.map((m) => (m as { pickup_method?: string | null }).pickup_method),
         ),
@@ -446,20 +468,16 @@ export async function computeStripLive(
       // Span the whole booking: earliest pickup → latest return.
       const sorted = members
         .slice()
-        .sort((a, b) => displayPickupDate(a).localeCompare(displayPickupDate(b)));
+        .sort(comparePickupMoment);
       const startM = sorted[0];
+      stripSourceOrders.set(String(startM._id), members.flatMap(m => stripSourceOrders.get(String(m._id)) ?? [m]));
       let endM = sorted[0];
       for (const m of sorted) if (compareReturnMoment(m, endM) > 0) endM = m;
-      // Confirmed handover times can live on a member other than the span
-      // start/end (a grouped booking where only one order carries the negotiated
-      // time). Take the earliest CONFIRMED pickup + latest CONFIRMED return so
-      // the booking shows real times rather than defaulting to a member's null.
-      const byReturnDesc = members
-        .slice()
-        .sort((a, b) => compareReturnMoment(b, a));
-      const pickMember = sorted.find((m) => m.pickup_time) ?? startM;
+      // Carry the boundary member's evidence with its clock. A missing clock
+      // stays unknown; another listing's agreement cannot confirm this one.
+      const pickMember = startM;
       const pickTime = pickMember.pickup_time;
-      const retMember = byReturnDesc.find((m) => m.return_time) ?? endM;
+      const retMember = endM;
       const retTime = retMember.return_time;
       // Delivery wins so a planned delivery never gets hidden by a collection
       // member (the grouping guard already keeps conflicting methods apart, but
@@ -819,7 +837,7 @@ export async function computeStripLive(
     }
 
     /** Build a rich chip for one reservation on a specific day. */
-    function buildChip(r: Doc<"reservations">, kind: "pickup" | "return" | "away") {
+    function buildChip(r: Doc<"reservations">, kind: "pickup" | "return" | "away", date: string) {
       const rType = r as {
         pickup_time?: string | null;
         return_time?: string | null;
@@ -833,7 +851,36 @@ export async function computeStripLive(
       const renterName =
         rType.renter_name ??
         (r.renter_id ? renterMap.get(r.renter_id as string) ?? "?" : "?");
-      const items = buildItems(r);
+      const sourceOrders = stripSourceOrders.get(String(r._id));
+      const items = !sourceOrders || sourceOrders.length === 1 || r.account_slug === "dbcinema_web"
+        ? buildItems(r)
+        : (() => {
+          const byTile = new Map<string, ChipItem>();
+          const allocations = new Map<string, Map<string,number>>();
+          for (const source of sourceOrders) {
+            const pickup = displayPickupDate(source), returned = effectiveReturnDate(source);
+            if (!pickup || !returned || pickup > date || returned < date) continue;
+            const units = reservationItemUnits(source,productIndexStrip,overrideMapStrip,rawItemsForStrip);
+            const group = confirmedCustodyGroup(source,units) ?? `independent:${source._id}`;
+            const sourceTiles = new Map<string,ChipItem>();
+            for (const item of buildItems(source)) {
+              const key = JSON.stringify([item.itemId, item.itemId ? null : item.name, item.imageUrl]);
+              const own = sourceTiles.get(key);
+              if (own) own.qty += item.qty;
+              else sourceTiles.set(key,{...item});
+            }
+            for (const [key,item] of sourceTiles) {
+              const existing = byTile.get(key);
+              const held = allocations.get(key) ?? new Map<string,number>();
+              held.set(group,Math.max(held.get(group) ?? 0,item.qty));
+              allocations.set(key,held);
+              const qty = [...held.values()].reduce((sum,n)=>sum+n,0);
+              if (existing) existing.qty = qty;
+              else byTile.set(key, { ...item,qty });
+            }
+          }
+          return [...byTile.values()];
+        })();
       // Per-tile multi-image: collect distinct image URLs (preserve order),
       // capped at 4 for the chip’s 1/2/4 grid layout. Single `imageUrl` is
       // retained for backward-compat (existing UI reads it as a fallback).
@@ -902,11 +949,11 @@ export async function computeStripLive(
       // Placement follows the negotiated dates in each direction.
       const pickups = calendarReservations
         .filter((r) => displayPickupDate(r) === date)
-        .map((r) => buildChip(r, "pickup"));
+        .map((r) => buildChip(r, "pickup", date));
 
       const returns = calendarReservations
         .filter((r) => effectiveReturnDate(r) === date)
-        .map((r) => buildChip(r, "return"));
+        .map((r) => buildChip(r, "return", date));
 
       // "Away" — rental days strictly between pickup and return (V1 parity).
       // Uses effective pickup + return dates so AI-negotiated rentals stay
@@ -923,7 +970,7 @@ export async function computeStripLive(
           if (!ret) return false;
           return pick < date && ret > date && !dayIds.has(`${r._id}:${r.site_period_key ?? ""}`);
         })
-        .map((r) => buildChip(r, "away"));
+        .map((r) => buildChip(r, "away", date));
 
       const dayHolds = holds
         // Drop status==="completed" holds — they're historical leftovers from
@@ -941,7 +988,7 @@ export async function computeStripLive(
           status: h.status,
         }));
 
-      return { calendarWindowVersion: 4 as const, date, pickups, returns, away, holds: dayHolds };
+      return { calendarWindowVersion: 5 as const, date, pickups, returns, away, holds: dayHolds };
     });
 }
 
@@ -965,7 +1012,7 @@ export const getCalendarStrip = query({
       // Cast the stored v.any() payload back to the live compute's exact type
       // (returning `any` from one branch would widen the whole query return
       // type to `any`). Same pattern as getWeeklyCalendar.
-      if (mv && mv.anchor === startDate && mv.days === days && Array.isArray(mv.payload) && mv.payload.every((d: { calendarWindowVersion?: number }) => d.calendarWindowVersion === 4))
+      if (mv && mv.anchor === startDate && mv.days === days && Array.isArray(mv.payload) && mv.payload.every((d: { calendarWindowVersion?: number }) => d.calendarWindowVersion === 5))
         return mv.payload as Awaited<ReturnType<typeof computeStripLive>>;
     }
     return computeStripLive(ctx, { accountSlug, startDate, days });
@@ -1332,7 +1379,7 @@ export async function computeWeeklyLive(
     }
 
     return {
-      calendarWindowVersion: 4 as const,
+      calendarWindowVersion: 5 as const,
       days: dates.map((date) => ({
         date,
         reservations: reservations
@@ -1436,7 +1483,7 @@ export const getWeeklyCalendar = query({
       // type — otherwise returning `any` from one branch widens the whole
       // query's inferred return type to `any` and the frontend's typed
       // `data.days.map(...)` breaks (noImplicitAny).
-      if (mv && mv.anchor === weekStartDate && mv.payload?.calendarWindowVersion === 4)
+      if (mv && mv.anchor === weekStartDate && mv.payload?.calendarWindowVersion === 5)
         return mv.payload as Awaited<ReturnType<typeof computeWeeklyLive>>;
     }
     return computeWeeklyLive(ctx, { accountSlug, weekStartDate });

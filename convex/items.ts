@@ -1,3 +1,6 @@
+import {buildStockForecast} from "./lib/stock_forecast";
+import {loadStockRepairs} from "./lib/stock_repairs";
+import {STOCK_FORECAST_VERSION,stockForecastRows,type StockForecastSnapshot} from "../src/lib/stock-forecast";
 import { shortItemName } from "./lib/item_display_name";
 import { mutation, query, internalQuery, internalQueryOf } from "./owner_functions";
 import { loadStockSources } from "./lib/renter_stock";
@@ -13,7 +16,7 @@ import {
   widgetSlugKey,
 } from "./lib/widget_mv";
 import type { Doc } from "./_generated/dataModel";
-import { isConfirmedWithDates, isPaidWithV1Legacy } from "./lib/reservations/predicates";
+import { isPaidWithV1Legacy } from "./lib/reservations/predicates";
 // Attribution engine (was gated by `use_new_attribution_engine` — Phase 6 cutover).
 import {
   attributeRevenue,
@@ -356,13 +359,7 @@ export const getItemCycles = query({
 /** The lookAheadDays the dashboard panel always passes (OutOfStockPanel.tsx). */
 export const OOS_CANONICAL_LOOKAHEAD_DAYS = 14;
 
-export type OosPanelRow = {
-  itemId: string;
-  name: string;
-  image: string | null;
-  nextAvailableDate: string | null;
-  activeReservationCount: number;
-};
+export type OosPanelRow = import("../src/lib/stock-forecast").StockForecastRow;
 
 export type SellRecoRow = {
   itemId: string;
@@ -383,216 +380,20 @@ export type PriceRecoRow = {
   demandSignal: string;
 };
 
-export type OosPoolComponents = Map<string, Array<{ item_id: string; qty: number }>>;
-
-/**
- * Pool bundle-components per `${slug}#${product_id}` — extracted verbatim from
- * the live handler so the mv/widgets refresher shares one build across slugs.
- */
-export function buildOosPoolComponents(
-  poolRows: Array<Doc<"listing_info_pool">>,
-  poolEnabledAccounts: Set<string>,
-): OosPoolComponents {
-  const poolComponentsByProduct: OosPoolComponents = new Map();
-  for (const pr of poolRows) {
-    if (!poolEnabledAccounts.has(pr.account_slug)) continue;
-    const mo = pr.manual_override;
-    const moComps = mo?.bundle_components;
-    const comps: Array<{ item_id: string; qty: number }> = [];
-    if (moComps && moComps.length > 0) {
-      for (const c of moComps) comps.push({ item_id: String(c.item_id), qty: c.qty });
-    } else {
-      for (const c of pr.bundle_components) {
-        if (!c.item_id) continue;
-        if (c.source_kind === "comparison_reference") continue;
-        if (c.source_kind === "standard_included") continue;
-        comps.push({ item_id: String(c.item_id), qty: c.qty });
-      }
-    }
-    if (comps.length > 0) poolComponentsByProduct.set(`${pr.account_slug}#${pr.product_id}`, comps);
-  }
-  return poolComponentsByProduct;
-}
-
-/**
- * Pure per-slug OOS counting — the exact hold-count loop from the live
- * handler, taking pre-collected inputs so the hourly mv/widgets refresher
- * computes all 5 slugs from ONE reservation read. `reservations` must
- * already be filtered to confirmed-with-dates ∩ start<=endStr ∩ end>=today
- * (cross-account); the slug filter happens here to mirror the live order.
- */
-export function computeOosForSlug(opts: {
-  reservations: Array<Doc<"reservations">>;
-  activeItems: Array<Doc<"items">>;
-  poolEnabledAccounts: Set<string>;
-  poolComponentsByProduct: OosPoolComponents;
-  accountSlug: string | null;
-  endStr: string;
-}): {
-  oos: Array<Doc<"items">>;
-  holdCounts: Map<string, number>;
-  nextAvailMap: Map<string, string>;
-} {
-  const { activeItems, poolEnabledAccounts, poolComponentsByProduct, accountSlug, endStr } = opts;
-  const reservations = accountSlug
-    ? opts.reservations.filter((r) => r.account_slug === accountSlug)
-    : opts.reservations;
-
-  const itemIdToCanonical = new Map<string, string>();
-  for (const i of activeItems) itemIdToCanonical.set(String(i._id), i.name_canonical);
-  const canonSet = new Set<string>(activeItems.map((i) => i.name_canonical));
-
-  const holdCounts = new Map<string, number>();
-  const nextAvailMap = new Map<string, string>();
-  for (const r of reservations) {
-    // Pool path — when ANY hygglo_items[].product_id has a pool entry,
-    // tally those components and skip the resolved_items fallback for
-    // this reservation (the pool is authoritative). Listings without a
-    // pool match still get the legacy path.
-    const hItems = (r as { hygglo_items?: Array<{ product_id?: number; qty?: number }> }).hygglo_items ?? [];
-    const slug = r.account_slug ?? "";
-    let usedPool = false;
-    if (hItems.length > 0 && poolEnabledAccounts.has(slug)) {
-      for (const h of hItems) {
-        if (typeof h.product_id !== "number") continue;
-        const comps = poolComponentsByProduct.get(`${slug}#${h.product_id}`);
-        if (!comps || comps.length === 0) continue;
-        const lineQty = typeof h.qty === "number" && h.qty > 0 ? h.qty : 1;
-        for (const c of comps) {
-          const canon = itemIdToCanonical.get(c.item_id);
-          if (!canon || !canonSet.has(canon)) continue;
-          holdCounts.set(canon, (holdCounts.get(canon) ?? 0) + c.qty * lineQty);
-          const existing = nextAvailMap.get(canon);
-          if (!existing || (r.end_date && r.end_date > existing)) {
-            nextAvailMap.set(canon, r.end_date ?? endStr);
-          }
-          usedPool = true;
-        }
-      }
-    }
-    if (usedPool) continue;
-    // Legacy path (flag OFF, no pool row, or pool components all dropped).
-    const resolved = (r as { resolved_items?: Array<{ item_name_canonical: string }> }).resolved_items ?? [];
-    for (const x of resolved) {
-      if (!canonSet.has(x.item_name_canonical)) continue;
-      holdCounts.set(x.item_name_canonical, (holdCounts.get(x.item_name_canonical) ?? 0) + 1);
-      const existing = nextAvailMap.get(x.item_name_canonical);
-      if (!existing || (r.end_date && r.end_date > existing)) {
-        nextAvailMap.set(x.item_name_canonical, r.end_date ?? endStr);
-      }
-    }
-  }
-
-  const oos = activeItems.filter(
-    (i) =>
-      holdCounts.has(i.name_canonical) &&
-      (holdCounts.get(i.name_canonical) ?? 0) >= i.qty,
-  );
-  return { oos, holdCounts, nextAvailMap };
-}
-
 export const getOutOfStockItems = query({
   args: {
     accountSlug: v.union(v.string(), v.null()),
     lookAheadDays: v.number(),
   },
   handler: async (ctx, { accountSlug, lookAheadDays }) => {
-    // 2026-07-12 cost audit: MV fast path. The panel always asks for the
-    // canonical 14-day window; serve the hourly mv_widgets row so the tab
-    // subscribes to one small doc instead of re-scanning the reservations
-    // window + full items table on every poller write. Non-canonical
-    // windows (none in the UI today) fall through to live.
-    if (lookAheadDays === OOS_CANONICAL_LOOKAHEAD_DAYS) {
-      const cached = await readWidgetMv(
-        ctx,
-        `oos:${widgetSlugKey(accountSlug)}`,
-        FAST_WIDGET_MAX_AGE_MS,
-      );
-      if (cached !== null) return cached as OosPanelRow[];
+    if(!Number.isInteger(lookAheadDays)||lookAheadDays<1||lookAheadDays>90)throw Error("Stock outlook must be between 1 and 90 days");
+    const cached=lookAheadDays===OOS_CANONICAL_LOOKAHEAD_DAYS?await readWidgetMv(ctx,`oos:${widgetSlugKey(accountSlug)}`,FAST_WIDGET_MAX_AGE_MS):null;
+    const snapshot=cached as StockForecastSnapshot|null;
+    if(snapshot?.stockWindowVersion===STOCK_FORECAST_VERSION&&Array.isArray(snapshot.inputs)){
+      const repairs=await loadStockRepairs(ctx);
+      return stockForecastRows({...snapshot,inputs:snapshot.inputs.map(i=>({...i,inRepair:repairs.get(i.item_id)??0}))},Date.now());
     }
-    const today = new Date().toISOString().slice(0, 10);
-    const endDate = new Date();
-    endDate.setDate(endDate.getDate() + lookAheadDays);
-    const endStr = endDate.toISOString().slice(0, 10);
-
-    // Include ongoing (start<=today, end>=today) + upcoming (start<=endStr) confirmed reservations.
-    // PERF: push the `start_date <= endStr` bound into the by_start_date index so we read only
-    // the relevant prefix instead of the whole table. Result-equivalent: the full predicate
-    // already requires start_date <= endStr, and rows with undefined start_date (excluded from
-    // a lte index range) are also dropped by isConfirmedWithDates. The remaining JS filters
-    // (isConfirmedWithDates, end_date >= today, account_slug) are applied verbatim afterwards.
-    // PERF: also LOWER-bound the scan. `.lte(endStr)` alone matches ALL history
-    // (every past row has start_date <= a future date) → the entire reservations
-    // table was read on every reactive re-run. The only output is currently-active/
-    // upcoming rentals (guarded by `end_date >= today` below), which cannot have
-    // started more than one rental-length ago; 400d is beyond any real Hygglo rental,
-    // so the row set is unchanged.
-    const oosLookbackDate = new Date();
-    oosLookbackDate.setDate(oosLookbackDate.getDate() - 400);
-    const oosLookbackStr = oosLookbackDate.toISOString().slice(0, 10);
-    let reservations = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (q) =>
-        q.gte("start_date", oosLookbackStr).lte("start_date", endStr))
-      .collect();
-    reservations = reservations.filter(
-      (r) =>
-        isConfirmedWithDates(r as any) &&
-        (r.start_date as string) <= endStr &&
-        (r.end_date as string) >= today
-    );
-    if (accountSlug) {
-      reservations = reservations.filter((r) => r.account_slug === accountSlug);
-    }
-
-    // Build hold counts using fuzzy canonical name matching
-    // (Hygglo item_name is the full listing title; items table uses short canonical names)
-    const allItems = await ctx.db.query("items").collect();
-    const activeItems = allItems.filter((i) => i.status === "active" && !i.is_marketing_only);
-
-    // 2026-05-24: listing info pool components — gated per-account.
-    // When the flag is ON for an account, the pool's bundle_components
-    // are summed per item_id (lens + body each count toward their own
-    // capacity). When OFF, the legacy resolved_items strict-canonical-
-    // name match runs verbatim. Components flagged as comparison_reference
-    // or standard_included never contribute to OOS counts.
-    const candidateSlugs = Array.from(new Set(
-      reservations.map((r) => r.account_slug).filter((s): s is string => !!s)
-    ));
-    const poolEnabledAccounts = await infoPoolEnabledAccounts(ctx, candidateSlugs);
-    let poolComponentsByProduct: OosPoolComponents = new Map();
-    if (poolEnabledAccounts.size > 0) {
-      const poolRows = await ctx.db.query("listing_info_pool").collect();
-      poolComponentsByProduct = buildOosPoolComponents(poolRows, poolEnabledAccounts);
-    }
-
-    // accountSlug already applied above — pass null so the core doesn't re-filter.
-    const { oos, holdCounts, nextAvailMap } = computeOosForSlug({
-      reservations,
-      activeItems,
-      poolEnabledAccounts,
-      poolComponentsByProduct,
-      accountSlug: null,
-      endStr,
-    });
-    // Listing thumbnail per OOS item (indexed by_master_item lookup, only the
-    // few out-of-stock rows).
-    const imageByItem = new Map<string, string>();
-    for (const i of oos) {
-      const prod = await ctx.db
-        .query("hygglo_products")
-        .withIndex("by_master_item", (q) => q.eq("masterItemId", i._id))
-        .first();
-      const img = prod?.images?.[0]?.fullSizeUrl ?? prod?.images?.[0]?.thumbnailUrl;
-      if (img) imageByItem.set(String(i._id), img);
-    }
-    return oos.map((i) => ({
-      itemId: i._id,
-      name: shortItemName(i),
-      image: imageByItem.get(String(i._id)) ?? null,
-      nextAvailableDate: nextAvailMap.get(i.name_canonical) ?? null,
-      activeReservationCount: holdCounts.get(i.name_canonical) ?? 0,
-    }));
+    return stockForecastRows(await buildStockForecast(ctx,lookAheadDays),Date.now());
   },
 });
 

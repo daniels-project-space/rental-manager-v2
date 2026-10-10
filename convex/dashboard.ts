@@ -1,3 +1,4 @@
+import {loadStockRepairs} from "./lib/stock_repairs";
 import { websiteCaseView, type WebsiteCaseRow } from "./lib/websiteCases";
 import { listingDisplayName, shortItemName, shortListingTitle } from "./lib/item_display_name";
 import { query, type QueryCtx, internalQueryOf } from "./owner_functions";
@@ -33,7 +34,13 @@ import {
   normaliseItemName,
   type ImageHint,
 } from "./lib/imageResolution";
-import { effEnd as effEndImpl, effStart as effStartImpl, extensionOccupancyQty } from "./lib/double_booking";
+import { stockOccupancyForItem } from "./lib/renter_stock";
+import { stockConflictPeak, STOCK_CONFLICT_VERSION } from "./lib/stock_conflict_peak";
+import { londonStockLabel } from "./lib/confirmed_schedule";
+import { loadCanonicalListingAllocation } from "./lib/canonical_listing_allocation";
+import { buildProductIndexMap, reservationItemUnits } from "./lib/reservations/itemUnits";
+import type { Doc } from "./_generated/dataModel";
+import {stockNowCard,type StockNowInput} from "../src/lib/stock-now";
 import { claimHoldsStock } from "./lib/availability";
 // Attribution engine (was gated by `use_new_attribution_engine` — Phase 6 cutover).
 // The rental-volume queries now reach it through ./lib/rental_volume.
@@ -351,7 +358,7 @@ export const getStatsDrawerData = query({
         .query("mv_stats_drawer")
         .withIndex("by_account", (q) => q.eq("account", accountKey))
         .first();
-      if (cached) {
+      if (cached && (cached.payload as {stockConflictVersion?:number}|null)?.stockConflictVersion === STOCK_CONFLICT_VERSION) {
         // Re-apply conflict dismissals at READ time so clicking "Resolve" clears
         // the card instantly. The cached MV payload is rebuilt only on
         // reservation mutations (not on a dismissal), so without this a resolved
@@ -365,14 +372,18 @@ export const getStatsDrawerData = query({
         // hourly MV refresh, which made the drawer's "Advance" button appear to
         // do nothing. Mirrors the conflict-dismissal/scanner read-time overlays.
         const freshInsurance = await liveInsuranceCard(ctx, accountSlug);
+        // Physical inventory is shared across accounts. Read only the two
+        // repair stages, including closed statuses so claimHoldsStock decides.
+        const liveRepair=await loadStockRepairs(ctx);
         const applyDismissals = (p: unknown): unknown => {
           const pp = p as
             | { conflicts?: Array<{ conflict_key: string }>; insurance?: unknown }
             | null;
           if (!pp) return p;
           const base = pp as Record<string, unknown>;
+          const inputs=(base.stockNowInputs as StockNowInput[]|undefined)?.map(i=>({...i,inRepair:liveRepair.get(i.item_id)??0}));
           // Always overlay the freshly-computed insurance card.
-          const withInsurance: Record<string, unknown> = { ...base, insurance: freshInsurance };
+          const withInsurance: Record<string, unknown> = { ...base, insurance: freshInsurance,...(inputs?{stockNowInputs:inputs,out_of_stock:stockNowCard(inputs,Date.now())}:{}) };
           if (!Array.isArray(pp.conflicts) || dismissedNow.size === 0) return withInsurance;
           return {
             ...withInsurance,
@@ -986,25 +997,23 @@ export const getStatsDrawerData = query({
     // accounts (not just the scoped one) so an A7 III booked by DB Cinema
     // and an A7 III booked by Leo on the same day surface as ONE conflict
     // on either dashboard page.
-    const ongoingCross = (allResCrossAccount as ResRow[]).filter((r) => isOngoing(r as ResRow, activeToday));
     const upcomingCross = (allResCrossAccount as ResRow[]).filter((r) => isUpcoming(r as ResRow, activeToday));
-    const pendingCross = (allResCrossAccount as ResRow[]).filter((r) => (r as { status?: string }).status === "pending_review" && (r as { order_step?: string }).order_step === "VERIFIED" && !(r as { is_obsolete?: boolean }).is_obsolete && !!r.start_date);
     const dedupCross = <T extends ResRow>(arr: T[]): T[] => dedupByLogicalRental(arr);
-    const ongoingCrossUniq = dedupCross(ongoingCross);
     const upcomingCrossUniq = dedupCross(upcomingCross);
-    const pendingCrossUniq = dedupCross(pendingCross);
-    // Pending-tracked equivalent for cross-account (filter to those whose
-    // resolved_items point at active inventory).
-    const pendingCrossTracked = pendingCrossUniq.filter((r) => {
-      const ids = expandedIdsOf(r as ResRow);
-      for (const id of ids.keys()) if (activeItemIds.has(id)) return true;
-      return false;
-    });
-    const activeForConflicts: ResWithItems[] = [
-      ...ongoingCrossUniq,
-      ...upcomingCrossUniq,
-      ...pendingCrossTracked,
-    ];
+    // Resolve conflict quantities through the same canonical listing contents
+    // as checkout; reuse the catalogue and overrides already fetched above.
+    // The last return's buffer may spill into today even when the Active
+    // widget has finished that booking. Let the projected windows decide
+    // overlap, rather than dropping sources by whole-day widget membership.
+    const conflictReservations = dedupCross((allResCrossAccount as ResRow[]).filter(r=>
+      !r.is_obsolete && !!r.start_date && !!r.end_date &&
+      (r.status === "confirmed" || r.status === "ongoing" || r.status === "pending_review" && r.order_step === "VERIFIED")
+    )) as Doc<"reservations">[];
+    const conflictIndex=buildProductIndexMap(productIndexRows);
+    const conflictAllocation=await loadCanonicalListingAllocation(ctx,allItems,overrideRows,conflictReservations);
+    const conflictUnits=new Map(conflictReservations.map(r=>[String(r._id),reservationItemUnits(r,conflictIndex,conflictAllocation,allItems)]));
+    const conflictSources={items:allItems,reservations:conflictReservations,productIndex:conflictIndex,overrides:conflictAllocation,reservationUnits:conflictUnits};
+    const conflictRowsById=new Map(conflictReservations.map(r=>[String(r._id),r as ResWithItems]));
     interface Conflict {
       conflict_key: string;
       item_id: string;
@@ -1035,109 +1044,21 @@ export const getStatsDrawerData = query({
     for (const item of activeItems) {
       if (item.qty < 1) continue;
       if (stdAccIds.has(String(item._id))) continue; // SD cards / batteries: bundled, not a constraint
-      const matchingRes: Array<{ r: ResWithItems; kind: "ongoing" | "upcoming" | "pending" }> = [];
-      const seenIds = new Set<string>();
-      const tag = (r: ResWithItems): "ongoing" | "upcoming" | "pending" =>
-        upcomingCrossUniq.includes(r) ? "upcoming"
-        : ongoingCrossUniq.includes(r) ? "ongoing"
-        : "pending";
-      const itemIdStr = item._id as string;
-      // Effective capacity = owned qty minus units out on repair (open cases).
+      const itemIdStr = String(item._id);
       const effQty = item.qty - (repairByItem.get(itemIdStr) ?? 0);
-      for (const r of activeForConflicts) {
-        if (!r.start_date || !r.end_date) continue;
-        if ((r.start_date as string) > horizonEnd) continue;
-        // Strict match via LLM-resolved item IDs — no substring fuzzy.
-        const idsToQty = expandedIdsOf(r as ResRow);
-        const q = idsToQty.get(itemIdStr);
-        if (!q || q < 1) continue;
-        if (seenIds.has(r._id)) continue;
-        seenIds.add(r._id);
-        matchingRes.push({ r, kind: tag(r) });
-      }
-      // Concurrent qty SUM is what matters. A reservation holding 2× of the item
-      // counts as 2 toward overlap.
-      const sumQty = (rows: typeof matchingRes): number => extensionOccupancyQty(
-        rows.map(({ r }) => ({ renter_name: r.renter_name, qty: expandedIdsOf(r as ResRow).get(itemIdStr) ?? 0 })),
-      );
-      if (sumQty(matchingRes) <= effQty) continue;
-
-      // Sweep dates within horizon, count concurrency per day.
-      // `effStart` honours an evening-before pickup_date (gear out earlier);
-      // `effEnd` honours a morning-after return_date (gear out later) plus
-      // the overdue-grace extension for RETURNED/DELIVERED + confirmed rows.
-      const todayIso = today;
-      const effEnd = (r: ResRow): string =>
-        effEndImpl(
-          {
-            end_date: r.end_date as string,
-            return_date: (r as any).return_date as string | null | undefined,
-            order_step: r.order_step as string | null | undefined,
-            status: r.status as string | null | undefined,
-          },
-          todayIso,
-        );
-      const effStart = (r: ResRow): string =>
-        effStartImpl({
-          start_date: r.start_date as string,
-          pickup_date: r.pickup_date as string | null | undefined,
-        });
-      // Time-aware occupancy: a same-day handover (one rental returns, the next
-      // is picked up LATER the same day) is not a real overlap. Build datetime
-      // strings "YYYY-MM-DDThh:mm" from the effective dates + chat-extracted
-      // pickup_time / return_time. Missing times default to all-day (00:00
-      // pickup, 23:59 return) so behaviour is unchanged where we lack the data —
-      // only KNOWN times can shrink an overlap, never invent one.
-      const startDT = (r: ResRow): string =>
-        effStart(r) + "T" + (((r as any).pickup_time as string | undefined) || "00:00");
-      const endDT = (r: ResRow): string => {
-        const ed = effEnd(r);
-        const rawEnd = (((r as any).return_date as string | undefined) ?? (r.end_date as string));
-        // When overdue-grace pushed the end past the booked return we have no
-        // time for the extra day(s) → treat as out all day.
-        const tm = ed > rawEnd ? "23:59" : (((r as any).return_time as string | undefined) || "23:59");
-        return ed + "T" + tm;
-      };
-      let worstStart = "";
-      let worstInstant = "";
-      let worstCount = 0;
-      // Worst CONFIRMED-only concurrency (ongoing + upcoming; excludes pending).
-      // Lets us tell a live oversell apart from one that only appears if a
-      // pending request is accepted — pending bookings don't block the calendar.
-      let worstConfirmedCount = 0;
-      const scanFromDT = todayIso + "T00:00";
-      const scanToDT = horizonEnd + "T23:59";
-      // Concurrency only rises at a pickup instant, so it suffices to evaluate at
-      // each member's start datetime (and the scan start). A unit is out over the
-      // half-open window [startDT, endDT): a return at exactly t frees it.
-      const instants = Array.from(
-        new Set<string>(
-          [scanFromDT, ...matchingRes.map((m) => startDT(m.r as ResRow))].filter(
-            (x) => x >= scanFromDT && x <= scanToDT,
-          ),
-        ),
-      ).sort();
-      for (const t of instants) {
-        const overlapping = matchingRes.filter(
-          (m) => startDT(m.r as ResRow) <= t && endDT(m.r as ResRow) > t,
-        );
-        const qtySum = sumQty(overlapping);
-        const confirmedSum = sumQty(overlapping.filter((m) => m.kind !== "pending"));
-        if (qtySum > worstCount) {
-          worstCount = qtySum;
-          worstInstant = t;
-          worstStart = t.slice(0, 10);
-        }
-        if (confirmedSum > worstConfirmedCount) worstConfirmedCount = confirmedSum;
-      }
+      const occupancy=stockOccupancyForItem(conflictSources,item,{item_name:item.name_canonical,start_date:activeToday,end_date:horizonEnd});
+      const result=stockConflictPeak(occupancy.map(row=>({...row,pending:conflictRowsById.get(row.reservation_id!)?.status==="pending_review"})),activeToday+"T00:00",new Date(Date.parse(horizonEnd+"T00:00Z")+86400000).toISOString().slice(0,10)+"T00:00");
+      const worstCount=result.peak,worstConfirmedCount=result.confirmedPeak;
+      const worstInstant=result.at===null?null:londonStockLabel(result.at);
+      const worstStart=worstInstant?.slice(0,10)??"";
       if (worstCount > effQty && worstInstant) {
-        // The exact set of reservations concurrent at the peak instant.
-        const overlappingSet = matchingRes.filter(
-          (m) => startDT(m.r as ResRow) <= worstInstant && endDT(m.r as ResRow) > worstInstant,
-        );
-        const earliestEnd = overlappingSet
-          .map((m) => effEnd(m.r as ResRow))
-          .sort()[0];
+        // Several physical windows can belong to one website booking. Keep
+        // quantities per window but only one booking card/action at the peak.
+        const overlappingSet=[...new Set(result.overlapping.map(w=>w.reservation_id))].flatMap(id=>{
+          const r=id?conflictRowsById.get(id):undefined;
+          return r?[{r,kind:(r.status==="pending_review"?"pending":upcomingCrossUniq.some(u=>u._id===r._id)?"upcoming":"ongoing") as "pending"|"upcoming"|"ongoing"}]:[];
+        });
+        const earliestEnd=result.overlapping.map(w=>w.end.slice(0,10)).sort()[0]??worstStart;
         // Stable conflict identity: item_id + sorted reservation IDs.
         // If any reservation set member changes, the key changes too — a
         // dismissal of the OLD shape does not suppress a NEW shape.
@@ -1955,57 +1876,21 @@ export const getStatsDrawerData = query({
       ] as Array<{ label: string; count: number; gbp: number; weight: number }>,
     };
 
-    // ── card: out_of_stock ────────────────────────────────────────
-    // NOW-based (not next-30d): items whose currently-active rentals
-    // (isOngoing predicate — confirmed + today ∈ [start, end]) hold qty
-    // equal to or greater than the item's total stock. Zero units
-    // physically available right now.
-    //
-    // Per Daniel: "things that are rented rn and currently out of stock
-    // as there is no longer inventory for it".
-    //
-    // Source of truth: reservations.expanded_items[].item_id — the
-    // bundle-decomposed, master-inventory-linked item list. Schema
-    // comment on reservations.expanded_items: "Conflict + out-of-stock
-    // + sell-reco read this, not resolved_items." Falls back to
-    // resolved_items when expanded_items is not yet populated.
-    //
-    // We MUST match by item_id, not by name. The resolver appends a
-    // "[kind]" suffix to item_name_canonical (e.g. "Sony FX3 [camera]")
-    // which never equals the bare items.name_canonical ("Sony FX3"),
-    // and r.items[].item_name is the raw Hygglo listing title that
-    // matches nothing canonical.
-    const heldNowByItemId = new Map<string, number>();
-    for (const r of ongoingRentals) {
-      const expanded = (r as { expanded_items?: Array<{ item_id: string; qty: number }> }).expanded_items;
-      const resolved = (r as { resolved_items?: Array<{ item_id: string; qty?: number }> }).resolved_items;
-      const source: Array<{ item_id: string; qty?: number }> =
-        expanded && expanded.length > 0
-          ? expanded
-          : resolved ?? [];
-      for (const it of source) {
-        if (!it.item_id) continue;
-        const qty = it.qty ?? 1;
-        heldNowByItemId.set(
-          it.item_id as string,
-          (heldNowByItemId.get(it.item_id as string) ?? 0) + qty,
-        );
-      }
-    }
-    const oosItems = activeItems
-      .filter((i) => ((heldNowByItemId.get(i._id as string) ?? 0) + (repairByItem.get(i._id as string) ?? 0)) >= i.qty)
-      .slice(0, 15)
-      .map((i) => ({
-        item_id: i._id as string,
-        name: i.name_canonical,
-        qty: i.qty,
-        heldNow: heldNowByItemId.get(i._id as string) ?? 0,
-        inRepair: repairByItem.get(i._id as string) ?? 0,
-      }));
-    const out_of_stock = {
-      count: oosItems.length,
-      items: oosItems,
-    };
+    // Current physical availability is shared across accounts. Provider
+    // requests do not hold stock until confirmed; verified website bookings
+    // already have a paid, committed allocation. Keep only anonymous windows
+    // in the materialized payload so clocks can advance without database scans.
+    const nowSources={...conflictSources,reservations:conflictReservations.filter(r=>r.status!=="pending_review"||r.account_slug==="dbcinema_web")};
+    const stockNowInputs:StockNowInput[]=activeItems.map(item=>{
+      const groups=new Map<string,number>();
+      const windows=stockOccupancyForItem(nowSources,item,{item_name:item.name_canonical,start_date:activeToday,end_date:activeToday}).map(w=>{
+        let group:number|undefined;
+        if(w.extension_key){if(!groups.has(w.extension_key))groups.set(w.extension_key,groups.size);group=groups.get(w.extension_key);}
+        return {start:w.startInstant!,end:w.endInstant!,qty:w.qty,...(group===undefined?{}:{group})};
+      });
+      return {item_id:String(item._id),name:item.name_canonical,qty:item.qty,inRepair:repairByItem.get(String(item._id))??0,windows};
+    });
+    const out_of_stock=stockNowCard(stockNowInputs,now.getTime());
 
     // ── card: vacation ────────────────────────────────────────────
     // owner_unavailability joined with items for name
@@ -2296,6 +2181,8 @@ export const getStatsDrawerData = query({
     }
 
     return {
+      stockConflictVersion: STOCK_CONFLICT_VERSION,
+      stockNowInputs,
       active: {
         total: activeTotal,
         ongoing_count: ongoingGroupRows.length,

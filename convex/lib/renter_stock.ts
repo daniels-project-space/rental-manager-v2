@@ -8,6 +8,7 @@ import { effStart } from "./double_booking";
 import { dedupByLogicalRental } from "./reservations/predicates";
 import { buildProductIndexMap, reservationItemUnits, type OverrideMap } from "./reservations/itemUnits";
 import { defaultAdapterUnits } from "./default_adapter_units";
+import { confirmedCustodyGroup } from "./reservation_custody";
 
 export type StockRequest = {
   item_name: string;
@@ -37,7 +38,9 @@ export type Occupancy = {
   endInstant?:number;
   renter_name?: string | null;
   order_id?: string;
-  /** Account + renter identity + complete physical basket, never name alone. */
+  reservation_id?: string;
+  /** Explicit shared allocation supplied by a trusted caller, never inferred
+   * from renter identity, matching baskets or overlapping booked dates. */
   extension_key?: string;
 };
 type DateBlock = { start_date: string; end_date: string };
@@ -138,7 +141,8 @@ function quotationEnd(r: {end_date:string;return_date?:string|null;return_time?:
 
 /** Shared physical occupancy, including extensions, per-item windows and
  * agreed return windows. Callers project it without exposing renter identities. */
-export function stockOccupancyForItem(sources: Awaited<ReturnType<typeof loadStockSources>>, item: Doc<"items">, request: StockRequest) {
+export type StockOccupancySources = Pick<Awaited<ReturnType<typeof loadStockSources>>, "items"|"reservations"|"productIndex"|"overrides"|"reservationUnits">;
+export function stockOccupancyForItem(sources: StockOccupancySources, item: Doc<"items">, request: StockRequest) {
   const occupancy: Occupancy[] = [];
   for (const r of sources.reservations) {
     // RETURNED is Hygglo's next-to-do step: the kit is still with its renter.
@@ -156,7 +160,7 @@ export function stockOccupancyForItem(sources: Awaited<ReturnType<typeof loadSto
           // A repeated DST clock cannot describe a positive interval in a
           // civil-label quote; keep its boundary day conservatively occupied.
           if(end<=start){start=start.slice(0,10)+"T00:00";end=shiftStockDate(end.slice(0,10),1)+"T00:00";}
-          occupancy.push({start,end,startInstant:w.start,endInstant,qty:w.qty,renter_name:r.renter_name,order_id:r.hygglo_order_id});continue;
+          occupancy.push({start,end,startInstant:w.start,endInstant,qty:w.qty,renter_name:r.renter_name,order_id:r.hygglo_order_id,reservation_id:String(r._id)});continue;
         }
         const pickup = new Date(w.start).toISOString().slice(0,10);
         const agreedReturn = new Date(w.end).toISOString().slice(0,10);
@@ -166,7 +170,7 @@ export function stockOccupancyForItem(sources: Awaited<ReturnType<typeof loadSto
         const end = returnTime && /^([01]\d|2[0-3]):[0-5]\d$/.test(returnTime)
           ? `${ret}T${returnTime}`
           : `${shiftStockDate(ret,1)}T00:00`;
-        occupancy.push({start:`${pickup}T${pickupTime ?? "00:00"}`,startInstant:londonStockInstant(`${pickup}T${pickupTime ?? "00:00"}`,"start"),...bufferedStockEnd(end),qty:w.qty,renter_name:r.renter_name,order_id:r.hygglo_order_id});
+        occupancy.push({start:`${pickup}T${pickupTime ?? "00:00"}`,startInstant:londonStockInstant(`${pickup}T${pickupTime ?? "00:00"}`,"start"),...bufferedStockEnd(end),qty:w.qty,renter_name:r.renter_name,order_id:r.hygglo_order_id,reservation_id:String(r._id)});
       }
       continue;
     }
@@ -188,12 +192,12 @@ export function stockOccupancyForItem(sources: Awaited<ReturnType<typeof loadSto
       start = `${r.start_date}T00:00`;
       end = `${shiftStockDate(r.end_date, 1)}T00:00`;
     }
-    const name = r.renter_name?.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
-    const renter = r.renter_id ? `id:${r.renter_id}` : name && !["unknown", "unknown renter", "?", "—"].includes(name) ? `name:${name}` : undefined;
-    // Preserve same-kit extensions; sharing a battery or adapter does not make
-    // two different kits one rental. Quantity is part of the complete basket.
-    const extension_key = renter && r.account_slug ? JSON.stringify([r.account_slug, renter, [...units].sort(([a], [b]) => a.localeCompare(b))]) : undefined;
-    occupancy.push({ start, startInstant:londonStockInstant(start,"start"), ...bufferedStockEnd(end), qty, renter_name: r.renter_name, order_id: r.hygglo_order_id, extension_key });
+    // loadStockSources has already deduplicated copies of the same order.
+    // Separate order IDs are separate physical commitments. The provider
+    // payload does not persist an extension relationship: only a saved,
+    // current owner confirmation can establish shared physical custody.
+    const extension_key = confirmedCustodyGroup(r,units);
+    occupancy.push({ start, startInstant:londonStockInstant(start,"start"), ...bufferedStockEnd(end), qty, renter_name: r.renter_name, order_id: r.hygglo_order_id, reservation_id:String(r._id), extension_key });
   }
   return occupancy;
 }

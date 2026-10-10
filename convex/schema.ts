@@ -402,6 +402,15 @@ const operationalSchema = defineSchema({
     v1_updated_at: v.optional(v.number()),
     imported_at: v.optional(v.number()),
     hygglo_order_id: v.optional(v.string()),   // Hygglo order ID for poll-synced reservations
+    // Owner-confirmed continuous custody across separate provider orders.
+    // This changes physical occupancy only, never either order's payment.
+    stock_custody_group_id: v.optional(v.id("reservations")),
+    stock_custody_provenance: v.optional(v.object({
+      source: v.literal("owner_confirmation"),
+      order_id: v.string(), account_slug: v.string(), renter_key: v.string(),
+      units_key: v.string(), start_date: v.string(), end_date: v.string(),
+      confirmed_at: v.number(), confirmed_by: v.string(), note: v.string(),
+    })),
     // ── Phase 1 live-polling fields ──────────────────────────────
     order_step: v.optional(v.union(
       v.literal("REQUEST"),
@@ -650,6 +659,8 @@ const operationalSchema = defineSchema({
     .index("by_renter", ["renter_id"])
     .index("by_hygglo_user_id", ["hygglo_user_id"])
     .index("by_account_slug", ["account_slug"])
+    .index("by_account_order", ["account_slug", "hygglo_order_id"])
+    .index("by_stock_custody_group", ["stock_custody_group_id"])
     .index("by_start_date", ["start_date"])
     .index("by_pickup_date", ["pickup_date"])
     .index("by_v1_rental_id", ["v1_rental_id"])
@@ -674,6 +685,7 @@ const operationalSchema = defineSchema({
     // Live unmapped-listing alert: read only active status rows in its bounded
     // forward horizon, rather than every reservation sharing that date range.
     .index("by_status_start_date", ["status", "start_date"])
+    .index("by_status_end_date", ["status", "end_date"])
     // Pass 8b (2026-05-31): the stats_drawer MV dirty-probe needs to detect ANY
     // reservation mutation cheaply. The poller bumps last_polled_at on every
     // touched row, so an indexed max(last_polled_at) lets the probe catch status
@@ -1061,6 +1073,7 @@ const operationalSchema = defineSchema({
     repair_item_ids: v.optional(v.array(v.id("items"))),
   }).index("by_account", ["account_slug"])
     .index("by_claim_date", ["claim_date"])
+    .index("by_stage", ["stage"])
     .index("by_site_case", ["site_case_id"]),
 
   // ── Conflict dismissals — per-event flags so an owner can suppress
@@ -1168,6 +1181,11 @@ const operationalSchema = defineSchema({
   }).index("by_account", ["account"]),
 
   // ── Sync state (freshness tracking, Phase 1 live-data upgrade) ─
+  schedule_reconciliation_state: defineTable({
+    key: v.literal("handover-evidence-v1"), status: v.union(v.literal("confirmed"),v.literal("ongoing")),
+    cursor: v.union(v.string(),v.null()), cutoff: v.string(), checkedAt: v.number(),
+  }).index("by_key",["key"]),
+
   sync_state: defineTable({
     source: v.string(),         // e.g. "hygglo_poller"
     lastRunAt: v.number(),       // ms since epoch

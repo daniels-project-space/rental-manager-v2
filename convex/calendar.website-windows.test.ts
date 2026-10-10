@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./auth", () => ({ authComponent: { safeGetAuthUser: vi.fn(async () => null) } }));
 import { computeStripLive, computeWeeklyLive, getGanttWeek, getCalendarStrip, getWeeklyCalendar, getItemAvailabilityForChat } from "./calendar";
 import { websiteCalendarPeriods } from "./lib/reservations/itemUnits";
+import {custodyRenterKey,custodyUnitsKey} from "./lib/reservation_custody";
 const ms = (day: string) => Date.parse(`${day}T00:00:00Z`);
 const window = (id: string, start: string, end: string, clock: string | null, qty = 1) => ({ item_id: id, start: ms(start), end: ms(end), qty, pickupTime: "09:00", returnTime: clock });
 const booking = { _id: "web-rental", _creationTime: 1, account_slug: "dbcinema_web", hygglo_order_id: "paid-web-rental", status: "confirmed", order_step: "DELIVERED", start_date: "2026-10-05", end_date: "2026-10-11", pickup_time: "08:00", return_time: "22:00", renter_name: "Client", gross_paid_gbp: 99,
@@ -48,9 +49,9 @@ describe("saved website calendar windows",()=>{
   expect(days[2].returns).toHaveLength(1);expect(days[2].away).toHaveLength(1);expect(days[2].away[0].items[0].itemId).toBe("lens");
  });
  it("reuses compatible period-aware caches",async()=>{
-  const cache=[{calendarWindowVersion:4,date:"2026-10-05",pickups:[],returns:[],away:[],holds:[]}];
+  const cache=[{calendarWindowVersion:5,date:"2026-10-05",pickups:[],returns:[],away:[],holds:[]}];
   expect(await (getCalendarStrip as any)._handler(context([booking],cache),{accountSlug:null,startDate:"2026-10-05",days:7})).toEqual(cache);
-  const weekly={calendarWindowVersion:4,days:[]};expect(await (getWeeklyCalendar as any)._handler(context([booking],weekly),{accountSlug:null,weekStartDate:"2026-10-05"})).toEqual(weekly);
+  const weekly={calendarWindowVersion:5,days:[]};expect(await (getWeeklyCalendar as any)._handler(context([booking],weekly),{accountSlug:null,weekStartDate:"2026-10-05"})).toEqual(weekly);
  });
  it("chat availability reports the real gap and only upcoming physical periods",async()=>{
   const result=await (getItemAvailabilityForChat as any)._handler(context(),{query:"FX3",horizonDays:5,accountSlug:"leo"});
@@ -85,6 +86,63 @@ it('keeps paid website verification periods in strip, week, Gantt and chat stock
 it('rejects caches made before paid pending commitments were included',async()=>{
  const pending={...booking,status:'pending_review',order_step:'VERIFIED'};
  const strip=await (getCalendarStrip as any)._handler(context([pending],[{calendarWindowVersion:3,date:'2026-10-05',pickups:[],returns:[],away:[],holds:[]}]),{accountSlug:null,startDate:'2026-10-05',days:7});
- expect(strip[0].pickups).toHaveLength(1);expect(strip[0].calendarWindowVersion).toBe(4);
- const week=await (getWeeklyCalendar as any)._handler(context([pending],{calendarWindowVersion:3,days:[]}),{accountSlug:null,weekStartDate:'2026-10-05'});expect(week.calendarWindowVersion).toBe(4);expect(week.days[0].reservations).toHaveLength(1);
+ expect(strip[0].pickups).toHaveLength(1);expect(strip[0].calendarWindowVersion).toBe(5);
+ const week=await (getWeeklyCalendar as any)._handler(context([pending],{calendarWindowVersion:3,days:[]}),{accountSlug:null,weekStartDate:'2026-10-05'});expect(week.calendarWindowVersion).toBe(5);expect(week.days[0].reservations).toHaveLength(1);
+});
+
+describe("grouped calendar tiles retain separate physical orders",()=>{
+ const order=(id:string,extra:Record<string,unknown>={})=>({_id:id,_creationTime:1,hygglo_order_id:id,account_slug:"leo",renter_name:"Same renter",status:"confirmed",start_date:"2026-10-05",end_date:"2026-10-06",resolved_items:[{item_id:"camera",qty:1,confidence:1}],...extra});
+ it("shows a confirmed continuous allocation once, plus an independent kit for the same renter",async()=>{
+  const shared=[order("original"),order("extension")].map(row=>({...row,stock_custody_group_id:"original",stock_custody_provenance:{source:"owner_confirmation",account_slug:"leo",order_id:row.hygglo_order_id,renter_key:custodyRenterKey(row as any),units_key:custodyUnitsKey(new Map([["camera",1]])),start_date:row.start_date,end_date:row.end_date,confirmed_at:1,confirmed_by:"owner",note:"Owner confirmed the customer retained this same physical kit."}}));
+  const days=await computeStripLive(context([...shared,order("independent")]),{accountSlug:"leo",startDate:"2026-10-05",days:2});
+  expect(days[0].pickups[0].items.map(i=>i.qty)).toEqual([2]);
+  shared[1].end_date="2026-10-07";
+  const changed=await computeStripLive(context([...shared,order("independent")]),{accountSlug:"leo",startDate:"2026-10-05",days:2});
+  expect(changed[0].pickups[0].items.map(i=>i.qty)).toEqual([3]);
+ });
+ it("sums duplicate unpictured listing lines within an individual order",async()=>{
+  const rows=[order("one",{hygglo_items:[{name:"FX3",product_id:42,qty:1},{name:"FX3",product_id:42,qty:1}]}),order("two",{hygglo_items:[{name:"FX3",product_id:42,qty:1}]})];
+  const days=await computeStripLive(context(rows),{accountSlug:"leo",startDate:"2026-10-05",days:2});
+  expect(days[0].pickups[0].items.map(i=>i.qty)).toEqual([3]);
+ });
+ it("keeps one grouped tile with three independently booked bodies and an unknown return",async()=>{
+  const proof=(time:string)=>({source:"agreed_chat",date:"2026-10-06",time,confirmedAt:1});
+  const rows=[order("early",{return_time:"17:00",return_time_provenance:proof("17:00")}),order("later",{return_time:"19:00",return_time_provenance:proof("19:00")}),order("unknown")];
+  const days=await computeStripLive(context(rows),{accountSlug:"leo",startDate:"2026-10-05",days:2});
+  expect(days[0].pickups).toHaveLength(1);expect(days[1].returns).toHaveLength(1);
+  expect(days[0].pickups[0].items.map(i=>[i.itemId,i.qty])).toEqual([["camera",3]]);
+  expect(days[1].returns[0].items.map(i=>[i.itemId,i.qty])).toEqual([["camera",3]]);
+  expect(days[1].returns[0].returnTime).toBeNull();
+ });
+ it("does not multiply sequential orders that occupy different calendar days",async()=>{
+  const rows=[order("first",{end_date:"2026-10-05"}),order("second",{start_date:"2026-10-06"})];
+  const days=await computeStripLive(context(rows),{accountSlug:"leo",startDate:"2026-10-05",days:2});
+  expect(days[0].pickups[0].items.map(i=>i.qty)).toEqual([1]);expect(days[1].returns[0].items.map(i=>i.qty)).toEqual([1]);
+ });
+ it("preserves the latest accepted return clock together with its own provenance",async()=>{
+  const rows=["17:00","19:00"].map((time,i)=>order(String(i),{return_time:time,return_time_provenance:{source:"agreed_chat",date:"2026-10-06",time,confirmedAt:i+1}}));
+  const days=await computeStripLive(context(rows),{accountSlug:"leo",startDate:"2026-10-05",days:2});
+  expect(days[1].returns[0].returnTime).toBe("19:00");expect(days[1].returns[0].items.map(i=>i.qty)).toEqual([2]);
+ });
+ it("keeps an unknown boundary unknown when a different kit has an agreed clock",async()=>{
+  const rows=[order("camera"),order("lens",{resolved_items:[{item_id:"lens",qty:1,confidence:1}],return_time:"19:00",return_time_provenance:{source:"agreed_chat",date:"2026-10-06",time:"19:00",confirmedAt:1}})];
+  const days=await computeStripLive(context(rows),{accountSlug:"leo",startDate:"2026-10-05",days:2});
+  expect(days[1].returns).toHaveLength(1);expect(days[1].returns[0].returnTime).toBeNull();
+ });
+ it("combines different listing groups without losing the source quantities or lens",async()=>{
+  const rows=[order("body-one"),order("body-two"),order("lens",{resolved_items:[{item_id:"lens",qty:2,confidence:1}]})];
+  const days=await computeStripLive(context(rows),{accountSlug:"leo",startDate:"2026-10-05",days:2});
+  expect(days[0].pickups).toHaveLength(1);
+  expect(days[0].pickups[0].items.map(i=>[i.itemId,i.qty])).toEqual([["camera",2],["lens",2]]);
+ });
+ it("deduplicates copies of the same provider order before counting the grouped kit",async()=>{
+  const rows=[order("one"),order("copy",{hygglo_order_id:"one",_creationTime:2}),order("two")];
+  const days=await computeStripLive(context(rows),{accountSlug:"leo",startDate:"2026-10-05",days:2});
+  expect(days[0].pickups[0].items.map(i=>i.qty)).toEqual([2]);
+ });
+ it("rejects cached tiles from the old grouping implementation",async()=>{
+  const rows=[order("one"),order("two")],old=[{calendarWindowVersion:4,date:"2026-10-05",pickups:[],returns:[],away:[],holds:[]}];
+  const days=await (getCalendarStrip as any)._handler(context(rows,old),{accountSlug:null,startDate:"2026-10-05",days:7});
+  expect(days[0].calendarWindowVersion).toBe(5);expect(days[0].pickups[0].items.map((i:any)=>i.qty)).toEqual([2]);
+ });
 });
