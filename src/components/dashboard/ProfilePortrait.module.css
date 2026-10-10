@@ -1,0 +1,62 @@
+.trigger {
+  padding: 0;
+  cursor: zoom-in;
+  position: relative;
+  transition: box-shadow 0.15s;
+}
+.trigger:focus-visible {
+  outline: 2px solid #69ceff;
+  outline-offset: 3px;
+}
+.trigger:disabled {
+  cursor: default;
+}
+.preview {
+  position: fixed;
+  z-index: 600;
+  width: 220px;
+  height: 220px;
+  background: #14212c;
+  border: 1px solid #506d82;
+  border-radius: 12px;
+  box-shadow: 0 12px 45px #0009;
+  padding: 8px;
+  pointer-events: none;
+}
+.preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+}
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 650;
+  background: #081019ed;
+  display: grid;
+  place-items: center;
+  padding: 64px 20px 20px;
+  overscroll-behavior: contain;
+}
+.full {
+  max-width: min(90vw, 700px);
+  max-height: calc(100dvh - 100px);
+  width: min(90vw, 700px);
+  height: min(70dvh, 700px);
+  object-fit: contain;
+  border-radius: 8px;
+}
+.close {
+  position: absolute;
+  right: 20px;
+  top: 16px;
+  width: 44px;
+  height: 44px;
+  background: #243543;
+  border: 1px solid #536a7c;
+  border-radius: 50%;
+  color: white;
+  font-size: 30px;
+  cursor: pointer;
+}

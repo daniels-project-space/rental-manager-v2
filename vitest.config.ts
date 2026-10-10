@@ -24,6 +24,10 @@ export default defineConfig({
     globals: false,
     include: [
       "convex/dbcinema_chat.test.ts",
+      "convex/replyInbox.availability.test.ts",
+      "convex/renter_trust.cache.test.ts",
+      "convex/lib/quick_reply_sort.test.ts",
+      "convex/lib/review_time.test.ts",
       "convex/lib/finance/*.test.ts",
       "convex/finance.test.ts",
       "convex/calendar.website-windows.test.ts",

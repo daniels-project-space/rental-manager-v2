@@ -69,6 +69,7 @@ export const inbox = action({
         unreadOwner?: number;
         lastMessage?: string | null;
         lastSender?: string | null;
+        createdAt?: number;
         updatedAt?: number;
       }>;
     }>("query", "rentalChat:adminInbox", {});
@@ -104,15 +105,16 @@ export const inbox = action({
       const trust = booking.verifiedRenterEmail
         ? trustByEmail.get(booking.verifiedRenterEmail.trim().toLowerCase())
         : undefined;
-      const availabilityItems = (booking.items ?? []).flatMap((item) => {
+      const availabilityItems = (booking.items ?? []).map((item, item_index) => {
         const stock = item.stockAvailability;
-        if (!stock || typeof stock.available !== "boolean") return [];
+        if (!stock || typeof stock.available !== "boolean") return {item_index,name:item.name?.trim()||"Rental item",requested:item.qty??1,total_units:0,booked:0,pending:0,free:0,available:null,reason:"Website stock check needs review"};
         const requested = Number.isSafeInteger(stock.requestedQty) && (stock.requestedQty ?? 0) > 0
           ? stock.requestedQty!
           : Number.isSafeInteger(item.qty) && (item.qty ?? 0) > 0 ? item.qty! : 1;
         const free = Number.isSafeInteger(stock.availableUnits) && (stock.availableUnits ?? 0) >= 0 ? stock.availableUnits! : 0;
         const total = Number.isSafeInteger(stock.ownedUnits) && (stock.ownedUnits ?? 0) >= 0 ? stock.ownedUnits! : 0;
-        return [{
+        return {
+          item_index,
           name: item.name?.trim() || "Rental item",
           requested,
           total_units: total,
@@ -120,11 +122,11 @@ export const inbox = action({
           pending: 0,
           free,
           available: stock.available,
-        }];
+        };
       });
       // A checked subset never proves the full basket is available.
-      const completeStock = availabilityItems.length === (booking.items?.length ?? 0) && availabilityItems.length > 0;
-      const hasConflict = availabilityItems.some(item => !item.available);
+      const completeStock = availabilityItems.length === (booking.items?.length ?? 0) && availabilityItems.length > 0 && availabilityItems.every(item => typeof item.available === "boolean");
+      const hasConflict = availabilityItems.some(item => item.available === false);
       const availability = {
         status: hasConflict ? "conflict" as const : completeStock ? "available" as const : "unknown" as const,
         include_pending: true,
@@ -167,6 +169,7 @@ export const inbox = action({
         last_message: booking.lastMessage!,
         last_sender: booking.lastSender ?? null,
         last_renter_msg_at: booking.updatedAt!,
+        request_created_at: booking.createdAt ?? null,
         last_activity_at: booking.updatedAt!,
         last_msg_at: booking.updatedAt!,
         preview: booking.lastMessage!,

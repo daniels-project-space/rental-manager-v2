@@ -41,6 +41,8 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     await pause(300);
     const ev = (x) => c.evaluate(x);
     async function tap(expr) {
+      const deadline=Date.now()+5000;
+      while(!await ev(`!!(${expr})`)){if(Date.now()>deadline)throw Error("Missing target: "+expr);await pause(50);}
       const r = await ev(
         `(()=>{const e=${expr};if(!e)throw Error('Missing target');e.scrollIntoView({block:'nearest'});const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`,
       );

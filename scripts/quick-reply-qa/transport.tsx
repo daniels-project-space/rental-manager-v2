@@ -85,7 +85,8 @@ export const rows = names.map((name, i) => ({
   availability: {
     status: i === 3 ? "conflict" : "available",
     include_pending: false,
-    items: [],
+    items: [{item_index:0,name:["Sony FX6","Sigma 24-70","Aputure 600d","Canon RF 50mm","Atomos Ninja V","Sigma 35mm"][i],requested:1,total_units:1,booked:i===3?1:0,pending:0,free:i===3?0:1,available:i!==3}],
+    checked_at: now,
   },
   last_renter_msg_at: now - [48, 25, 72, 123, 161, 48][i] * 60000,
   last_activity_at: now - i * 60000,
@@ -194,9 +195,10 @@ export function useQuery(ref, args) {
         {
           rating: 5,
           text: "Great renter. On time and careful with the equipment.",
-          reviewer: "Studio",
-          date: "2026-05-01",
+          author: "Studio",
+          created_at: "2026-05-01",
         },
+        {rating:4,text:"Reliable renter",author:"Owner",created_at:"2 weeks ago"},
       ],
       lowCount: 0,
       fetched: true,

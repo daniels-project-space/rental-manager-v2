@@ -107,6 +107,12 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       checks.push("sort " + sort);
       if(sort==='earnings') await ok("highest earnings is first", `document.querySelector('[aria-label^="Open conversation"]').getAttribute('aria-label')==='Open conversation with Marcus Lee'`);
     }
+    await ev(`{window.__originalStock=structuredClone(window.__fixture.rows[0]);const row=window.__fixture.rows[0];row.items=Array.from({length:8},(_,i)=>({name:'Stock fixture '+i,qty:1,image_url:null}));row.item_count=8;row.availability={status:'unknown',checked_at:Date.now(),include_pending:false,items:row.items.map((item,i)=>({item_index:i,name:item.name,requested:1,total_units:1,booked:0,pending:0,free:1,available:i===7?null:true,...(i===7?{reason:'Gear needs an inventory mapping'}:{})}))};window.__fixture.changed();}`);
+    await pause(100);
+    await tap(`[...document.querySelectorAll('[aria-label="Open conversation with Marcus Lee"]')].find(e=>e.textContent.includes("Stock fixture 0")).querySelector('[aria-label^="Show stock"]')`);
+    await ok("all eight requested items show their own stock result", `(()=>{const row=[...document.querySelectorAll('[aria-label="Open conversation with Marcus Lee"]')].find(e=>e.textContent.includes("Stock fixture 0"));return row.textContent.includes('Stock fixture 7')&&row.textContent.includes('Gear needs an inventory mapping')&&row.querySelector('[aria-label^="Show stock"]').getAttribute("aria-expanded")==="true"})()`);
+    fs.writeFileSync(root+`/item-stock-${width}.png`, Buffer.from((await c.cmd("Page.captureScreenshot", {captureBeyondViewport:false})).data,"base64"));
+    await ev(`{window.__fixture.rows[0]=window.__originalStock;window.__fixture.changed();}`);
     await tap(contains("Quick texts"));
     await ok(
       "quick text manager opens",
@@ -175,11 +181,17 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       `['Location','Times','Delivery info'].every(label=>[...document.querySelector('[aria-label="Reply shortcuts"]').querySelectorAll('button')].some(b=>b.textContent.trim()===label&&b.offsetParent!==null))`,
     );
 
+    await tap(`document.querySelector('[role=dialog] [aria-label="Expand profile image of Marcus Lee"]')`);
+    await ok("profile photo expands outside chat frame", `(()=>{const photo=document.querySelector('[aria-label="Profile image of Marcus Lee"]');return photo?.parentElement===document.body&&getComputedStyle(photo).position==='fixed'&&photo.querySelector('img').getBoundingClientRect().width>100})()`);
+    fs.writeFileSync(root+`/expanded-profile-${width}.png`, Buffer.from((await c.cmd("Page.captureScreenshot", {captureBeyondViewport:false})).data,"base64"));
+    await tap(`document.querySelector('[aria-label="Close profile image"]')`);
+    await ok("photo close preserves conversation", `!document.querySelector('[aria-label="Profile image of Marcus Lee"]')&&!!document.querySelector('[aria-label="Close conversation"]')`);
     await tap(`document.querySelector('[title="View all renter reviews"]')`);
     await ok(
       "reviews open",
       `document.body.textContent.includes('Great renter.')`,
     );
+    await ok("review dates preserve exact and relative labels", `document.body.textContent.includes("1 May 2026")&&document.body.textContent.includes("2 weeks ago")&&!document.body.textContent.includes("Invalid Date")`);
     await tap(close);
     await ok("close from reviews", `!document.querySelector('[role=dialog]')`);
     await tap(marcus);
