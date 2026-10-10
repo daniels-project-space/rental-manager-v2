@@ -100,7 +100,7 @@ export const options = action({
     ctx,
     a,
   ): Promise<{ options: any[]; reason: string | null | undefined }> => {
-    await requireOwner(ctx, true);
+    await requireOwner(ctx);
     return nativeOptions(ctx, a.thread_id, a.item_index);
   },
 });
@@ -114,7 +114,7 @@ export const accept = action({
     dryRun: v.optional(v.boolean()),
   },
   handler: async (ctx, a): Promise<any> => {
-    await requireOwner(ctx, true);
+    await requireOwner(ctx);
     if (!/^[a-zA-Z0-9-]{16,80}$/.test(a.request_id))
       throw Error("Invalid replacement request.");
     const receipt = await ctx.runQuery(
@@ -212,7 +212,7 @@ export const draft = action({
     booking_id: v.optional(v.string()),
   },
   handler: async (ctx, a): Promise<{ draft: string }> => {
-    await requireOwner(ctx, true);
+    await requireOwner(ctx);
     let candidate: any, tile: any, messages: any[];
     if (a.source === "dbcinema_web") {
       if (!a.booking_id) throw Error("Rental unavailable.");

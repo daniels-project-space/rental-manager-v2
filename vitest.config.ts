@@ -77,6 +77,8 @@ export default defineConfig({
       "convex/lib/fulfillment_claims.test.ts",
       "convex/replyInbox.review.test.ts",
       "convex/lib/quick_reply_presentation.test.ts",
+      "convex/lib/quick_reply_proof.test.ts",
+      "convex/lib/profile_image.test.ts",
       "convex/lib/quick_reply_swap.test.ts",
       "convex/quick_reply_swap_ledger.test.ts",
       "convex/lib/recommendation_kit.test.ts",

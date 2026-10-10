@@ -754,6 +754,9 @@ const upsertOrderArgsFields = {
     v.literal("none"),
   )),
   hygglo_system_signal_text: v.optional(v.string()),
+  paid: v.optional(v.boolean()),
+  verification_started: v.optional(v.boolean()),
+  platform_booking_confirmed: v.optional(v.boolean()),
   /** Reply Inbox: Hygglo `actions` map offers accept/deny (awaiting my approval). */
   awaiting_owner_action: v.optional(v.boolean()),
   /** Granular owner actions (2026-06-26) — accept available vs only deny. */
@@ -1063,6 +1066,9 @@ async function upsertOrderImpl(
     // classifier can rely on field existence to know we've checked events.
     ...(args.hygglo_system_signal !== undefined && { hygglo_system_signal: args.hygglo_system_signal }),
     ...(args.hygglo_system_signal_text !== undefined && { hygglo_system_signal_text: args.hygglo_system_signal_text }),
+    ...(args.paid !== undefined && {paid: args.paid}),
+    ...(args.verification_started !== undefined && {verification_started: args.verification_started}),
+    ...(args.platform_booking_confirmed !== undefined && {platform_booking_confirmed: args.platform_booking_confirmed}),
     // Reply Inbox: drives the Approve/Decline buttons (insert + every baseFields patch).
     ...(args.awaiting_owner_action !== undefined && { awaiting_owner_action: args.awaiting_owner_action }),
     // Granular state — accept gone + deny left = already approved (show only Decline).
@@ -1512,6 +1518,7 @@ export const upsertRentersBatch = mutation({
       v.object({
         hygglo_user_id: v.optional(v.string()),
         display_name: v.string(),
+        profile_image_url: v.optional(v.string()),
       })
     ),
   },
@@ -1528,6 +1535,9 @@ export const upsertRentersBatch = mutation({
           .withIndex("by_hygglo_user_id", (q) => q.eq("hygglo_user_id", r.hygglo_user_id))
           .first();
         if (existing) {
+          if (r.profile_image_url && existing.profile_image_url !== r.profile_image_url) {
+            await ctx.db.patch(existing._id, {profile_image_url: r.profile_image_url});upserted++;continue;
+          }
           skipped++;
           continue;
         }
@@ -1547,6 +1557,7 @@ export const upsertRentersBatch = mutation({
       await ctx.db.insert("renters", {
         hygglo_user_id: r.hygglo_user_id,
         display_name: displayNameTrimmed,
+        profile_image_url: r.profile_image_url,
         created_at: now,
       });
       upserted++;
@@ -1739,7 +1750,7 @@ export const getLatestActivityBatch = query({
         ?.latest_activity;
       const step = (row as { order_step?: string } | null)?.order_step;
       if (la !== undefined) {
-        out[id] = { latest_activity: la, has_order_step: step !== undefined };
+        out[id] = { latest_activity: la, has_order_step: step !== undefined && row?.paid !== undefined && row?.platform_booking_confirmed !== undefined };
       }
     }
     return out;

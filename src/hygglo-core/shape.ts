@@ -1,3 +1,5 @@
+import { quickReplyProof } from "../../convex/lib/quick_reply_proof";
+import { profileImageUrl } from "../../convex/lib/profile_image";
 /**
  * hygglo-core/shape — PURE mappers Hygglo order/product → Convex upsert payloads.
  *
@@ -182,6 +184,7 @@ export function orderToRenter(detail: HyggloOrderDetail): RenterPayload {
   return {
     hygglo_user_id: renterUserIdOf(detail),
     display_name: renterNameOf(detail),
+    profile_image_url: profileImageUrl(detail.users?.otherPart?.profileImage),
   };
 }
 
@@ -375,6 +378,7 @@ export function orderToReservation(
     photos_urls,
     latest_activity: latestActivity,
     order: detail,
+    ...quickReplyProof(detail),
     hygglo_system_signal: systemSignal.signal,
     hygglo_system_signal_text: systemSignal.text,
   };

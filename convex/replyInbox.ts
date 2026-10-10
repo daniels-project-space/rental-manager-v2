@@ -347,8 +347,10 @@ type ItemAvail = {
   available: boolean; // free >= requested
 };
 type TileAvailability = {
-  status: "available" | "conflict";
+  status: "available" | "conflict" | "unknown";
   include_pending: boolean;
+  reason?: string;
+  checked_at?: number;
   items: ItemAvail[];
 };
 
@@ -456,17 +458,19 @@ function computeAvailability(
   reservation: BotBooking | null,
   av?: AvailCtx,
 ): TileAvailability | null {
-  if (!av || !reservation) return null;
+  const unknown = (reason: string): TileAvailability => ({status:"unknown",include_pending:av?.includePending ?? false,items:[],reason,checked_at:Date.now()});
+  if (!av) return unknown("Inventory is loading");
+  if (!reservation) return unknown("Dates needed to check stock");
   const start = reservation.pickup_date ?? reservation.start_date;
   const end = reservation.return_date ?? reservation.end_date;
-  if (!start || !end) return null;
+  if (!start || !end) return unknown("Dates needed to check stock");
   const units = reservationItemUnits(
     reservation,
     av.productIndex,
     av.overrideMap,
     av.itemRows,
   );
-  if (units.size === 0) return null;
+  if (units.size === 0) return unknown("Gear needs an inventory mapping");
 
   const selfId = reservation._id;
   const confirmed = av.confirmed.filter((r) => r._id !== selfId);
@@ -479,7 +483,7 @@ function computeAvailability(
   let anyConflict = false;
   for (const [itemIdStr, reqQty] of units) {
     const total = av.itemQty.get(itemIdStr) ?? 0;
-    if (total <= 0) continue; // marketing-only / unknown — can't assess, skip
+    // Zero owned stock is unavailable, not an unchecked item.
     const itemId = itemIdStr as Id<"items">;
     let booked = 0;
     let pending = 0;
@@ -504,9 +508,10 @@ function computeAvailability(
       available,
     });
   }
-  if (out.length === 0) return null;
+  if (out.length === 0) return unknown("Gear needs an inventory mapping");
   return {
     status: anyConflict ? "conflict" : "available",
+    checked_at: Date.now(),
     include_pending: av.includePending,
     items: out,
   };
@@ -662,6 +667,7 @@ async function assembleTile(
       reservation?.renter_name ??
       latestMsg?.sender_name ??
       "Renter",
+    renter_image_url: renter?.profile_image_url ?? null,
     renter_rating: renter?.hygglo_rating ?? null,
     renter_review_count: renter?.hygglo_review_count ?? null,
     renter_blacklisted: renter?.blacklisted ?? false,
@@ -674,6 +680,9 @@ async function assembleTile(
     status: reservation?.status ?? null,
     booking_status: reservation?.booking_status ?? null,
     order_step: step,
+    paid: reservation?.paid ?? ["VERIFIED","BOOKED_AFTER_VERIFIED","DELIVERED","RETURNED","REVIEWED"].includes(step ?? ""),
+    verification_started: reservation?.verification_started ?? ["VERIFIED","BOOKED_AFTER_VERIFIED","DELIVERED","RETURNED","REVIEWED"].includes(step ?? ""),
+    platform_booking_confirmed: reservation?.platform_booking_confirmed ?? false,
     is_request: isRequest,
     can_decide: isRequest,
     // "request" = pending approve/decline; "message" = a normal chat thread.
@@ -1774,7 +1783,8 @@ export const getThreadContext = internalQuery({
       escalate_to_sonnet: settingsRow?.escalate_to_sonnet ?? false,
       renter_name:
         renter?.display_name ?? reservation?.renter_name ?? "the renter",
-      renter_rating: renter?.hygglo_rating ?? null,
+      renter_image_url: renter?.profile_image_url ?? null,
+    renter_rating: renter?.hygglo_rating ?? null,
       renter_review_count: renter?.hygglo_review_count ?? null,
       renter_blacklisted: renter?.blacklisted ?? renter?.blacklist ?? false,
       renter_flagged:

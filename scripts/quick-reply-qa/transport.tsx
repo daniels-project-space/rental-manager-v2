@@ -41,6 +41,9 @@ export const rows = names.map((name, i) => ({
   renter_rating: 4.8,
   renter_review_count: 18,
   has_reservation: true,
+  paid: true,
+  verification_started: true,
+  platform_booking_confirmed: i === 0,
   is_request: true,
   kind: "request",
   last_sender: "renter",
@@ -231,6 +234,7 @@ export function useAction(ref) {
       }
       if (name === "dbcinema_chat:draftReply")
         return { draft: "Fixture DB Cinema contextual reply." };
+      if (name === "renter_trust:profilePhotos") return args.thread_ids.map(thread_id=>({thread_id,image_url:"/face0.png"}));
       if (name === "dbcinema_chat:sendOwnerReply") return { ok: true };
       if (
         name === "quick_reply_replacements:options" ||
@@ -253,6 +257,7 @@ export function useAction(ref) {
               can_apply: true,
               price_note: "Check the rental price before sending.",
             },
+            {id:"34",name:"Canon C70 replacement",image_url:"/gear1.png",available:true,original:{item_id:11,product_id:22,name:"Canon RF 50mm",start:"2026-10-14",end:"2026-10-17"},can_apply:true,price_note:"Check price before sending."},
           ],
         };
       if (name === "quick_reply_replacements:draft")
@@ -264,8 +269,7 @@ export function useAction(ref) {
         name === "quick_reply_replacements:accept" ||
         name === "dbcinema_chat:acceptReplacement"
       ) {
-        if (!args.dryRun) throw Error("Test-only swap requires dryRun");
-        return { ok: true, dryRun: true };
+        return { ok: true, dryRun: false };
       }
       if (name === "order_edit:getOrderState")
         return {

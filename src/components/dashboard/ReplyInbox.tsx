@@ -127,6 +127,8 @@ interface ItemAvail {
 interface TileAvailability {
   status: "available" | "conflict" | "unknown";
   include_pending: boolean;
+  reason?: string;
+  checked_at?: number;
   items: ItemAvail[];
 }
 export interface DraftFlag {
@@ -144,6 +146,9 @@ export interface ReplyTileData {
   renter_image_url?: string | null;
   renter_identity?: string | null;
   verification_status?: string | null;
+  paid?: boolean;
+  verification_started?: boolean;
+  platform_booking_confirmed?: boolean;
   account_slug: string | null;
   renter_name: string;
   renter_rating: number | null;
@@ -379,7 +384,7 @@ function decideState(t: ReplyTileData): {
   canDecline: boolean;
   approved: boolean;
 } {
-  const canApprove = t.can_accept ?? t.is_request;
+  const canApprove = t.availability?.status !== "conflict" && (t.can_accept ?? t.is_request);
   const canDecline = t.can_deny ?? t.is_request;
   return { canApprove, canDecline, approved: !canApprove && canDecline };
 }
@@ -449,7 +454,7 @@ function StageBar({ t }: { t: ReplyTileData }) {
 
 function QueueAvailability({tile}: {tile:ReplyTileData}) {
   const status = tile.availability?.status ?? "unknown";
-  return <span className={`${styles.availability} ${status === "available" ? styles.available : status === "conflict" ? styles.unavailable : styles.unknown}`} title={tile.availability?.items.map((item) => `${item.name}: ${item.free} free / ${item.requested} requested`).join("; ") || "Availability has not been confirmed"}>{status === "available" ? "Available" : status === "conflict" ? "Unavailable" : "Not checked"}</span>;
+  return <span className={`${styles.availability} ${status === "available" ? styles.available : status === "conflict" ? styles.unavailable : styles.unknown}`} title={tile.availability?.items.map((item) => `${item.name}: ${item.free} free / ${item.requested} requested`).join("; ") || tile.availability?.reason || "Checking availability"}>{status === "available" ? "Available" : status === "conflict" ? "Unavailable" : tile.availability?.reason?.startsWith("Dates") ? "Dates needed" : "Needs stock review"}</span>;
 }
 
 function fmtDate(iso?: string | null): string | null {
@@ -832,6 +837,7 @@ function ReplyCard({
   duplicate = false,
   selected = false,
   onReviews,
+  onReplacement,
 }: {
   tile: ReplyTileData;
   now: number;
@@ -841,6 +847,7 @@ function ReplyCard({
   duplicate?: boolean;
   selected?: boolean;
   onReviews: () => void;
+  onReplacement: () => void;
 }) {
   const aw = awaitingMe(tile);
   const ds = decideState(tile);
@@ -910,7 +917,7 @@ function ReplyCard({
       <div className={styles.datesCell}>{tile.start_date ? <><span>{fmtDate(tile.start_date)}</span><span>– {fmtDate(tile.end_date ?? tile.start_date)}</span></> : <span>Dates pending</span>}</div>
       <div className={styles.waitCell}>{aw ? <><span>Waiting</span><strong style={{color:u?.glow ? u.color : "#f6be55"}}>{waited(tile.last_renter_msg_at, now)}</strong></> : <><span>Replied</span><strong className="text-emerald-300">✓</strong></>}</div>
       <div className={styles.earnCell}><span>{tile.net_to_owner_gbp != null ? "Owner earns" : "Est. earn"}</span><strong>{fmtMoney(tile.net_to_owner_gbp ?? tile.estimate_earnings_gbp) ?? "—"}</strong></div>
-      <div className={styles.availCell}><QueueAvailability tile={tile} /></div>
+      <div className={styles.availCell}><QueueAvailability tile={tile} />{tile.availability?.status === "conflict" && <button type="button" className={styles.rowReplacement} onClick={(event) => {event.stopPropagation();onReplacement();}}>Find replacement</button>}</div>
       <div className={styles.progressCell}><StageBar t={tile} />
         <div className={styles.rowActions} onClick={(e) => e.stopPropagation()}>
           {optimistic ? <span className="text-[10px] text-emerald-300">{optimistic === "approve" ? "Approved" : "Declined"}</span> : confirming ? <><button disabled={busy} onClick={() => act(confirming)}>Confirm {confirming}</button><button onClick={() => setConfirming(null)}>Cancel</button></> : <>{ds.canApprove && <button onClick={() => setConfirming("approve")}>Approve</button>}{ds.canDecline && <button onClick={() => setConfirming("decline")}>Decline</button>}</>}
@@ -1743,6 +1750,7 @@ export function ReplyModal({
   zClass = "z-[200]",
   dockTarget,
   initialShowReviews = false,
+  initialReplacementRequest = 0,
 }: {
   tile: ReplyTileData;
   onClose: () => void;
@@ -1751,6 +1759,7 @@ export function ReplyModal({
   zClass?: string;
   dockTarget?: HTMLElement | null;
   initialShowReviews?: boolean;
+  initialReplacementRequest?: number;
 }) {
   const accent = tileAccent(tile);
   const ds = decideState(tile);
@@ -1792,9 +1801,18 @@ export function ReplyModal({
     setReplacementOpen(true);setReplacementIndex(index);setReplacementBusy("stock");setReplacementError(null);setReplacementChoices([]);setReplacementChoice(null);setReplacementText("");
     try{const result=tile.source==="dbcinema_web"?await dbReplacementOptions({booking_id:tile.source_booking_id,item_index:index}):await replacementOptions({thread_id:tile.thread_id,item_index:index});
       if(stockVersion!==replacementStockVersion.current)return;
-      setReplacementChoices(result.options);if(result.options.length)await chooseReplacement(result.options[0],index);else setReplacementError(result.reason??"No suitable replacement with verified stock is available.");}
+      setReplacementChoices(result.options.slice(0,2));if(result.options.length)await chooseReplacement(result.options[0],index);else setReplacementError(result.reason??"No suitable replacement with verified stock is available.");}
     catch(error){if(stockVersion===replacementStockVersion.current)setReplacementError(error instanceof Error?error.message:"Replacement stock check failed.");}finally{if(stockVersion===replacementStockVersion.current)setReplacementBusy(null);}
   };
+  useEffect(() => {
+    if (initialReplacementRequest > 0 && tile.availability?.status === "conflict") {
+      const unavailable = tile.availability.items.find(item => !item.available);
+      const index = unavailable ? tile.items.findIndex(item => item.name === unavailable.name) : 0;
+      void findReplacements(Math.max(0, index));
+    }
+    // A new explicit list-row request, not polling, opens the prepared proposal.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialReplacementRequest]);
   const applyReplacement=async()=>{
     if(!replacementChoice||!replacementRequest.current||replacementBusy)return;
     setReplacementBusy("apply");setReplacementError(null);
@@ -1802,6 +1820,7 @@ export function ReplyModal({
       const result=tile.source==="dbcinema_web"?await dbAcceptReplacement({...shared,booking_id:tile.source_booking_id}):await acceptReplacement({...shared,thread_id:tile.thread_id,item_index:replacementIndex});
       if(!result.ok)throw Error(result.message??"Replacement could not be verified. Check the original order.");
       setNote(result.dryRun?"✓ Replacement checked in test mode — nothing changed.":"✓ Replacement applied. Review and send the reply separately.");
+      setText(replacementText);setComposeApproval(null);setComposeOpen(true);
       setReplacementOpen(false);setReplacementChoice(null);setDbCinemaRefresh(value=>value+1);
     }catch(error){setReplacementError(error instanceof Error?error.message:"Replacement failed.");}finally{setReplacementBusy(null);}
   };
@@ -2453,6 +2472,16 @@ export function ReplyInbox() {
     messagesWithinDays: 5,
     includePending,
   }) as ReplyTileData[] | undefined;
+  const loadPortraits = useAction(makeFunctionReference<"action">("renter_trust:profilePhotos"));
+  const [portraits,setPortraits] = useState<Record<string,string|null>>({});
+  const portraitBatch = (queue ?? []).filter(row => !row.renter_image_url && !(row.thread_id in portraits)).slice(0,12).map(row => row.thread_id).join("|");
+  useEffect(() => {
+    if (!portraitBatch) return;
+    let alive=true;
+    void loadPortraits({thread_ids:portraitBatch.split("|")}).then(rows => {if(alive)setPortraits(old=>({...old,...Object.fromEntries(rows.map((row:any)=>[row.thread_id,row.image_url]))}));}).catch(()=>{if(alive)setPortraits(old=>({...old,...Object.fromEntries(portraitBatch.split("|").map(id=>[id,null]))}));});
+    return ()=>{alive=false;};
+  },[portraitBatch,loadPortraits]);
+  const withPortrait = (row: ReplyTileData): ReplyTileData => row.renter_image_url ? row : {...row,renter_image_url:portraits[row.thread_id]??null};
   const [dbCinemaRows, setDbCinemaRows] = useState<ReplyTileData[]>([]);
   const [dbCinemaLoadFailed, setDbCinemaLoadFailed] = useState(false);
   useEffect(() => {
@@ -2535,8 +2564,9 @@ export function ReplyInbox() {
   // Default to "To reply" so chats I already answered (owner spoke last) DON'T
   // clutter the view — only new requests + renters waiting on me.
   const [filter, setFilter] = useState<"todo" | "requests" | "all">("todo");
-  const [sortBy, setSortBy] = useState<"newest" | "oldest" | "waiting">("waiting");
-  const [testMode, setTestMode] = useState(false);
+  const [sortBy, setSortBy] = useState<"newest" | "oldest" | "waiting" | "earnings" | "priority">("priority");
+  const testMode = false;
+  const [replacementRequest, setReplacementRequest] = useState({thread: "", revision: 0});
   const [showManager, setShowManager] = useState(false);
 
   useEffect(() => setMounted(true), []);
@@ -2580,20 +2610,28 @@ export function ReplyInbox() {
   }, []);
 
   const onActed = (id: string) => setActed((p) => new Set(p).add(id));
-  const all = [...(queue ?? []), ...dbCinemaRows].filter((t) => {
+  const all = [...(queue ?? []), ...dbCinemaRows].map(withPortrait).filter((t) => {
     if (acted.has(t.thread_id)) return false;
     const dismissedAt = dbDismissedAt[t.thread_id];
     return t.source !== "dbcinema_web" || dismissedAt == null || t.last_activity_at > dismissedAt;
   });
   // A request still "needs me" only until I've replied/approved (owner-last).
   const pendingRequest = (t: ReplyTileData) =>
-    t.kind === "request" && t.last_sender !== "owner" && !isResolvedClosed(t);
+    t.is_request && !isResolvedClosed(t);
   const requests = all.filter(pendingRequest).length;
-  const todo = all.filter((t) => awaitingMe(t)).length;
+  const needsReply = (t: ReplyTileData) => t.last_sender === "renter" && !!t.preview.trim();
+  const todo = all.filter(needsReply).length;
   const visible = all.filter((t) =>
-    filter === "all" ? true : filter === "requests" ? pendingRequest(t) : awaitingMe(t),
+    filter === "all" ? true : filter === "requests" ? pendingRequest(t) : needsReply(t),
   );
+  const priority = (t: ReplyTileData) => {
+    const earnings = Math.max(0, t.net_to_owner_gbp ?? t.estimate_earnings_gbp ?? 0);
+    const hours = t.last_sender === "renter" ? Math.max(0, (now - t.last_renter_msg_at) / 3_600_000) : 0;
+    return Math.log1p(earnings) * 2 + Math.log1p(hours) * 3 + (t.availability?.status === "available" ? 2 : t.availability?.status === "conflict" ? -2 : 0);
+  };
   const sorted = [...visible].sort((a, b) => {
+    if (sortBy === "priority") return priority(b) - priority(a) || b.last_activity_at - a.last_activity_at;
+    if (sortBy === "earnings") return (b.net_to_owner_gbp ?? b.estimate_earnings_gbp ?? -1) - (a.net_to_owner_gbp ?? a.estimate_earnings_gbp ?? -1) || a.last_renter_msg_at - b.last_renter_msg_at;
     if (sortBy === "newest") return (b.last_activity_at ?? 0) - (a.last_activity_at ?? 0);
     if (sortBy === "oldest") return (a.last_activity_at ?? 0) - (b.last_activity_at ?? 0);
     // "waiting": longest-unanswered first, then the highest owner earnings.
@@ -2640,13 +2678,12 @@ export function ReplyInbox() {
       `}</style>
       <div className={styles.titleRow}><h2>Quick Reply</h2>{dbCinemaLoadFailed && <span className="text-amber-300">DB Cinema offline</span>}</div>
       <div className={styles.toolbar}>
-        {([{k:"todo",label:"To reply",n:todo},{k:"requests",label:"Requests",n:requests},{k:"all",label:"All",n:all.length}] as const).map((item) => <button type="button" key={item.k} onClick={() => setFilter(item.k)} className={filter===item.k ? styles.activeFilter : ""}>{filter===item.k && <i />}{item.label}</button>)}
-        <select value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)} aria-label="Sort conversations"><option value="waiting">Longest waiting · best earnings</option><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select>
+        {([{k:"todo",label:"To reply",n:todo},{k:"requests",label:"Requests",n:requests},{k:"all",label:"All",n:all.length}] as const).map((item) => <button type="button" key={item.k} title={item.k === "todo" ? "Renter messages waiting for your reply" : item.k === "requests" ? "Booking requests awaiting your decision, including requests you have replied to" : "All recent conversations"} onClick={() => {setFilter(item.k);if(item.k === "all")setSortBy("priority");}} className={filter===item.k ? styles.activeFilter : ""}>{filter===item.k && <i />}{item.label}</button>)}
+        <select value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)} aria-label="Sort conversations"><option value="priority">Priority · earnings, wait & stock</option><option value="earnings">Highest earnings first</option><option value="waiting">Longest waiting · best earnings</option><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select>
         <button type="button" onClick={() => setShowManager(true)}>▤ Quick texts</button>
-        <button type="button" onClick={() => setTestMode((value) => !value)} aria-pressed={testMode} className={styles.toggle}><i data-on={testMode} />Test mode</button>
         <button type="button" onClick={() => void updateSettings({availability_include_pending:!includePending})} aria-pressed={includePending} className={styles.toggle}><i data-on={includePending} />Pending {includePending ? "on" : "off"}</button>
       </div>
-      <div className={`${styles.split} ${canDock ? styles.withDock : ""}`}><div className={styles.inbox}>
+      <div className={`${styles.split} ${canDock ? styles.withDock : ""} ${canDock && openId ? styles.expandedChat : ""}`}><div className={styles.inbox}>
       {currentHandoffs.length > 0 && <div className={styles.handoffRail}><div className={styles.handoffIntro}><span>◷</span><div><strong>Next 60 min</strong><p>Rentals within 1 hour<br />before or after.</p></div></div><div className={styles.handoffs}>{currentHandoffs.map((h) => {
         const row = all.find((candidate) => candidate.thread_id === h.thread_id);
         return <button type="button" key={`${h.thread_id}-${h.kind}-${h.date}-${h.time}`} disabled={!h.thread_id} onClick={() => {if(row)openThread(row);else if(h.thread_id){openCacheRef.current=null;setReviewId(null);setOpenId(h.thread_id);}}} className={styles.handoffCard} aria-label={`${h.kind} with ${h.renter_name}`} title={h.renter_name}>
@@ -2682,6 +2719,7 @@ export function ReplyInbox() {
               now={now}
               onOpen={() => openThread(tile)}
               onReviews={() => openThread(tile, true)}
+              onReplacement={() => {openThread(tile);setReplacementRequest(value => ({thread: tile.thread_id, revision: value.revision + 1}));}}
               selected={openId === tile.thread_id}
               onActed={onActed}
               dryRun={testMode}
@@ -2694,7 +2732,7 @@ export function ReplyInbox() {
       {canDock && <div ref={setDockTarget} className={styles.chatDock}>{!open && <div className={styles.emptyChat}><span>▤</span><h3>Your conversations, in focus</h3><p>Select a renter to see the request and reply.</p></div>}</div>}
       </div>
       {mounted && open && (
-        <ReplyModal key={open.thread_id} tile={open} onClose={closeModal} onActed={onActed} dryRun={testMode} dockTarget={canDock ? dockTarget : null} initialShowReviews={reviewId === open.thread_id} />
+        <ReplyModal key={open.thread_id} tile={withPortrait(open)} onClose={closeModal} onActed={onActed} dryRun={testMode} dockTarget={canDock ? dockTarget : null} initialShowReviews={reviewId === open.thread_id} initialReplacementRequest={replacementRequest.thread === open.thread_id ? replacementRequest.revision : 0} />
       )}
       {mounted && showManager && (
         <CannedManager accountSlug={activeAccountSlug} onClose={() => setShowManager(false)} />

@@ -1,6 +1,9 @@
 export type QuickReplyStage = "enquiry" | "pending" | "confirmed" | "closed";
 type StageInput = {
   has_reservation: boolean;
+  paid?: boolean;
+  verification_started?: boolean;
+  platform_booking_confirmed?: boolean;
   source?: string;
   status: string | null;
   booking_status: string | null;
@@ -21,19 +24,9 @@ export function quickReplyStage(tile: StageInput): QuickReplyStage {
     )
   )
     return "closed";
-  if (!tile.has_reservation) return "enquiry";
-  const status = (tile.booking_status ?? tile.status ?? "").toLowerCase();
-  const step = (tile.order_step ?? "").toUpperCase();
-  if (
-    ["confirmed", "active", "ongoing", "returned", "completed"].includes(
-      status,
-    ) ||
-    ["BOOKED_AFTER_VERIFIED", "DELIVERED", "RETURNED", "REVIEWED"].includes(
-      step,
-    )
-  )
-    return "confirmed";
-  return "pending";
+  if (!tile.has_reservation || tile.paid !== true) return "enquiry";
+  if (tile.platform_booking_confirmed === true) return "confirmed";
+  return tile.verification_started === true ? "pending" : "enquiry";
 }
 type DuplicateInput = {
   start_date?: string | null;

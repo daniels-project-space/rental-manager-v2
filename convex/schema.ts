@@ -311,6 +311,7 @@ const operationalSchema = defineSchema({
     phone: v.optional(v.string()),
     hygglo_rating: v.optional(v.number()),
     hygglo_review_count: v.optional(v.number()),
+    profile_image_url: v.optional(v.string()),
     // Legacy count may have been overwritten by old bot-local statistics.
     total_rentals_count: v.optional(v.number()),
     // Written only by an authoritative platform trust refresh.
@@ -640,6 +641,9 @@ const operationalSchema = defineSchema({
     )),
     /** Raw event.content text that produced `hygglo_system_signal`. Observability only. */
     hygglo_system_signal_text: v.optional(v.string()),
+    paid: v.optional(v.boolean()),
+    verification_started: v.optional(v.boolean()),
+    platform_booking_confirmed: v.optional(v.boolean()),
     created_at: v.number(),
   })
     .index("by_account", ["account_id"])

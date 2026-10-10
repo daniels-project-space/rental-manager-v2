@@ -127,6 +127,9 @@ type OrderDetail = {
 
 type OrderReservationPayload = {
   hygglo_order_id: string;
+  paid?: boolean;
+  verification_started?: boolean;
+  platform_booking_confirmed?: boolean;
   status: string;
   start_date: string;
   end_date: string;
@@ -336,6 +339,9 @@ async function scrapeAccountViaCore(
     can_deny: r.can_deny,
     hygglo_system_signal: r.hygglo_system_signal,
     hygglo_system_signal_text: r.hygglo_system_signal_text,
+    paid: r.paid,
+    verification_started: r.verification_started,
+    platform_booking_confirmed: r.platform_booking_confirmed,
   }));
 
   return {
@@ -834,6 +840,9 @@ export const pollHyggloInbox = schedules.task({
                 latest_activity: payload.latest_activity,
                 hygglo_system_signal: payload.hygglo_system_signal,
                 hygglo_system_signal_text: payload.hygglo_system_signal_text,
+                paid: payload.paid,
+                verification_started: payload.verification_started,
+                platform_booking_confirmed: payload.platform_booking_confirmed,
               };
             });
 

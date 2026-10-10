@@ -37,7 +37,7 @@ export async function callDbCinema<T>(kind: "query" | "mutation", path: string, 
 export const inbox = action({
   args: {},
   handler: async (ctx): Promise<Array<Record<string, unknown>>> => {
-    await requireOwner(ctx, true);
+    await requireOwner(ctx);
     const feed = await callDbCinema<{
       authorized?: boolean;
       items?: Array<{
@@ -48,6 +48,8 @@ export const inbox = action({
         verifiedRenterEmail?: string | null;
         status?: string | null;
         idVerifyStatus?: string | null;
+        verificationArchiveReady?: boolean;
+        verificationUpdatedAt?: number | null;
         start?: number;
         end?: number;
         total?: number;
@@ -137,6 +139,9 @@ export const inbox = action({
         renter_image_url: booking.renterPhoto ?? null,
         renter_identity: trust?.renter_identity ?? `dbcinema:${booking.accountId}`,
         verification_status: booking.idVerifyStatus ?? "required",
+        paid: ["confirmed","active","ongoing","returned","completed"].includes(booking.status ?? ""),
+        verification_started: ["processing","requires_input","manual_review","submitted","pending","in_review","verified"].includes(booking.idVerifyStatus ?? "") && !!booking.verificationUpdatedAt,
+        platform_booking_confirmed: ["confirmed","active","ongoing","returned","completed"].includes(booking.status ?? "") && booking.idVerifyStatus === "verified" && booking.verificationArchiveReady === true,
         renter_rating: trust?.rating ?? null,
         renter_review_count: trust?.review_count ?? null,
         renter_rating_source: trust?.renter_identity ? "hygglo" as const : null,
@@ -195,7 +200,7 @@ export const inbox = action({
 export const renterReviews = action({
   args: { booking_id: v.string() },
   handler: async (ctx, { booking_id }): Promise<LinkedRenterReviews> => {
-    await requireOwner(ctx, true);
+    await requireOwner(ctx);
     const identity = await callDbCinema<{ authorized?: boolean; email?: string | null }>(
       "query", "rentalChat:adminRenterIdentity", { bookingId: booking_id },
     );
@@ -226,7 +231,7 @@ export const renterReviews = action({
 export const thread = action({
   args: { booking_id: v.string() },
   handler: async (ctx, { booking_id }) => {
-    await requireOwner(ctx, true);
+    await requireOwner(ctx);
     const page = await callDbCinema<{
       page?: Array<{ _id: string; sender: string; text: string; at: number }>;
       escalated?: boolean;
@@ -255,7 +260,7 @@ export const thread = action({
 export const sendOwnerReply = action({
   args: { booking_id: v.string(), text: v.string() },
   handler: async (ctx, { booking_id, text }) => {
-    await requireOwner(ctx, true);
+    await requireOwner(ctx);
     const body = text.trim();
     if (!body || body.length > 2000) throw new Error("Write a message of up to 2,000 characters.");
     const result = await callDbCinema<{ ok?: boolean }>("mutation", "rentalChat:sendOwner", {
@@ -271,7 +276,7 @@ export const sendOwnerReply = action({
 export const draftReply = action({
   args: { booking_id: v.string() },
   handler: async (ctx, { booking_id }) => {
-    await requireOwner(ctx, true);
+    await requireOwner(ctx);
     const [feed, page] = await Promise.all([
       callDbCinema<{ authorized?: boolean; items?: Array<Record<string, unknown>> }>("query", "rentalChat:adminInbox", {}),
       callDbCinema<{ page?: Array<{ sender: string; text: string; at: number }> }>("query", "rentalChat:messages", {
@@ -303,11 +308,11 @@ export const draftReply = action({
 
 /** Replacement reads and explicit operator acceptance stay behind the server bridge. */
 export const replacementOptions=action({args:{booking_id:v.string(),item_index:v.number()},handler:async(ctx,a)=>{
-  await requireOwner(ctx,true);
+  await requireOwner(ctx);
   return await callDbCinema<any>("query","rentalReplacements:options",{bookingId:a.booking_id,lineIndex:a.item_index});
 }});
 export const acceptReplacement=action({args:{booking_id:v.string(),replacement_id:v.string(),original:v.any(),request_id:v.string(),dryRun:v.optional(v.boolean())},handler:async(ctx,a)=>{
-  await requireOwner(ctx,true);
+  await requireOwner(ctx);
   if(a.dryRun){
     const fresh=await callDbCinema<any>("query","rentalReplacements:options",{bookingId:a.booking_id,lineIndex:a.original.lineIndex});
     const candidate=fresh.options.find((i:any)=>i.id===a.replacement_id);

@@ -87,60 +87,57 @@ describe("Quick Reply duplicate requests", () => {
 });
 describe("Quick Reply live lifecycle", () => {
   const base = {
-    has_reservation: false,
+    has_reservation: true,
     status: null,
     booking_status: null,
     order_step: null,
     is_request: false,
   };
-  it.each(["cancelled", "declined", "expired"])(
-    "does not mark %s as confirmed",
-    (status) =>
-      expect(
-        quickReplyStage({
-          ...base,
-          has_reservation: true,
-          status,
-          booking_status: "confirmed",
-          order_step: "BOOKED_AFTER_VERIFIED",
-        }),
-      ).toBe("closed"),
-  );
-  it("shows enquiries without a reservation", () =>
-    expect(quickReplyStage(base)).toBe("enquiry"));
-  it.each(["REQUEST", "APPROVED", "FUNDS_RESERVED", "VERIFIED"])(
-    "shows Hygglo %s as pending",
+  it.each(["REQUEST", "APPROVED", "FUNDS_RESERVED"])(
+    "unpaid %s remains an enquiry",
     (step) =>
-      expect(
-        quickReplyStage({ ...base, has_reservation: true, order_step: step }),
-      ).toBe("pending"),
+      expect(quickReplyStage({ ...base, order_step: step })).toBe("enquiry"),
   );
-  it.each(["confirmed", "active", "returned"])(
-    "shows website %s as confirmed",
-    (status) =>
-      expect(
-        quickReplyStage({
-          ...base,
-          has_reservation: true,
-          source: "dbcinema_web",
-          booking_status: status,
-        }),
-      ).toBe("confirmed"),
-  );
-  it("shows unpaid website requests as pending", () =>
+  it("a price or coarse confirmed status is not payment proof", () =>
+    expect(quickReplyStage({ ...base, booking_status: "confirmed" })).toBe(
+      "enquiry",
+    ));
+  it("payment alone cannot claim verification started", () =>
+    expect(quickReplyStage({ ...base, paid: true })).toBe("enquiry"));
+  it("verified process start after payment is pending", () =>
+    expect(
+      quickReplyStage({ ...base, paid: true, verification_started: true }),
+    ).toBe("pending"));
+  it("requires authoritative platform confirmation", () =>
     expect(
       quickReplyStage({
         ...base,
-        has_reservation: true,
+        paid: true,
+        verification_started: true,
+        platform_booking_confirmed: true,
+      }),
+    ).toBe("confirmed"));
+  it("website payment without verified archive remains pending", () =>
+    expect(
+      quickReplyStage({
+        ...base,
         source: "dbcinema_web",
-        status: "pending_payment",
+        paid: true,
+        verification_started: true,
+        platform_booking_confirmed: false,
       }),
     ).toBe("pending"));
-  it("reads confirmation from the latest row", () => {
-    const pending = { ...base, has_reservation: true, order_step: "REQUEST" };
-    expect(quickReplyStage(pending)).toBe("pending");
-    expect(
-      quickReplyStage({ ...pending, order_step: "BOOKED_AFTER_VERIFIED" }),
-    ).toBe("confirmed");
-  });
+  it.each(["cancelled", "declined", "expired"])(
+    "terminal %s wins over historical proof",
+    (status) =>
+      expect(
+        quickReplyStage({
+          ...base,
+          status,
+          paid: true,
+          verification_started: true,
+          platform_booking_confirmed: true,
+        }),
+      ).toBe("closed"),
+  );
 });

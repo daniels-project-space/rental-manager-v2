@@ -7,3 +7,5 @@ The pointer tests cover toolbar/filter/sort controls, account quick texts, revie
 Set `RM_QA_OUTPUT` to retain the JSON receipts. These tests deliberately use fake transports; actual replacement handlers, stock races, immutable snapshots and replay/recovery are tested separately in the Convex tests and DB Cinema's `test-quick-reply-replacements.cjs`.
 
 Reference photographs and generated bundles are **not** application assets. Visual comparison screenshots from this release are retained in `/root/CODEX_ARTIFACTS/rental-manager/quick-reply-reference-2026-10-10/`.
+
+The current control suite also checks that the production Test mode switch is absent, sends use normal arguments through the isolated transport, unavailable requests cannot be approved, list-row replacements prepare two options, and desktop conversations expand to half the workspace. No production client is constructed and external DNS remains blocked.

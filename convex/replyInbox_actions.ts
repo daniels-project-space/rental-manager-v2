@@ -1239,6 +1239,9 @@ export const approveOrder = action({
   args: { thread_id: v.string(), account_slug: v.string(), dryRun: v.optional(v.boolean()) },
   handler: async (ctx, { thread_id, account_slug, dryRun }): Promise<OrderActionResult> => {
     if (!account_slug) return { status: "failed", error: "No account for this thread" };
+    const tile = await ctx.runQuery(internal.replyInbox.__service_getThreadById, {thread_id});
+    if (!tile || tile.account_slug !== account_slug) return {status:"failed",error:"This request does not belong to this account."};
+    if (tile.availability?.status === "conflict") return {status:"failed",error:"Requested gear is unavailable. Find a replacement before approving."};
     if (dryRun) return { status: "sent", reason: "DRY_RUN" };
     const res = await manualApproveOrder({
       accountSlug: account_slug,
