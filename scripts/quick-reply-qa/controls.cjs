@@ -150,6 +150,19 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       "conversation opens",
       `document.querySelector('[role=dialog]')!==null`,
     );
+    await ok(
+      "composer visible without opening drawer",
+      `document.querySelector('textarea[placeholder="Write a reply…"]').offsetParent!==null`,
+    );
+    await ok(
+      "AI pill above typing pill",
+      `(()=>{const ai=document.querySelector('[title="Draft a reply from this conversation"]'),input=document.querySelector('textarea[placeholder="Write a reply…"]');return ai.getBoundingClientRect().bottom<=input.parentElement.getBoundingClientRect().top&&parseFloat(getComputedStyle(ai).borderRadius)>=20&&parseFloat(getComputedStyle(input.parentElement).borderRadius)>=30})()`,
+    );
+    await ok(
+      "all three shortcuts above composer",
+      `['Location','Times','Delivery info'].every(label=>[...document.querySelector('[aria-label="Reply shortcuts"]').querySelectorAll('button')].some(b=>b.textContent.trim()===label&&b.offsetParent!==null))`,
+    );
+
     await tap(`document.querySelector('[title="View all renter reviews"]')`);
     await ok(
       "reviews open",
@@ -191,7 +204,9 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       "snippets insert",
       `document.querySelector('textarea[placeholder="Write a reply…"]').value.includes('Fixture studio')`,
     );
-    await tap(button("Customize"));
+    await tap(
+      `document.querySelector('[title="Customize these quick replies for this account"]')`,
+    );
     await ok(
       "account editor opens",
       `document.querySelector('[aria-label="Close quick reply editor"]')!==null`,
@@ -367,6 +382,22 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     // DB Cinema conversation: draft/copy/send all use its own bridge.
     await tap(
       `document.querySelector('[aria-label="Open conversation with Priya Sharma"]')`,
+    );
+    await tap(
+      `document.querySelector('[title="Customize these quick replies for this account"]')`,
+    );
+    await ok(
+      "website snippets are separate from Hygglo",
+      `document.querySelector('textarea[placeholder="Write account-specific text…"]').value===''`,
+    );
+    await ev(
+      `{const e=document.querySelector('textarea[placeholder="Write account-specific text…"]');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,'Website-only location fixture');e.dispatchEvent(new Event('input',{bubbles:true}));}`,
+    );
+    await pause(30);
+    await tap(button("Save & insert"));
+    await ok(
+      "website snippet saved to website account",
+      `window.__calls.some(c=>c.name==='canned_responses:create'&&c.args.account_slug==='dbcinema_web'&&c.args.text==='Website-only location fixture')`,
     );
     await tap(contains("Draft reply"));
     await ok(
