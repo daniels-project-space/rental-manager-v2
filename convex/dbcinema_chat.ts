@@ -122,13 +122,16 @@ export const inbox = action({
           available: stock.available,
         }];
       });
-      const availability = availabilityItems.length
-        ? {
-            status: availabilityItems.every((item) => item.available) ? "available" as const : "conflict" as const,
-            include_pending: true,
-            items: availabilityItems,
-          }
-        : null;
+      // A checked subset never proves the full basket is available.
+      const completeStock = availabilityItems.length === (booking.items?.length ?? 0) && availabilityItems.length > 0;
+      const hasConflict = availabilityItems.some(item => !item.available);
+      const availability = {
+        status: hasConflict ? "conflict" as const : completeStock ? "available" as const : "unknown" as const,
+        include_pending: true,
+        checked_at: Date.now(),
+        items: availabilityItems,
+        ...(!hasConflict && !completeStock ? { reason: "Full basket needs a stock review" } : {}),
+      };
       return {
         booking_id: booking._id,
         source_booking_id: booking._id,

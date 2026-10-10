@@ -37,7 +37,12 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     const checks = [];
     const ev = (x) => c.evaluate(x);
     const ok = async (label, condition) => {
-      assert(await ev(condition), label);
+      const passed = await ev(condition);
+      if (!passed) {
+        fs.writeFileSync(root+`/failed-${width}.png`, Buffer.from((await c.cmd("Page.captureScreenshot", {captureBeyondViewport:false})).data, "base64"));
+        console.error("Failed viewport", width, label);
+      }
+      assert(passed, label);
       checks.push(label);
     };
     async function tap(expr) {
@@ -263,17 +268,17 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
     await tap(marcus);
     async function openBooking(action) {
-      if (width === 390) {
-        await tap(
-          `document.querySelector('[aria-label="Write reply or insert text file"]')`,
-        );
-        await tap(contains("Booking actions"));
-      } else {
-        await tap(`document.querySelector('summary')`);
-        await tap(button(action));
-      }
+      if (!await ev(`!!document.querySelector('[aria-label="Rental controls"]')`)) await tap(contains("Rental controls"));
+      await tap(button(action));
       await pause(100);
     }
+    await tap(`document.querySelector('[aria-label="Open rental controls"]')`);
+    for (const tab of ["Dates", "Pricing", "Gear"]) {
+      await tap(`[...document.querySelectorAll('[role=tab]')].find(e=>e.textContent==='${tab}')`);
+      await ok("rental tab " + tab, `[...document.querySelectorAll('[role=tab]')].find(e=>e.textContent==='${tab}').getAttribute('aria-selected')==='true'`);
+    }
+    await tap(`document.querySelector('[aria-label="Close rental controls"]')`);
+    await ok("drawer close keeps conversation", `!!document.querySelector('[role=dialog]')&&!document.querySelector('[aria-label="Rental controls"]')`);
     await openBooking("Change rental");
     await ok(
       "booking editor loads",
@@ -329,7 +334,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     checks.push("close booking editor");
     if (width !== 390) {
       for (const action of ["Reschedule", "Discount", "Refund"]) {
-        await tap(`document.querySelector('summary')`);
+        await tap(contains("Rental controls"));
         await tap(button(action));
         await ok(
           "dropdown " + action,
@@ -353,13 +358,21 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       "replacement card and AI draft",
       `document.body.textContent.includes('Sony FX3 replacement')&&document.querySelector('textarea[placeholder="Writing a reply from this conversation…"]').value.includes('So sorry')`,
     );
-    await tap(button("Use reply"));
+    await tap(`[...document.querySelectorAll('[aria-label="Replacement options"] button')].find(b=>b.textContent.includes('Canon C70 replacement'))`);
+    await ok("second replacement selects and prepares a draft", `document.querySelector('[aria-label="Replacement options"] button[aria-pressed=true]').textContent.includes('Canon C70 replacement')&&window.__calls.some(c=>c.name==='quick_reply_replacements:draft'&&c.args.replacement_id==='34')`);
+    await tap(button("Review message in chat"));
     await ok(
       "replacement draft inserted",
       `document.querySelector('textarea[placeholder="Write a reply…"]').value.includes('So sorry')`,
     );
     await tap(contains("Find replacement"));
-    await tap(button("Accept & replace item"));
+    const sendsBeforeReplacement = await ev(`window.__calls.filter(c=>/sendRenterReply|sendOwnerReply/.test(c.name)).length`);
+    await tap(button("✓ Approve replacement"));
+    await ok("replacement approval never sends a message", `window.__calls.filter(c=>/sendRenterReply|sendOwnerReply/.test(c.name)).length===${sendsBeforeReplacement}`);
+    await ok("replacement cannot be applied twice", `[...document.querySelectorAll('button')].find(b=>b.textContent==='✓ Replacement approved').disabled`);
+    await tap(button("➤ Send message"));
+    await ok("replacement message sends only on separate explicit action", `window.__calls.filter(c=>/sendRenterReply|sendOwnerReply/.test(c.name)).length===${sendsBeforeReplacement+1}`);
+
     await ok(
       "replacement accept uses actual operator arguments",
       `window.__calls.some(c=>c.name==='quick_reply_replacements:accept'&&c.args.dryRun===false)`,
@@ -444,6 +457,19 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       "live website confirmed stage",
       `document.querySelector('[role=dialog] [aria-label="Booking progress: Confirmed"]')!==null`,
     );
+    await ev(`{window.__fixture.rows[1].availability.status='conflict';window.__fixture.rows[1].availability.items=[{name:window.__fixture.rows[1].items[0].name,available:false,requested:1,total_units:1,free:0,booked:1,pending:0}];document.dispatchEvent(new Event('visibilitychange'));}`);
+    await pause(150);
+    await tap(contains("Find replacement"));
+    await ok("website replacement reads its booking", `window.__calls.some(c=>c.name==='dbcinema_chat:replacementOptions'&&c.args.booking_id)`);
+    const websiteSendCount = await ev(`window.__calls.filter(c=>c.name==='dbcinema_chat:sendOwnerReply').length`);
+    await tap(button("✓ Approve replacement"));
+    await ok("website replacement approval uses website guarded action", `window.__calls.some(c=>c.name==='dbcinema_chat:acceptReplacement'&&c.args.booking_id&&c.args.dryRun===false)`);
+    await ok("website replacement approval does not send", `window.__calls.filter(c=>c.name==='dbcinema_chat:sendOwnerReply').length===${websiteSendCount}`);
+    await tap(button("➤ Send message"));
+    await ok("website replacement separate send reaches website chat", `window.__calls.filter(c=>c.name==='dbcinema_chat:sendOwnerReply').length===${websiteSendCount+1}`);
+    await tap(`document.querySelector('[aria-label="Open rental controls"]')`);
+    await tap(button("Refund"));
+    await ok("website refund opens exact source review", `document.querySelector('[aria-label="Rental controls"] a').href.includes('action=refund')&&document.querySelector('[aria-label="Rental controls"] a').href.includes('rental=')`);
     await tap(close);
     for (let i = 0; i < 10; i++) {
       await tap(marcus);

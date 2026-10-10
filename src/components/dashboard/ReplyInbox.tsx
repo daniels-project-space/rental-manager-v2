@@ -26,6 +26,7 @@ import { useAccount } from "@/lib/account-context";
 import { accountAccent, accountLabel } from "@/lib/account-theme";
 import { Card } from "@/components/ui/Card";
 import styles from "./ReplyInbox.module.css";
+import { RentalControls, type RentalControlTab } from "./RentalControls";
 import { quickReplyStage, quickReplyDuplicateIds } from "../../../convex/lib/quick_reply_presentation";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
@@ -1772,6 +1773,9 @@ export function ReplyModal({
     return ()=>{visible?.removeEventListener("resize",update);visible?.removeEventListener("scroll",update);window.removeEventListener("resize",update);};
   },[dockTarget]);
   const [bookingAction, setBookingAction] = useState<"change" | "dates" | "discount" | "refund" | null>(null);
+  const [controlsOpen, setControlsOpen] = useState(false);
+  const [controlTab, setControlTab] = useState<RentalControlTab>("gear");
+  const [replacementApplied, setReplacementApplied] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   type ReplacementOption={id:string;name:string;image_url:string|null;available:boolean;original:Record<string,unknown>;can_apply:boolean;price_note:string};
   const replacementOptions=useAction(makeFunctionReference<"action">("quick_reply_replacements:options"));
@@ -1796,9 +1800,10 @@ export function ReplyModal({
     catch(error){if(version===replacementDraftVersion.current)setReplacementError(error instanceof Error?error.message:"Replacement draft is unavailable.");}
   };
   const findReplacements=async(index:number)=>{
+    if(replacementBusy === "apply")return;
     const stockVersion=++replacementStockVersion.current;
     ++replacementDraftVersion.current;
-    setReplacementOpen(true);setReplacementIndex(index);setReplacementBusy("stock");setReplacementError(null);setReplacementChoices([]);setReplacementChoice(null);setReplacementText("");
+    setControlsOpen(true);setControlTab("gear");setBookingAction(null);setReplacementApplied(false);setReplacementOpen(true);setReplacementIndex(index);setReplacementBusy("stock");setReplacementError(null);setReplacementChoices([]);setReplacementChoice(null);setReplacementText("");
     try{const result=tile.source==="dbcinema_web"?await dbReplacementOptions({booking_id:tile.source_booking_id,item_index:index}):await replacementOptions({thread_id:tile.thread_id,item_index:index});
       if(stockVersion!==replacementStockVersion.current)return;
       setReplacementChoices(result.options.slice(0,2));if(result.options.length)await chooseReplacement(result.options[0],index);else setReplacementError(result.reason??"No suitable replacement with verified stock is available.");}
@@ -1821,7 +1826,7 @@ export function ReplyModal({
       if(!result.ok)throw Error(result.message??"Replacement could not be verified. Check the original order.");
       setNote(result.dryRun?"✓ Replacement checked in test mode — nothing changed.":"✓ Replacement applied. Review and send the reply separately.");
       setText(replacementText);setComposeApproval(null);setComposeOpen(true);
-      setReplacementOpen(false);setReplacementChoice(null);setDbCinemaRefresh(value=>value+1);
+      setReplacementApplied(true);setDbCinemaRefresh(value=>value+1);
     }catch(error){setReplacementError(error instanceof Error?error.message:"Replacement failed.");}finally{setReplacementBusy(null);}
   };
 
@@ -2155,14 +2160,35 @@ export function ReplyModal({
       <div
         className={styles.conversation}
         data-composing={composeOpen}
+        data-controls={controlsOpen}
         data-short-viewport={viewport ? viewport.height<500 : undefined}
         style={{ borderColor: `${accent}4d` }}
       >
+        {controlsOpen && <RentalControls
+          name={tile.renter_name} portrait={tile.renter_image_url}
+          identity={<><button type="button" className={styles.rating} onClick={()=>{setControlsOpen(false);setShowReviews(true);}}>{tile.renter_rating?.toFixed(1) ?? "Unrated"} <span>★</span></button><AccountTag slug={tile.account_slug} source={tile.source}/></>}
+          progress={<StageBar t={tile}/>}
+          tab={controlTab} onTab={tab=>{setControlTab(tab);setBookingAction(tab==="dates"?"dates":tab==="pricing"?"discount":null);}}
+          onClose={()=>{setControlsOpen(false);setBookingAction(null);}}
+          gear={<div className={styles.controlGear}><Thumb src={tile.image_url} accent={accent} size={68}/><div><strong>{itemLineShort(tile)||"General inquiry"}</strong><small>{tile.start_date?`${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date??tile.start_date)}`:"Dates pending"}</small><QueueAvailability tile={tile}/><b>{fmtMoney(tile.net_to_owner_gbp??tile.estimate_earnings_gbp)??"—"}</b></div></div>}
+          replacement={replacementOpen?{
+            choices:replacementChoices,selected:replacementChoice?.id??null,text:replacementText,busy:replacementBusy,error:replacementError,applied:replacementApplied,sending,
+            onSend:()=>{if(sending||replacementBusy||!replacementText.trim())return;void sendBody(replacementText,false).then(ok=>{if(ok){setText("");setComposeApproval(null);setControlsOpen(false);setReplacementOpen(false);}else setReplacementError("Message was not sent. Your draft is kept; review the chat error before retrying.");});},
+            onChoose:id=>{const candidate=replacementChoices.find(choice=>choice.id===id);if(candidate)void chooseReplacement(candidate,replacementIndex);},
+            onText:setReplacementText,onApply:()=>void applyReplacement(),
+            onUseReply:()=>{setText(replacementText);setComposeApproval(null);setComposeOpen(true);setControlsOpen(false);requestAnimationFrame(()=>replyInputRef.current?.focus());},
+            itemPicker:tile.items.length>1?<label>Requested item<select aria-label="Requested replacement item" value={replacementIndex} disabled={!!replacementBusy||replacementApplied} onChange={event=>void findReplacements(Number(event.target.value))}>{tile.items.map((item,index)=><option key={index} value={index}>{item.name}</option>)}</select></label>:undefined,
+          }:undefined}
+          editor={bookingAction&&tile.has_reservation&&tile.account_slug?<section className={styles.controlEditor}><header><strong>{({change:"Change rental",dates:"Reschedule",discount:"Discount",refund:"Refund"})[bookingAction]}</strong><button type="button" aria-label="Close booking editor" onClick={()=>{setBookingAction(null);setControlTab("gear");}}>×</button></header>{tile.source==="dbcinema_web"?<div className={styles.sourceActions}><p>Review this change in the DB Cinema rental workspace.</p>{dryRun?<p>Workspace disabled in test mode.</p>:<a target="_blank" rel="noopener noreferrer" href={`https://dbcinemarentals.com/admin?rental=${encodeURIComponent(tile.source_booking_id??"")}&action=${bookingAction}`}>Open {({change:"kit editor",dates:"reschedule",discount:"discount / refund review",refund:"refund review"})[bookingAction]} ↗</a>}<small>Changes keep DB Cinema’s payment and approval checks.</small></div>:<OrderEditor key={bookingAction} accountSlug={tile.account_slug} orderId={tile.thread_id} dryRun={dryRun} initialAction={bookingAction}/>}</section>:undefined}
+          actions={<div>{tile.availability?.status==="conflict"&&!replacementOpen&&<button type="button" onClick={()=>void findReplacements(Math.max(0,tile.availability?.items.findIndex(item=>!item.available)??0))}>Find replacement</button>}{tile.has_reservation&&tile.account_slug&&([["change","Change rental"],["dates","Reschedule"],["discount","Discount"],["refund","Refund"]] as const).map(([action,label])=><button type="button" key={action} onClick={()=>{setBookingAction(action);setControlTab(action==="dates"?"dates":action==="change"?"gear":"pricing");}}>{label}</button>)}</div>}
+        />}
+        <div className={styles.conversationContent}>
         <div className={styles.chatHeader}>
           <div className={styles.chatIdentity}>
             <div className={styles.chatAvatar}>{tile.renter_image_url ? <img src={tile.renter_image_url} alt={tile.renter_name} /> : <span>{tile.renter_name.split(" ").map((part) => part[0]).slice(0,2).join("")}</span>}</div>
             <div className="min-w-0"><h3>{tile.renter_name}</h3><button type="button" onClick={() => setShowReviews((value) => !value)} className={styles.rating} title="View all renter reviews">{tile.renter_rating?.toFixed(1) ?? "Unrated"} <span>★</span>{tile.renter_review_count != null && <small className={styles.reviewCount}> · {tile.renter_review_count} reviews</small>}</button><div className="mt-1.5"><AccountTag slug={tile.account_slug} source={tile.source} /></div><div className={styles.identityDates}>{tile.start_date ? `${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date ?? tile.start_date)}` : "Dates pending"}</div></div>
           </div>
+          {!controlsOpen && <button type="button" className={styles.headerControls} aria-label="Open rental controls" title="Rental controls" onClick={()=>{setControlsOpen(true);setControlTab("gear");}}>⚙</button>}
           <button type="button" onClick={onClose} aria-label="Close conversation" data-testid="quick-reply-close" className={styles.chatClose}><span>×</span><small>Close</small></button>
           <div className={styles.chatGear}><Thumb src={tile.image_url} accent={accent} size={140} /><div className={styles.chatGearDetails}><strong>{itemLineShort(tile) || "General inquiry"}</strong><div className={styles.chatDates}>{tile.start_date ? `${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date ?? tile.start_date)}` : "Dates pending"}</div><div className={styles.chatGearMeta}><QueueAvailability tile={tile} /><span>{tile.net_to_owner_gbp != null ? "Owner earns" : "Est. earn"} <b>{fmtMoney(tile.net_to_owner_gbp ?? tile.estimate_earnings_gbp) ?? "—"}</b></span></div></div></div>
 
@@ -2188,21 +2214,10 @@ export function ReplyModal({
           {/* Order editor — live items + add/remove + price + dates (has_reservation
               threads only; inquiries with no booking have nothing to edit). */}
           {tile.has_reservation && tile.account_slug && (
-            <details className={styles.bookingMenu}>
-              <summary>Booking actions <span>⌄</span></summary>
-              <div className={styles.bookingDropdown}>{([["change","Change rental"],["dates","Reschedule"],["discount","Discount"],["refund","Refund"]] as const).map(([action,label]) => <button type="button" key={action} onClick={(event) => {setBookingAction(action);event.currentTarget.closest("details")?.removeAttribute("open");}}>{label}</button>)}</div>
-            </details>
+            <button type="button" className={styles.rentalControlsButton} aria-expanded={controlsOpen} onClick={() => {setControlsOpen(true);setControlTab("gear");}}>Rental controls <span>⚙</span></button>
           )}
 
           </div>
-          {replacementOpen && <section className={styles.replacementPane} aria-label="Replacement options"><header><strong>Replace unavailable item</strong><button type="button" aria-label="Close replacement options" onClick={()=>{++replacementDraftVersion.current;++replacementStockVersion.current;setReplacementBusy(null);setReplacementOpen(false);}}>×</button></header>
-            {tile.items.length>1&&<label>Requested item<select value={replacementIndex} disabled={!!replacementBusy} onChange={event=>void findReplacements(Number(event.target.value))}>{tile.items.map((item,index)=><option key={index} value={index}>{item.name}</option>)}</select></label>}
-            {replacementBusy==="stock"&&<p role="status">Checking the full basket and writing a draft…</p>}
-            <div className={styles.replacementCards}>{replacementChoices.map(candidate=><button type="button" key={candidate.id} className={candidate.id===replacementChoice?.id?styles.selectedReplacement:""} disabled={!!replacementBusy} onClick={()=>void chooseReplacement(candidate,replacementIndex)}>{candidate.image_url?<img src={candidate.image_url} alt={candidate.name}/>:<span className={styles.replacementImage}>◇</span>}<span><strong>{candidate.name}</strong><small>Available for these dates</small></span></button>)}</div>
-            {replacementChoice&&<><p>{replacementChoice.price_note}</p><label>AI replacement reply<textarea value={replacementText} onChange={event=>setReplacementText(event.target.value)} placeholder="Writing a reply from this conversation…" rows={4}/></label><div className={styles.replacementActions}><button type="button" disabled={!!replacementBusy||!replacementText.trim()} onClick={()=>{setText(replacementText);setComposeApproval(null);setComposeOpen(true);setReplacementOpen(false);}}>Use reply</button><button type="button" disabled={!!replacementBusy||!replacementChoice.can_apply} onClick={()=>void applyReplacement()}>{replacementBusy==="apply"?"Applying…":dryRun?"Check replacement":"Accept & replace item"}</button></div>{!replacementChoice.can_apply&&<p>Draft an offer now. Kit changes need an editable, upcoming booking.</p>}</>}
-            {replacementError&&<p role="alert">{replacementError}</p>}
-          </section>}
-          {bookingAction && tile.account_slug && <div className={styles.orderPane}><header><strong>{({change:"Change rental",dates:"Reschedule",discount:"Discount",refund:"Refund"})[bookingAction]}</strong><button type="button" onClick={() => setBookingAction(null)} aria-label="Close booking editor">×</button></header>{tile.source==="dbcinema_web"?<div className={styles.sourceActions}><p>Review this change in the DB Cinema rental workspace.</p>{dryRun?<p>Test mode: opening the rental workspace is disabled.</p>:<a target="_blank" rel="noopener noreferrer" href={`https://dbcinemarentals.com/admin?rental=${encodeURIComponent(tile.source_booking_id??"")}&action=${bookingAction}`}>Open {({change:"kit editor",dates:"reschedule",discount:"discount / refund review",refund:"refund review"})[bookingAction]} ↗</a>}<small>Changes keep DB Cinema’s payment and approval checks.</small></div>:<OrderEditor key={bookingAction} accountSlug={tile.account_slug} orderId={tile.thread_id} dryRun={dryRun} initialAction={bookingAction} />}</div>}
           {/* Renter reviews — confined panel, opened by tapping the stars.
               Physical stars incl. half; under-4★ highlighted. */}
           {showReviews && (
@@ -2262,7 +2277,7 @@ export function ReplyModal({
         {/* Compose + decisions — shrink-0 so it never gets compressed/clipped. */}
         <div className={`${styles.compose} ${composeOpen ? styles.expandedCompose : ""}`}>
           <div className={styles.composeDrawer} hidden={!composeOpen}>
-          {tile.has_reservation && tile.account_slug && <button type="button" className={styles.mobileBookingButton} onClick={() => setBookingAction("change")}>Booking actions ⌄</button>}
+          {tile.has_reservation && tile.account_slug && <button type="button" className={styles.mobileBookingButton} onClick={() => {setControlsOpen(true);setControlTab("gear");}}>Rental controls ⚙</button>}
           <div className={styles.composeHeading}><strong>Reply</strong><button type="button" onClick={() => setComposeOpen(false)} aria-label="Collapse reply composer">×</button></div>
           {(ds.canApprove || ds.canDecline || decided) && (
             <div className="flex items-center gap-2 flex-wrap">
@@ -2444,6 +2459,7 @@ export function ReplyModal({
           {note && (
             <div className={`text-xs ${note.startsWith("✓") ? "text-emerald-400" : "text-amber-400"}`}>{note}</div>
           )}
+        </div>
         </div>
         </div>
       </div>
