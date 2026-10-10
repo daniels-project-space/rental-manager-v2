@@ -1222,6 +1222,91 @@ function AccountTag({
 
 // ── card ──────────────────────────────────────────────────────────
 
+function ConversationPreview({
+  tile,
+  onOpen,
+  onReviews,
+}: {
+  tile: ReplyTileData;
+  onOpen: () => void;
+  onReviews: () => void;
+}) {
+  return (
+    <aside
+      className={styles.queuePreview}
+      aria-label={`Request preview for ${tile.renter_name}`}
+    >
+      <header>
+        <ProfilePortrait
+          src={tile.renter_image_url}
+          name={tile.renter_name}
+          className={styles.previewPortrait}
+        />
+        <div>
+          <h3>{tile.renter_name}</h3>
+          <button
+            type="button"
+            className={styles.rating}
+            onClick={onReviews}
+            title="View renter reviews"
+          >
+            <span>★</span> {tile.renter_rating?.toFixed(1) ?? "Unrated"}
+            {tile.renter_review_count != null && (
+              <small> · {tile.renter_review_count} reviews</small>
+            )}
+          </button>
+          <div className={styles.previewAccount}>
+            <AccountTag slug={tile.account_slug} source={tile.source} />
+          </div>
+        </div>
+      </header>
+      <div className={styles.previewSummary}>
+        <div>
+          <span>Rental dates</span>
+          <strong>
+            {tile.start_date
+              ? `${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date ?? tile.start_date)}`
+              : "Dates pending"}
+          </strong>
+        </div>
+        <div>
+          <span>Est. earn</span>
+          <strong>
+            {fmtMoney(tile.net_to_owner_gbp ?? tile.estimate_earnings_gbp) ??
+              "Price pending"}
+          </strong>
+        </div>
+        <QueueAvailability tile={tile} />
+      </div>
+      <section className={styles.previewEquipment}>
+        <h4>Requested equipment</h4>
+        <RequestedItemStack
+          items={tile.requested_items ?? tile.items}
+          alwaysExpanded
+          expandedLabel="Preview requested equipment"
+          size={72}
+        />
+      </section>
+      <section className={styles.previewLatest}>
+        <h4>Latest message</h4>
+        <p>{tile.preview || statusText(tile)}</p>
+        {tile.last_activity_at && (
+          <time>{fmtMsgTime(tile.last_activity_at)}</time>
+        )}
+      </section>
+      <footer>
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-label={`Open full chat with ${tile.renter_name}`}
+        >
+          Open chat to reply <span aria-hidden="true">↗</span>
+        </button>
+      </footer>
+    </aside>
+  );
+}
+
 function ReplyCard({
   tile,
   now,
@@ -1232,6 +1317,7 @@ function ReplyCard({
   selected = false,
   onReviews,
   onReplacement,
+  onPreview,
 }: {
   tile: ReplyTileData;
   now: number;
@@ -1242,6 +1328,7 @@ function ReplyCard({
   selected?: boolean;
   onReviews: () => void;
   onReplacement: () => void;
+  onPreview: () => void;
 }) {
   const aw = awaitingMe(tile);
   const [stockExpanded, setStockExpanded] = useState(false);
@@ -1324,6 +1411,10 @@ function ReplyCard({
     <div
       style={{ "--account-accent": tileAccent(tile) } as CSSProperties}
       onClick={onOpen}
+      onMouseEnter={onPreview}
+      onFocus={(event) => {
+        if (event.target === event.currentTarget) onPreview();
+      }}
       className={`${styles.row} ${selected ? styles.selected : ""} ${duplicate ? styles.duplicate : ""}`}
       role="button"
       tabIndex={0}
@@ -1970,7 +2061,7 @@ function DateCalendar({
                   key={i}
                   disabled={disabled}
                   onClick={() => pick(day)}
-                  className={`h-9 rounded-lg text-[12.5px] transition-colors ${
+                  className={`h-[30px] rounded-lg text-[12.5px] transition-colors ${
                     disabled
                       ? "text-[#4b5160] line-through cursor-not-allowed"
                       : sel
@@ -2410,10 +2501,8 @@ function OrderEditor({
 
       {expanded && (
         <>
-          <div className="flex items-center gap-2 px-4 pb-1">
-            <span className="text-[10px] uppercase tracking-[0.1em] text-[#5f6675]">
-              items · price · dates
-            </span>
+          <div className={styles.editorHeading}>
+            <h4>1. Equipment</h4>
             <button
               onClick={() => void refresh()}
               title="Refresh from Hygglo"
@@ -2423,7 +2512,6 @@ function OrderEditor({
             </button>
           </div>
 
-          <h4>1. Equipment</h4>
           {/* Items */}
           <div className="px-3 pb-2 space-y-1.5">
             {st.items.map((it) => (
@@ -3759,7 +3847,21 @@ export function ReplyModal({
                   setReplacementOpen(false);
                 }}
               >
-                Rental controls <span aria-hidden="true">⌘</span>
+                Rental controls{" "}
+                <svg
+                  aria-hidden="true"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                >
+                  <path d="M3 6h7m4 0h7M3 12h3m4 0h11M3 18h11m4 0h3" />
+                  <circle cx="12" cy="6" r="2" />
+                  <circle cx="8" cy="12" r="2" />
+                  <circle cx="16" cy="18" r="2" />
+                </svg>
               </button>
             )}
             <div className={styles.chatIdentity}>
@@ -4557,6 +4659,7 @@ export function ReplyInbox() {
   const [accountFilter, setAccountFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [openRevision, setOpenRevision] = useState(0);
+  const [previewId, setPreviewId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [reviewId, setReviewId] = useState<string | null>(null);
   const widgetRef = useRef<HTMLDivElement>(null);
@@ -4572,6 +4675,7 @@ export function ReplyInbox() {
     return () => observer.disconnect();
   }, []);
   const openThread = (tile: ReplyTileData, reviews = false) => {
+    setPreviewId(tile.thread_id);
     setOpenRevision((value) => value + 1);
     openCacheRef.current = tile;
     setReviewId(reviews ? tile.thread_id : null);
@@ -4759,6 +4863,10 @@ export function ReplyInbox() {
     ...sorted.filter((row) => !duplicateIds.has(row.thread_id)),
     ...sorted.filter((row) => duplicateIds.has(row.thread_id)),
   ];
+  const previewTile =
+    displayRows.find((tile) => tile.thread_id === previewId) ??
+    displayRows[0] ??
+    null;
   // `open` resolves against the RAW queue (not `all`/visible) so approving or
   // declining a card — which drops it from `all` via onActed — does NOT close
   // the chat overlay. Sending ALSO drops the thread from the queue (owner now
@@ -5035,6 +5143,7 @@ export function ReplyInbox() {
                       key={tile.thread_id}
                       tile={tile}
                       now={now}
+                      onPreview={() => setPreviewId(tile.thread_id)}
                       onOpen={() => openThread(tile)}
                       onReviews={() => openThread(tile, true)}
                       onReplacement={() => {
@@ -5044,7 +5153,10 @@ export function ReplyInbox() {
                           revision: value.revision + 1,
                         }));
                       }}
-                      selected={openId === tile.thread_id}
+                      selected={
+                        openId === tile.thread_id ||
+                        (!openId && previewTile?.thread_id === tile.thread_id)
+                      }
                       onActed={onActed}
                       dryRun={testMode}
                       duplicate={duplicateIds.has(tile.thread_id)}
@@ -5056,13 +5168,19 @@ export function ReplyInbox() {
           </div>
           {canDock && (
             <div ref={setDockTarget} className={styles.chatDock}>
-              {!open && (
+              {!open && previewTile ? (
+                <ConversationPreview
+                  tile={withPortrait(previewTile)}
+                  onOpen={() => openThread(previewTile)}
+                  onReviews={() => openThread(previewTile, true)}
+                />
+              ) : !open ? (
                 <div className={styles.emptyChat}>
                   <span>▤</span>
                   <h3>Your conversations, in focus</h3>
                   <p>Select a renter to see the request and reply.</p>
                 </div>
-              )}
+              ) : null}
             </div>
           )}
         </div>

@@ -1735,3 +1735,263 @@
   border: 1px solid #486f9c;
   border-radius: 12px;
 }
+/* The closed dock is a real request preview; explicit chat open owns drafting. */
+.queuePreview {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px;
+  background: #101820;
+  overflow: auto;
+}
+.queuePreview header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.previewPortrait {
+  width: 56px;
+  height: 56px;
+  min-width: 56px;
+  min-height: 56px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.queuePreview h3 {
+  font-size: 18px;
+  line-height: 1.3;
+  font-weight: 600;
+  margin: 0 0 5px;
+}
+.queuePreview header [class*="accountTag"] {
+  margin-top: 5px;
+}
+.queuePreview h4 {
+  margin: 0 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.previewSummary {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  padding: 14px;
+  background: #17232e;
+  border: 1px solid #2c4050;
+  border-radius: 10px;
+}
+.previewSummary div {
+  min-width: 0;
+}
+.previewSummary span {
+  display: block;
+  color: #9db4c7;
+  font-size: 10px;
+  margin-bottom: 5px;
+}
+.previewSummary strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+.previewSummary > span {
+  margin: 0;
+  justify-self: start;
+}
+.previewEquipment {
+  padding: 14px;
+  border: 1px solid #2c4050;
+  background: #17232e;
+  border-radius: 10px;
+}
+.previewEquipment [data-requested-stack] section {
+  grid-template-columns: repeat(auto-fit, minmax(70px, 1fr));
+  gap: 8px;
+  padding: 0;
+}
+.previewEquipment [data-requested-stack] section img {
+  height: 76px;
+}
+.previewLatest {
+  color: #c8d7e4;
+}
+.previewLatest p {
+  padding: 14px;
+  border-radius: 12px;
+  background: #1b2d3b;
+  font-size: 13px;
+  line-height: 1.65;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.previewLatest time {
+  display: block;
+  text-align: right;
+  color: #95afc3;
+  font-size: 10px;
+  margin-top: 8px;
+}
+.queuePreview footer {
+  margin-top: auto;
+  padding-top: 12px;
+}
+.queuePreview footer button {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 1px solid #3b82f6;
+  border-radius: 10px;
+  padding: 13px 15px;
+  background: #2563eb;
+  color: white;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.queuePreview button:focus-visible {
+  outline: 2px solid #8ac7ff;
+  outline-offset: 3px;
+}
+.rowActions:empty {
+  display: none;
+}
+@container (min-width:500px) and (max-width:1000px) {
+  .row {
+    grid-template-columns: minmax(0, 1fr) 140px 104px;
+    grid-template-rows: auto auto auto;
+    min-height: 100px;
+    padding: 12px;
+    gap: 4px 12px;
+  }
+  .renterCell {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .avatar {
+    width: 42px;
+    height: 42px;
+    min-width: 42px;
+    min-height: 42px;
+  }
+  .renterName {
+    font-size: 13px;
+  }
+  .previewCell {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .gearCell {
+    grid-column: 2;
+    grid-row: 1/3;
+    flex-direction: column;
+    gap: 6px;
+    align-items: flex-start;
+  }
+  .gearCell > span {
+    max-width: 100%;
+    font-size: 8px;
+  }
+  .datesCell {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .waitCell {
+    grid-column: 1;
+    grid-row: 3;
+    flex-direction: row;
+    gap: 5px;
+    align-items: center;
+    justify-content: flex-start;
+  }
+  .waitCell > span {
+    display: inline;
+    font-size: 9px;
+  }
+  .waitCell strong {
+    font-size: 11px;
+  }
+  .earnCell {
+    grid-column: 3;
+    grid-row: 2;
+  }
+  .availCell {
+    grid-column: 2;
+    grid-row: 3;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+  }
+  .progressCell {
+    grid-column: 3;
+    grid-row: 3;
+  }
+  .expandedStock {
+    grid-column: 1/-1;
+  }
+  .row:has([data-requested-stack][data-expanded="true"]) .gearCell {
+    grid-column: 1/3;
+    grid-row: 3;
+  }
+  .row:has([data-requested-stack][data-expanded="true"]) .waitCell {
+    grid-row: 4;
+  }
+  .row:has([data-requested-stack][data-expanded="true"]) .availCell {
+    grid-column: 1/3;
+    grid-row: 5;
+  }
+  .row:has([data-requested-stack][data-expanded="true"]) .progressCell {
+    grid-row: 5;
+  }
+}
+.queuePreview {
+  border: 1px solid #253440;
+  border-radius: 10px;
+}
+.previewAccount {
+  margin-top: 5px;
+}
+.editorHeading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0 12px;
+}
+.editorHeading h4 {
+  margin: 0 !important;
+}
+.editorHeading button {
+  margin-left: auto;
+  min-width: 28px;
+  min-height: 28px;
+  border: 0;
+  background: transparent;
+  color: #9db4c7;
+  cursor: pointer;
+}
+@container (min-width:500px) and (max-width:1000px) {
+  .progressCell .stepper {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .progressCell .stageCaption {
+    margin: 0;
+    white-space: nowrap;
+    font-size: 9px;
+    flex-shrink: 0;
+  }
+  .progressCell .steps {
+    flex: 1;
+    min-width: 32px;
+  }
+  .progressCell .step > span {
+    width: 10px;
+    height: 10px;
+    font-size: 6px;
+  }
+  .progressCell .step:not(:last-child):after {
+    bottom: 4px;
+  }
+}

@@ -36,10 +36,12 @@ export function RequestedItemStack({
   items,
   size = 38,
   alwaysExpanded = false,
+  expandedLabel = "All requested items",
 }: {
   items: StackItem[];
   size?: number;
   alwaysExpanded?: boolean;
+  expandedLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   if (!items.length) return <span className={styles.empty}>◇</span>;
@@ -113,7 +115,7 @@ export function RequestedItemStack({
       {(open || alwaysExpanded) && (
         <section
           className={styles.expansion}
-          aria-label="All requested items"
+          aria-label={expandedLabel}
           onClick={(event) => event.stopPropagation()}
         >
           {items.map((item, index) => (
