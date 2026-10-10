@@ -85,7 +85,25 @@ export const rows = names.map((name, i) => ({
   availability: {
     status: i === 3 ? "conflict" : "available",
     include_pending: false,
-    items: [{item_index:0,name:["Sony FX6","Sigma 24-70","Aputure 600d","Canon RF 50mm","Atomos Ninja V","Sigma 35mm"][i],requested:1,total_units:1,booked:i===3?1:0,pending:0,free:i===3?0:1,available:i!==3}],
+    items: [
+      {
+        item_index: 0,
+        name: [
+          "Sony FX6",
+          "Sigma 24-70",
+          "Aputure 600d",
+          "Canon RF 50mm",
+          "Atomos Ninja V",
+          "Sigma 35mm",
+        ][i],
+        requested: 1,
+        total_units: 1,
+        booked: i === 3 ? 1 : 0,
+        pending: 0,
+        free: i === 3 ? 0 : 1,
+        available: i !== 3,
+      },
+    ],
     checked_at: now,
   },
   last_renter_msg_at: now - [48, 25, 72, 123, 161, 48][i] * 60000,
@@ -198,7 +216,12 @@ export function useQuery(ref, args) {
           author: "Studio",
           created_at: "2026-05-01",
         },
-        {rating:4,text:"Reliable renter",author:"Owner",created_at:"2 weeks ago"},
+        {
+          rating: 4,
+          text: "Reliable renter",
+          author: "Owner",
+          created_at: "2 weeks ago",
+        },
       ],
       lowCount: 0,
       fetched: true,
@@ -213,14 +236,44 @@ export function useAction(ref) {
       window.__calls.push({ kind: "action", name, args });
       if (name === "dbcinema_chat:inbox")
         return rows.filter((r) => r.source === "dbcinema_web");
+      if (name === "dbcinema_chat:rentalControls")
+        return {
+          status: "confirmed",
+          total: 350,
+          depositHoldAmount: 100,
+          snapshot: "fixture-booking-version",
+          canChangeDates: true,
+          lines: [
+            {
+              name: "Sony FX6",
+              qty: 1,
+              start: Date.UTC(2026, 9, 14),
+              end: Date.UTC(2026, 9, 17),
+              image_url: "/gear0.png",
+            },
+          ],
+          refunds: [],
+        };
+      if (name === "dbcinema_chat:previewRentalDates")
+        return {
+          ok: true,
+          controlsSnapshot: "fixture-booking-version",
+          total: 350,
+          depositHoldAmount: 100,
+        };
+      if (name === "dbcinema_chat:applyRentalDates") return { ok: true };
+      if (name === "dbcinema_chat:refundRental")
+        return { status: "succeeded", amount: args.amount_pence / 100 };
       if (name === "dbcinema_chat:thread") return { messages };
       if (name === "dbcinema_chat:renterReviews")
         return { reviews: [], lowCount: 0, fetched: true };
       if (name === "replyInbox_actions:generateDraft") {
         const draft =
           "Yes, those dates work. Pickup is available at the requested time.";
-        rows[0].ai_draft_text = draft;
-        rows[0].ai_draft_approval = {
+        const row = rows.find((row) => row.thread_id === args.thread_id);
+        if (!row) throw Error("Unknown draft thread in fixture");
+        row.ai_draft_text = draft;
+        row.ai_draft_approval = {
           context_key: "fixture",
           epoch: 1,
           message_id: "fixture-msg",
@@ -236,40 +289,63 @@ export function useAction(ref) {
       }
       if (name === "dbcinema_chat:draftReply")
         return { draft: "Fixture DB Cinema contextual reply." };
-      if (name === "renter_trust:profilePhotos") return args.thread_ids.map(thread_id=>({thread_id,image_url:"/face0.png"}));
+      if (name === "renter_trust:profilePhotos")
+        return args.thread_ids.map((thread_id) => ({
+          thread_id,
+          image_url: "/face0.png",
+        }));
       if (name === "dbcinema_chat:sendOwnerReply") return { ok: true };
       if (
-        name === "quick_reply_replacements:options" ||
-        name === "dbcinema_chat:replacementOptions"
-      )
+        name === "quick_reply_replacements:basketOptions" ||
+        name === "dbcinema_chat:replacementBasketOptions"
+      ) {
+        const row =
+          rows.find(
+            (row) =>
+              row.thread_id === args.thread_id ||
+              row.source_booking_id === args.booking_id,
+          ) ?? rows[3];
+        const originals = row.items.filter((item, index) =>
+          row.availability.items.some(
+            (check) =>
+              check.available === false &&
+              (check.item_index === index ||
+                (check.item_index == null && check.name === item.name)),
+          ),
+        );
         return {
-          options: [
-            {
-              id: "33",
-              name: "Sony FX3 replacement",
-              image_url: "/gear0.png",
-              available: true,
-              original: {
-                item_id: 11,
-                product_id: 22,
-                name: "Canon RF 50mm",
-                start: "2026-10-14",
-                end: "2026-10-17",
-              },
-              can_apply: true,
-              price_note: "Check the rental price before sending.",
-            },
-            {id:"34",name:"Canon C70 replacement",image_url:"/gear1.png",available:true,original:{item_id:11,product_id:22,name:"Canon RF 50mm",start:"2026-10-14",end:"2026-10-17"},can_apply:true,price_note:"Check price before sending."},
-          ],
+          originals,
+          options: ["33", "34"].map((id, index) => ({
+            id,
+            name: `Replacement set ${index + 1}`,
+            available: true,
+            original: { items: row.items, lines: originals },
+            items: originals.map((item, i) => ({
+              id: `${id}-${i}`,
+              name:
+                i === 0
+                  ? index === 0
+                    ? "Sony FX3 replacement"
+                    : "Canon C70 replacement"
+                  : "Available replacement lens",
+              image_url: `/gear${i}.png`,
+              qty: item.qty,
+              replaces: item.name,
+            })),
+            can_apply: true,
+            price_note:
+              "Verified together with the retained kit. Review price before sending.",
+          })),
         };
+      }
       if (name === "quick_reply_replacements:draft")
         return {
           draft:
             "So sorry, the requested item is unavailable for those dates. We have a Sony FX3 instead. Would you like that?",
         };
       if (
-        name === "quick_reply_replacements:accept" ||
-        name === "dbcinema_chat:acceptReplacement"
+        name === "quick_reply_replacements:acceptBasket" ||
+        name === "dbcinema_chat:acceptReplacementBasket"
       ) {
         return { ok: true, dryRun: false };
       }

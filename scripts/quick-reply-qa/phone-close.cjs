@@ -41,8 +41,11 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     await pause(300);
     const ev = (x) => c.evaluate(x);
     async function tap(expr) {
-      const deadline=Date.now()+5000;
-      while(!await ev(`!!(${expr})`)){if(Date.now()>deadline)throw Error("Missing target: "+expr);await pause(50);}
+      const deadline = Date.now() + 5000;
+      while (!(await ev(`!!(${expr})`))) {
+        if (Date.now() > deadline) throw Error("Missing target: " + expr);
+        await pause(50);
+      }
       const r = await ev(
         `(()=>{const e=${expr};if(!e)throw Error('Missing target');e.scrollIntoView({block:'nearest'});const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`,
       );
@@ -56,15 +59,32 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       });
       await pause(80);
     }
-    const open = `document.querySelector('[aria-label="Open conversation with Marcus Lee"]')`,
+    const open = `document.querySelector('[aria-label="Open conversation with Marcus Lee"] strong')`,
       close = `document.querySelector('[aria-label="Close conversation"]')`,
       btn = (t) =>
         `[...document.querySelector('[role=dialog]').querySelectorAll('button')].find(e=>e.offsetParent!==null&&e.textContent.includes(${JSON.stringify(t)}))`;
     const states = [];
-    for (const state of ["composer", "quick text", "calendar", "reviews", "replacement", "portrait"]) {
-      await tap(state === "replacement" ? `document.querySelector('[aria-label="Open conversation with Elena Rossi"]')` : open);
+    for (const state of [
+      "composer",
+      "quick text",
+      "calendar",
+      "reviews",
+      "replacement",
+      "portrait",
+    ]) {
+      console.log(
+        `Close check ${width}x${height} keyboard=${mockKeyboard} state=${state}`,
+      );
+      await tap(
+        state === "replacement"
+          ? `document.querySelector('[aria-label="Open conversation with Elena Rossi"] strong')`
+          : open,
+      );
       if (state === "replacement") await tap(btn("Find replacement"));
-      if (state === "portrait") await tap(`document.querySelector('[role=dialog] [aria-label="Expand profile image of Marcus Lee"]')`);
+      if (state === "portrait")
+        await tap(
+          `document.querySelector('[role=dialog] [aria-label="Expand profile image of Marcus Lee"]')`,
+        );
       if (state === "reviews")
         await tap(
           `document.querySelector('[title="View all renter reviews"]')`,
@@ -75,10 +95,26 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
         );
         if (state === "quick text") await tap(btn("Customize"));
         if (state === "calendar") {
-          await tap(`document.querySelector('[aria-label="Open rental controls"]')`);
-          if (!await ev(`!!document.querySelector('[aria-label="Rental controls"]')`)) throw Error("Controls did not open: "+width+"x"+height+" "+await ev(`document.body.innerText`));
+          await tap(
+            `[...document.querySelectorAll('button')].find(button=>button.offsetParent!==null&&button.textContent.trim().startsWith('Rental controls'))`,
+          );
+          if (
+            !(await ev(
+              `!!document.querySelector('[aria-label="Rental controls"]')`,
+            ))
+          )
+            throw Error(
+              "Controls did not open: " +
+                width +
+                "x" +
+                height +
+                " " +
+                (await ev(`document.body.innerText`)),
+            );
           await tap(btn("Reschedule"));
-          await tap(`document.querySelector('[title="Change the rental dates"]')`);
+          await tap(
+            `document.querySelector('[title="Change the rental dates"]')`,
+          );
         }
       }
       if (mockKeyboard) {
@@ -87,7 +123,10 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
         );
         await pause(100);
       }
-      const targetClose=state==="portrait"?`document.querySelector('[aria-label="Close profile image"]')`:close;
+      const targetClose =
+        state === "portrait"
+          ? `document.querySelector('[aria-label="Close profile image"]')`
+          : close;
       const geometry = await ev(
         `(()=>{const e=${targetClose},r=e.getBoundingClientRect(),send=[...document.querySelector('[role=dialog]').querySelectorAll('button')].find(e=>e.textContent.trim()==='Send'),s=send.getBoundingClientRect();return {hit:e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)),closeInside:r.top>=(window.visualViewport?.offsetTop??0)&&r.bottom<=(window.visualViewport?.height??innerHeight)+(window.visualViewport?.offsetTop??0),sendInside:s.top>=(window.visualViewport?.offsetTop??0)&&s.bottom<=(window.visualViewport?.height??innerHeight)+(window.visualViewport?.offsetTop??0),viewport:innerHeight};})()`,
       );
@@ -110,7 +149,14 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
           }),
         );
       await tap(targetClose);
-      if(state==="portrait"){assert(await ev(`!document.querySelector('[aria-label="Close profile image"]')&&!!document.querySelector('[aria-label="Close conversation"]')`));await tap(close);}
+      if (state === "portrait") {
+        assert(
+          await ev(
+            `!document.querySelector('[aria-label="Close profile image"]')&&!!document.querySelector('[aria-label="Close conversation"]')`,
+          ),
+        );
+        await tap(close);
+      }
       assert(await ev(`!document.querySelector('[role=dialog]')`));
       states.push({ state, ...geometry });
     }

@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { requestedImageItems } from "./quick_reply_requested_items";
+import {
+  requestedImageItems,
+  requestedDisplayMatch,
+} from "./quick_reply_requested_items";
 const catalogue = [
   { name_canonical: "Sony FX6", aliases: ["FX6"], image_url: "/fx6" },
   { name_canonical: "Sigma 24-70", image_url: "/lens" },
@@ -76,4 +79,34 @@ describe("requested equipment image context", () => {
         [],
       )[0],
     ).toMatchObject({ name: "Imported light", qty: 3, origin: "chat" }));
+});
+
+describe("exact equipment image identity", () => {
+  it("resolves reordered Osmo model tokens for images only", () => {
+    const model = {
+      name_canonical: "DJI Osmo Action 5 Pro",
+      image_url: "/osmo",
+    };
+    expect(requestedDisplayMatch("DJI Osmo Action Pro 5", [model])).toBe(model);
+    expect(requestedDisplayMatch("DJI Osmo Action Pro 4", [model])).toBeNull();
+    expect(requestedDisplayMatch("Osmo Action Pro 5", [model])).toBeNull();
+  });
+  it("does not choose between ambiguous reordered names", () => {
+    expect(
+      requestedDisplayMatch("DJI Osmo Action Pro 5", [
+        { name_canonical: "DJI Osmo Action 5 Pro" },
+        { name_canonical: "DJI Action 5 Osmo Pro" },
+      ]),
+    ).toBeNull();
+  });
+  it("retains all exact image fallback sources on repeated mentions", () => {
+    const rows = requestedImageItems(
+      [{ name: "Sony FX6", qty: 1, image_url: "/old" }],
+      [{ name: "FX6", qty: 1, image_url: "/fresh", image_urls: ["/second"] }],
+      [],
+      catalogue,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].image_urls).toEqual(["/old", "/fx6", "/fresh", "/second"]);
+  });
 });

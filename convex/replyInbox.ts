@@ -542,9 +542,15 @@ async function assembleTile(
   const latestMsg=mentionMessages[0]??null;
 
   const sourceItems: RichItem[] = simOrder ? simOrder.items.map(i => ({ name: i.name, qty: i.qty, product_id: i.product_id, image_url: null })) : buildRichItems(reservation, conv);
-  const richItems = sourceItems.map(i => ({ ...i, display_name: i.product_id != null && slug && display ? display.name(slug, i.product_id, i.name) : shortItemName(shortListingTitle(i.name)) }));
+  const imageBank=slug&&display?await display.imagesFor(slug,sourceItems.flatMap(item=>item.product_id!=null?[item.product_id]:[])):new Map<number,string>();
+  const richItems = sourceItems.map(i => ({ ...i, image_url:i.image_url??(i.product_id!=null?imageBank.get(i.product_id):undefined)??null, image_urls:[...new Set([i.image_url,i.product_id!=null?imageBank.get(i.product_id):undefined].filter(Boolean))] as string[], display_name: i.product_id != null && slug && display ? display.name(slug, i.product_id, i.name) : shortItemName(shortListingTitle(i.name)) }));
+
   // Only renter text supplements display context.
-  const requestedItems=requestedImageItems(richItems,(conv?.inquiry_items??[]).map(i=>({...i,qty:i.qty??1,image_url:i.image_url??null})),mentionMessages.filter(m=>m.sender==="renter").map(m=>m.body_text??""),display?.items??[]);
+  const requestedItemsRaw=requestedImageItems(richItems,(conv?.inquiry_items??[]).map(i=>({...i,qty:i.qty??1,image_url:i.image_url??null})),mentionMessages.filter(m=>m.sender==="renter").map(m=>m.body_text??""),display?.items??[]);
+  const requestedItems=await Promise.all(requestedItemsRaw.map(async item=>{
+    const candidates=[...new Set([item.image_url,...(item.image_urls??[]),...(slug&&display?await display.imageChoicesForName(slug,item.name):[])].filter((url):url is string=>typeof url==="string"&&!!url))];
+    return {...item,image_url:candidates[0]??null,...(candidates.length>1?{image_urls:candidates}:{})};
+  }));
   const primaryImage =
     richItems.find((i) => i.image_url)?.image_url ??
     reservation?.photos_urls?.[0] ??
@@ -700,6 +706,7 @@ async function assembleTile(
     request_created_at: reservation?.created_at ?? reservation?._creationTime ?? conv?._creationTime ?? null,
     last_msg_at: conv?.last_msg_at ?? lastRenterAt,
     preview: latestMsg?.body_text ?? "",
+    search_text: mentionMessages.map(message=>message.body_text??"").join(" ").slice(0,12000),
     ai_draft_review: currentDraftReview(conv?.ai_draft_review, { message_id: latestMsg?.message_id,
       epoch: hub?.draftEpoch ?? 0, context_key: draftContextKey(reservation, conv?.inquiry_items, simOrder) }),
     has_draft: !!conv?.ai_draft_text,

@@ -41,3 +41,8 @@ export function accountAccent(slug?: string | null): string {
 export function accountLabel(slug?: string | null): string {
   return (slug && ACCOUNT_THEME[slug]?.label) || (slug ?? "Unknown");
 }
+
+/** Dense calendar account identity, shared by Quick Reply filters and rows. */
+export function calendarAccountAccent(slug?: string | null): string {
+  return slug === "dbcinema" ? "#3b82f6" : accountAccent(slug);
+}

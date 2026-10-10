@@ -4,6 +4,7 @@ import styles from "./RentalControls.module.css";
 import { ProfilePortrait } from "./ProfilePortrait";
 export type RentalControlTab = "gear" | "dates" | "pricing";
 export type ReplacementCard = {
+  items?:Array<{id:string;name:string;image_url:string|null;qty:number;replaces:string}>;
   id: string;
   name: string;
   image_url: string | null;
@@ -36,6 +37,7 @@ export function RentalControls({
   editor?: ReactNode;
   actions: ReactNode;
   replacement?: {
+    originals?:Array<{name:string;image_url:string|null;qty:number}>;
     original: { name: string; image_url: string | null; qty: number };
     choices: ReplacementCard[];
     selected: string | null;
@@ -69,10 +71,10 @@ export function RentalControls({
         </div>
         <button
           type="button"
-          aria-label="Close rental controls"
+          aria-label="Back to chat"
           onClick={onClose}
         >
-          ×
+          ← Back to chat
         </button>
       </header>
       <div className={styles.scroll}>
@@ -81,27 +83,9 @@ export function RentalControls({
             aria-label="Replacement options"
             className={styles.replacements}
           >
-            <div className={styles.original}>
-              {replacement.original.image_url ? (
-                <img
-                  data-no-zoom
-                  src={replacement.original.image_url}
-                  alt={replacement.original.name}
-                />
-              ) : (
-                <span className={styles.noImage}>◇</span>
-              )}
-              <div>
-                <span className={styles.unavailable}>Unavailable</span>
-                <strong>{replacement.original.name}</strong>
-                <small>{replacement.original.qty}× requested</small>
-              </div>
-            </div>
-            {replacement.itemPicker && (
-              <div className={styles.itemPicker}>{replacement.itemPicker}</div>
-            )}
+            <div className={styles.originals}>{(replacement.originals?.length ? replacement.originals : [replacement.original]).map((item,index)=><div key={index} className={styles.original}>{item.image_url?<img data-no-zoom src={item.image_url} alt={item.name}/>:<span className={styles.noImage}>◇</span>}<div><span className={styles.unavailable}>Unavailable</span><strong>{item.name}</strong><small>{item.qty}× requested</small></div></div>)}</div>
             <h4>
-              <span>1</span> Choose an available alternative
+              <span>1</span> Choose a complete replacement set
             </h4>
             {replacement.busy === "stock" && (
               <div className={styles.loading} role="status">
@@ -123,16 +107,8 @@ export function RentalControls({
                   <span className={styles.check}>
                     {choice.id === replacement.selected ? "✓" : ""}
                   </span>
-                  {choice.image_url ? (
-                    <img
-                      data-no-zoom
-                      src={choice.image_url}
-                      alt={choice.name}
-                    />
-                  ) : (
-                    <span className={styles.noImage}>◇</span>
-                  )}
                   <strong>{choice.name}</strong>
+                  {(choice.items??[{id:choice.id,name:choice.name,image_url:choice.image_url,qty:1,replaces:replacement.original.name}]).map(item=><span key={item.id} className={styles.setItem}>{item.image_url?<img data-no-zoom src={item.image_url} alt={item.name}/>:<span className={styles.noImage}>◇</span>}<span><b>{item.qty}× {item.name}</b><small>Replaces {item.replaces}</small></span></span>)}
                   <span className={styles.available}>● Available</span>
                   <small>
                     {choice.id === replacement.selected
@@ -215,35 +191,7 @@ export function RentalControls({
               </div>
             </div>
             <div className={styles.progress}>{progress}</div>
-            <div
-              className={styles.tabs}
-              role="tablist"
-              aria-label="Rental settings"
-            >
-              {(
-                [
-                  ["gear", "Gear"],
-                  ["dates", "Dates"],
-                  ["pricing", "Pricing"],
-                ] as const
-              ).map(([value, label]) => (
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === value}
-                  key={value}
-                  onClick={() => onTab(value)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            {tab === "gear" && (
-              <>
-                <h4>Requested equipment</h4>
-                <div className={styles.gear}>{gear}</div>
-              </>
-            )}
+            {!editor && <><h4>1. Equipment</h4><div className={styles.gear}>{gear}</div></>}
             {editor}
           </>
         )}
@@ -267,7 +215,7 @@ export function RentalControls({
                     ? "Updating booking…"
                     : replacement.applied
                       ? "✓ Booking updated"
-                      : "Use replacement in booking"}
+                      : "Use complete set in booking"}
                 </button>
               )}
               <button

@@ -1,14 +1,32 @@
 import { v } from "convex/values";
-import {websiteSwapSnapshot} from "./lib/quick_reply_swap";
+import {
+  basketSwapSnapshot,
+  websiteSwapSnapshot,
+} from "./lib/quick_reply_swap";
 import { action, requireOwner } from "./owner_functions";
 import { internal } from "./_generated/api";
 
-type RenterTrustReview = { id: string; rating: number | null; text: string | null; author: string | null; created_at: string | null };
-type LinkedRenterReviews = { reviews: RenterTrustReview[]; lowCount: number; fetched: boolean; unavailable: boolean };
+type RenterTrustReview = {
+  id: string;
+  rating: number | null;
+  text: string | null;
+  author: string | null;
+  created_at: string | null;
+};
+type LinkedRenterReviews = {
+  reviews: RenterTrustReview[];
+  lowCount: number;
+  fetched: boolean;
+  unavailable: boolean;
+};
 
 type RemoteResult<T> = { status?: string; value?: T; errorMessage?: string };
 
-export async function callDbCinema<T>(kind: "query" | "mutation", path: string, args: unknown): Promise<T> {
+export async function callDbCinema<T>(
+  kind: "query" | "mutation" | "action",
+  path: string,
+  args: unknown,
+): Promise<T> {
   const url = process.env.DBCINEMA_CONVEX_URL;
   const token = process.env.DBCINEMA_ADMIN_TOKEN;
   if (!url || !token) throw new Error("DB Cinema chat is not configured.");
@@ -16,7 +34,11 @@ export async function callDbCinema<T>(kind: "query" | "mutation", path: string, 
   const response = await fetch(`${url.replace(/\/$/, "")}/api/${kind}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ path, args: { ...(args as object), token }, format: "json" }),
+    body: JSON.stringify({
+      path,
+      args: { ...(args as object), token },
+      format: "json",
+    }),
     signal: AbortSignal.timeout(15_000),
   });
   let result: RemoteResult<T>;
@@ -70,6 +92,7 @@ export const inbox = action({
         lastMessage?: string | null;
         lastSender?: string | null;
         requestedGearTexts?: string[];
+        searchText?: string;
         createdAt?: number;
         updatedAt?: number;
       }>;
@@ -80,62 +103,139 @@ export const inbox = action({
     }
 
     const recentChats = feed.items
-      .filter((booking) =>
-        !!booking._id &&
-        !!booking.accountId &&
-        typeof booking.lastMessage === "string" &&
-        booking.lastMessage.trim().length > 0 &&
-        Number.isFinite(booking.updatedAt),
+      .filter(
+        (booking) =>
+          !!booking._id &&
+          !!booking.accountId &&
+          typeof booking.lastMessage === "string" &&
+          booking.lastMessage.trim().length > 0 &&
+          Number.isFinite(booking.updatedAt),
       )
       .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
       .slice(0, 100);
-    const earnings = await ctx.runQuery(internal.replyInbox.dbCinemaReservationEarnings, {
-      bookingIds: recentChats.map((booking) => booking._id),
-    }) as Array<{ bookingId: string; net_to_owner_gbp: number | null; gross_paid_gbp: number | null; currency: string }>;
-    const trustSummaries = await ctx.runQuery(internal.replyInbox.dbCinemaRenterTrustByEmails, {
-      emails: recentChats.flatMap((booking) => booking.verifiedRenterEmail ? [booking.verifiedRenterEmail] : []),
-    }) as Array<{
-      email: string; renter_identity: string | null; rating: number | null;
-      review_count: number | null; blacklisted: boolean; flagged: boolean;
+    const earnings = (await ctx.runQuery(
+      internal.replyInbox.dbCinemaReservationEarnings,
+      {
+        bookingIds: recentChats.map((booking) => booking._id),
+      },
+    )) as Array<{
+      bookingId: string;
+      net_to_owner_gbp: number | null;
+      gross_paid_gbp: number | null;
+      currency: string;
     }>;
-    const imageContexts=await ctx.runQuery(internal.replyInbox.dbCinemaRequestedImages,{requests:recentChats.map(booking=>({id:booking._id,items:(booking.items??[]).map(item=>({name:item.name?.trim()||"Rental item",qty:item.qty??1,image_url:item.heroImage??null})),texts:booking.requestedGearTexts??(booking.lastSender==="renter"?[booking.lastMessage??""]:[])}))});
-    const imagesById=new Map(imageContexts.map((row:any)=>[row.id,row.items]));
-    const earningsById = new Map(earnings.map((entry) => [entry.bookingId, entry]));
-    const trustByEmail = new Map(trustSummaries.map((entry) => [entry.email, entry]));
+    const trustSummaries = (await ctx.runQuery(
+      internal.replyInbox.dbCinemaRenterTrustByEmails,
+      {
+        emails: recentChats.flatMap((booking) =>
+          booking.verifiedRenterEmail ? [booking.verifiedRenterEmail] : [],
+        ),
+      },
+    )) as Array<{
+      email: string;
+      renter_identity: string | null;
+      rating: number | null;
+      review_count: number | null;
+      blacklisted: boolean;
+      flagged: boolean;
+    }>;
+    const imageContexts = await ctx.runQuery(
+      internal.replyInbox.dbCinemaRequestedImages,
+      {
+        requests: recentChats.map((booking) => ({
+          id: booking._id,
+          items: (booking.items ?? []).map((item) => ({
+            name: item.name?.trim() || "Rental item",
+            qty: item.qty ?? 1,
+            image_url: item.heroImage ?? null,
+          })),
+          texts:
+            booking.requestedGearTexts ??
+            (booking.lastSender === "renter"
+              ? [booking.lastMessage ?? ""]
+              : []),
+        })),
+      },
+    );
+    const imagesById = new Map(
+      imageContexts.map((row: any) => [row.id, row.items]),
+    );
+    const earningsById = new Map(
+      earnings.map((entry) => [entry.bookingId, entry]),
+    );
+    const trustByEmail = new Map(
+      trustSummaries.map((entry) => [entry.email, entry]),
+    );
 
     return recentChats.map((booking) => {
       const money = earningsById.get(booking._id);
       const trust = booking.verifiedRenterEmail
         ? trustByEmail.get(booking.verifiedRenterEmail.trim().toLowerCase())
         : undefined;
-      const availabilityItems = (booking.items ?? []).map((item, item_index) => {
-        const stock = item.stockAvailability;
-        if (!stock || typeof stock.available !== "boolean") return {item_index,name:item.name?.trim()||"Rental item",requested:item.qty??1,total_units:0,booked:0,pending:0,free:0,available:null,reason:"Website stock check needs review"};
-        const requested = Number.isSafeInteger(stock.requestedQty) && (stock.requestedQty ?? 0) > 0
-          ? stock.requestedQty!
-          : Number.isSafeInteger(item.qty) && (item.qty ?? 0) > 0 ? item.qty! : 1;
-        const free = Number.isSafeInteger(stock.availableUnits) && (stock.availableUnits ?? 0) >= 0 ? stock.availableUnits! : 0;
-        const total = Number.isSafeInteger(stock.ownedUnits) && (stock.ownedUnits ?? 0) >= 0 ? stock.ownedUnits! : 0;
-        return {
-          item_index,
-          name: item.name?.trim() || "Rental item",
-          requested,
-          total_units: total,
-          booked: Math.max(0, total - free),
-          pending: 0,
-          free,
-          available: stock.available,
-        };
-      });
+      const availabilityItems = (booking.items ?? []).map(
+        (item, item_index) => {
+          const stock = item.stockAvailability;
+          if (!stock || typeof stock.available !== "boolean")
+            return {
+              item_index,
+              name: item.name?.trim() || "Rental item",
+              requested: item.qty ?? 1,
+              total_units: 0,
+              booked: 0,
+              pending: 0,
+              free: 0,
+              available: null,
+              reason: "Website stock check needs review",
+            };
+          const requested =
+            Number.isSafeInteger(stock.requestedQty) &&
+            (stock.requestedQty ?? 0) > 0
+              ? stock.requestedQty!
+              : Number.isSafeInteger(item.qty) && (item.qty ?? 0) > 0
+                ? item.qty!
+                : 1;
+          const free =
+            Number.isSafeInteger(stock.availableUnits) &&
+            (stock.availableUnits ?? 0) >= 0
+              ? stock.availableUnits!
+              : 0;
+          const total =
+            Number.isSafeInteger(stock.ownedUnits) &&
+            (stock.ownedUnits ?? 0) >= 0
+              ? stock.ownedUnits!
+              : 0;
+          return {
+            item_index,
+            name: item.name?.trim() || "Rental item",
+            requested,
+            total_units: total,
+            booked: Math.max(0, total - free),
+            pending: 0,
+            free,
+            available: stock.available,
+          };
+        },
+      );
       // A checked subset never proves the full basket is available.
-      const completeStock = availabilityItems.length === (booking.items?.length ?? 0) && availabilityItems.length > 0 && availabilityItems.every(item => typeof item.available === "boolean");
-      const hasConflict = availabilityItems.some(item => item.available === false);
+      const completeStock =
+        availabilityItems.length === (booking.items?.length ?? 0) &&
+        availabilityItems.length > 0 &&
+        availabilityItems.every((item) => typeof item.available === "boolean");
+      const hasConflict = availabilityItems.some(
+        (item) => item.available === false,
+      );
       const availability = {
-        status: hasConflict ? "conflict" as const : completeStock ? "available" as const : "unknown" as const,
+        status: hasConflict
+          ? ("conflict" as const)
+          : completeStock
+            ? ("available" as const)
+            : ("unknown" as const),
         include_pending: true,
         checked_at: Date.now(),
         items: availabilityItems,
-        ...(!hasConflict && !completeStock ? { reason: "Full basket needs a stock review" } : {}),
+        ...(!hasConflict && !completeStock
+          ? { reason: "Full basket needs a stock review" }
+          : {}),
       };
       return {
         booking_id: booking._id,
@@ -145,14 +245,38 @@ export const inbox = action({
         account_slug: "dbcinema_web",
         renter_name: booking.name?.trim() || "DB Cinema renter",
         renter_image_url: booking.renterPhoto ?? null,
-        renter_identity: trust?.renter_identity ?? `dbcinema:${booking.accountId}`,
+        renter_identity:
+          trust?.renter_identity ?? `dbcinema:${booking.accountId}`,
         verification_status: booking.idVerifyStatus ?? "required",
-        paid: ["confirmed","active","ongoing","returned","completed"].includes(booking.status ?? ""),
-        verification_started: ["processing","requires_input","manual_review","submitted","pending","in_review","verified"].includes(booking.idVerifyStatus ?? "") && !!booking.verificationUpdatedAt,
-        platform_booking_confirmed: ["confirmed","active","ongoing","returned","completed"].includes(booking.status ?? "") && booking.idVerifyStatus === "verified" && booking.verificationArchiveReady === true,
+        paid: [
+          "confirmed",
+          "active",
+          "ongoing",
+          "returned",
+          "completed",
+        ].includes(booking.status ?? ""),
+        verification_started:
+          [
+            "processing",
+            "requires_input",
+            "manual_review",
+            "submitted",
+            "pending",
+            "in_review",
+            "verified",
+          ].includes(booking.idVerifyStatus ?? "") &&
+          !!booking.verificationUpdatedAt,
+        platform_booking_confirmed:
+          ["confirmed", "active", "ongoing", "returned", "completed"].includes(
+            booking.status ?? "",
+          ) &&
+          booking.idVerifyStatus === "verified" &&
+          booking.verificationArchiveReady === true,
         renter_rating: trust?.rating ?? null,
         renter_review_count: trust?.review_count ?? null,
-        renter_rating_source: trust?.renter_identity ? "hygglo" as const : null,
+        renter_rating_source: trust?.renter_identity
+          ? ("hygglo" as const)
+          : null,
         renter_blacklisted: trust?.blacklisted ?? false,
         renter_flagged: trust?.flagged ?? false,
         status: booking.status ?? "Rental",
@@ -165,10 +289,13 @@ export const inbox = action({
         currency: money?.currency ?? "GBP",
         items: (booking.items ?? []).map((item) => ({
           name: item.name?.trim() || "Rental item",
-          qty: Number.isSafeInteger(item.qty) && (item.qty ?? 0) > 0 ? item.qty! : 1,
+          qty:
+            Number.isSafeInteger(item.qty) && (item.qty ?? 0) > 0
+              ? item.qty!
+              : 1,
           image_url: item.heroImage ?? null,
         })),
-        requested_items: imagesById.get(booking._id)??[],
+        requested_items: imagesById.get(booking._id) ?? [],
         unread_owner: booking.unreadOwner ?? 0,
         last_message: booking.lastMessage!,
         last_sender: booking.lastSender ?? null,
@@ -177,15 +304,28 @@ export const inbox = action({
         last_activity_at: booking.updatedAt!,
         last_msg_at: booking.updatedAt!,
         preview: booking.lastMessage!,
-        kind: booking.status === "pending_payment" ? "request" as const : "message" as const,
+        search_text: (
+          booking.searchText ??
+          (booking.requestedGearTexts ?? [booking.lastMessage ?? ""]).join(" ")
+        ).slice(0, 12000),
+        kind:
+          booking.status === "pending_payment"
+            ? ("request" as const)
+            : ("message" as const),
         is_request: false,
         has_reservation: true,
         can_decide: false,
         can_accept: false,
         can_deny: false,
-        start_date: booking.start ? new Date(booking.start).toISOString().slice(0, 10) : null,
-        end_date: booking.end ? new Date(booking.end).toISOString().slice(0, 10) : null,
-        return_date: booking.end ? new Date(booking.end).toISOString().slice(0, 10) : null,
+        start_date: booking.start
+          ? new Date(booking.start).toISOString().slice(0, 10)
+          : null,
+        end_date: booking.end
+          ? new Date(booking.end).toISOString().slice(0, 10)
+          : null,
+        return_date: booking.end
+          ? new Date(booking.end).toISOString().slice(0, 10)
+          : null,
         order_step: null,
         booking_status: booking.status ?? null,
         pickup_method: null,
@@ -194,7 +334,8 @@ export const inbox = action({
         estimate_days: null,
         availability,
         item_count: (booking.items ?? []).length,
-        image_url: booking.items?.find((item) => item.heroImage)?.heroImage ?? null,
+        image_url:
+          booking.items?.find((item) => item.heroImage)?.heroImage ?? null,
         has_draft: false,
         ai_draft_text: null,
         ai_draft_confidence: null,
@@ -211,18 +352,28 @@ export const renterReviews = action({
   args: { booking_id: v.string() },
   handler: async (ctx, { booking_id }): Promise<LinkedRenterReviews> => {
     await requireOwner(ctx);
-    const identity = await callDbCinema<{ authorized?: boolean; email?: string | null }>(
-      "query", "rentalChat:adminRenterIdentity", { bookingId: booking_id },
-    );
+    const identity = await callDbCinema<{
+      authorized?: boolean;
+      email?: string | null;
+    }>("query", "rentalChat:adminRenterIdentity", { bookingId: booking_id });
     if (!identity?.authorized || !identity.email) {
       return { reviews: [], lowCount: 0, fetched: false, unavailable: true };
     }
-    let details = await ctx.runQuery(internal.replyInbox.dbCinemaRenterTrustDetails, { email: identity.email });
-    if (!details.linked) return { reviews: [], lowCount: 0, fetched: false, unavailable: true };
+    let details = await ctx.runQuery(
+      internal.replyInbox.dbCinemaRenterTrustDetails,
+      { email: identity.email },
+    );
+    if (!details.linked)
+      return { reviews: [], lowCount: 0, fetched: false, unavailable: true };
     if (details.thread_id) {
       try {
-        await ctx.runAction(internal.renter_trust.__service_resolveForThread, { thread_id: details.thread_id });
-        details = await ctx.runQuery(internal.replyInbox.dbCinemaRenterTrustDetails, { email: identity.email });
+        await ctx.runAction(internal.renter_trust.__service_resolveForThread, {
+          thread_id: details.thread_id,
+        });
+        details = await ctx.runQuery(
+          internal.replyInbox.dbCinemaRenterTrustDetails,
+          { email: identity.email },
+        );
       } catch {
         // Keep the owner's review panel usable with cached verified trust if the
         // upstream order detail is temporarily unavailable.
@@ -250,7 +401,8 @@ export const thread = action({
       admin: true,
       paginationOpts: { numItems: 40, cursor: null },
     });
-    if (!page || !Array.isArray(page.page)) throw new Error("DB Cinema chat history is unavailable.");
+    if (!page || !Array.isArray(page.page))
+      throw new Error("DB Cinema chat history is unavailable.");
     return {
       escalated: !!page.escalated,
       messages: page.page
@@ -258,7 +410,10 @@ export const thread = action({
         .reverse()
         .map((message) => ({
           id: message._id,
-          role: message.sender === "owner" ? "owner" as const : "renter" as const,
+          role:
+            message.sender === "owner"
+              ? ("owner" as const)
+              : ("renter" as const),
           content: message.text,
           timestamp: message.at,
         })),
@@ -272,11 +427,16 @@ export const sendOwnerReply = action({
   handler: async (ctx, { booking_id, text }) => {
     await requireOwner(ctx);
     const body = text.trim();
-    if (!body || body.length > 2000) throw new Error("Write a message of up to 2,000 characters.");
-    const result = await callDbCinema<{ ok?: boolean }>("mutation", "rentalChat:sendOwner", {
-      bookingId: booking_id,
-      text: body,
-    });
+    if (!body || body.length > 2000)
+      throw new Error("Write a message of up to 2,000 characters.");
+    const result = await callDbCinema<{ ok?: boolean }>(
+      "mutation",
+      "rentalChat:sendOwner",
+      {
+        bookingId: booking_id,
+        text: body,
+      },
+    );
     if (!result?.ok) throw new Error("DB Cinema did not accept the reply.");
     return { ok: true };
   },
@@ -288,46 +448,294 @@ export const draftReply = action({
   handler: async (ctx, { booking_id }) => {
     await requireOwner(ctx);
     const [feed, page] = await Promise.all([
-      callDbCinema<{ authorized?: boolean; items?: Array<Record<string, unknown>> }>("query", "rentalChat:adminInbox", {}),
-      callDbCinema<{ page?: Array<{ sender: string; text: string; at: number }> }>("query", "rentalChat:messages", {
-        bookingId: booking_id, admin: true, paginationOpts: { numItems: 40, cursor: null },
+      callDbCinema<{
+        authorized?: boolean;
+        items?: Array<Record<string, unknown>>;
+      }>("query", "rentalChat:adminInbox", {}),
+      callDbCinema<{
+        page?: Array<{ sender: string; text: string; at: number }>;
+      }>("query", "rentalChat:messages", {
+        bookingId: booking_id,
+        admin: true,
+        paginationOpts: { numItems: 40, cursor: null },
       }),
     ]);
-    if (!feed?.authorized || !Array.isArray(feed.items) || !Array.isArray(page?.page)) throw new Error("DB Cinema draft context is unavailable.");
+    if (
+      !feed?.authorized ||
+      !Array.isArray(feed.items) ||
+      !Array.isArray(page?.page)
+    )
+      throw new Error("DB Cinema draft context is unavailable.");
     const booking = feed.items.find((row) => row._id === booking_id);
     if (!booking) throw new Error("DB Cinema rental was not found.");
-    const base = process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
+    const base =
+      process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
     const secret = process.env.RENTER_BOT_API_SECRET;
     if (!secret) throw new Error("AI reply drafts are not configured.");
-    const response = await fetch(`${base.replace(/\/$/, "")}/api/dbcinema-chat-draft`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${secret}` },
-      body: JSON.stringify({
-        renter_name: booking.name,
-        booking: { status: booking.status, start: booking.start, end: booking.end, items: booking.items },
-        messages: page.page.slice().reverse().map((message) => ({ role: message.sender === "owner" ? "owner" : "renter", text: message.text, at: message.at })),
-      }),
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!response.ok) throw new Error("AI reply draft is temporarily unavailable.");
-    const result = await response.json() as { draft?: string };
-    if (typeof result.draft !== "string" || !result.draft.trim()) throw new Error("AI returned an empty reply draft.");
+    const response = await fetch(
+      `${base.replace(/\/$/, "")}/api/dbcinema-chat-draft`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${secret}`,
+        },
+        body: JSON.stringify({
+          renter_name: booking.name,
+          booking: {
+            status: booking.status,
+            start: booking.start,
+            end: booking.end,
+            items: booking.items,
+          },
+          messages: page.page
+            .slice()
+            .reverse()
+            .map((message) => ({
+              role: message.sender === "owner" ? "owner" : "renter",
+              text: message.text,
+              at: message.at,
+            })),
+        }),
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+    if (!response.ok)
+      throw new Error("AI reply draft is temporarily unavailable.");
+    const result = (await response.json()) as { draft?: string };
+    if (typeof result.draft !== "string" || !result.draft.trim())
+      throw new Error("AI returned an empty reply draft.");
     return { draft: result.draft.trim() };
   },
 });
 
 /** Replacement reads and explicit operator acceptance stay behind the server bridge. */
-export const replacementOptions=action({args:{booking_id:v.string(),item_index:v.number()},handler:async(ctx,a)=>{
-  await requireOwner(ctx);
-  return await callDbCinema<any>("query","rentalReplacements:options",{bookingId:a.booking_id,lineIndex:a.item_index});
-}});
-export const acceptReplacement=action({args:{booking_id:v.string(),replacement_id:v.string(),original:v.any(),request_id:v.string(),dryRun:v.optional(v.boolean())},handler:async(ctx,a)=>{
-  await requireOwner(ctx);
-  if(a.dryRun){
-    const fresh=await callDbCinema<any>("query","rentalReplacements:options",{bookingId:a.booking_id,lineIndex:a.original.lineIndex});
-    const candidate=fresh.options.find((i:any)=>i.id===a.replacement_id);
-    if(!candidate?.can_apply||websiteSwapSnapshot(candidate.original)!==websiteSwapSnapshot(a.original))throw Error("Kit or availability changed. Refresh the replacement choices.");
-    return {ok:true,dryRun:true};
-  }
-  return await callDbCinema<any>("mutation","rentalReplacements:accept",{bookingId:a.booking_id,requestId:a.request_id,lineIndex:a.original.lineIndex,oldListingId:a.original.listingId,newListingId:a.replacement_id,qty:a.original.qty,start:a.original.start,end:a.original.end});
-}});
+export const replacementOptions = action({
+  args: { booking_id: v.string(), item_index: v.number() },
+  handler: async (ctx, a) => {
+    await requireOwner(ctx);
+    return await callDbCinema<any>("query", "rentalReplacements:options", {
+      bookingId: a.booking_id,
+      lineIndex: a.item_index,
+    });
+  },
+});
+export const acceptReplacement = action({
+  args: {
+    booking_id: v.string(),
+    replacement_id: v.string(),
+    original: v.any(),
+    request_id: v.string(),
+    dryRun: v.optional(v.boolean()),
+  },
+  handler: async (ctx, a) => {
+    await requireOwner(ctx);
+    if (a.dryRun) {
+      const fresh = await callDbCinema<any>(
+        "query",
+        "rentalReplacements:options",
+        { bookingId: a.booking_id, lineIndex: a.original.lineIndex },
+      );
+      const candidate = fresh.options.find(
+        (i: any) => i.id === a.replacement_id,
+      );
+      if (
+        !candidate?.can_apply ||
+        websiteSwapSnapshot(candidate.original) !==
+          websiteSwapSnapshot(a.original)
+      )
+        throw Error(
+          "Kit or availability changed. Refresh the replacement choices.",
+        );
+      return { ok: true, dryRun: true };
+    }
+    return await callDbCinema<any>("mutation", "rentalReplacements:accept", {
+      bookingId: a.booking_id,
+      requestId: a.request_id,
+      lineIndex: a.original.lineIndex,
+      oldListingId: a.original.listingId,
+      newListingId: a.replacement_id,
+      qty: a.original.qty,
+      start: a.original.start,
+      end: a.original.end,
+    });
+  },
+});
+
+export const replacementBasketOptions = action({
+  args: { booking_id: v.string() },
+  handler: async (ctx, a): Promise<any> => {
+    await requireOwner(ctx);
+    return callDbCinema<any>("query", "rentalReplacements:basketOptions", {
+      bookingId: a.booking_id,
+    });
+  },
+});
+export const acceptReplacementBasket = action({
+  args: {
+    booking_id: v.string(),
+    replacement_id: v.string(),
+    original: v.any(),
+    request_id: v.string(),
+    dryRun: v.optional(v.boolean()),
+  },
+  handler: async (ctx, a): Promise<any> => {
+    await requireOwner(ctx);
+    if (a.dryRun) {
+      const fresh = await callDbCinema<any>(
+        "query",
+        "rentalReplacements:basketOptions",
+        { bookingId: a.booking_id },
+      );
+      const choice = fresh.options.find(
+        (item: any) => item.id === a.replacement_id,
+      );
+      if (
+        !choice?.can_apply ||
+        basketSwapSnapshot(choice.original, a.replacement_id) !==
+          basketSwapSnapshot(a.original, a.replacement_id)
+      )
+        throw Error(
+          "The kit, dates or stock changed. Refresh the replacement sets.",
+        );
+      return { ok: true, dryRun: true };
+    }
+    return callDbCinema<any>("mutation", "rentalReplacements:acceptBasket", {
+      bookingId: a.booking_id,
+      requestId: a.request_id,
+      replacementId: a.replacement_id,
+      original: a.original,
+    });
+  },
+});
+
+/** Owner-only controls reuse the website's authoritative rental workflows. */
+export const rentalControls = action({
+  args: { booking_id: v.string() },
+  handler: async (ctx, { booking_id }) => {
+    await requireOwner(ctx);
+    const b = await callDbCinema<any>("query", "rentalOperations:details", {
+      bookingId: booking_id,
+    });
+    if (!b) throw Error("Rental details are unavailable.");
+    return {
+      status: b.status,
+      total: b.total,
+      depositHoldAmount: b.depositHoldAmount ?? 0,
+      snapshot: b.controlsSnapshot,
+      canChangeDates:
+        b.status === "confirmed" &&
+        !b.cancellationDecision &&
+        !b.returnDecision &&
+        !b.activeAdditionId &&
+        !b.activeExtensionId,
+      lines: (b.lineItems ?? []).map((l: any) => ({
+        name: l.title,
+        qty: l.qty,
+        start: l.start,
+        end: l.end,
+        image_url: l.heroImage ?? null,
+      })),
+      refunds: (b.rentalRefunds ?? []).map((r: any) => ({
+        status: r.status,
+        amountPence: r.amountPence ?? 0,
+      })),
+    };
+  },
+});
+export const previewRentalDates = action({
+  args: {
+    booking_id: v.string(),
+    start: v.number(),
+    end: v.number(),
+    reason: v.string(),
+    keep_agreed_price: v.boolean(),
+  },
+  handler: async (
+    ctx,
+    { booking_id, start, end, reason, keep_agreed_price },
+  ) => {
+    await requireOwner(ctx);
+    return await callDbCinema<{
+      ok: boolean;
+      reason?: string;
+      controlsSnapshot?: string;
+      total?: number;
+      depositHoldAmount?: number;
+    }>("query", "rentalOperations:previewReschedule", {
+      bookingId: booking_id,
+      start,
+      end,
+      reason,
+      keepAgreedPrice: keep_agreed_price,
+    });
+  },
+});
+export const applyRentalDates = action({
+  args: {
+    booking_id: v.string(),
+    start: v.number(),
+    end: v.number(),
+    reason: v.string(),
+    keep_agreed_price: v.boolean(),
+    expected_snapshot: v.string(),
+    operator_confirmed: v.boolean(),
+  },
+  handler: async (
+    ctx,
+    {
+      booking_id,
+      start,
+      end,
+      reason,
+      keep_agreed_price,
+      expected_snapshot,
+      operator_confirmed,
+    },
+  ) => {
+    await requireOwner(ctx);
+    if (!operator_confirmed || !expected_snapshot)
+      throw Error("Review and confirm the date change first.");
+    await callDbCinema("mutation", "rentalOperations:reschedule", {
+      bookingId: booking_id,
+      start,
+      end,
+      reason,
+      keepAgreedPrice: keep_agreed_price,
+      expectedSnapshot: expected_snapshot,
+    });
+    return { ok: true };
+  },
+});
+export const refundRental = action({
+  args: {
+    booking_id: v.string(),
+    request_id: v.string(),
+    amount_pence: v.number(),
+    reason: v.string(),
+    operator_confirmed: v.boolean(),
+  },
+  handler: async (
+    ctx,
+    { booking_id, request_id, amount_pence, reason, operator_confirmed },
+  ) => {
+    await requireOwner(ctx);
+    if (
+      !operator_confirmed ||
+      !Number.isSafeInteger(amount_pence) ||
+      amount_pence <= 0 ||
+      reason.trim().length < 5
+    )
+      throw Error("Review the amount and reason before confirming.");
+    return await callDbCinema<{ status: string; amount: number }>(
+      "action",
+      "checkout:refundRental",
+      {
+        bookingId: booking_id,
+        requestId: request_id,
+        amountPence: amount_pence,
+        reason,
+      },
+    );
+  },
+});

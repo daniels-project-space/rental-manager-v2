@@ -1,100 +1,98 @@
 "use client";
-import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
+import { useState } from "react";
 import styles from "./RequestedItemStack.module.css";
 export type StackItem = {
   name: string;
   display_name?: string;
   qty: number;
   image_url: string | null;
+  image_urls?: string[];
   origin?: "basket" | "chat";
 };
+function ItemImage({ item }: { item: StackItem }) {
+  const sources = [
+    ...new Set([item.image_url, ...(item.image_urls ?? [])].filter(Boolean)),
+  ] as string[];
+  const [failed, setFailed] = useState<string[]>([]);
+  const src = sources.find((url) => !failed.includes(url));
+  return src ? (
+    <img
+      data-no-zoom
+      src={src}
+      alt={item.display_name ?? item.name}
+      onError={() => setFailed((old) => [...old, src])}
+    />
+  ) : (
+    <span
+      className={styles.missing}
+      aria-label={`No image for ${item.display_name ?? item.name}`}
+    >
+      ◇
+    </span>
+  );
+}
+/** Expansion stays in normal document flow, so the row grows with its gear. */
 export function RequestedItemStack({
   items,
   size = 38,
+  alwaysExpanded = false,
 }: {
   items: StackItem[];
   size?: number;
+  alwaysExpanded?: boolean;
 }) {
-  const [open, setOpen] = useState(false),
-    [pinned, setPinned] = useState(false),
-    [position, setPosition] = useState({ left: 8, top: 8, maxHeight: 400 });
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        setOpen(false);
-        setPinned(false);
-      }
-    };
-    const outside = (event: PointerEvent) => {
-      if (!(event.target as HTMLElement).closest("[data-requested-stack]")) {
-        setOpen(false);
-        setPinned(false);
-      }
-    };
-    window.addEventListener("keydown", close, true);
-    document.addEventListener("pointerdown", outside);
-    return () => {
-      window.removeEventListener("keydown", close, true);
-      document.removeEventListener("pointerdown", outside);
-    };
-  }, [open]);
-  const show = (element: HTMLElement) => {
-    const r = element.getBoundingClientRect(),
-      width = Math.min(340, innerWidth - 16),
-      height = Math.min(430, innerHeight - 24);
-    const top = Math.max(8, Math.min(innerHeight - height - 8, r.bottom + 8));
-    setPosition({
-      left: Math.max(8, Math.min(innerWidth - width - 8, r.left)),
-      top,
-      maxHeight: height,
-    });
-    setOpen(true);
-  };
+  const [open, setOpen] = useState(false);
   if (!items.length) return <span className={styles.empty}>◇</span>;
   return (
-    <>
-      <button
-        data-requested-stack
-        type="button"
-        className={styles.stack}
-        style={{
-          width: size + Math.min(items.length - 1, 2) * 7,
-          height: size + Math.min(items.length - 1, 2) * 4,
-        }}
-        aria-label={`Show all ${items.length} requested items`}
-        aria-expanded={open}
-        onMouseEnter={(event) => {
-          if (!matchMedia("(hover: none)").matches) show(event.currentTarget);
-        }}
-        onMouseLeave={() => {
-          if (!pinned) setOpen(false);
-        }}
-        onFocus={(event) => {
-          if (event.currentTarget.matches(":focus-visible"))
-            show(event.currentTarget);
-        }}
-        onClick={(event) => {
+    <div
+      data-requested-stack
+      data-expanded={open || alwaysExpanded}
+      className={styles.container}
+      onPointerEnter={(event) => {
+        if (event.pointerType === "mouse") setOpen(true);
+      }}
+      onPointerLeave={(event) => {
+        if (event.pointerType === "mouse") setOpen(false);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
           event.stopPropagation();
-          if (pinned) {
-            setPinned(false);
-            setOpen(false);
-          } else {
-            setPinned(true);
-            show(event.currentTarget);
+          setOpen(false);
+        }
+      }}
+    >
+      {!alwaysExpanded && (
+        <button
+          type="button"
+          className={`${styles.stack} ${open ? styles.expandedAnchor : ""}`}
+          style={
+            open
+              ? undefined
+              : {
+                  width: size + Math.min(items.length - 1, 2) * 7,
+                  height: size + Math.min(items.length - 1, 2) * 4,
+                }
           }
-        }}
-      >
-        {items
-          .slice(0, 3)
-          .reverse()
-          .map((item, reverse) => {
-            const index = Math.min(items.length, 3) - 1 - reverse;
-            return (
+          aria-label={`Show all ${items.length} requested items`}
+          aria-expanded={open}
+          onFocus={(event) => {
+            if (event.currentTarget.matches(":focus-visible")) setOpen(true);
+          }}
+          onClick={(event) => {
+            event.stopPropagation();
+            const pointer = event.nativeEvent as MouseEvent & {
+              pointerType?: string;
+            };
+            setOpen((value) =>
+              pointer.pointerType === "touch" ? !value : true,
+            );
+          }}
+        >
+          {open && <span>Requested equipment · {items.length}</span>}
+          {!open &&
+            items.slice(0, 3).map((item, index) => (
               <span
-                key={index}
+                key={`${index}-${item.name}`}
                 className={styles.layer}
                 style={{
                   width: size,
@@ -104,77 +102,42 @@ export function RequestedItemStack({
                   zIndex: 3 - index,
                 }}
               >
-                {item.image_url ? (
-                  <img
-                    data-no-zoom
-                    src={item.image_url}
-                    alt={item.display_name ?? item.name}
-                  />
-                ) : (
-                  <span>◇</span>
-                )}
+                <ItemImage item={item} />
               </span>
-            );
-          })}
-        {items.length > 1 && <b className={styles.count}>{items.length}</b>}
-      </button>
-      {open &&
-        createPortal(
-          <section
-            data-requested-stack
-            className={styles.popover}
-            style={{
-              left: position.left,
-              top: position.top,
-              maxHeight: position.maxHeight,
-            }}
-            aria-label="All requested items"
-            onClick={(event) => event.stopPropagation()}
-            onMouseEnter={() => setOpen(true)}
-            onMouseLeave={() => {
-              if (!pinned) setOpen(false);
-            }}
-          >
-            <header>
-              <strong>Requested equipment</strong>
-              <button
-                type="button"
-                aria-label="Close requested items"
-                onClick={() => {
-                  setOpen(false);
-                  setPinned(false);
-                }}
-              >
-                ×
-              </button>
-            </header>
-            <div>
-              {items.map((item, index) => (
-                <article key={`${index}-${item.name}`}>
-                  {item.image_url ? (
-                    <img
-                      data-no-zoom
-                      src={item.image_url}
-                      alt={item.display_name ?? item.name}
-                    />
-                  ) : (
-                    <span className={styles.missing}>◇</span>
-                  )}
-                  <div>
-                    <strong>{item.display_name ?? item.name}</strong>
-                    <small>
-                      {item.qty}× ·{" "}
-                      {item.origin === "chat"
-                        ? "Mentioned in chat"
-                        : "In basket"}
-                    </small>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>,
-          document.body,
-        )}
-    </>
+            ))}
+          {!open && items.length > 1 && (
+            <b className={styles.count}>{items.length}</b>
+          )}
+        </button>
+      )}
+      {(open || alwaysExpanded) && (
+        <section
+          className={styles.expansion}
+          aria-label="All requested items"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {items.map((item, index) => (
+            <article key={`${index}-${item.name}`}>
+              <ItemImage item={item} />
+              <strong>{item.display_name ?? item.name}</strong>
+              <small>
+                {item.qty}× ·{" "}
+                {item.origin === "chat" ? "Mentioned in chat" : "In basket"}
+              </small>
+            </article>
+          ))}
+          {!alwaysExpanded && (
+            <button
+              type="button"
+              aria-label="Collapse requested items"
+              className={styles.collapse}
+              onClick={() => setOpen(false)}
+            >
+              Collapse equipment ↑
+            </button>
+          )}
+        </section>
+      )}
+    </div>
   );
 }
