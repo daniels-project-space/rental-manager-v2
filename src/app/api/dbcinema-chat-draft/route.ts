@@ -12,7 +12,7 @@ export async function POST(request: Request) {
   if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  let body: { renter_name?: string; booking?: { status?: string; start?: number; end?: number; items?: Array<{ name?: string; qty?: number }> }; messages?: ContextMessage[] };
+  let body: { renter_name?: string; booking?: { status?: string; start?: number; end?: number; items?: Array<{ name?: string; qty?: number }> }; messages?: ContextMessage[]; replacement?: {original?:string;new_item?:string;available?:boolean;price_note?:string} };
   try {
     body = await request.json();
   } catch {
@@ -46,6 +46,11 @@ export async function POST(request: Request) {
         `Rental status: ${String(body.booking?.status ?? "unknown").slice(0, 80)}`,
         `Dates: ${date(body.booking?.start)} to ${date(body.booking?.end)}`,
         `Items: ${items.join(", ") || "not supplied"}`,
+        ...(body.replacement?.available===true && body.replacement.new_item ? [
+          `Verified replacement facts: requested ${String(body.replacement.original??"item").slice(0,120)} is unavailable for this booking; ${String(body.replacement.new_item).slice(0,120)} has freshly checked stock for the complete proposed basket.`,
+          `Replacement price information: ${String(body.replacement.price_note??"Price needs checking.").slice(0,300)}`,
+          "Apologise briefly and offer the replacement. Ask whether the renter would like it. Nothing has been changed yet. Do not claim identical features or unchanged price unless the facts establish it.",
+        ] : []),
         "Conversation, oldest to newest:",
         transcript,
         "Write only the draft reply to the renter.",

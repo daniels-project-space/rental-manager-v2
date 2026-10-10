@@ -2442,3 +2442,5 @@ export const __service_getReplyQueue = internalQueryOf(getReplyQueue);
 
 // Privileged caller counterpart; shares the original handler and validators.
 export const __service_getDraftApprovalContext = internalQueryOf(getDraftApprovalContext);
+
+export const __service_getThreadById=internalQueryOf(getThreadById);

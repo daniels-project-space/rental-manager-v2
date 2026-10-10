@@ -22,7 +22,7 @@
  * the order's `actions` map — the UI reads getOrderState().actions and passes
  * the right one; the write helpers default sensibly if omitted.
  */
-import { action } from "./owner_functions";
+import { action,internalActionOf } from "./owner_functions";
 import { v } from "convex/values";
 import {
   getAccountCredentials,
@@ -432,3 +432,7 @@ export const setDates = action({
     });
   },
 });
+
+export const __service_getOrderState=internalActionOf(getOrderState);
+export const __service_addItem=internalActionOf(addItem);
+export const __service_removeItem=internalActionOf(removeItem);

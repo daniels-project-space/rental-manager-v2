@@ -1,3 +1,4 @@
+import {internalQueryOf} from "./owner_functions";
 import { mutation, query } from "./owner_functions";
 import type { MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
@@ -1744,3 +1745,5 @@ export const getLatestActivityBatch = query({
     return out;
   },
 });
+
+export const __service_listByThread=internalQueryOf(listByThread);

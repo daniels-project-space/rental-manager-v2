@@ -2796,6 +2796,8 @@ const operationalSchema = defineSchema({
 // Keep identical validated lifecycle facts in a physically separate test table.
 // Production stock, calendars, revenue and return workflows only read reservations.
 export default defineSchema({
+  quick_reply_swaps: defineTable({thread_id:v.string(),request_id:v.string(),snapshot:v.string(),state:v.union(v.literal("running"),v.literal("applied"),v.literal("failed"),v.literal("attention")),at:v.number()}).index("by_thread",["thread_id"]).index("by_request",["request_id"]),
+
   ...operationalSchema.tables,
   renter_bot_lab_bookings: defineTable(operationalSchema.tables.reservations.validator)
     .index("by_hygglo_order_id", ["hygglo_order_id"]),
