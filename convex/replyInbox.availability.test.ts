@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 vi.mock("./auth", () => ({ authComponent: { safeGetAuthUser: vi.fn() } }));
-import { computeAvailability } from "./replyInbox";
+import { computeAvailability, extendAvailabilityMappings } from "./replyInbox";
 const gear = (id: string, name: string, qty = 1) => ({
   _id: id,
   name_canonical: name,
@@ -37,6 +37,76 @@ const booking = {
 } as any;
 const line = (name: string, qty = 1) => ({ name, qty, image_url: null });
 describe("Quick Reply full-basket shared stock checks", () => {
+  it("resolves a recorded exact inventory alias", () => {
+    const item = {
+      ...gear("a", "Sony FX3"),
+      aliases: ["Sony FX3 cinema camera"],
+    };
+    expect(
+      computeAvailability(booking, context([item]), [
+        line("Sony FX3 cinema camera"),
+      ]).status,
+    ).toBe("available");
+  });
+  it("loads pending kit contents from indexed catalogue records without writes", async () => {
+    const items = [
+      { ...gear("camera", "Sony FX3"), is_marketing_only: false },
+      {
+        ...gear("lens", "Sony GM 24-70mm f2.8", 1),
+        kind: "lens",
+        is_marketing_only: false,
+      },
+    ];
+    const av = context(items, {
+        blackouts: [
+          { item_id: "lens", start_date: "2026-10-12", end_date: "2026-10-13" },
+        ],
+      }),
+      reads: string[] = [],
+      write = vi.fn();
+    const ctx = {
+      db: {
+        query: (table: string) => {
+          reads.push(table);
+          const q = {
+            withIndex: () => q,
+            first: async () =>
+              table === "hygglo_products"
+                ? {
+                    accountSlug: "fixture",
+                    productId: 7,
+                    masterItemId: "camera",
+                    description:
+                      "Included in this rental: • 1x Sony FX3 • 1x Sony GM 24-70mm f2.8",
+                  }
+                : null,
+          };
+          return q;
+        },
+        patch: write,
+        insert: write,
+      },
+    } as any;
+    const rental = {
+      ...booking,
+      hygglo_items: [
+        { product_id: 7, name: "FX3 camera and lens kit", qty: 1 },
+      ],
+    };
+    await extendAvailabilityMappings(ctx, av, [rental]);
+    const result = computeAvailability(rental, av, [
+      { ...line("FX3 camera and lens kit"), product_id: 7 },
+    ]);
+    expect(reads).toEqual(["hygglo_products", "online_listings"]);
+    expect(
+      av.overrideMap
+        .get("fixture#7")
+        .map((c: any) => c.item_id)
+        .sort(),
+    ).toEqual(["camera", "lens"]);
+    expect(result.status).toBe("conflict");
+    expect(write).not.toHaveBeenCalled();
+  });
   it("checks every requested item beyond the old six-item limit", () => {
     const items = Array.from({ length: 8 }, (_, i) =>
       gear(String(i), `Gear ${i}`),

@@ -1,3 +1,5 @@
+import {currentQuickReplyCache} from "./lib/quick_reply_cache";
+import {loadCanonicalListingAllocation} from "./lib/canonical_listing_allocation";
 import {nativeInformationForText,nativeInformationClaimRequest} from "./lib/native_information_blocks";
 import {ownedItemHirePriceReader} from "./lib/owned_item_hire_price";
 import {currentKitEvidence} from "./lib/current_kit_evidence";
@@ -424,6 +426,18 @@ async function loadAvailCtx(
   };
 }
 
+/** Resolve requested listings before they are confirmed, without changing mappings. */
+export async function extendAvailabilityMappings(ctx:QueryCtx,av:AvailCtx,rentals:BotBooking[]) {
+  if(!rentals.length)return;
+  const seed=[...av.overrideMap].map(([key,components])=>{
+    const separator=key.lastIndexOf("#");
+    return {account_slug:key.slice(0,separator),product_id:Number(key.slice(separator+1)),components:components as Doc<"listing_resolution_override">["components"]};
+  });
+  const overrides=await loadCanonicalListingAllocation(ctx,av.itemRows,seed,rentals);
+  av.overrideMap=overrides;
+  av.stockSources={...av.stockSources,overrides};
+}
+
 export function computeAvailability(reservation:BotBooking|null,av?:AvailCtx,requested?:RichItem[]):TileAvailability {
   const checked_at=Date.now(),include_pending=av?.includePending??false;
   const lines=requested??buildRichItems(reservation);
@@ -437,9 +451,9 @@ export function computeAvailability(reservation:BotBooking|null,av?:AvailCtx,req
     if(key&&(av.overrideMap.has(key)||av.productIndex.has(key))){
       units=reservationItemUnits({account_slug:slug,hygglo_items:[{name:line.name,product_id:line.product_id,qty:line.qty}]},av.productIndex,av.overrideMap,av.itemRows);
     } else {
-      // Only unambiguous exact owned inventory names fill missing mappings.
+      // Only exact canonical names or recorded aliases fill missing mappings.
       const norm=(name:string)=>name.normalize("NFKC").trim().replace(/\s+/g," ").toLowerCase();
-      const exact=av.itemRows.filter(item=>!item.is_marketing_only&&norm(item.name_canonical)===norm(line.name));
+      const exact=av.itemRows.filter(item=>!item.is_marketing_only&&[item.name_canonical,...(item.aliases??[])].some(name=>norm(name)===norm(line.name)));
       if(exact.length===1)units=reservationItemUnits({resolved_items:[{item_id:exact[0]._id,qty:line.qty}]},av.productIndex,av.overrideMap,av.itemRows);
     }
     return units;
@@ -870,7 +884,7 @@ export const getReplyQueue = query({
           q.eq("account", incPending0 ? "all:pending" : "all"),
         )
         .first();
-      if (mvRow) {
+      if (mvRow && currentQuickReplyCache(mvRow.tiles)) {
         let tiles = mvRow.tiles as Array<
           NonNullable<Awaited<ReturnType<typeof assembleTile>>>
         >;
@@ -942,6 +956,8 @@ export const getReplyQueue = query({
         )
         .collect(),
     ]);
+    await extendAvailabilityMappings(ctx,availCtx,[...byStep,...byAction].filter(r=>
+      !!r.hygglo_order_id && (convByThread.has(r.hygglo_order_id)||(r.created_at??r._creationTime)>=cutoff)));
     // Reservation-by-order-id cache: loadAvailCtx's confirmed/pending rows plus
     // the request rows above — every reservation already read this execution.
     // See AvailCtx.byOrderId for why a hit is exactly `.first()`'s answer.
@@ -1168,6 +1184,7 @@ export const getThreadById = query({
     const settingsRow = await ctx.db.query("settings").first();
     const incPending = settingsRow?.availability_include_pending ?? false;
     const availCtx = await loadAvailCtx(ctx, incPending);
+    await extendAvailabilityMappings(ctx,availCtx,reservation?[reservation]:[]);
     return await assembleTile(
       ctx,
       conv,
@@ -1397,6 +1414,7 @@ export const getThreadContext = internalQuery({
     // overrides and items for the entire draft-context build. Previously this
     // function collected the fat product-index and items tables again below.
     const availCtx = await loadAvailCtx(ctx, false);
+    await extendAvailabilityMappings(ctx,availCtx,reservation?[reservation]:[]);
     if (slug && lineItems.some((li) => typeof li.product_id !== "number")) {
       const STOP = new Set(["the","and","for","with","plus","set","kit","bundle","combo"]);
       const toks = (str: string) =>
