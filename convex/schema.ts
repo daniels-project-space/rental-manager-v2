@@ -196,6 +196,77 @@ const operationalSchema = defineSchema({
     .index("by_slug", ["slug"])
     .index("by_kind", ["kind"]),
 
+  // Owner-confirmed WallE intake. The single item_id is the physical stock
+  // pool; account listings below never create additional units.
+  inventory_intakes: defineTable({
+    request_key: v.string(),
+    item_id: v.id("items"),
+    item_name: v.string(),
+    ownership: v.union(v.literal("owned"), v.literal("hired_in"), v.literal("marketing_only")),
+    physical_quantity: v.number(),
+    serials: v.array(v.string()),
+    missing_serial_count: v.number(),
+    missing_serial_reasons: v.array(v.string()),
+    exact_model: v.string(),
+    specifications: v.string(),
+    compatibility_note: v.string(),
+    included_accessories: v.string(),
+    target_account_slugs: v.array(v.string()),
+    details_verified_at: v.number(),
+    details_evidence: v.string(),
+    availability_confirmed_at: v.optional(v.number()),
+    availability_evidence: v.optional(v.string()),
+    propagation_status: v.union(v.literal("pending"), v.literal("complete"), v.literal("partial"), v.literal("failed")),
+    propagation_attempts: v.number(),
+    propagation_error: v.optional(v.string()),
+    propagation_updated_at: v.number(),
+    owner_name: v.optional(v.string()),
+    acquisition_date: v.optional(v.string()),
+    purchase_price_gbp: v.optional(v.number()),
+    purchase_value_basis: v.optional(v.union(v.literal("per_unit"), v.literal("total"))),
+    replacement_value_gbp: v.optional(v.number()),
+    replacement_value_basis: v.optional(v.union(v.literal("per_unit"), v.literal("total"))),
+    currency_code: v.literal("GBP"),
+    vat_basis: v.optional(v.union(v.literal("including_vat"), v.literal("excluding_vat"), v.literal("not_applicable"), v.literal("to_confirm"))),
+    valuation_source: v.optional(v.string()),
+    valuation_date: v.optional(v.string()),
+    requested_cover_date: v.optional(v.string()),
+    insurance_status: v.union(v.literal("needs_details"), v.literal("ready_for_review"), v.literal("sent_to_broker"), v.literal("awaiting_confirmation"), v.literal("addition_confirmed")),
+    broker_evidence: v.optional(v.string()),
+    broker_evidence_kind: v.optional(v.union(v.literal("sent_message"), v.literal("broker_reply"), v.literal("endorsement"))),
+    confirmed_cover_date: v.optional(v.string()),
+    created_at: v.number(),
+    updated_at: v.number(),
+  }).index("by_request_key", ["request_key"]).index("by_item", ["item_id"]).index("by_created_at", ["created_at"]),
+
+  // One durable row per physical unit. Missing serials are retained as explicit
+  // per-unit review exceptions, while serials are indexed for duplicate checks.
+  inventory_unit_serials: defineTable({
+    item_id: v.id("items"),
+    unit_number: v.number(),
+    serial: v.optional(v.string()),
+    normalized_serial: v.optional(v.string()),
+    exception_reason: v.optional(v.string()),
+    recorded_at: v.number(),
+  }).index("by_item", ["item_id"]).index("by_serial", ["normalized_serial"]),
+
+  // Explicit interrupted-intake drafts are separate from committed stock.
+  inventory_onboarding_drafts: defineTable({
+    request_key: v.string(),
+    form: v.object({
+      name: v.string(), exact_model: v.string(), kind: v.string(), quantity: v.string(),
+      ownership: v.union(v.literal("owned"), v.literal("hired_in"), v.literal("marketing_only")), serials: v.string(),
+      missing_serial_reasons: v.string(), specifications: v.string(), compatibility_note: v.string(),
+      included_accessories: v.string(), lens_mount: v.string(), owner_name: v.string(),
+      acquisition_date: v.string(), purchase_price_gbp: v.string(), purchase_value_basis: v.string(),
+      replacement_value_gbp: v.string(), replacement_value_basis: v.string(), vat_basis: v.string(),
+      valuation_source: v.string(), valuation_date: v.string(), requested_cover_date: v.string(),
+    }),
+    compatible_accessory_ids: v.array(v.id("items")),
+    target_account_slugs: v.array(v.string()),
+    updated_at: v.number(),
+  }).index("by_request_key", ["request_key"]).index("by_updated_at", ["updated_at"]),
+
   item_specs: defineTable({
     item_id: v.id("items"),
     item_name_canonical: v.string(),
@@ -1947,10 +2018,15 @@ const operationalSchema = defineSchema({
     account_slug: v.string(),
     product_id: v.number(),
     components: v.array(v.object({ item_id: v.id("items"), qty: v.number() })),
+    // Exact externally created listing identity. This row is also the
+    // stock/calendar mapping source of truth, so registration is not duplicated.
+    stock_item_id: v.optional(v.id("items")),
+    public_url: v.optional(v.string()),
     note: v.optional(v.string()),
     source: v.optional(v.string()),
     updated_at: v.number(),
-  }).index("by_account_product", ["account_slug", "product_id"]),
+  }).index("by_account_product", ["account_slug", "product_id"])
+    .index("by_stock_item", ["stock_item_id"]),
 
   // ── Phase 3: marketing-listings layer (ADDITIVE — data ingest only) ──────
   // Full Hygglo catalog snapshot per account, synced read-only from the v2
