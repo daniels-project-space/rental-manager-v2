@@ -48,6 +48,7 @@
   border-radius: 8px;
 }
 .close {
+  z-index: 2;
   position: absolute;
   right: 20px;
   top: 16px;

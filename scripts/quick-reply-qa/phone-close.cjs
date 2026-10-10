@@ -61,14 +61,15 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       btn = (t) =>
         `[...document.querySelector('[role=dialog]').querySelectorAll('button')].find(e=>e.offsetParent!==null&&e.textContent.includes(${JSON.stringify(t)}))`;
     const states = [];
-    for (const state of ["composer", "quick text", "calendar", "reviews", "replacement"]) {
+    for (const state of ["composer", "quick text", "calendar", "reviews", "replacement", "portrait"]) {
       await tap(state === "replacement" ? `document.querySelector('[aria-label="Open conversation with Elena Rossi"]')` : open);
       if (state === "replacement") await tap(btn("Find replacement"));
+      if (state === "portrait") await tap(`document.querySelector('[role=dialog] [aria-label="Expand profile image of Marcus Lee"]')`);
       if (state === "reviews")
         await tap(
           `document.querySelector('[title="View all renter reviews"]')`,
         );
-      else if (state !== "replacement") {
+      else if (state !== "replacement" && state !== "portrait") {
         await tap(
           `document.querySelector('[aria-label="Write reply or insert text file"]')`,
         );
@@ -86,8 +87,9 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
         );
         await pause(100);
       }
+      const targetClose=state==="portrait"?`document.querySelector('[aria-label="Close profile image"]')`:close;
       const geometry = await ev(
-        `(()=>{const e=${close},r=e.getBoundingClientRect(),send=[...document.querySelector('[role=dialog]').querySelectorAll('button')].find(e=>e.textContent.trim()==='Send'),s=send.getBoundingClientRect();return {hit:e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)),closeInside:r.top>=(window.visualViewport?.offsetTop??0)&&r.bottom<=(window.visualViewport?.height??innerHeight)+(window.visualViewport?.offsetTop??0),sendInside:s.top>=(window.visualViewport?.offsetTop??0)&&s.bottom<=(window.visualViewport?.height??innerHeight)+(window.visualViewport?.offsetTop??0),viewport:innerHeight};})()`,
+        `(()=>{const e=${targetClose},r=e.getBoundingClientRect(),send=[...document.querySelector('[role=dialog]').querySelectorAll('button')].find(e=>e.textContent.trim()==='Send'),s=send.getBoundingClientRect();return {hit:e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)),closeInside:r.top>=(window.visualViewport?.offsetTop??0)&&r.bottom<=(window.visualViewport?.height??innerHeight)+(window.visualViewport?.offsetTop??0),sendInside:s.top>=(window.visualViewport?.offsetTop??0)&&s.bottom<=(window.visualViewport?.height??innerHeight)+(window.visualViewport?.offsetTop??0),viewport:innerHeight};})()`,
       );
       assert(
         geometry.hit && geometry.closeInside,
@@ -107,7 +109,8 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
             ),
           }),
         );
-      await tap(close);
+      await tap(targetClose);
+      if(state==="portrait"){assert(await ev(`!document.querySelector('[aria-label="Close profile image"]')&&!!document.querySelector('[aria-label="Close conversation"]')`));await tap(close);}
       assert(await ev(`!document.querySelector('[role=dialog]')`));
       states.push({ state, ...geometry });
     }

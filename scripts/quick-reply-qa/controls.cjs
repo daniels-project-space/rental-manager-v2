@@ -99,6 +99,10 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     await tap(button("All"));
     await pause(150);
     await ok("missing portrait loads from provider read", `window.__calls.some(c=>c.name==='renter_trust:profilePhotos')&&document.querySelector('[aria-label="Open conversation with Marcus Lee"] img').src.endsWith('/face0.png')`);
+    await tap(`document.querySelector('[aria-label="Open conversation with Marcus Lee"] [aria-label="Expand profile image of Marcus Lee"]')`);
+    await ok("list photo opens without opening conversation", `!!document.querySelector('[aria-label="Close profile image"]')&&!document.querySelector('[aria-label="Close conversation"]')`);
+    await tap(`document.querySelector('[aria-label="Close profile image"]')`);
+    await ok("list photo close never opens conversation", `!document.querySelector('[role=dialog]')`);
     for (const sort of ["newest", "oldest", "waiting", "earnings", "priority"]) {
       await ev(
         `{const e=document.querySelector('[aria-label="Sort conversations"]');e.value='${sort}';e.dispatchEvent(new Event('change',{bubbles:true}));}`,
@@ -183,6 +187,10 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
     await tap(`document.querySelector('[role=dialog] [aria-label="Expand profile image of Marcus Lee"]')`);
     await ok("profile photo expands outside chat frame", `(()=>{const photo=document.querySelector('[aria-label="Profile image of Marcus Lee"]');return photo?.parentElement===document.body&&getComputedStyle(photo).position==='fixed'&&photo.querySelector('img').getBoundingClientRect().width>100})()`);
+    await ok("photo close receives focus", `document.activeElement?.getAttribute('aria-label')==='Close profile image'`);
+    await c.cmd("Input.dispatchKeyEvent",{type:"keyDown",key:"Tab",code:"Tab",windowsVirtualKeyCode:9});
+    await c.cmd("Input.dispatchKeyEvent",{type:"keyUp",key:"Tab",code:"Tab",windowsVirtualKeyCode:9});
+    await ok("photo keyboard focus stays in viewer", `document.activeElement?.getAttribute('aria-label')==='Close profile image'`);
     fs.writeFileSync(root+`/expanded-profile-${width}.png`, Buffer.from((await c.cmd("Page.captureScreenshot", {captureBeyondViewport:false})).data,"base64"));
     await tap(`document.querySelector('[aria-label="Close profile image"]')`);
     await ok("photo close preserves conversation", `!document.querySelector('[aria-label="Profile image of Marcus Lee"]')&&!!document.querySelector('[aria-label="Close conversation"]')`);
