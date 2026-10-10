@@ -99,6 +99,14 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     await tap(button("All"));
     await pause(150);
     await ok("missing portrait loads from provider read", `window.__calls.some(c=>c.name==='renter_trust:profilePhotos')&&document.querySelector('[aria-label="Open conversation with Marcus Lee"] img').src.endsWith('/face0.png')`);
+    if(width===1192){
+      // Headless Chrome advertises no physical pointer; model a real desktop.
+      await ev(`{const original=window.matchMedia.bind(window);window.matchMedia=query=>query==='(hover: none)'?{matches:false}:original(query);}`);
+      const avatar=await ev(`(()=>{const el=document.querySelector('[aria-label="Expand profile image of Marcus Lee"]'),r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+      await c.cmd("Input.dispatchMouseEvent",{type:"mouseMoved",...avatar});await pause(100);
+      await ok("profile hover keeps one preview and no legacy zoom",`document.querySelectorAll('[data-profile-preview]').length===1&&getComputedStyle(document.querySelector('[aria-label="Expand profile image of Marcus Lee"] img')).transform==='none'`);
+      await c.cmd("Input.dispatchMouseEvent",{type:"mouseMoved",x:5,y:5});
+    }
     await tap(`document.querySelector('[aria-label="Open conversation with Marcus Lee"] [aria-label="Expand profile image of Marcus Lee"]')`);
     await ok("list photo opens without opening conversation", `!!document.querySelector('[aria-label="Close profile image"]')&&!document.querySelector('[aria-label="Close conversation"]')`);
     await tap(`document.querySelector('[aria-label="Close profile image"]')`);
@@ -117,6 +125,16 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     await ok("all eight requested items show their own stock result", `(()=>{const row=[...document.querySelectorAll('[aria-label="Open conversation with Marcus Lee"]')].find(e=>e.textContent.includes("Stock fixture 0"));return row.textContent.includes('Stock fixture 7')&&row.textContent.includes('Gear needs an inventory mapping')&&row.querySelector('[aria-label^="Show stock"]').getAttribute("aria-expanded")==="true"})()`);
     fs.writeFileSync(root+`/item-stock-${width}.png`, Buffer.from((await c.cmd("Page.captureScreenshot", {captureBeyondViewport:false})).data,"base64"));
     await ev(`{window.__fixture.rows[0]=window.__originalStock;window.__fixture.changed();}`);
+    await ev(`{window.__savedRequest=structuredClone(window.__fixture.rows[0]);const row=window.__fixture.rows[0];row.requested_items=[...row.items.map(i=>({...i,origin:'basket'})),{name:'Sigma 24-70 from chat',qty:1,image_url:'/gear1.png',origin:'chat'},{name:'Aputure from basket',qty:2,image_url:'/gear2.png',origin:'basket'}];window.__fixture.changed();}`);
+    await pause(100);
+    const stack=`document.querySelector('[aria-label="Open conversation with Marcus Lee"] [aria-label="Show all 3 requested items"]')`;
+    if(width===1192){const r=await ev(`(()=>{const r=${stack}.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);await c.cmd("Input.dispatchMouseEvent",{type:"mouseMoved",...r});await pause(100);await ok("equipment stack expands on hover",`!!document.querySelector('[aria-label="All requested items"]')`);await c.cmd("Input.dispatchMouseEvent",{type:"mouseMoved",x:5,y:5});}
+    await tap(stack);
+    await ok("stack shows all basket and chat images without opening chat",`document.querySelector('[aria-label="All requested items"]')?.querySelectorAll('article').length===3&&document.querySelector('[aria-label="All requested items"]').querySelectorAll('article img').length===3&&document.body.textContent.includes('Mentioned in chat')&&!document.querySelector('[aria-label="Close conversation"]')`);
+    fs.writeFileSync(root+`/requested-stack-${width}.png`,Buffer.from((await c.cmd("Page.captureScreenshot",{captureBeyondViewport:false})).data,"base64"));
+    await tap(`document.querySelector('[aria-label="Close requested items"]')`);
+    await ok("closing equipment stack preserves list",`!document.querySelector('[aria-label="All requested items"]')&&!document.querySelector('[aria-label="Close conversation"]')`);
+    await ev(`{window.__fixture.rows[0]=window.__savedRequest;window.__fixture.changed();}`);
     await tap(contains("Quick texts"));
     await ok(
       "quick text manager opens",
@@ -372,7 +390,15 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     // The list button opens a prepared proposal, with no booking or message write.
     await ev(`{window.__fixture.rows[3].can_accept=true;window.__fixture.changed();}`);
     await ok("unavailable row has no approve", `![...document.querySelector('[aria-label="Open conversation with Elena Rossi"]').querySelectorAll('button')].some(b=>b.textContent.trim()==='Approve')`);
+    await ev(`{window.__originalReplacement=structuredClone(window.__fixture.rows[3]);const row=window.__fixture.rows[3];row.items.push({name:'Available tripod',qty:1,image_url:'/gear2.png'},{name:'Unavailable lens',qty:1,image_url:'/gear1.png'});row.availability.items.push({item_index:1,name:'Available tripod',available:true},{item_index:2,name:'Unavailable lens',available:false});window.__fixture.changed();}`);
     await tap(`[...document.querySelector('[aria-label="Open conversation with Elena Rossi"]').querySelectorAll('button')].find(b=>b.textContent.trim()==='Find replacement')`);
+    await ok("replacement picker lists every basket line",`document.querySelector('[aria-label="Requested replacement item"]').options.length===3&&document.querySelector('[aria-label="Requested replacement item"]').options[1].disabled`);
+    await ev(`{const select=document.querySelector('[aria-label="Requested replacement item"]');select.value='2';select.dispatchEvent(new Event('change',{bubbles:true}));}`);await pause(100);
+    await ok("choosing another unavailable line uses its real index",`window.__calls.some(c=>c.name==='quick_reply_replacements:options'&&c.args.item_index===2)&&document.querySelector('[aria-label="Replacement options"]').textContent.includes('Unavailable lens')`);
+    await ev(`{const select=document.querySelector('[aria-label="Requested replacement item"]');select.value='0';select.dispatchEvent(new Event('change',{bubbles:true}));}`);await pause(100);
+
+    await ok("replacement picker contains no rental settings",`!document.querySelector('[aria-label="Replacement options"]').closest('aside').querySelector('[aria-label="Rental settings"]')&&!document.querySelector('[aria-label="Replacement options"]').closest('aside').textContent.includes('Booking actions')`);
+    fs.writeFileSync(root+`/replacement-picker-${width}.png`,Buffer.from((await c.cmd("Page.captureScreenshot",{captureBeyondViewport:false})).data,"base64"));
     await ok("two available alternatives", `document.body.textContent.includes('Sony FX3 replacement')&&document.body.textContent.includes('Canon C70 replacement')`);
     await ok(
       "replacement card and AI draft",
@@ -380,17 +406,17 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     );
     await tap(`[...document.querySelectorAll('[aria-label="Replacement options"] button')].find(b=>b.textContent.includes('Canon C70 replacement'))`);
     await ok("second replacement selects and prepares a draft", `document.querySelector('[aria-label="Replacement options"] button[aria-pressed=true]').textContent.includes('Canon C70 replacement')&&window.__calls.some(c=>c.name==='quick_reply_replacements:draft'&&c.args.replacement_id==='34')`);
-    await tap(button("Review message in chat"));
+    await tap(button("Edit in chat ↗"));
     await ok(
       "replacement draft inserted",
       `document.querySelector('textarea[placeholder="Write a reply…"]').value.includes('So sorry')`,
     );
     await tap(contains("Find replacement"));
     const sendsBeforeReplacement = await ev(`window.__calls.filter(c=>/sendRenterReply|sendOwnerReply/.test(c.name)).length`);
-    await tap(button("✓ Approve replacement"));
+    await tap(button("Use replacement in booking"));
     await ok("replacement approval never sends a message", `window.__calls.filter(c=>/sendRenterReply|sendOwnerReply/.test(c.name)).length===${sendsBeforeReplacement}`);
-    await ok("replacement cannot be applied twice", `[...document.querySelectorAll('button')].find(b=>b.textContent==='✓ Replacement approved').disabled`);
-    await tap(button("➤ Send message"));
+    await ok("replacement cannot be applied twice", `[...document.querySelectorAll('button')].find(b=>b.textContent==='✓ Booking updated').disabled`);
+    await tap(button("Send replacement offer"));
     await ok("replacement message sends only on separate explicit action", `window.__calls.filter(c=>/sendRenterReply|sendOwnerReply/.test(c.name)).length===${sendsBeforeReplacement+1}`);
 
     await ok(
@@ -399,6 +425,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     );
     await tap(close);
 
+    await ev(`{window.__fixture.rows[3]=window.__originalReplacement;window.__fixture.changed();}`);
     // Approval and decline remain deliberate, separately confirmed actions.
     await ev(
       `{Object.assign(window.__fixture.rows[0],{can_accept:true,can_deny:true,booking_status:null,status:'pending',order_step:'REQUEST'});window.__fixture.changed();}`,
@@ -482,10 +509,10 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     await tap(contains("Find replacement"));
     await ok("website replacement reads its booking", `window.__calls.some(c=>c.name==='dbcinema_chat:replacementOptions'&&c.args.booking_id)`);
     const websiteSendCount = await ev(`window.__calls.filter(c=>c.name==='dbcinema_chat:sendOwnerReply').length`);
-    await tap(button("✓ Approve replacement"));
+    await tap(button("Use replacement in booking"));
     await ok("website replacement approval uses website guarded action", `window.__calls.some(c=>c.name==='dbcinema_chat:acceptReplacement'&&c.args.booking_id&&c.args.dryRun===false)`);
     await ok("website replacement approval does not send", `window.__calls.filter(c=>c.name==='dbcinema_chat:sendOwnerReply').length===${websiteSendCount}`);
-    await tap(button("➤ Send message"));
+    await tap(button("Send replacement offer"));
     await ok("website replacement separate send reaches website chat", `window.__calls.filter(c=>c.name==='dbcinema_chat:sendOwnerReply').length===${websiteSendCount+1}`);
     await tap(`document.querySelector('[aria-label="Open rental controls"]')`);
     await tap(button("Refund"));
