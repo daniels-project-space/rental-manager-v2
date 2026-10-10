@@ -2186,3 +2186,13 @@
   padding: 8px 10px;
   gap: 6px;
 }
+/* Reference toolbar proportions; native select keeps its accessible menu. */
+@media (min-width:641px) {
+  .toolbar > button:nth-child(1){width:105px;justify-content:center}
+  .toolbar > button:nth-child(2){width:86px;justify-content:center}
+  .toolbar > button:nth-child(3){width:64px;justify-content:center}
+  .toolbar > select{width:150px;padding-left:32px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23cbd5e1' stroke-width='1.6'%3E%3Cpath d='M6 3v14M3 6l3-3 3 3M14 17V3M11 14l3 3 3-3'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:12px center;background-size:16px}
+  .toolbar > button:nth-of-type(4){width:130px;justify-content:center}
+  .toolbar > button:nth-of-type(5){width:116px;justify-content:center}
+  .toolbar > button:nth-of-type(6){width:122px;justify-content:center}
+}
