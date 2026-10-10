@@ -30,6 +30,7 @@ import { internalAction, internalMutation, query } from "../owner_functions";
 import { internal } from "../_generated/api";
 import { anyApi } from "convex/server";
 import { refreshHandoffsWidget } from "./widgets";
+import {currentQuickReplyCache} from "../lib/quick_reply_cache";
 import {
   REPLY_MV_WITHIN_DAYS,
   REPLY_MV_MESSAGES_WITHIN_DAYS,
@@ -86,7 +87,7 @@ export async function refreshAll(
       // within the backstop window. This is what stops the every-5-min no-op
       // rebuilds (the poller re-stamps last_polled_at constantly, but that no
       // longer counts as dirty — see dirtySince).
-      if (!dirty && age < REPLY_QUEUE_BACKSTOP_MS) {
+      if (!dirty && age >= 0 && age < REPLY_QUEUE_BACKSTOP_MS && currentQuickReplyCache(prior?.tiles)) {
         return { ok: true, written: 0, skipped: 1, durationMs: Date.now() - startedAt };
       }
     }
