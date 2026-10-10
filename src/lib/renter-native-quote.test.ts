@@ -1,4 +1,4 @@
-import {inquiryOffersForText} from "../../convex/lib/native_inquiry_offer";
+import {inquiryOffersForText,monetaryProse} from "../../convex/lib/native_inquiry_offer";
 import { REFERRAL_RESTORE_OFFER } from "../../convex/lib/referral_offer";
 import {stockRequestForInquiryQuote} from "../../convex/lib/stock_claims";
 import {describe,it,expect} from "vitest";
@@ -17,6 +17,19 @@ const scope={threadId:fixtures.first.thread_id,accountSlug:"leo",requestMessageI
 const receipt=(result=fixtures.first,context=scope)=>({tool:"check_basket_availability",call_id:"real-native",result:{...result,renter_quote:nativeInquiryQuote(result,context)}});
 const base:RenterBotOutput={draft:"",intent:"EQUIPMENT_QUESTION",conversation_stage:"INQUIRY",needs_human:false,red_flags:[],factsClaimed:[]};
 const clone=()=>structuredClone(fixtures.first);
+describe("Native monetary prose classification",()=>{
+ it("does not treat a budget date or recording measurement as money",()=>{
+  expect(monetaryProse("I looked through my gear within your budget for 20–21 October.")).toBe(false);
+  expect(monetaryProse("Please confirm availability within the £65 budget for 20–21 October.")).toBe(true);
+  expect(monetaryProse("The camera records at 30 fps within the requested budget.")).toBe(false);
+  expect(monetaryProse("The total is 84 for 20–21 October.")).toBe(true);
+  expect(monetaryProse("The price discussion can happen between 10:30 and 12:00.")).toBe(false);
+ });
+ it("still recognizes written and currency-marked hire amounts",()=>{
+  for(const text of ["The budget is 65.","The total comes to 84.","The rental costs £98.","That is 25 pounds."])
+   expect(monetaryProse(text),text).toBe(true);
+ });
+});
 const parts=(key=nativeInquiryQuote(fixtures.first,scope)!.quote_key):RenterBotOutput=>({...base,reply_parts:[{type:"text",text:"The R5 kit isn't available, but I can offer this Sony setup:"},{type:"quote",quote_key:key},{type:"text",text:"Would this work for your shoot?"}]});
 describe("Native inquiry quote rendering",()=>{
  it("classifies an unqualified financial selection as review while approving no candidate or financial proof",()=>{

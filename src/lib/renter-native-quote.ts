@@ -191,7 +191,7 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
     }
   }
   if(!output.reply_parts?.length) {
-    if(receipts.some(r=>r.result.new_inquiry===true||r.tool==="check_basket_availability"&&(record(r.result.quote)?.source==="native_inquiry_basket"||scope.rentalStage==="INQUIRY")) && monetaryProse.test(output.draft))return {ok:false,reason:"Use the Native quote selection for inquiry prices"};
+    if(receipts.some(r=>r.result.new_inquiry===true||r.tool==="check_basket_availability"&&(record(r.result.quote)?.source==="native_inquiry_basket"||scope.rentalStage==="INQUIRY")) && monetaryProse(output.draft))return {ok:false,reason:"Use the Native quote selection for inquiry prices"};
     return {ok:true,draft:withNativeContext(output.draft),quote_keys:[],recommendation_quotes:[],stock_quotes:[],commercial_quotes:[]};
   }
   if(output.draft.trim())return {ok:false,reason:"Structured reply parts cannot be mixed with a second draft"};
@@ -199,7 +199,7 @@ export function renderNativeQuoteReply(output:RenterBotOutput,receipts:ToolRecei
   let selectedRecord:BookingRecord|undefined;
   for(const part of output.reply_parts) {
     if(part.type==="text") {
-      if(monetaryProse.test(part.text))return {ok:false,reason:"Financial amounts must come from Native quote parts"};
+      if(monetaryProse(part.text))return {ok:false,reason:"Financial amounts must come from Native quote parts"};
       if(part.text.trim())parts.push(part.text.trim());
     } else if(part.type==="budget_check") {
       const check=budgets.get(part.budget_key);
