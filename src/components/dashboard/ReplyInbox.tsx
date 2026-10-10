@@ -1807,6 +1807,8 @@ export function ReplyModal({
   };
 
   const fileRef = useRef<HTMLInputElement>(null);
+  const replyInputRef = useRef<HTMLTextAreaElement>(null);
+
   const hyggloThread = useQuery(api.hygglo.listByThread, tile.source === "dbcinema_web" ? "skip" : { thread_id: tile.thread_id });
   const loadDbCinemaThread = useAction(dbCinemaThreadRef);
   const sendDbCinemaReply = useAction(dbCinemaSendRef);
@@ -1854,6 +1856,11 @@ export function ReplyModal({
   const decline = useAction(api.replyInbox_actions.declineOrder);
 
   const [text, setText] = useState("");
+  useEffect(()=>{
+    const input=replyInputRef.current;if(!input)return;
+    input.style.height="42px";
+    input.style.height=`${Math.min(viewport&&viewport.height<500?42:110,Math.max(42,input.scrollHeight))}px`;
+  },[text,viewport?.height]);
   const [composeApproval,setComposeApproval] = useState<DraftApproval|null>(null);
   const copiedDraftStale = !!composeApproval && !sameDraftApproval(composeApproval,liveTile?.ai_draft_approval);
   // AI draft lives in its OWN preview box (not the compose box). Tap it to copy
@@ -1884,6 +1891,17 @@ export function ReplyModal({
   // Real sends are written into hygglo_messages by recordSentReply and arrive
   // through the reactive `thread` query. Only dry-run messages are client-only.
   const [dryRunSentMsgs, setDryRunSentMsgs] = useState<string[]>([]);
+  const messageListRef=useRef<HTMLDivElement>(null);
+  const followLatest=useRef(true);
+  useEffect(()=>{
+    const list=messageListRef.current;if(!list)return;
+    let alive=true;
+    const revealLatest=()=>{if(alive&&followLatest.current)list.scrollTop=list.scrollHeight;};
+    revealLatest();
+    const observer=new ResizeObserver(revealLatest);observer.observe(list);
+    void document.fonts.ready.then(revealLatest);
+    return()=>{alive=false;observer.disconnect();};
+  },[thread?.length,dryRunSentMsgs.length]);
   const [decided, setDecided] = useState<"approve" | "decline" | null>(null);
   const [deciding, setDeciding] = useState(false);
   const [confirming, setConfirming] = useState<"approve" | "decline" | null>(null);
@@ -1921,7 +1939,7 @@ export function ReplyModal({
     }
   }, [showReviews, refreshReviews, tile.source, tile.thread_id]);
   // Per-account canned "quick texts" — tapping one PASTES into the box.
-  const cannedAccountSlug = tile.account_slug === "dbcinema_web" ? "dbcinema" : tile.account_slug;
+  const cannedAccountSlug = tile.account_slug;
   const canned = (useQuery(cannedListRef, {
     account_slug: cannedAccountSlug ?? undefined,
   }) ?? []) as Canned[];
@@ -1929,10 +1947,14 @@ export function ReplyModal({
   const updateCanned = useMutation(cannedUpdateRef);
   const [quickSlot, setQuickSlot] = useState<"location" | "times" | "delivery" | null>(null);
   const [quickDraft, setQuickDraft] = useState("");
+  const [quickSaving, setQuickSaving] = useState(false);
+  const [quickError, setQuickError] = useState<string|null>(null);
   const quickPreset = quickSlot
     ? canned.find((c) => quickSlot === "location" ? /location|address|pickup/i.test(c.label) : quickSlot === "times" ? /time|hour|availability/i.test(c.label) : /delivery|courier|shipping/i.test(c.label))
     : undefined;
   function openQuickSlot(slot: "location" | "times" | "delivery") {
+    if(quickSaving)return;
+    setQuickError(null);
     setQuickSlot(slot);
     const found = canned.find((c) => slot === "location" ? /location|address|pickup/i.test(c.label) : slot === "times" ? /time|hour|availability/i.test(c.label) : /delivery|courier|shipping/i.test(c.label));
     setQuickDraft(found?.text ?? "");
@@ -1943,13 +1965,18 @@ export function ReplyModal({
     else openQuickSlot(slot);
   }
   async function saveQuickPreset() {
-    if (!quickSlot || !quickDraft.trim() || !cannedAccountSlug) return;
+    if (quickSaving || !quickSlot || !quickDraft.trim() || !cannedAccountSlug) return;
     const label = quickSlot === "location" ? "Location" : quickSlot === "times" ? "Times" : "Delivery info";
     const symbol = quickSlot === "location" ? "📍" : quickSlot === "times" ? "🕒" : "🚚";
-    if (quickPreset) await updateCanned({ id: quickPreset._id, label, symbol, text: quickDraft.trim() });
-    else await createCanned({ account_slug: cannedAccountSlug, label, symbol, text: quickDraft.trim() });
-    pasteText(quickDraft.trim());
-    setQuickSlot(null);
+    setQuickSaving(true);setQuickError(null);
+    const body=quickDraft.trim();
+    try {
+      if (quickPreset) await updateCanned({ id: quickPreset._id, label, symbol, text: body });
+      else await createCanned({ account_slug: cannedAccountSlug, label, symbol, text: body });
+      pasteText(body);setQuickSlot(null);
+    } catch(error) {
+      setQuickError(error instanceof Error ? error.message : "Could not save this quick reply. Please try again.");
+    } finally {setQuickSaving(false);}
   }
 
   // Paste a snippet into the compose box (never sends). Appends with a blank
@@ -2179,7 +2206,7 @@ export function ReplyModal({
 
         {/* Thread — flex-1 + min-h-0 so it shrinks and the compose dock below
             (with Send) is ALWAYS visible, never clipped off-screen on mobile. */}
-        <div className={styles.messages}>
+        <div ref={messageListRef} className={styles.messages} onScroll={(event)=>{const list=event.currentTarget;followLatest.current=list.scrollHeight-list.scrollTop-list.clientHeight<64;}}>
           {thread === undefined ? (
             <SkeletonBlock className="h-24 w-full" />
           ) : thread.length === 0 ? (
@@ -2371,30 +2398,30 @@ export function ReplyModal({
             </div>
           )}
 
+
+          </div>
           {copiedDraftStale && <div role="alert" className="mb-2 rounded-lg border border-amber-400/30 bg-amber-500/10 p-2 text-xs text-amber-100">
             The copied AI reply is out of date. Your text is kept. Clear it to write your reply, or clear it and copy a fresh draft.
           </div>}
-          <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
-            {([ ["location","📍","Location"], ["times","🕒","Times"], ["delivery","🚚","Delivery info"] ] as const).map(([key, icon, label]) => <button key={key} type="button" onClick={() => pasteQuickSlot(key)} className="shrink-0 rounded-full border border-white/10 bg-white/[0.045] px-3 py-1.5 text-[11px] font-medium text-[#cbd0d8] hover:border-white/20 hover:bg-white/[0.09]">{icon} {label}</button>)}
-            <button type="button" onClick={() => openQuickSlot("location")} title="Customize these quick replies for this account" className="shrink-0 rounded-full border border-white/10 px-2.5 py-1.5 text-[11px] text-[#9299a7]">Customize</button>
+          <div className={styles.composerTools} aria-label="Reply shortcuts">
+            <button type="button" onClick={() => {setComposeOpen(true);void onGenerate();}} disabled={drafting} title="Draft a reply from this conversation" className={styles.aiButton}><span>✦</span>{drafting ? "Drafting…" : draftReview ? "Retry reply" : <><span>Draft reply</span></>}</button>
+            <div className={styles.snippetButtons}>
+              {([["location","Location"],["times","Times"],["delivery","Delivery info"]] as const).map(([key,label]) => <button key={key} type="button" onClick={() => pasteQuickSlot(key)} title={`Insert ${label.toLowerCase()} for ${accountLabel(cannedAccountSlug)}`}>{label}</button>)}
+            </div>
+            <button type="button" onClick={() => openQuickSlot("location")} title="Customize these quick replies for this account" className={styles.customizeButton}><span aria-hidden="true">⚙</span><span className="sr-only">Customize</span></button>
           </div>
           {quickSlot && createPortal(<div className={styles.quickPanel} role="dialog" aria-label="Account quick replies" style={viewport ? {top:viewport.top+viewport.height*.18,height:viewport.height*.64,maxHeight:viewport.height*.64} : undefined}>
-            <div className="mb-2 flex items-center justify-between"><div className="text-xs font-semibold text-white">Account quick replies</div><button type="button" onClick={() => setQuickSlot(null)} aria-label="Close quick reply editor" className="h-8 w-8 rounded-lg text-xl text-[#9aa0ad] hover:bg-white/10">×</button></div>
+            <div className="mb-2 flex items-center justify-between"><div><div className="text-sm font-semibold text-white">Quick replies</div><small className={styles.quickAccount}>{accountLabel(cannedAccountSlug)}</small></div><button type="button" onClick={() => setQuickSlot(null)} aria-label="Close quick reply editor" className="h-8 w-8 rounded-lg text-xl text-[#9aa0ad] hover:bg-white/10">×</button></div>
             <div className="mb-2 flex gap-1">{([ ["location","Location"], ["times","Times"], ["delivery","Delivery"] ] as const).map(([key,label]) => <button key={key} type="button" onClick={() => openQuickSlot(key)} className={`rounded-full px-2.5 py-1 text-[10px] ${quickSlot===key?"bg-white/15 text-white":"bg-white/[0.04] text-[#969eae]"}`}>{label}</button>)}</div>
-            <textarea value={quickDraft} onChange={(e) => setQuickDraft(e.target.value)} rows={4} placeholder="Write account-specific text…" className="w-full rounded-xl border border-white/10 bg-black/30 p-3 text-[15px] text-white placeholder:text-[#697080] focus:outline-none focus:border-white/25" />
-            <div className="mt-2 flex items-center justify-between gap-2"><span className="text-[10px] text-[#7d8492]">Saved for {accountLabel(cannedAccountSlug)}</span><button type="button" onClick={() => void saveQuickPreset()} disabled={!quickDraft.trim()} className="rounded-full bg-white px-4 py-2 text-[11px] font-semibold text-[#17191f] disabled:opacity-40">Save & insert</button></div>
+            <textarea disabled={quickSaving} value={quickDraft} onChange={(e) => setQuickDraft(e.target.value)} rows={4} placeholder="Write account-specific text…" className="w-full rounded-xl border border-white/10 bg-black/30 p-3 text-[15px] text-white placeholder:text-[#697080] focus:outline-none focus:border-white/25" />
+            <div className="mt-2 flex items-center justify-between gap-2"><span className="text-[10px] text-[#7d8492]">Saved for {accountLabel(cannedAccountSlug)}</span><button type="button" onClick={() => void saveQuickPreset()} disabled={quickSaving||!quickDraft.trim()} className="rounded-full bg-white px-4 py-2 text-[11px] font-semibold text-[#17191f] disabled:opacity-40">{quickSaving ? "Saving…" : "Save & insert"}</button></div>
+            {quickError && <p role="alert" className="mt-3 text-xs text-amber-200">{quickError}</p>}
           </div>,document.body)}
-
           <div className={styles.composeInput}>
-            <textarea value={text} onChange={(e) => {setText(e.target.value);if(!e.target.value.trim())setComposeApproval(null);}} placeholder="Write a reply…" rows={2} className="w-full resize-none bg-transparent px-3 py-2 text-[16px] leading-relaxed text-[#eef1f5] placeholder-[#697080] focus:outline-none" />
-            <div className={styles.fileInsert}><button type="button" onClick={() => fileRef.current?.click()}>Insert text file</button><input ref={fileRef} type="file" accept=".txt,text/plain" className="hidden" onChange={async(event) => {const file=event.target.files?.[0];if(!file)return;if(file.size>1_000_000){setNote("Text files must be smaller than 1 MB.");return;}pasteText(await file.text());event.target.value="";}} /></div>
-          </div>
-          </div>
-          <div className={styles.footerButtons}>
             <button type="button" onClick={() => setComposeOpen((open) => !open)} className={styles.attachButton} aria-label="Write reply or insert text file" title="Write a reply or insert a text file"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m9 17 8-8a3 3 0 0 0-4-4L5 13a5 5 0 0 0 7 7l8-8a7 7 0 0 0-10-10L3 9"/><path d="m7 15 8-8"/></svg></button>
-            <button type="button" onClick={() => {setComposeOpen(true);void onGenerate();}} disabled={drafting} className={styles.aiButton}><span>✦</span>{drafting ? "Drafting…" : draftReview ? "Retry reply" : <><span className={styles.desktopDraftLabel}>Draft reply from chat context</span><span className={styles.mobileDraftLabel}>Draft reply</span></>}</button>
-            <button type="button" onClick={() => {if(!text.trim()){setComposeOpen(true);return;}void onSend();}} disabled={sending || copiedDraftStale} className={styles.sendButton}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m21 3-7 18-4-7-7-4 18-7Z"/><path d="m10 14 6-6"/></svg>{sending ? "Sending…" : "Send"}</button>
-          </div>
+            <textarea ref={replyInputRef} aria-label={`Reply to ${tile.renter_name}`} value={text} onChange={(e) => {setText(e.target.value);if(!e.target.value.trim())setComposeApproval(null);}} placeholder="Write a reply…" rows={1} className="w-full resize-none bg-transparent px-3 py-2 text-[16px] leading-relaxed text-[#eef1f5] placeholder-[#697080] focus:outline-none" />
+            <button type="button" onClick={() => {if(!text.trim()){setComposeOpen(true);replyInputRef.current?.focus();return;}void onSend();}} disabled={sending || copiedDraftStale} className={styles.sendButton}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m21 3-7 18-4-7-7-4 18-7Z"/><path d="m10 14 6-6"/></svg>{sending ? "Sending…" : "Send"}</button>          </div>
+          <div className={styles.fileInsert} hidden={!composeOpen}><button type="button" onClick={() => fileRef.current?.click()}>Insert text file</button><input ref={fileRef} type="file" accept=".txt,text/plain" className="hidden" onChange={async(event) => {const file=event.target.files?.[0];if(!file)return;if(file.size>1_000_000){setNote("Text files must be smaller than 1 MB.");return;}pasteText(await file.text());event.target.value="";}} /></div>
           {note && (
             <div className={`text-xs ${note.startsWith("✓") ? "text-emerald-400" : "text-amber-400"}`}>{note}</div>
           )}

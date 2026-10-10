@@ -2196,3 +2196,25 @@
   .toolbar > button:nth-of-type(5){width:116px;justify-content:center}
   .toolbar > button:nth-of-type(6){width:122px;justify-content:center}
 }
+/* The reply stays visible; shortcuts and AI are separate pills above it. */
+.composeInput{display:flex;align-items:center;gap:5px;border-radius:32px;padding:6px;min-height:64px}
+.composeInput textarea{flex:1;min-width:0;width:0;min-height:42px;height:42px;max-height:100px;padding:10px 7px;line-height:22px}
+.composeInput .attachButton{width:34px;height:38px;flex-shrink:0;border:0;border-radius:50%;display:grid;place-items:center;background:transparent}
+.composeInput .sendButton{min-width:78px;height:48px;border-radius:26px;display:flex;align-items:center;justify-content:center;gap:5px;font-size:14px;flex-shrink:0;padding:0 12px}
+.composerTools{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.composerTools .aiButton{flex:0 0 auto!important;min-height:34px;padding:5px 10px;border-radius:22px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:12px}
+.composerTools .aiButton>span:first-child{font-size:20px}
+.snippetButtons{display:flex;align-items:center;gap:4px;flex:1;justify-content:flex-end}
+.snippetButtons button{border:1px solid #394b5d;border-radius:18px;color:#bdccdd;background:#202b35;padding:6px 7px;font-size:11px;white-space:nowrap;min-height:30px;cursor:pointer}
+.snippetButtons button:hover,.customizeButton:hover{border-color:#6e96bd;background:#293a4b}
+.customizeButton{width:26px;height:30px;flex-shrink:0;border:1px solid #394b5d;border-radius:50%;color:#a2b8cc;display:grid;place-items:center;font-size:16px;cursor:pointer}
+.overlay .conversation[data-short-viewport=true] .composeDrawer{max-height:calc(var(--quick-reply-viewport-height,100dvh)*.14)}
+@media(max-width:360px){.composerTools{gap:4px}.composerTools .aiButton{padding:5px 8px;font-size:11px}.snippetButtons{gap:3px}.snippetButtons button{padding:6px 5px;font-size:10px}.customizeButton{width:24px}.composeInput .sendButton{min-width:68px;padding:0 9px}.composeInput textarea{font-size:16px}}
+.quickAccount{display:block;margin-top:5px;color:#92bdec;font-size:12px}
+/* Colours sampled from the approved desktop reference. */
+.table{background:linear-gradient(115deg,#192027,#11171d)}
+.tableHeader{background:#1a2229}
+.selected{background:linear-gradient(100deg,#20272e,#12191f)}
+.conversation{background:radial-gradient(at top left,#252b32,#11161c 65%)}
+.chatHeader{background:linear-gradient(150deg,#222931,#171e26)}
+@media(min-width:641px){.messages{gap:23px}.bubble{font-size:15px;line-height:1.4}.ownerMessage .bubble{font-size:15px}}
