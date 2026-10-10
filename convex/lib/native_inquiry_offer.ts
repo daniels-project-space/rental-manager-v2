@@ -6,8 +6,57 @@ import {bookingRecordText} from "./booking_record";
 import {REFERRAL_RESTORE_OFFER} from "./referral_offer";
 import type {DraftEvidence,StockQuoteEvidence} from "./renter_draft_evidence";
 
-/** Financial prose belongs in Native blocks, including during human review. */
-export const monetaryProse=/(?:[£$€]\s*\d|\b\d+(?:\.\d+)?\s*(?:GBP|pounds?|pence)\b|\b(?:price|costs?|total|rate|budget|charge)\b[^.!?\n]{0,24}\b\d+(?:\.\d+)?\b)/i;
+/** Financial prose belongs in Native blocks, including during human review.
+ * Currency is unambiguous. A bare amount needs a nearby financial term, but
+ * calendar dates and measured values (fps, days, capacity, etc.) are not money. */
+const explicitMoney=/(?:[£$€]\s*\d|\b\d+(?:\.\d+)?\s*(?:GBP|pounds?|pence)\b)/i;
+const financialTerm=/\b(?:price|costs?|total|rate|budget|charge)\b/gi;
+const monthName="(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
+const calendarDate=new RegExp(`\\b(?:(${monthName})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:\\s*[–—-]\\s*(\\d{1,2})(?:st|nd|rd|th)?)?(?:,?\\s+(\\d{4}))?|(\\d{1,2})(?:st|nd|rd|th)?(?:\\s*[–—-]\\s*(\\d{1,2})(?:st|nd|rd|th)?)?\\s+(?:of\\s+)?(${monthName})\\.?(?:,?\\s+(\\d{4}))?|\\b(\\d{4})-(\\d{1,2})-(\\d{1,2})|\\b(\\d{1,2})/(\\d{1,2})/(\\d{4}))\\b`,"gi");
+function validCalendarDay(year:number,month:number,day:number){
+ const d=new Date(Date.UTC(year,month-1,day));
+ return d.getUTCFullYear()===year&&d.getUTCMonth()===month-1&&d.getUTCDate()===day;
+}
+function calendarDateSpans(text:string){
+ const spans:Array<[number,number]>=[];
+ for(const m of text.matchAll(calendarDate)){
+  const v=m;
+  const i=v.index??0,s=v[0];let valid=false;
+  const monthNumber=(name:string)=>new Date(Date.parse(`${name} 1, 2000 UTC`)).getUTCMonth()+1;
+  if(v[1]&&v[2]){const month=monthNumber(v[1]),year=Number(v[4]??2000);valid=validCalendarDay(year,month,Number(v[2]))&&(!v[3]||validCalendarDay(year,month,Number(v[3])));}
+  else if(v[5]&&v[7]){const month=monthNumber(v[7]),year=Number(v[8]??2000);valid=validCalendarDay(year,month,Number(v[5]))&&(!v[6]||validCalendarDay(year,month,Number(v[6])));}
+  else if(v[9])valid=validCalendarDay(Number(v[9]),Number(v[10]),Number(v[11]));
+  else if(v[12])valid=validCalendarDay(Number(v[14]),Number(v[13]),Number(v[12]));
+  if(valid)spans.push([i,i+s.length]);
+ }
+ return spans;
+}
+function hasCalendarDateAt(index:number,spans: [number,number][]) {
+ return spans.some(([start,end])=>index>=start&&index<end);
+}
+function hasClockTimeAt(index:number,text:string){
+ for(const time of text.matchAll(/\b(?:[01]?\d|2[0-3]):[0-5]\d\b/g)){
+  const start=time.index??0;
+  if(index>=start&&index<start+time[0].indexOf(":"))return true;
+ }
+ return false;
+}
+export function monetaryProse(text:string):boolean{
+ if(explicitMoney.test(text))return true;
+ const dates=calendarDateSpans(text);
+ for(const term of text.matchAll(financialTerm)){
+  const start=(term.index??0)+term[0].length;
+  const tail=text.slice(start,start+24).split(/[.!?\n]/,1)[0]??"";
+  const amount=/\b\d+(?:\.\d+)?\b/.exec(tail);
+  if(!amount)continue;
+  const absolute=start+(amount.index??0);
+  if(hasCalendarDateAt(absolute,dates)||hasClockTimeAt(absolute,text))continue;
+  const after=tail.slice((amount.index??0)+amount[0].length);
+  if(/^\s*(?:fps|frames?\s+per\s+second|days?|nights?|hours?|minutes?|seconds?|mm|cm|m|kg|g|wh|w|gb|tb|%|units?|items?)\b/i.test(after))continue;
+  return true;
+ }
+ return false;
+}
 const money=(value:number)=>`£${value.toFixed(2).replace(/\.00$/,"")}`;
 const date=(iso:string)=>new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"long",year:"numeric",timeZone:"UTC"}).format(new Date(`${iso}T12:00:00Z`));
 
@@ -46,6 +95,6 @@ export function inquiryOffersForText(evidence:DraftEvidence|undefined,savedText:
   const block=bookingRecordText(evidence.booking_record);
   if(savedText&&occurrences(savedText,block).length===1&&occurrences(text,block).length===1)remainder=remainder.replace(block,"");
  }
- if(monetaryProse.test(remainder))return {supported:true,ok:false,quotes:[]};
+ if(monetaryProse(remainder))return {supported:true,ok:false,quotes:[]};
  return {supported:true,ok:true,quotes:selected.sort((a,b)=>a.at-b.at).map(s=>s.quote)};
 }
