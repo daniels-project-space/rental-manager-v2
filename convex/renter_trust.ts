@@ -87,7 +87,7 @@ export const applyTrust = internalMutation({
         const key=reviewFingerprint(review),existing=byKey.get(key);
         if(existing){
           // Keep a precise timestamp when the provider now returns a relative label.
-          const created_at=review.created_at && (!existing.created_at || /^\d{4}-\d{2}-\d{2}T/.test(review.created_at)) ? review.created_at : existing.created_at;
+          const created_at=review.created_at && (!existing.created_at || !/^\d{4}-\d{2}-\d{2}(?:T|$)/.test(existing.created_at) || /^\d{4}-\d{2}-\d{2}(?:T|$)/.test(review.created_at)) ? review.created_at : existing.created_at;
           await ctx.db.patch(existing._id,{fetched_at:Date.now(),...(created_at?{created_at}:{})});
         } else {
           const id=await ctx.db.insert("renter_reviews",{renter_id,hygglo_review_id:nextId--,...review,fetched_at:Date.now()});

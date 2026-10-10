@@ -1,5 +1,7 @@
 import {currentQuickReplyCache} from "./lib/quick_reply_cache";
-import {loadCanonicalListingAllocation} from "./lib/canonical_listing_allocation";
+import {canonicalListingAllocation,reservedListingKeys} from "./lib/canonical_listing_allocation";
+import {resolveListingComponents} from "./lib/listing_components";
+import {createBundleMappingContext} from "./lib/bundle_mapping";
 import {nativeInformationForText,nativeInformationClaimRequest} from "./lib/native_information_blocks";
 import {ownedItemHirePriceReader} from "./lib/owned_item_hire_price";
 import {currentKitEvidence} from "./lib/current_kit_evidence";
@@ -364,6 +366,7 @@ type AvailCtx = {
   itemRows: Doc<"items">[];
   includePending: boolean;
   stockSources: Awaited<ReturnType<typeof loadStockSources>>;
+  listingQualification?: Map<string,{complete:boolean;owned:boolean|null}>;
   // PERF (2026-07-12): every reservation row the confirmed/pending collects
   // already paid for, keyed by hygglo_order_id — built from the RAW collect
   // results (before the order_step/is_obsolete filters) so RETURNED/obsolete
@@ -433,7 +436,20 @@ export async function extendAvailabilityMappings(ctx:QueryCtx,av:AvailCtx,rental
     const separator=key.lastIndexOf("#");
     return {account_slug:key.slice(0,separator),product_id:Number(key.slice(separator+1)),components:components as Doc<"listing_resolution_override">["components"]};
   });
-  const overrides=await loadCanonicalListingAllocation(ctx,av.itemRows,seed,rentals);
+  const keys=reservedListingKeys(rentals);
+  const [products,listings]=await Promise.all([
+    Promise.all(keys.map(key=>ctx.db.query("hygglo_products").withIndex("by_account_product",q=>q.eq("accountSlug",key.account).eq("productId",key.productId)).first())),
+    Promise.all(keys.map(key=>ctx.db.query("online_listings").withIndex("by_account_product",q=>q.eq("account_slug",key.account).eq("product_id",key.productId)).first())),
+  ]);
+  const productRows=products.filter((row):row is Doc<"hygglo_products">=>row!==null),listingRows=listings.filter((row):row is Doc<"online_listings">=>row!==null);
+  const overrides=canonicalListingAllocation(av.itemRows,seed,productRows,listingRows);
+  const qualification=av.listingQualification??new Map<string,{complete:boolean;owned:boolean|null}>(),context=createBundleMappingContext(av.itemRows);
+  keys.forEach((key,index)=>{
+    const id=`${key.account}#${key.productId}`,product=products[index],listing=listings[index];
+    const resolved=resolveListingComponents(av.itemRows,av.overrideMap.get(id),product?.masterItemId?String(product.masterItemId):undefined,1,product?.description??listing?.description,context);
+    qualification.set(id,{complete:resolved.complete,owned:resolved.owned});
+  });
+  av.listingQualification=qualification;
   av.overrideMap=overrides;
   av.stockSources={...av.stockSources,overrides};
 }
@@ -470,6 +486,9 @@ export function computeAvailability(reservation:BotBooking|null,av?:AvailCtx,req
     if(!av||!sources)return unknown("Inventory is loading");
     if(!start||!end)return unknown("Dates needed to check stock");
     if(!Number.isSafeInteger(line.qty)||line.qty<1)return unknown("Requested quantity needs review");
+    const listing=line.product_id!=null?av.listingQualification?.get(`${reservation?.account_slug??""}#${line.product_id}`):undefined;
+    if(listing?.owned===false)return {...unknown("Requested listing includes gear not available for hire"),available:false};
+    if(listing&& !listing.complete)return unknown("Kit contents need inventory review");
     const units=resolved[item_index];
     if(!units.size)return unknown("Gear needs an inventory mapping");
     const components=[...units];
