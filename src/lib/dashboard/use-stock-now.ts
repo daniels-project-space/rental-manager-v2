@@ -4,7 +4,7 @@ import {stockNowCard,type StockNowInput} from "../stock-now";
 
 /** Update at actual stock boundaries without polling Convex or fetching the
  * dashboard again. Recheck when a background tab becomes visible. */
-export function useStockNow(inputs:StockNowInput[]|undefined){
+export function useStockBoundaryClock(inputs:StockNowInput[]|undefined){
  const [at,setAt]=useState(()=>Date.now());
  useEffect(()=>{
   if(!inputs)return;
@@ -20,5 +20,9 @@ export function useStockNow(inputs:StockNowInput[]|undefined){
   document.addEventListener("visibilitychange",visible);
   return()=>{if(timer!==undefined)clearTimeout(timer);document.removeEventListener("visibilitychange",visible);};
  },[inputs]);
+ return at;
+}
+export function useStockNow(inputs:StockNowInput[]|undefined){
+ const at=useStockBoundaryClock(inputs);
  return useMemo(()=>inputs?stockNowCard(inputs,at):undefined,[inputs,at]);
 }

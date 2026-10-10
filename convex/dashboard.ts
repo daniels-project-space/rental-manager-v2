@@ -1,3 +1,4 @@
+import {loadStockRepairs} from "./lib/stock_repairs";
 import { websiteCaseView, type WebsiteCaseRow } from "./lib/websiteCases";
 import { listingDisplayName, shortItemName, shortListingTitle } from "./lib/item_display_name";
 import { query, type QueryCtx, internalQueryOf } from "./owner_functions";
@@ -373,10 +374,7 @@ export const getStatsDrawerData = query({
         const freshInsurance = await liveInsuranceCard(ctx, accountSlug);
         // Physical inventory is shared across accounts. Read only the two
         // repair stages, including closed statuses so claimHoldsStock decides.
-        const repairRows=(await Promise.all(["quote_received","in_for_repair"].map(stage=>ctx.db.query("insurance_claims").withIndex("by_stage",q=>q.eq("stage",stage)).take(1001)))).flat();
-        if(repairRows.length>1000)throw Error("Repair inventory requires paged reconciliation");
-        const liveRepair=new Map<string,number>();
-        for(const c of repairRows.filter(claimHoldsStock))for(const id of c.repair_item_ids??[])liveRepair.set(String(id),(liveRepair.get(String(id))??0)+1);
+        const liveRepair=await loadStockRepairs(ctx);
         const applyDismissals = (p: unknown): unknown => {
           const pp = p as
             | { conflicts?: Array<{ conflict_key: string }>; insurance?: unknown }

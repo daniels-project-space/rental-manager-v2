@@ -27,19 +27,13 @@ import type { ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { anyApi } from "convex/server";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
-import { infoPoolEnabledAccounts } from "../lib/feature_flags_helper";
 import { nearbyCalendarDates, type ImminentHandoffCandidate } from "../lib/imminent_handoffs";
-import {
-  OOS_CANONICAL_LOOKAHEAD_DAYS,
-  type OosPanelRow,
-  type OosPoolComponents,
-  buildOosPoolComponents,
-  computeOosForSlug,
-} from "../items";
+import { OOS_CANONICAL_LOOKAHEAD_DAYS } from "../items";
+import {buildStockForecast} from "../lib/stock_forecast";
+import type {StockForecastSnapshot} from "../../src/lib/stock-forecast";
 import { computeHealthIssues, type HealthIssue } from "../health";
 import { CANONICAL_BUNDLE_WINDOWS } from "../bundles";
 import { defaultStartYear } from "../tax";
-import { isConfirmedWithDates } from "../lib/reservations/predicates";
 
 const SLUG_VARIANTS: Array<{ key: string; arg: string | null }> = [
   { key: ACCOUNT_ALL, arg: null },
@@ -95,82 +89,23 @@ export const computeFast = internalQuery({
   handler: async (
     ctx,
   ): Promise<{
-    oos: Record<string, OosPanelRow[]>;
+    oos: Record<string, StockForecastSnapshot>;
     health: Record<string, { issues: HealthIssue[] }>;
   }> => {
-    const today = new Date().toISOString().slice(0, 10);
-    const endDate = new Date();
-    endDate.setDate(endDate.getDate() + OOS_CANONICAL_LOOKAHEAD_DAYS);
-    const endStr = endDate.toISOString().slice(0, 10);
-
-    // One confirmed-status collect feeds BOTH widgets. Equivalence with the
-    // live handlers' by_start_date window scans: OOS filtered to
-    // isConfirmedWithDates (status==="confirmed") ∩ start<=endStr ∩
-    // end>=today — identical predicate set, and the live 400d index
-    // lower-bound only existed to cheapen the scan (no real rental spans
-    // it). Health looped over status==="confirmed" rows within 365d;
-    // undefined start_date is excluded by both the old index range and the
-    // string compare below.
+    // Share the bounded confirmed source and inventory with Health. The
+    // forecast also loads ongoing and paid website pending allocations;
+    // its own clock projection decides which periods actually overlap.
     const confirmed = await ctx.db
       .query("reservations")
       .withIndex("by_status", (q) => q.eq("status", "confirmed"))
-      .collect();
-    const items = await ctx.db.query("items").collect();
-    const activeItems = items.filter((i) => i.status === "active" && !i.is_marketing_only);
+      .take(2001);
+    const items = await ctx.db.query("items").withIndex("by_canonical_name").take(2001);
 
-    // ── OOS inputs (cross-account, slug applied per variant in the core) ──
-    const oosReservations = confirmed.filter(
-      (r) =>
-        isConfirmedWithDates(r) &&
-        (r.start_date as string) <= endStr &&
-        (r.end_date as string) >= today,
-    );
-    const candidateSlugs = Array.from(
-      new Set(oosReservations.map((r) => r.account_slug).filter((s): s is string => !!s)),
-    );
-    const poolEnabledAccounts = await infoPoolEnabledAccounts(ctx, candidateSlugs);
-    let poolComponentsByProduct: OosPoolComponents = new Map();
-    if (poolEnabledAccounts.size > 0) {
-      const poolRows = await ctx.db.query("listing_info_pool").collect();
-      poolComponentsByProduct = buildOosPoolComponents(poolRows, poolEnabledAccounts);
-    }
-
-    const oos: Record<string, OosPanelRow[]> = {};
-    // Thumbnail lookups memoized across slugs (the same item is OOS in
-    // "all" AND its own account view).
-    const imageByItem = new Map<string, string | null>();
-    for (const { key, arg } of SLUG_VARIANTS) {
-      const result = computeOosForSlug({
-        reservations: oosReservations,
-        activeItems,
-        poolEnabledAccounts,
-        poolComponentsByProduct,
-        accountSlug: arg,
-        endStr,
-      });
-      const rows: OosPanelRow[] = [];
-      for (const i of result.oos) {
-        const id = String(i._id);
-        if (!imageByItem.has(id)) {
-          const prod = await ctx.db
-            .query("hygglo_products")
-            .withIndex("by_master_item", (q) => q.eq("masterItemId", i._id))
-            .first();
-          imageByItem.set(
-            id,
-            prod?.images?.[0]?.fullSizeUrl ?? prod?.images?.[0]?.thumbnailUrl ?? null,
-          );
-        }
-        rows.push({
-          itemId: i._id,
-          name: i.name_canonical,
-          image: imageByItem.get(id) ?? null,
-          nextAvailableDate: result.nextAvailMap.get(i.name_canonical) ?? null,
-          activeReservationCount: result.holdCounts.get(i.name_canonical) ?? 0,
-        });
-      }
-      oos[key] = rows;
-    }
+    // Build the actual shared physical forecast once. Account variants
+    // retain their cache identities but cannot invent separate equipment.
+    const shared=await buildStockForecast(ctx,OOS_CANONICAL_LOOKAHEAD_DAYS,{items,confirmed});
+    const oos:Record<string,StockForecastSnapshot>={};
+    for(const {key} of SLUG_VARIANTS)oos[key]=shared;
 
     // ── Health issue scan ──
     const photos = await ctx.db.query("listing_photos").collect();
@@ -201,14 +136,14 @@ export async function refreshFastWidgets(
   // anyApi: this module is new and not yet in the committed _generated api
   // type map (same pattern as mv/investment_scorecard.ts self-references).
   const computed: {
-    oos: Record<string, OosPanelRow[]>;
+    oos: Record<string, StockForecastSnapshot>;
     health: Record<string, { issues: HealthIssue[] }>;
   } = await ctx.runQuery(anyApi.mv.widgets.computeFast, {});
   let written = 0;
   for (const { key } of SLUG_VARIANTS) {
     await ctx.runMutation(anyApi.mv.widgets.writeWidget, {
       key: `oos:${key}`,
-      payload: computed.oos[key] ?? [],
+      payload: computed.oos[key],
       generatedAt: startedAt,
     });
     await ctx.runMutation(anyApi.mv.widgets.writeWidget, {
