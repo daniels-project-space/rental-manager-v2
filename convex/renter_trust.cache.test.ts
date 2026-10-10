@@ -13,6 +13,26 @@ async function update(reviews: unknown[], old: any[] = []) {
   return { patch, insert, remove };
 }
 describe("review history survives partial provider reads", () => {
+  it("advances a relative date when the provider refreshes it", async () => {
+    const db = await update(
+      [{ rating: 5, text: "Good", author: "A", created_at: "2 months ago" }],
+      [
+        {
+          _id: "old",
+          hygglo_review_id: 1,
+          rating: 5,
+          text: "Good",
+          author: "A",
+          created_at: "2 weeks ago",
+        },
+      ],
+    );
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(db.patch).toHaveBeenCalledWith(
+      "old",
+      expect.objectContaining({ created_at: "2 months ago" }),
+    );
+  });
   it("never deletes cached history on an empty response", async () => {
     const db = await update(
       [],

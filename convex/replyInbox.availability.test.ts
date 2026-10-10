@@ -37,6 +37,44 @@ const booking = {
 } as any;
 const line = (name: string, qty = 1) => ({ name, qty, image_url: null });
 describe("Quick Reply full-basket shared stock checks", () => {
+  it("never certifies a partially mapped kit from its available body alone", async () => {
+    const items = [{ ...gear("camera", "Sony FX3"), is_marketing_only: false }],
+      av = context(items);
+    av.productIndex.set("fixture#7", "camera");
+    const ctx = {
+      db: {
+        query: (table: string) => {
+          const q = {
+            withIndex: () => q,
+            first: async () =>
+              table === "hygglo_products"
+                ? {
+                    accountSlug: "fixture",
+                    productId: 7,
+                    masterItemId: "camera",
+                    description:
+                      "Included in this rental: • 1x Sony FX3 • 1x Mystery cinema lens",
+                  }
+                : null,
+          };
+          return q;
+        },
+      },
+    } as any;
+    const rental = {
+      ...booking,
+      hygglo_items: [{ product_id: 7, name: "FX3 kit", qty: 1 }],
+    };
+    await extendAvailabilityMappings(ctx, av, [rental]);
+    expect(
+      computeAvailability(rental, av, [{ ...line("FX3 kit"), product_id: 7 }]),
+    ).toMatchObject({
+      status: "unknown",
+      items: [
+        { available: null, reason: "Kit contents need inventory review" },
+      ],
+    });
+  });
   it("resolves a recorded exact inventory alias", () => {
     const item = {
       ...gear("a", "Sony FX3"),
