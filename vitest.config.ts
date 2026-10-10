@@ -23,6 +23,7 @@ export default defineConfig({
     environment: "node",
     globals: false,
     include: [
+      "convex/lib/website_live_reader.test.ts",
       "convex/lib/finance/*.test.ts",
       "convex/finance.test.ts",
       "convex/calendar.website-windows.test.ts",
