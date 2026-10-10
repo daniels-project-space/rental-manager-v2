@@ -1,6 +1,7 @@
 "use client";
 import type { ReactNode } from "react";
 import styles from "./RentalControls.module.css";
+import {ProfilePortrait} from "./ProfilePortrait";
 
 export type RentalControlTab = "gear" | "dates" | "pricing";
 export type ReplacementCard = { id: string; name: string; image_url: string | null; can_apply: boolean; price_note: string };
@@ -21,7 +22,7 @@ export function RentalControls({ name, portrait, identity, progress, gear, tab, 
     <div className={styles.handle} />
     <header className={styles.header}><h3>Rental controls</h3><button type="button" aria-label="Close rental controls" onClick={onClose}>×</button></header>
     <div className={styles.scroll}>
-      <div className={styles.identity}>{portrait ? <img src={portrait} alt={name} /> : <span className={styles.initials}>{name.split(" ").map(part => part[0]).slice(0, 2).join("")}</span>}<div><strong>{name}</strong>{identity}</div></div>
+      <div className={styles.identity}><ProfilePortrait src={portrait} name={name} className={styles.initials}/><div><strong>{name}</strong>{identity}</div></div>
       <div className={styles.progress}>{progress}</div>
       <div className={styles.tabs} role="tablist" aria-label="Rental settings">{([['gear', 'Gear'], ['dates', 'Dates'], ['pricing', 'Pricing']] as const).map(([value, label]) => <button type="button" role="tab" aria-selected={tab === value} key={value} onClick={() => onTab(value)}>{label}</button>)}</div>
       {tab === 'gear' && <><h4>Selected gear</h4><div className={styles.gear}>{gear}</div></>}

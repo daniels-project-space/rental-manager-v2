@@ -1,3 +1,4 @@
+import { reviewTimestamp, reviewFingerprint } from "./lib/review_time";
 import { profileImageUrl } from "./lib/profile_image";
 /**
  * Renter trust resolver (2026-06-27) — THE correct rating source.
@@ -77,24 +78,22 @@ export const applyTrust = internalMutation({
     }
     await ctx.db.patch(renter_id, patch);
 
-    // Replace this renter's cached reviews with the renter-SIDE set (with text).
-    const old = await ctx.db
-      .query("renter_reviews")
-      .withIndex("by_renter", (q) => q.eq("renter_id", renter_id))
-      .collect();
-    for (const o of old) await ctx.db.delete(o._id);
-    const now = Date.now();
-    let i = 0;
-    for (const r of reviews) {
-      await ctx.db.insert("renter_reviews", {
-        renter_id,
-        hygglo_review_id: i++,
-        rating: r.rating,
-        text: r.text,
-        author: r.author,
-        created_at: r.created_at,
-        fetched_at: now,
-      });
+    // Empty/partial order-detail review sets must not erase cached history.
+    if (reviews.length) {
+      const old = await ctx.db.query("renter_reviews").withIndex("by_renter", q=>q.eq("renter_id",renter_id)).collect();
+      const byKey=new Map(old.map(row=>[reviewFingerprint(row),row]));
+      let nextId=Math.min(-1,...old.map(row=>row.hygglo_review_id-1));
+      for (const review of reviews) {
+        const key=reviewFingerprint(review),existing=byKey.get(key);
+        if(existing){
+          // Keep a precise timestamp when the provider now returns a relative label.
+          const created_at=review.created_at && (!existing.created_at || /^\d{4}-\d{2}-\d{2}T/.test(review.created_at)) ? review.created_at : existing.created_at;
+          await ctx.db.patch(existing._id,{fetched_at:Date.now(),...(created_at?{created_at}:{})});
+        } else {
+          const id=await ctx.db.insert("renter_reviews",{renter_id,hygglo_review_id:nextId--,...review,fetched_at:Date.now()});
+          byKey.set(key,{_id:id,...review} as typeof old[number]);
+        }
+      }
     }
     return { ok: true };
   },
@@ -150,7 +149,7 @@ export const resolveForThread = action({
             rating: r.rating as number,
             text: r.text ? String(r.text).trim() : undefined,
             author: r.author?.shortName ? String(r.author.shortName).trim() : undefined,
-            created_at: r.relativeLabel ? String(r.relativeLabel) : undefined,
+            created_at: reviewTimestamp(r),
           }))
       : [];
     await ctx.runMutation(internal.renter_trust.applyTrust, {

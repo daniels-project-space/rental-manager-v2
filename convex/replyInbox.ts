@@ -1,4 +1,3 @@
-import { loadCanonicalListingAllocation } from "./lib/canonical_listing_allocation";
 import {nativeInformationForText,nativeInformationClaimRequest} from "./lib/native_information_blocks";
 import {ownedItemHirePriceReader} from "./lib/owned_item_hire_price";
 import {currentKitEvidence} from "./lib/current_kit_evidence";
@@ -61,10 +60,8 @@ import { internal } from "./_generated/api";
 import { PREFIX as PROBE_THREAD_PREFIX } from "./renter_bot_probe";
 import { readWidgetMv } from "./lib/widget_mv";
 import { exactListingProductIds } from "./lib/draft_listing_grounding";
-import { bookedUnitsOnDate } from "./lib/availability";
 import {
   reservationItemUnits,
-  buildProductIndexMap,
   type OverrideMap,
 } from "./lib/reservations/itemUnits";
 import { profileRenter } from "./lib/renter_dna";
@@ -333,9 +330,8 @@ function parseMentionedDays(text: string | null | undefined): number | null {
 // ── Availability / double-booking ────────────────────────────────
 // For a reservation/request with dates, work out whether accepting it would be
 // a double-booking: per resolved item, compare existing occupancy (CONFIRMED,
-// and OPTIONALLY pending) over the window against owned units. Reuses the same
-// occupancy maths as the calendar/overbooking (bookedUnitsOnDate + the canonical
-// reservationItemUnits resolution), so the verdict matches the rest of the app.
+// and optionally verified pending) with shared inventory stock rules, including
+// basket demand, repairs, owner blackouts, vacation and turnaround buffers.
 
 type ItemAvail = {
   name: string;
@@ -344,7 +340,9 @@ type ItemAvail = {
   booked: number; // peak confirmed units out over the window (excl. this res)
   pending: number; // peak pending units (only when include_pending)
   free: number; // total - occupancy
-  available: boolean; // free >= requested
+  available: boolean | null; // null = explicit unresolved stock check
+  reason?: string;
+  item_index?: number;
 };
 type TileAvailability = {
   status: "available" | "conflict" | "unknown";
@@ -363,6 +361,7 @@ type AvailCtx = {
   itemName: Map<string, string>;
   itemRows: Doc<"items">[];
   includePending: boolean;
+  stockSources: Awaited<ReturnType<typeof loadStockSources>>;
   // PERF (2026-07-12): every reservation row the confirmed/pending collects
   // already paid for, keyed by hygglo_order_id — built from the RAW collect
   // results (before the order_step/is_obsolete filters) so RETURNED/obsolete
@@ -375,39 +374,15 @@ type AvailCtx = {
   byOrderId: Map<string, Doc<"reservations">>;
 };
 
-/** Inclusive YYYY-MM-DD list from start→end, capped to bound query cost. */
-function expandDates(start: string, end: string, cap = 45): string[] {
-  const s = new Date(`${start}T00:00:00Z`).getTime();
-  const e = new Date(`${end}T00:00:00Z`).getTime();
-  if (isNaN(s) || isNaN(e) || e < s) return [start];
-  const out: string[] = [];
-  for (let t = s; t <= e && out.length < cap; t += 86_400_000) {
-    out.push(new Date(t).toISOString().slice(0, 10));
-  }
-  return out;
-}
-
 async function loadAvailCtx(
   ctx: QueryCtx,
   includePending: boolean,
 ): Promise<AvailCtx> {
-  // Confirmed rentals only — but EXCLUDE ones whose gear is already back
-  // (step RETURNED/REVIEWED) or that were superseded (is_obsolete). Hygglo
-  // leaves status="confirmed" after a return, so without this a returned rental
-  // kept blocking its item for the old dates (the "anamorphic shows rented but
-  // it has no live booking" bug, 2026-06-27).
-  const confirmedRaw = await ctx.db
-    .query("reservations")
-    .withIndex("by_status", (q) => q.eq("status", "confirmed"))
-    .collect();
-  const confirmed = confirmedRaw.filter(
-    (r) =>
-      !r.is_obsolete &&
-      r.order_step !== "RETURNED" &&
-      r.order_step !== "REVIEWED",
-  );
-  // PERF: was a whole-table `.collect()` scan every fire. by_status narrows to
-  // pending_review rows; the remaining order_step/is_obsolete filters are kept.
+  // Shared inventory authority includes confirmed, ongoing and verified website rentals.
+  // RETURNED is still awaiting the return; REVIEWED/completed releases stock.
+  const stockSources=await loadStockSources(ctx);
+  const confirmedRaw=stockSources.reservations;
+  const confirmed=confirmedRaw.filter(r=>!r.is_obsolete&&r.order_step!=="REVIEWED"&&r.status!=="completed");
   const pendingRaw = includePending
     ? await ctx.db
         .query("reservations")
@@ -427,11 +402,7 @@ async function loadAvailCtx(
     if (!prev || r._creationTime < prev._creationTime)
       byOrderId.set(r.hygglo_order_id, r);
   }
-  const [pidx, ovr, items] = await Promise.all([
-    ctx.db.query("hygglo_product_index").collect(),
-    ctx.db.query("listing_resolution_override").collect(),
-    ctx.db.query("items").collect(),
-  ]);
+  const items=stockSources.items;
   const itemQty = new Map<string, number>();
   const itemName = new Map<string, string>();
   for (const it of items) {
@@ -442,10 +413,9 @@ async function loadAvailCtx(
   return {
     confirmed,
     pending,
-    productIndex: buildProductIndexMap(
-      pidx as Array<{ account_slug: string; product_id: number; item_id: Id<"items"> }>,
-    ),
-    overrideMap: await loadCanonicalListingAllocation(ctx,items,ovr,[...confirmed,...pending]),
+    productIndex: stockSources.productIndex,
+    overrideMap: stockSources.overrides,
+    stockSources,
     itemQty,
     itemName,
     itemRows: items,
@@ -454,68 +424,53 @@ async function loadAvailCtx(
   };
 }
 
-function computeAvailability(
-  reservation: BotBooking | null,
-  av?: AvailCtx,
-): TileAvailability | null {
-  const unknown = (reason: string): TileAvailability => ({status:"unknown",include_pending:av?.includePending ?? false,items:[],reason,checked_at:Date.now()});
-  if (!av) return unknown("Inventory is loading");
-  if (!reservation) return unknown("Dates needed to check stock");
-  const start = reservation.pickup_date ?? reservation.start_date;
-  const end = reservation.return_date ?? reservation.end_date;
-  if (!start || !end) return unknown("Dates needed to check stock");
-  const units = reservationItemUnits(
-    reservation,
-    av.productIndex,
-    av.overrideMap,
-    av.itemRows,
-  );
-  if (units.size === 0) return unknown("Gear needs an inventory mapping");
-
-  const selfId = reservation._id;
-  const confirmed = av.confirmed.filter((r) => r._id !== selfId);
-  const pendingRows = av.includePending
-    ? av.pending.filter((r) => r._id !== selfId)
-    : [];
-  const dates = expandDates(start, end);
-
-  const out: ItemAvail[] = [];
-  let anyConflict = false;
-  for (const [itemIdStr, reqQty] of units) {
-    const total = av.itemQty.get(itemIdStr) ?? 0;
-    // Zero owned stock is unavailable, not an unchecked item.
-    const itemId = itemIdStr as Id<"items">;
-    let booked = 0;
-    let pending = 0;
-    for (const d of dates) {
-      const b = bookedUnitsOnDate(confirmed, itemId, d, {productIndex:av.productIndex,overrides:av.overrideMap,inventory:av.itemRows});
-      if (b > booked) booked = b;
-      if (av.includePending) {
-        const p = bookedUnitsOnDate(pendingRows, itemId, d, {productIndex:av.productIndex,overrides:av.overrideMap,inventory:av.itemRows});
-        if (p > pending) pending = p;
-      }
+export function computeAvailability(reservation:BotBooking|null,av?:AvailCtx,requested?:RichItem[]):TileAvailability {
+  const checked_at=Date.now(),include_pending=av?.includePending??false;
+  const lines=requested??buildRichItems(reservation);
+  const start=reservation?.pickup_date??reservation?.start_date,end=reservation?.return_date??reservation?.end_date;
+  const sources=av?{...av.stockSources,reservations:[...av.confirmed,...av.pending.filter(row=>!av.confirmed.some(other=>other._id===row._id))]}:null;
+  const resolveLine=(line:RichItem)=>{
+    if(!av||!Number.isSafeInteger(line.qty)||line.qty<1)return new Map<string,number>();
+    const slug=reservation?.account_slug??"";
+    const key=line.product_id!=null?`${slug}#${line.product_id}`:null;
+    let units=new Map<string,number>();
+    if(key&&(av.overrideMap.has(key)||av.productIndex.has(key))){
+      units=reservationItemUnits({account_slug:slug,hygglo_items:[{name:line.name,product_id:line.product_id,qty:line.qty}]},av.productIndex,av.overrideMap,av.itemRows);
+    } else {
+      // Only unambiguous exact owned inventory names fill missing mappings.
+      const norm=(name:string)=>name.normalize("NFKC").trim().replace(/\s+/g," ").toLowerCase();
+      const exact=av.itemRows.filter(item=>!item.is_marketing_only&&norm(item.name_canonical)===norm(line.name));
+      if(exact.length===1)units=reservationItemUnits({resolved_items:[{item_id:exact[0]._id,qty:line.qty}]},av.productIndex,av.overrideMap,av.itemRows);
     }
-    const free = total - booked - pending;
-    const available = free >= reqQty;
-    if (!available) anyConflict = true;
-    out.push({
-      name: av.itemName.get(itemIdStr) ?? "item",
-      requested: reqQty,
-      total_units: total,
-      booked,
-      pending,
-      free,
-      available,
-    });
-  }
-  if (out.length === 0) return unknown("Gear needs an inventory mapping");
-  return {
-    status: anyConflict ? "conflict" : "available",
-    checked_at: Date.now(),
-    include_pending: av.includePending,
-    items: out,
+    return units;
   };
+  const resolved=lines.map(resolveLine),demand=new Map<string,number>();
+  for(const units of resolved)for(const [id,quantity] of units)demand.set(id,(demand.get(id)??0)+quantity);
+  const checked=new Map<string,ReturnType<typeof stockForRentalItem>|null>();
+  if(av&&sources&&start&&end)for(const [id,quantity] of demand){
+    const item=av.itemRows.find(row=>String(row._id)===id);
+    checked.set(id,item?stockForRentalItem(sources,item,{item_name:item.name_canonical,start_date:start,end_date:end,quantity,thread_id:reservation?.hygglo_order_id,pickup_time:reservation?.pickup_time,return_time:reservation?.return_time}):null);
+  }
+  const items:ItemAvail[]=lines.map((line,item_index)=>{
+    const unknown=(reason:string):ItemAvail=>({name:line.name,requested:line.qty??1,total_units:0,booked:0,pending:0,free:0,available:null,reason,item_index});
+    if(!av||!sources)return unknown("Inventory is loading");
+    if(!start||!end)return unknown("Dates needed to check stock");
+    if(!Number.isSafeInteger(line.qty)||line.qty<1)return unknown("Requested quantity needs review");
+    const units=resolved[item_index];
+    if(!units.size)return unknown("Gear needs an inventory mapping");
+    const components=[...units];
+    const results=components.map(([id])=>checked.get(id)??null);
+    const unavailable=results.some(result=>result?.available===false);
+    const complete=results.every(result=>result?.available===true);
+    const free=Math.min(...results.map((result,index)=>result?.free_units!=null?Math.floor(result.free_units/(components[index][1]/line.qty)):0));
+    const total=Math.min(...results.map((result,index)=>result?Math.floor(result.total_units/(components[index][1]/line.qty)):0));
+    return {name:line.name,requested:line.qty,total_units:total,booked:Math.max(0,total-free),pending:0,free,available:unavailable?false:complete?true:null,item_index,...(!complete?{reason:unavailable?"Requested gear or supplied component is unavailable":"Stock check needs review"}:{})};
+  });
+  const conflict=items.some(item=>item.available===false);
+  const complete=items.length>0&&items.every(item=>item.available===true);
+  return {status:conflict?"conflict":complete?"available":"unknown",include_pending,checked_at,items,...(!conflict&&!complete?{reason:items.find(item=>item.available===null)?.reason??"No requested gear to check"}:{})};
 }
+
 
 // ── Queue ────────────────────────────────────────────────────────
 
@@ -654,7 +609,7 @@ async function assembleTile(
     estimateGbp != null ? Math.round(estimateGbp * OWNER_SHARE) : null;
 
   // Double-booking check for dated reservations/requests (null otherwise).
-  const availability = computeAvailability(reservation, availCtx);
+  const availability = computeAvailability(reservation, availCtx, richItems);
   const draftApproval = currentDraftApproval(conv,{message_id:latestMsg?.message_id,epoch:hub?.draftEpoch??0,context_key:draftContextKey(reservation,conv?.inquiry_items,simOrder)});
 
   return {
@@ -701,12 +656,13 @@ async function assembleTile(
     estimate_earnings_gbp: estimateEarningsGbp,
     availability,
     currency: reservation?.currency ?? "GBP",
-    items: richItems.slice(0, 6),
+    items: richItems,
     item_count: richItems.length,
     image_url: primaryImage,
     last_renter_msg_at: lastRenterAt,
     dismissed,
     last_activity_at: lastActivityAt,
+    request_created_at: reservation?.created_at ?? reservation?._creationTime ?? conv?._creationTime ?? null,
     last_msg_at: conv?.last_msg_at ?? lastRenterAt,
     preview: latestMsg?.body_text ?? "",
     ai_draft_review: currentDraftReview(conv?.ai_draft_review, { message_id: latestMsg?.message_id,

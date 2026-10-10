@@ -26,6 +26,9 @@ import { useAccount } from "@/lib/account-context";
 import { accountAccent, accountLabel } from "@/lib/account-theme";
 import { Card } from "@/components/ui/Card";
 import styles from "./ReplyInbox.module.css";
+import {ProfilePortrait} from "./ProfilePortrait";
+import {compareQuickReplies, type QuickReplySort} from "../../../convex/lib/quick_reply_sort";
+import {reviewTimeLabel} from "../../../convex/lib/review_time";
 import { RentalControls, type RentalControlTab } from "./RentalControls";
 import { quickReplyStage, quickReplyDuplicateIds } from "../../../convex/lib/quick_reply_presentation";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -123,7 +126,9 @@ interface ItemAvail {
   booked: number;
   pending: number;
   free: number;
-  available: boolean;
+  available: boolean | null;
+  reason?: string;
+  item_index?: number;
 }
 interface TileAvailability {
   status: "available" | "conflict" | "unknown";
@@ -185,6 +190,7 @@ export interface ReplyTileData {
   last_renter_msg_at: number;
   dismissed?: boolean;
   last_activity_at: number;
+  request_created_at?: number | null;
   last_msg_at: number;
   preview: string;
   has_draft: boolean;
@@ -454,8 +460,17 @@ function StageBar({ t }: { t: ReplyTileData }) {
 }
 
 function QueueAvailability({tile}: {tile:ReplyTileData}) {
-  const status = tile.availability?.status ?? "unknown";
-  return <span className={`${styles.availability} ${status === "available" ? styles.available : status === "conflict" ? styles.unavailable : styles.unknown}`} title={tile.availability?.items.map((item) => `${item.name}: ${item.free} free / ${item.requested} requested`).join("; ") || tile.availability?.reason || "Checking availability"}>{status === "available" ? "Available" : status === "conflict" ? "Unavailable" : tile.availability?.reason?.startsWith("Dates") ? "Dates needed" : "Needs stock review"}</span>;
+  const status=tile.availability?.status??"unknown";
+  const label=status==="available"?"Available":status==="conflict"?"Unavailable":tile.availability?.reason?.startsWith("Dates")?"Dates needed":"Needs stock review";
+  return <span className={`${styles.availability} ${status==="available"?styles.available:status==="conflict"?styles.unavailable:styles.unknown}`} title={tile.availability?.reason??tile.availability?.items.map(item=>`${item.name}: ${item.available===null?item.reason??"Needs stock review":`${item.free} free / ${item.requested} requested`}`).join("; ")??"Checking availability"}>{label}</span>;
+}
+function ItemAvailability({tile}: {tile:ReplyTileData}) {
+  // Fall back for an old MV row until the next shared refresh; never drop a line.
+  return <div className={styles.itemStock} aria-label="Item availability">{tile.items.map((line,index)=>{
+    const check=tile.availability?.items.find(item=>item.item_index===index)??tile.availability?.items.find(item=>item.name===line.name);
+    const state=check?.available;
+    return <div key={`${index}-${line.name}`}><span>{line.qty}× {line.display_name??line.name}</span><strong className={state===true?styles.stockYes:state===false?styles.stockNo:styles.stockUnknown}>{state===true?"Available":state===false?"Unavailable":check?.reason??tile.availability?.reason??"Checking stock"}</strong></div>;
+  })}{tile.availability?.checked_at&&<small>Stock checked {new Date(tile.availability.checked_at).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}</small>}</div>;
 }
 
 function fmtDate(iso?: string | null): string | null {
@@ -728,11 +743,7 @@ function ReviewsOverlay({
                   <div className="flex items-center gap-2">
                     {r.rating != null ? <StarRating rating={r.rating} size={11} /> : <span className="text-[11px] text-[#6b7280]">—</span>}
                     {r.author && <span className="text-[10px] text-[#8b8fa3] truncate">{r.author}</span>}
-                    {r.created_at && (
-                      <span className="text-[10px] text-[#6b7280] ml-auto shrink-0">
-                        {new Date(r.created_at).toLocaleDateString("en-GB")}
-                      </span>
-                    )}
+                    <span className="text-[10px] text-[#9aa0ad] ml-auto shrink-0" aria-label="Review date">{reviewTimeLabel(r.created_at)}</span>
                   </div>
                   {r.text && (
                     <div className={`text-[12px] mt-1 ${low ? "text-red-100/90" : "text-[#c5cad3]"}`}>{r.text}</div>
@@ -851,6 +862,7 @@ function ReplyCard({
   onReplacement: () => void;
 }) {
   const aw = awaitingMe(tile);
+  const [stockExpanded,setStockExpanded]=useState(false);
   const ds = decideState(tile);
   // Urgency timer only when the ball is in MY court; a thread I replied to last
   // is calm (no glow / no "unanswered for" clock).
@@ -910,7 +922,7 @@ function ReplyCard({
   return (
     <div onClick={onOpen} className={`${styles.row} ${selected ? styles.selected : ""} ${duplicate ? styles.duplicate : ""}`} role="button" tabIndex={0} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onOpen(); } }} aria-label={`Open conversation with ${tile.renter_name}`}>
       <div className={styles.renterCell}>
-        <div className={styles.avatar}>{tile.renter_image_url ? <img src={tile.renter_image_url} alt={tile.renter_name} /> : <span>{tile.renter_name.split(" ").map((part) => part[0]).slice(0,2).join("")}</span>}</div>
+        <ProfilePortrait src={tile.renter_image_url} name={tile.renter_name} className={styles.avatar}/>
         <div className="min-w-0"><strong className={styles.renterName}>{tile.renter_name}</strong><button type="button" className={styles.rating} onClick={(e) => {e.stopPropagation();onReviews();}} title="View renter reviews">{tile.renter_rating?.toFixed(1) ?? "Unrated"} <span>★</span></button>{(tile.renter_blacklisted || tile.renter_flagged) && <span className="block text-[10px] text-red-300">{tile.renter_blacklisted ? "Blacklisted" : "Flagged"}</span>}{duplicate && <span className={styles.duplicateLabel}>Duplicate · lower value</span>}</div>
       </div>
       <div className={styles.previewCell}><p>{tile.preview || statusText(tile)}</p>{tile.ai_draft_review && <span className="text-[10px] text-amber-300">Reply needs review</span>}</div>
@@ -918,12 +930,13 @@ function ReplyCard({
       <div className={styles.datesCell}>{tile.start_date ? <><span>{fmtDate(tile.start_date)}</span><span>– {fmtDate(tile.end_date ?? tile.start_date)}</span></> : <span>Dates pending</span>}</div>
       <div className={styles.waitCell}>{aw ? <><span>Waiting</span><strong style={{color:u?.glow ? u.color : "#f6be55"}}>{waited(tile.last_renter_msg_at, now)}</strong></> : <><span>Replied</span><strong className="text-emerald-300">✓</strong></>}</div>
       <div className={styles.earnCell}><span>{tile.net_to_owner_gbp != null ? "Owner earns" : "Est. earn"}</span><strong>{fmtMoney(tile.net_to_owner_gbp ?? tile.estimate_earnings_gbp) ?? "—"}</strong></div>
-      <div className={styles.availCell}><QueueAvailability tile={tile} />{tile.availability?.status === "conflict" && <button type="button" className={styles.rowReplacement} onClick={(event) => {event.stopPropagation();onReplacement();}}>Find replacement</button>}</div>
+      <div className={styles.availCell}><QueueAvailability tile={tile} />{tile.items.length>0&&<button type="button" className={styles.itemStockDetails} aria-label={`Show stock for all items requested by ${tile.renter_name}`} aria-expanded={stockExpanded} onClick={event=>{event.stopPropagation();setStockExpanded(value=>!value);}}>{tile.items.length} item{tile.items.length===1?"":"s"} · stock</button>}{tile.availability?.status === "conflict" && <button type="button" className={styles.rowReplacement} onClick={(event) => {event.stopPropagation();onReplacement();}}>Find replacement</button>}</div>
       <div className={styles.progressCell}><StageBar t={tile} />
         <div className={styles.rowActions} onClick={(e) => e.stopPropagation()}>
           {optimistic ? <span className="text-[10px] text-emerald-300">{optimistic === "approve" ? "Approved" : "Declined"}</span> : confirming ? <><button disabled={busy} onClick={() => act(confirming)}>Confirm {confirming}</button><button onClick={() => setConfirming(null)}>Cancel</button></> : <>{ds.canApprove && <button onClick={() => setConfirming("approve")}>Approve</button>}{ds.canDecline && <button onClick={() => setConfirming("decline")}>Decline</button>}</>}
         </div>{note && <span className="text-[10px] text-amber-300">{note}</span>}
       </div>
+      {stockExpanded&&<div className={styles.expandedStock} onClick={event=>event.stopPropagation()}><ItemAvailability tile={tile}/></div>}
       <button type="button" onClick={(e) => {e.stopPropagation();void onDismiss();}} aria-label="Close thread" title="Hide until the renter messages again" className={styles.dismiss}>×</button>
     </div>
   );
@@ -1811,8 +1824,8 @@ export function ReplyModal({
   };
   useEffect(() => {
     if (initialReplacementRequest > 0 && tile.availability?.status === "conflict") {
-      const unavailable = tile.availability.items.find(item => !item.available);
-      const index = unavailable ? tile.items.findIndex(item => item.name === unavailable.name) : 0;
+      const unavailable = tile.availability.items.find(item => item.available === false);
+      const index = unavailable?.item_index ?? (unavailable ? tile.items.findIndex(item => item.name === unavailable.name) : 0);
       void findReplacements(Math.max(0, index));
     }
     // A new explicit list-row request, not polling, opens the prepared proposal.
@@ -2170,7 +2183,7 @@ export function ReplyModal({
           progress={<StageBar t={tile}/>}
           tab={controlTab} onTab={tab=>{setControlTab(tab);setBookingAction(tab==="dates"?"dates":tab==="pricing"?"discount":null);}}
           onClose={()=>{setControlsOpen(false);setBookingAction(null);}}
-          gear={<div className={styles.controlGear}><Thumb src={tile.image_url} accent={accent} size={68}/><div><strong>{itemLineShort(tile)||"General inquiry"}</strong><small>{tile.start_date?`${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date??tile.start_date)}`:"Dates pending"}</small><QueueAvailability tile={tile}/><b>{fmtMoney(tile.net_to_owner_gbp??tile.estimate_earnings_gbp)??"—"}</b></div></div>}
+          gear={<><div className={styles.controlGear}><Thumb src={tile.image_url} accent={accent} size={68}/><div><strong>{itemLineShort(tile)||"General inquiry"}</strong><small>{tile.start_date?`${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date??tile.start_date)}`:"Dates pending"}</small><QueueAvailability tile={tile}/><b>{fmtMoney(tile.net_to_owner_gbp??tile.estimate_earnings_gbp)??"—"}</b></div></div><ItemAvailability tile={tile}/></>}
           replacement={replacementOpen?{
             choices:replacementChoices,selected:replacementChoice?.id??null,text:replacementText,busy:replacementBusy,error:replacementError,applied:replacementApplied,sending,
             onSend:()=>{if(sending||replacementBusy||!replacementText.trim())return;void sendBody(replacementText,false).then(ok=>{if(ok){setText("");setComposeApproval(null);setControlsOpen(false);setReplacementOpen(false);}else setReplacementError("Message was not sent. Your draft is kept; review the chat error before retrying.");});},
@@ -2180,19 +2193,19 @@ export function ReplyModal({
             itemPicker:tile.items.length>1?<label>Requested item<select aria-label="Requested replacement item" value={replacementIndex} disabled={!!replacementBusy||replacementApplied} onChange={event=>void findReplacements(Number(event.target.value))}>{tile.items.map((item,index)=><option key={index} value={index}>{item.name}</option>)}</select></label>:undefined,
           }:undefined}
           editor={bookingAction&&tile.has_reservation&&tile.account_slug?<section className={styles.controlEditor}><header><strong>{({change:"Change rental",dates:"Reschedule",discount:"Discount",refund:"Refund"})[bookingAction]}</strong><button type="button" aria-label="Close booking editor" onClick={()=>{setBookingAction(null);setControlTab("gear");}}>×</button></header>{tile.source==="dbcinema_web"?<div className={styles.sourceActions}><p>Review this change in the DB Cinema rental workspace.</p>{dryRun?<p>Workspace disabled in test mode.</p>:<a target="_blank" rel="noopener noreferrer" href={`https://dbcinemarentals.com/admin?rental=${encodeURIComponent(tile.source_booking_id??"")}&action=${bookingAction}`}>Open {({change:"kit editor",dates:"reschedule",discount:"discount / refund review",refund:"refund review"})[bookingAction]} ↗</a>}<small>Changes keep DB Cinema’s payment and approval checks.</small></div>:<OrderEditor key={bookingAction} accountSlug={tile.account_slug} orderId={tile.thread_id} dryRun={dryRun} initialAction={bookingAction}/>}</section>:undefined}
-          actions={<div>{tile.availability?.status==="conflict"&&!replacementOpen&&<button type="button" onClick={()=>void findReplacements(Math.max(0,tile.availability?.items.findIndex(item=>!item.available)??0))}>Find replacement</button>}{tile.has_reservation&&tile.account_slug&&([["change","Change rental"],["dates","Reschedule"],["discount","Discount"],["refund","Refund"]] as const).map(([action,label])=><button type="button" key={action} onClick={()=>{setBookingAction(action);setControlTab(action==="dates"?"dates":action==="change"?"gear":"pricing");}}>{label}</button>)}</div>}
+          actions={<div>{tile.availability?.status==="conflict"&&!replacementOpen&&<button type="button" onClick={()=>void findReplacements(Math.max(0,tile.availability?.items.findIndex(item=>item.available===false)??0))}>Find replacement</button>}{tile.has_reservation&&tile.account_slug&&([["change","Change rental"],["dates","Reschedule"],["discount","Discount"],["refund","Refund"]] as const).map(([action,label])=><button type="button" key={action} onClick={()=>{setBookingAction(action);setControlTab(action==="dates"?"dates":action==="change"?"gear":"pricing");}}>{label}</button>)}</div>}
         />}
         <div className={styles.conversationContent}>
         <div className={styles.chatHeader}>
           <div className={styles.chatIdentity}>
-            <div className={styles.chatAvatar}>{tile.renter_image_url ? <img src={tile.renter_image_url} alt={tile.renter_name} /> : <span>{tile.renter_name.split(" ").map((part) => part[0]).slice(0,2).join("")}</span>}</div>
+            <ProfilePortrait src={tile.renter_image_url} name={tile.renter_name} className={styles.chatAvatar}/>
             <div className="min-w-0"><h3>{tile.renter_name}</h3><button type="button" onClick={() => setShowReviews((value) => !value)} className={styles.rating} title="View all renter reviews">{tile.renter_rating?.toFixed(1) ?? "Unrated"} <span>★</span>{tile.renter_review_count != null && <small className={styles.reviewCount}> · {tile.renter_review_count} reviews</small>}</button><div className="mt-1.5"><AccountTag slug={tile.account_slug} source={tile.source} /></div><div className={styles.identityDates}>{tile.start_date ? `${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date ?? tile.start_date)}` : "Dates pending"}</div></div>
           </div>
           {!controlsOpen && <button type="button" className={styles.headerControls} aria-label="Open rental controls" title="Rental controls" onClick={()=>{setControlsOpen(true);setControlTab("gear");}}>⚙</button>}
           <button type="button" onClick={onClose} aria-label="Close conversation" data-testid="quick-reply-close" className={styles.chatClose}><span>×</span><small>Close</small></button>
           <div className={styles.chatGear}><Thumb src={tile.image_url} accent={accent} size={140} /><div className={styles.chatGearDetails}><strong>{itemLineShort(tile) || "General inquiry"}</strong><div className={styles.chatDates}>{tile.start_date ? `${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date ?? tile.start_date)}` : "Dates pending"}</div><div className={styles.chatGearMeta}><QueueAvailability tile={tile} /><span>{tile.net_to_owner_gbp != null ? "Owner earns" : "Est. earn"} <b>{fmtMoney(tile.net_to_owner_gbp ?? tile.estimate_earnings_gbp) ?? "—"}</b></span></div></div></div>
 
-          {tile.availability?.status==="conflict" && <button type="button" className={styles.replacementButton} onClick={()=>void findReplacements(Math.max(0,tile.availability?.items.findIndex(item=>!item.available)??0))}>Find replacement <span>↗</span></button>}
+          {tile.availability?.status==="conflict" && <button type="button" className={styles.replacementButton} onClick={()=>void findReplacements(Math.max(0,tile.availability?.items.findIndex(item=>item.available===false)??0))}>Find replacement <span>↗</span></button>}
           {loc && <div className={styles.chatLocation}><LocationBadge loc={loc} onOpenMap={() => setShowMap(true)} /></div>}
           {tile.renter_rating != null && tile.renter_rating < 4 && <div className="mt-2 text-[11px] text-red-300">Low-rated renter · review before accepting</div>}
         </div>
@@ -2250,7 +2263,7 @@ export function ReplyModal({
               const sent = fmtMsgTime(m.timestamp);
               return (
                 <div key={i} className={`${styles.message} ${m.role === "owner" ? styles.ownerMessage : ""}`}>
-                  <div className={styles.messageAvatar}>{m.role === "owner" ? <span>Me</span> : tile.renter_image_url ? <img src={tile.renter_image_url} alt="" /> : <span>{tile.renter_name[0]}</span>}</div>
+                  {m.role === "owner" ? <div className={styles.messageAvatar}><span>Me</span></div> : <ProfilePortrait src={tile.renter_image_url} name={tile.renter_name} className={styles.messageAvatar}/> }
                   <div
                     className={styles.bubble}
                   >
@@ -2580,7 +2593,7 @@ export function ReplyInbox() {
   // Default to "To reply" so chats I already answered (owner spoke last) DON'T
   // clutter the view — only new requests + renters waiting on me.
   const [filter, setFilter] = useState<"todo" | "requests" | "all">("todo");
-  const [sortBy, setSortBy] = useState<"newest" | "oldest" | "waiting" | "earnings" | "priority">("priority");
+  const [sortBy, setSortBy] = useState<QuickReplySort>("priority");
   const testMode = false;
   const [replacementRequest, setReplacementRequest] = useState({thread: "", revision: 0});
   const [showManager, setShowManager] = useState(false);
@@ -2640,25 +2653,7 @@ export function ReplyInbox() {
   const visible = all.filter((t) =>
     filter === "all" ? true : filter === "requests" ? pendingRequest(t) : needsReply(t),
   );
-  const priority = (t: ReplyTileData) => {
-    const earnings = Math.max(0, t.net_to_owner_gbp ?? t.estimate_earnings_gbp ?? 0);
-    const hours = t.last_sender === "renter" ? Math.max(0, (now - t.last_renter_msg_at) / 3_600_000) : 0;
-    return Math.log1p(earnings) * 2 + Math.log1p(hours) * 3 + (t.availability?.status === "available" ? 2 : t.availability?.status === "conflict" ? -2 : 0);
-  };
-  const sorted = [...visible].sort((a, b) => {
-    if (sortBy === "priority") return priority(b) - priority(a) || b.last_activity_at - a.last_activity_at;
-    if (sortBy === "earnings") return (b.net_to_owner_gbp ?? b.estimate_earnings_gbp ?? -1) - (a.net_to_owner_gbp ?? a.estimate_earnings_gbp ?? -1) || a.last_renter_msg_at - b.last_renter_msg_at;
-    if (sortBy === "newest") return (b.last_activity_at ?? 0) - (a.last_activity_at ?? 0);
-    if (sortBy === "oldest") return (a.last_activity_at ?? 0) - (b.last_activity_at ?? 0);
-    // "waiting": longest-unanswered first, then the highest owner earnings.
-    const aw = a.last_sender === "renter" ? 0 : 1;
-    const bw = b.last_sender === "renter" ? 0 : 1;
-    if (aw !== bw) return aw - bw;
-    const waiting = (a.last_renter_msg_at ?? 0) - (b.last_renter_msg_at ?? 0);
-    if (waiting) return waiting;
-    const earnings = (b.net_to_owner_gbp ?? b.estimate_earnings_gbp ?? -1) - (a.net_to_owner_gbp ?? a.estimate_earnings_gbp ?? -1);
-    return earnings || ((b.last_activity_at ?? 0) - (a.last_activity_at ?? 0));
-  });
+  const sorted = [...visible].sort((a,b)=>compareQuickReplies(a,b,sortBy,now));
   const duplicateIds = quickReplyDuplicateIds(sorted.filter(pendingRequest));
   const displayRows = [...sorted.filter((row) => !duplicateIds.has(row.thread_id)), ...sorted.filter((row) => duplicateIds.has(row.thread_id))];
   // `open` resolves against the RAW queue (not `all`/visible) so approving or
@@ -2695,7 +2690,7 @@ export function ReplyInbox() {
       <div className={styles.titleRow}><h2>Quick Reply</h2>{dbCinemaLoadFailed && <span className="text-amber-300">DB Cinema offline</span>}</div>
       <div className={styles.toolbar}>
         {([{k:"todo",label:"To reply",n:todo},{k:"requests",label:"Requests",n:requests},{k:"all",label:"All",n:all.length}] as const).map((item) => <button type="button" key={item.k} title={item.k === "todo" ? "Renter messages waiting for your reply" : item.k === "requests" ? "Booking requests awaiting your decision, including requests you have replied to" : "All recent conversations"} onClick={() => {setFilter(item.k);if(item.k === "all")setSortBy("priority");}} className={filter===item.k ? styles.activeFilter : ""}>{filter===item.k && <i />}{item.label}</button>)}
-        <select value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)} aria-label="Sort conversations"><option value="priority">Priority · earnings, wait & stock</option><option value="earnings">Highest earnings first</option><option value="waiting">Longest waiting · best earnings</option><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select>
+        <select title="Priority combines earnings, waiting time and stock. Other choices sort independently." value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)} aria-label="Sort conversations"><option value="priority">Priority</option><option value="earnings">Highest earnings</option><option value="waiting">Longest wait</option><option value="newest">Newest activity</option><option value="oldest">Oldest request</option></select>
         <button type="button" onClick={() => setShowManager(true)}>▤ Quick texts</button>
         <button type="button" onClick={() => void updateSettings({availability_include_pending:!includePending})} aria-pressed={includePending} className={styles.toggle}><i data-on={includePending} />Pending {includePending ? "on" : "off"}</button>
       </div>

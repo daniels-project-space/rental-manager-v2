@@ -11,7 +11,7 @@ async function read(items: unknown[], proof = {}) {
     expect(JSON.parse(String(options.body)).path).toBe("rentalChat:adminInbox");
     return new Response(JSON.stringify({status:"success",value:{authorized:true,items:[{
       _id:"fixture-booking",accountId:"fixture-person",name:"Fixture renter",lastMessage:"Is this available?",
-      lastSender:"renter",updatedAt:1,items,status:"pending_payment",...proof,
+      lastSender:"renter",createdAt:1,updatedAt:99,items,status:"pending_payment",...proof,
     }]}}));
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -24,6 +24,10 @@ describe("website Quick Reply full-basket stock and lifecycle",()=>{
     const row=await read([{name:"Camera",stockAvailability:stock},{name:"Lens"}]);
     expect(row.availability).toMatchObject({status:"unknown",reason:"Full basket needs a stock review"});
     expect(row.availability.checked_at).toBeGreaterThan(0);
+    expect(row.request_created_at).toBe(1);
+    expect(row.last_activity_at).toBe(99);
+    expect(row.availability.items).toHaveLength(2);
+    expect(row.availability.items[1]).toMatchObject({item_index:1,name:"Lens",available:null});
   });
   it("preserves a verified conflict even when another line is unchecked",async()=>{
     expect((await read([{name:"Camera",stockAvailability:{...stock,available:false}},{name:"Lens"}])).availability.status).toBe("conflict");
