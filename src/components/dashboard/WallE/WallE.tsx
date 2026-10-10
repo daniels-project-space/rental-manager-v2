@@ -13,11 +13,12 @@
  */
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import WallEBotLazy from './WallEBotLazy';
 import { useWallESignals } from './WallESignals';
 import WallEChat from './WallEChat';
+import InventoryOnboarding from './InventoryOnboarding';
 import { deriveMood } from './walle.mood';
 import type { WallEChatState, Mood } from './walle.types';
 import type { BubbleTone } from './WallESpeechBubble';
@@ -26,6 +27,10 @@ import './walle-cell.css';
 export interface WallEProps {
   accountSlug?: string | null;
 }
+
+const subscribeNever = () => () => {};
+const getClientMounted = () => true;
+const getServerMounted = () => false;
 
 function moodToTone(mood: Mood): BubbleTone {
   switch (mood) {
@@ -46,7 +51,7 @@ export default function WallE({ accountSlug = null }: WallEProps) {
   const [speaking, setSpeaking] = useState(false);
 
   // Mount timestamp for idle proxy.
-  const mountedAt = useRef<number>(Date.now());
+  const [mountedAt] = useState<number>(() => Date.now());
   const [now, setNow] = useState<number>(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 5_000);
@@ -56,7 +61,7 @@ export default function WallE({ accountSlug = null }: WallEProps) {
   // Live signals — single subscription used for mood derivation.
   const { signals, lastChangeAt } = useWallESignals(accountSlug);
 
-  const idleSinceMs = chatState === 'idle' ? now - mountedAt.current : 0;
+  const idleSinceMs = chatState === 'idle' ? now - mountedAt : 0;
   const mood = useMemo(
     () => deriveMood(signals, { idleSinceMs, chatState }),
     [signals, idleSinceMs, chatState],
@@ -75,10 +80,8 @@ export default function WallE({ accountSlug = null }: WallEProps) {
   // otherwise make a position:fixed child anchor to the small cell — pushing
   // the panel off-centre and out of bounds.
   const [expanded, setExpanded] = useState(false);
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const [inventoryOpen, setInventoryOpen] = useState(false);
+  const mounted = useSyncExternalStore(subscribeNever, getClientMounted, getServerMounted);
 
   const orb = (
     <div className="walle-stage">
@@ -130,7 +133,12 @@ export default function WallE({ accountSlug = null }: WallEProps) {
               >
                 {'\u2715'}
               </button>
-              <WallEChat
+              <button
+                type="button"
+                onClick={() => setInventoryOpen(open => !open)}
+                className="absolute right-10 top-1.5 z-20 rounded-md border border-indigo-400/30 bg-indigo-500/20 px-2 py-1 text-[11px] text-indigo-100"
+              >{inventoryOpen ? 'Chat' : 'Add inventory'}</button>
+              {inventoryOpen ? <InventoryOnboarding onClose={() => setInventoryOpen(false)} /> : <WallEChat
                 onChatStateChange={setChatState}
                 onSpeakingChange={setSpeaking}
                 lastSignalChangeAt={lastChangeAt}
@@ -145,7 +153,7 @@ export default function WallE({ accountSlug = null }: WallEProps) {
                     </div>
                   </div>
                 }
-              />
+              />}
             </div>
           </div>,
           document.body,

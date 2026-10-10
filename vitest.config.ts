@@ -29,6 +29,7 @@ export default defineConfig({
       "convex/lib/quick_reply_sort.test.ts",
       "convex/lib/quick_reply_cache.test.ts",
       "convex/lib/review_time.test.ts",
+      "convex/inventory_onboarding.test.ts",
       "convex/lib/finance/*.test.ts",
       "convex/finance.test.ts",
       "convex/calendar.website-windows.test.ts",
