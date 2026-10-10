@@ -40,15 +40,78 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     await ev(
       `{window.__fixture.rows[2].account_slug='diogo';window.__fixture.rows[5].account_slug='leo';window.__fixture.rows[0].requested_items=[...window.__fixture.rows[0].items.map(i=>({...i,origin:'basket'})),{name:'Sigma 24-70',qty:1,image_url:'/gear1.png',origin:'chat'},{name:'Manfrotto Tripod',qty:1,image_url:'/gear2.png',origin:'chat'}];window.__fixture.changed();[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='All').click();}`,
     );
-    const search=async value=>{await ev(`{const input=document.querySelector('[aria-label="Search conversations"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));}`);await pause(100);};
-    await ev(`{window.__fixture.rows[0].search_text='The owner mentioned bouncy castle scheduling';window.__fixture.changed();}`);
-    await search('bouncy castle');
-    assert.equal(await ev(`document.querySelectorAll('[aria-label^="Open conversation with"]').length`),1,'words in recent conversation filter the queue');
-    await search('');
-    await ev(`[...document.querySelector('[aria-label="Filter conversations by account"]').querySelectorAll('button')].find(b=>b.textContent.trim()==='Leo Adams').click()`);await pause(100);
-    assert.equal(await ev(`document.querySelectorAll('[aria-label^="Open conversation with"]').length`),1,'account filter isolates the requested account');
-    assert.equal(await ev(`document.querySelector('[aria-label^="Open conversation with"]').style.getPropertyValue('--account-accent')`),'#a855f7','account row uses the calendar accent');
-    await ev(`[...document.querySelector('[aria-label="Filter conversations by account"]').querySelectorAll('button')].find(b=>b.textContent.trim()==='All accounts').click()`);await pause(100);
+    const search = async (value) => {
+      await ev(
+        `{const input=document.querySelector('[aria-label="Search conversations"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));}`,
+      );
+      await pause(100);
+    };
+    await ev(
+      `{window.__fixture.rows[0].search_text='The owner mentioned bouncy castle scheduling';window.__fixture.changed();}`,
+    );
+    await search("bouncy castle");
+    assert.equal(
+      await ev(
+        `document.querySelectorAll('[aria-label^="Open conversation with"]').length`,
+      ),
+      1,
+      "words in recent conversation filter the queue",
+    );
+    await search("");
+    await ev(
+      `[...document.querySelector('[aria-label="Filter conversations by account"]').querySelectorAll('button')].find(b=>b.textContent.trim()==='Leo Adams').click()`,
+    );
+    await pause(100);
+    assert.equal(
+      await ev(
+        `document.querySelectorAll('[aria-label^="Open conversation with"]').length`,
+      ),
+      1,
+      "account filter isolates the requested account",
+    );
+    assert.equal(
+      await ev(
+        `document.querySelector('[aria-label^="Open conversation with"]').style.getPropertyValue('--account-accent')`,
+      ),
+      "#a855f7",
+      "account row uses the calendar accent",
+    );
+    await ev(
+      `[...document.querySelector('[aria-label="Filter conversations by account"]').querySelectorAll('button')].find(b=>b.textContent.trim()==='All accounts').click()`,
+    );
+    await pause(100);
+    if (width === 1505) {
+      assert(
+        await ev(
+          `!!document.querySelector('[aria-label^="Request preview for"]')`,
+        ),
+        "closed desktop shows a request preview",
+      );
+      assert.equal(
+        await ev(
+          `window.__calls.filter(c=>c.name==='replyInbox_actions:generateDraft'||c.name==='dbcinema_chat:draftReply').length`,
+        ),
+        0,
+        "closed preview does not draft",
+      );
+      await ev(
+        `document.querySelector('[aria-label="Open conversation with Marcus Lee"]').dispatchEvent(new MouseEvent('mouseover',{bubbles:true,relatedTarget:document.body}))`,
+      );
+      await pause(100);
+      assert(
+        await ev(
+          `!!document.querySelector('[aria-label="Request preview for Marcus Lee"]')`,
+        ),
+        "hover updates the real request preview",
+      );
+      assert.equal(
+        await ev(
+          `window.__calls.filter(c=>c.name==='replyInbox_actions:generateDraft'||c.name==='dbcinema_chat:draftReply').length`,
+        ),
+        0,
+        "hover does not draft",
+      );
+    }
     await capture("queue");
     if (width === 1505) {
       await ev(
@@ -114,6 +177,15 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       "message history keeps usable height",
     );
 
+    if (width === 1505) {
+      const heights = await ev(
+        `[...document.querySelectorAll('[aria-label^="Open conversation with"]')].map(row=>row.getBoundingClientRect().height)`,
+      );
+      assert(
+        Math.max(...heights) < 165,
+        "medium queue rows retain compact reference density: " + JSON.stringify(heights),
+      );
+    }
     const draftBefore = await ev(
       `window.__calls.filter(c=>c.name==='replyInbox_actions:generateDraft').length`,
     );
@@ -148,6 +220,31 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     await ev(
       `document.querySelector('[aria-label="Close conversation"]').click()`,
     );
+    if (width === 1505) {
+      assert(
+        await ev(
+          `!!document.querySelector('[aria-label="Request preview for Marcus Lee"]')`,
+        ),
+        "closing restores the previous request in the compact dock",
+      );
+      const count = await ev(
+        `window.__calls.filter(c=>c.name==='replyInbox_actions:generateDraft').length`,
+      );
+      await ev(
+        `document.querySelector('[aria-label="Open full chat with Marcus Lee"]').click()`,
+      );
+      await pause(100);
+      assert.equal(
+        await ev(
+          `window.__calls.filter(c=>c.name==='replyInbox_actions:generateDraft').length`,
+        ),
+        count + 1,
+        "preview button explicitly opens chat and drafts once",
+      );
+      await ev(
+        `document.querySelector('[aria-label="Close conversation"]').click()`,
+      );
+    }
     await ev(
       `document.querySelector('[aria-label="Open conversation with Elena Rossi"] button').closest('[role=button]').querySelector('button').blur();[...document.querySelector('[aria-label="Open conversation with Elena Rossi"]').querySelectorAll('button')].find(b=>b.textContent.trim()==='Find replacement').click()`,
     );
