@@ -1,31 +1,6 @@
-// Pure-function unit tests for mergeOrder used in edit-mode-context.tsx.
-// The source file is a "use client" TSX module wired to React/Convex hooks,
-// so we mirror the spec pattern from convex/dashboard_insights.spec.ts and
-// inline the helper for direct verification. Keep this in sync with the
-// implementation in src/lib/dashboard/edit-mode-context.tsx.
-
+// Verify the actual layout helper used by the dashboard provider.
 import { describe, it, expect } from "vitest";
-
-function mergeOrder(saved: string[] | undefined, defaults: readonly string[]): string[] {
-  if (!saved || saved.length === 0) return [...defaults];
-  const knownDefaults = new Set(defaults);
-  const savedKnown = saved.filter((id) => knownDefaults.has(id));
-  const savedSet = new Set(savedKnown);
-  const result: string[] = [];
-  let savedIdx = 0;
-  for (const defId of defaults) {
-    if (!savedSet.has(defId)) {
-      result.push(defId);
-    } else {
-      while (savedIdx < savedKnown.length && savedKnown[savedIdx] !== defId) {
-        result.push(savedKnown[savedIdx++]);
-      }
-      if (savedIdx < savedKnown.length) result.push(savedKnown[savedIdx++]);
-    }
-  }
-  while (savedIdx < savedKnown.length) result.push(savedKnown[savedIdx++]);
-  return result;
-}
+import { mergeOrder } from "./layout-order";
 
 describe("mergeOrder", () => {
   it("returns defaults when saved is empty/undefined", () => {

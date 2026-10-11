@@ -59,23 +59,15 @@ function Speedometer({ channel }: { channel: ChannelRate }) {
 
   return (
     <div
-      className="rounded-xl border px-2.5 py-2"
+      className="flex items-center gap-2 rounded-lg border px-2 py-1"
       style={{
         background: "rgba(2,6,23,0.34)",
         borderColor: `${TONE_COLOR[tone]}30`,
       }}
     >
-      <div className="flex items-center justify-between gap-2 text-[10px] leading-tight">
-        <span className="truncate font-semibold uppercase tracking-wide text-slate-300">{label}</span>
-        <span
-          className="h-1.5 w-1.5 shrink-0 rounded-full"
-          style={{ background: TONE_COLOR[tone], boxShadow: `0 0 7px ${TONE_COLOR[tone]}` }}
-          aria-hidden="true"
-        />
-      </div>
       <svg
         viewBox="0 0 120 76"
-        className="mx-auto mt-0.5 block h-[76px] w-full max-w-[150px]"
+        className="block h-[24px] w-[38px] shrink-0"
         role="img"
         aria-label={ariaLabel}
       >
@@ -94,11 +86,10 @@ function Speedometer({ channel }: { channel: ChannelRate }) {
         <text x="14" y="71" textAnchor="middle" fill="#64748b" fontSize="8">0</text>
         <text x="106" y="71" textAnchor="middle" fill="#64748b" fontSize="8">100</text>
       </svg>
-      <p className="-mt-1 text-center text-[10px] text-slate-500">
-        {channel.rate === null
-          ? "Not available"
-          : "Hygglo profile"}
-      </p>
+      <div className="flex min-w-0 flex-1 items-center justify-between gap-1 text-[11px]">
+        <span className="truncate text-slate-300" title={label}>{label}</span>
+        <strong style={{ color: TONE_COLOR[tone] }}>{value}</strong>
+      </div>
     </div>
   );
 }
@@ -119,17 +110,17 @@ export function ChannelResponseRateCard() {
   const snapshot = useStableQuery(channelResponseRatesRef, {}) as Snapshot | null | undefined;
 
   if (snapshot === undefined) {
-    return <div className="h-[204px] animate-pulse rounded-2xl bg-slate-900/40" aria-label="Loading channel response rates" />;
+    return <div className="h-[140px] animate-pulse rounded-2xl bg-slate-900/40" aria-label="Loading channel response rates" />;
   }
 
   if (snapshot === null) {
     return (
       <div
         data-dashboard-card
-        className="stat-card rounded-2xl border-l-[3px] p-4"
+        className="stat-card rounded-2xl border-l-[3px] p-3"
         style={{ background: "rgba(14,17,28,0.35)", backdropFilter: "blur(24px) saturate(1.5)", borderColor: "rgba(100,116,139,0.28)", borderLeftColor: "#64748b" }}
       >
-        <p className="text-xs uppercase tracking-wider text-slate-400">Channel response rate</p>
+        <p className="text-xs uppercase tracking-wider text-slate-400">Response rate</p>
         <p className="mt-3 text-sm text-slate-500">First snapshot will appear after the next scheduled refresh.</p>
       </div>
     );
@@ -138,7 +129,7 @@ export function ChannelResponseRateCard() {
   return (
     <section
       data-dashboard-card
-      className="stat-card rounded-2xl border-l-[3px] p-4"
+      className="stat-card rounded-2xl border-l-[3px] p-3"
       style={{
         background: "rgba(14,17,28,0.35)",
         backdropFilter: "blur(24px) saturate(1.5)",
@@ -148,17 +139,17 @@ export function ChannelResponseRateCard() {
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-wider text-slate-400">Channel response rate</p>
-          <p className="mt-1 text-[11px] text-slate-500">Official Hygglo profile metric · refreshed 4x daily</p>
+          <p className="text-xs uppercase tracking-wider text-slate-400">Response rate</p>
+          <p className="mt-1 text-[11px] text-slate-500">Hygglo · 4x daily</p>
         </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-2.5">
-        {snapshot.channels.map((channel) => <Speedometer key={channel.slug} channel={channel} />)}
+      <div className="mt-2 grid grid-cols-1 gap-1">
+        {snapshot.channels.filter((channel) => channel.slug !== "dbcinema_web").map((channel) => <Speedometer key={channel.slug} channel={channel} />)}
       </div>
 
-      <div className="mt-3 flex items-center justify-between gap-2 text-[10px] text-slate-500">
-        <span>Red &lt;70% · yellow 70–89% · green ≥90%</span>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-1 text-[10px] text-slate-500">
+
         <span className="shrink-0">Updated {formatUpdatedAt(snapshot.generatedAt)}</span>
       </div>
     </section>

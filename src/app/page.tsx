@@ -12,7 +12,7 @@ import {
   SortableContext,
   arrayMove,
   sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
+  rectSortingStrategy,
 } from "@dnd-kit/sortable";
 import { Suspense } from "react";
 import { HeaderBar } from "@/components/dashboard/HeaderBar";
@@ -21,7 +21,7 @@ import { EditModeBar } from "@/components/dashboard/EditModeBar";
 import { AddWidgetDrawer } from "@/components/dashboard/AddWidgetDrawer";
 import { EditableWidget } from "@/components/dashboard/EditableWidget";
 import { WidgetErrorBoundary } from "@/components/dashboard/WidgetErrorBoundary";
-import { PANEL_WIDGETS } from "@/lib/dashboard/widget-registry";
+import { PANEL_WIDGETS, COMPACT_PANELS } from "@/lib/dashboard/widget-registry";
 import { useEditMode } from "@/lib/dashboard/edit-mode-context";
 import { DeferredMount } from "@/lib/dashboard/deferred-mount";
 import { DashboardHydrationProvider } from "@/lib/dashboard/hydration-context";
@@ -116,12 +116,13 @@ export default function DashboardPage() {
           >
             <SortableContext
               items={visiblePanels.map((w) => w.id)}
-              strategy={verticalListSortingStrategy}
+              strategy={rectSortingStrategy}
             >
+              <div className="dashboard-panels grid grid-cols-1 xl:grid-cols-2 gap-3 items-start">
               {visiblePanels.map(({ id, label, component: Component }) => {
                 const skel = PANEL_SKELETON[id];
                 return (
-                  <div key={id} className="mb-4">
+                  <div key={id} className={COMPACT_PANELS.has(id) ? "min-w-0" : "min-w-0 xl:col-span-2"}>
                     <EditableWidget id={id} kind="panel" label={label}>
                       <WidgetErrorBoundary label={label}>
                         <DeferredMount
@@ -136,6 +137,7 @@ export default function DashboardPage() {
                   </div>
                 );
               })}
+              </div>
             </SortableContext>
           </DndContext>
         </main>

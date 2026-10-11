@@ -6,7 +6,7 @@ export function Card({
   className?: string;
 }) {
   return (
-    <div className={`glass-card p-5 ${className}`} data-dashboard-card>
+    <div className={`glass-card p-4 ${className}`} data-dashboard-card>
       {children}
     </div>
   );

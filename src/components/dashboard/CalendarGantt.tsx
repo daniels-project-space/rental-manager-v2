@@ -59,6 +59,7 @@ interface GanttItem {
 
 interface Props {
   open: boolean;
+  embedded?: boolean;
   onClose: () => void;
   weekStartIso?: string;
   accountSlug?: string;
@@ -687,7 +688,7 @@ const LABEL_WIDTH = 300; // px for left "renter + thumbnails" column
 const RES_ROW_HEIGHT = 84; // one reservation per row (renter + large thumbnails)
 const BAR_HEIGHT = 28; // fixed bar height, vertically centered in the row
 
-export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug, focusedReservationId }: Props): React.ReactElement | null {
+export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug, focusedReservationId, embedded = false }: Props): React.ReactElement | null {
   const [weekStart, setWeekStart] = useState<string>(() => weekStartIso ?? viewAnchor());
   const [selectedBlock, setSelectedBlock] = useState<{ block: Block; items: ResItem[]; accent: string } | null>(null);
   // Live progress per logical calendar period.
@@ -743,7 +744,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
 
   // ESC to close; arrow keys use the same bounds as the visible controls.
   useEffect(() => {
-    if (!open) return;
+    if (!open || embedded) return;
     const defaultMin = addDays(viewAnchor(), -WEEK_BEHIND_CAP);
     const defaultMax = addDays(viewAnchor(), WEEK_AHEAD_CAP);
     const min = weekStartIso && weekStartIso < defaultMin ? weekStartIso : defaultMin;
@@ -755,15 +756,15 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose, weekStartIso]);
+  }, [open, onClose, weekStartIso, embedded]);
 
   // Lock body scroll while open
   useEffect(() => {
-    if (!open) return;
+    if (!open || embedded) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = prev; };
-  }, [open]);
+  }, [open, embedded]);
 
   // Compute live progress for DELIVERED blocks (5-min interval)
   const computeProgress = useCallback(() => {
@@ -827,7 +828,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
     setNowMs(Date.now());
     const id = setInterval(() => setNowMs(Date.now()), 60_000);
     return () => clearInterval(id);
-  }, [open]);
+  }, [open, embedded]);
 
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).classList.contains("gantt-backdrop")) onClose();
@@ -912,16 +913,16 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
 
   const content = (
     <div
-      className="gantt-backdrop fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(6px)" }}
-      onClick={handleBackdropClick}
+      className={embedded ? "gantt-embedded min-w-0" : "gantt-backdrop fixed inset-0 z-50 flex items-center justify-center p-4"}
+      style={embedded ? undefined : { background: "rgba(0,0,0,0.75)", backdropFilter: "blur(6px)" }}
+      onClick={embedded ? undefined : handleBackdropClick}
     >
       <div
         className="relative flex flex-col rounded-2xl overflow-hidden shadow-2xl"
         style={{
-          width: "95vw",
+          width: embedded ? "100%" : "95vw",
           maxWidth: 1480,
-          height: "90vh",
+          height: embedded ? Math.min(740, Math.max(340, 200 + visibleResRows.length * RES_ROW_HEIGHT)) : "90vh",
           background: "rgba(10,14,28,0.98)",
           border: "1px solid rgba(255,255,255,0.08)",
         }}
@@ -936,18 +937,18 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
             <h2 className="text-white font-bold text-lg leading-tight">Weekly Calendar</h2>
             <p className="text-gray-400 text-sm mt-0.5">{formatWeekRange(weekStart)}</p>
           </div>
-          <button
+          {!embedded && <button
             className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 transition-colors text-xl leading-none"
             onClick={onClose}
             aria-label="Close"
           >
             ×
-          </button>
+          </button>}
         </div>
 
         {/* ---- Sub-header navigation ---- */}
         <div
-          className="flex items-center gap-2 px-6 py-3 flex-shrink-0"
+          className="flex flex-wrap items-center gap-2 px-3 md:px-6 py-3 flex-shrink-0"
           style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
         >
           <button
@@ -1347,5 +1348,5 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
 
   // Portal to body to escape any stacking context
   if (typeof window === "undefined") return null;
-  return createPortal(content, document.body);
+  return embedded ? content : createPortal(content, document.body);
 }

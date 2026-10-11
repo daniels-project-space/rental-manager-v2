@@ -50,7 +50,9 @@ import { CapacityGapAlert } from "./insights/CapacityGapAlert";
 import { ItemUtilizationRanking } from "./insights/ItemUtilizationRanking";
 import { BelowMinimumCounter } from "./insights/BelowMinimumCounter";
 import { WeeklyRevenueSparkline } from "./insights/WeeklyRevenueSparkline";
+import { ConversationFunnel } from "./ConversationFunnel";
 import { ChannelResponseRateCard } from "./ChannelResponseRateCard";
+import { StatPackingGrid } from "./StatPackingGrid";
 import WallE from "./WallE/WallE";
 
 // Live poller freshness (2026-07-12). getStatsDrawerData no longer overlays
@@ -188,13 +190,6 @@ export function StatsGrid() {
   const verificationLosses = useStableQuery(api.dashboard.getMonthlyVerificationLosses, {
     accountSlug: activeAccountSlug, month: reportingMonth,
   });
-  // Rented gear with no inventory mapping. Small, live, and deliberately NOT
-  // folded into getStatsDrawerData — that payload comes from an hourly MV, and
-  // stock that is out while reading as available must not sit behind a cache.
-  const unmappedListings = useStableQuery(
-    api.calendar.getUnmappedRentedListings,
-    {},
-  );
   // Pass 10b (2026-05-25) — drawer drill-down rentals split into a
   // separate MV row. Fetch only when a drawer is currently expanded so
   // the headline subscription stays at ~6KB instead of ~78KB. Drawers
@@ -240,6 +235,7 @@ export function StatsGrid() {
 
     return {
       channel_response_rates: <ChannelResponseRateCard />,
+      conversation_funnel: <ConversationFunnel compact />,
       active: (
         <ExpandableStatCard
           id="active"
@@ -713,10 +709,7 @@ export function StatsGrid() {
     <>
       <CriticalAlerts
         conflicts={(rawData as any)?.conflicts ?? []}
-        // Queried directly, NOT via getStatsDrawerData: that payload is served
-        // from an hourly materialised view, and gear that is out but untracked
-        // must not sit behind a cache.
-        unmapped_listings={unmappedListings?.alerts ?? []}
+        unmapped_listings={[]}
         blacklist_alerts={(rawData as any)?.blacklist_alerts ?? []}
         qty_drift_count={(rawData as any)?.qty_drift_count ?? 0}
         qty_drift_sample={(rawData as any)?.qty_drift_sample ?? []}
@@ -727,7 +720,7 @@ export function StatsGrid() {
         onDragEnd={handleDragEnd}
       >
         <SortableContext items={visibleIds} strategy={rectSortingStrategy}>
-          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 auto-rows-[minmax(140px,auto)] gap-4 mt-4 items-start">
+          <StatPackingGrid>
           {visibleIds.map((id) => {
             const label = STAT_WIDGETS.find((w) => w.id === id)?.label ?? id;
             const span = HERO_SPANS[id];
@@ -755,7 +748,7 @@ export function StatsGrid() {
               </EditableWidget>
             );
           })}
-          </div>
+          </StatPackingGrid>
         </SortableContext>
       </DndContext>
 
