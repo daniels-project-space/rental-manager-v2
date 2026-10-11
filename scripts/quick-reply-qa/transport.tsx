@@ -256,6 +256,34 @@ export function useAction(ref) {
   return useCallback(
     async (args) => {
       window.__calls.push({ kind: "action", name, args });
+      if (name === "quick_reply_search:page") {
+        if (window.__historyFailure) throw Error("Fixture history unavailable");
+        if (window.__historyDelay)
+          await new Promise((resolve) =>
+            setTimeout(resolve, window.__historyDelay),
+          );
+        return {
+          results: args.requests.map((request) => {
+            const row = rows.find((row) => row.thread_id === request.thread_id);
+            const texts = row?.history_messages ?? [];
+            const offset = Number(request.cursor ?? 0);
+            const page = texts.slice(offset, offset + 16);
+            const remaining = request.terms.filter(
+              (word) =>
+                !page.some((text) => text.toLocaleLowerCase().includes(word)),
+            );
+            const done =
+              offset + page.length >= texts.length || !remaining.length;
+            return {
+              thread_id: request.thread_id,
+              remaining,
+              done,
+              cursor: done ? null : String(offset + page.length),
+              scanned: page.length,
+            };
+          }),
+        };
+      }
       if (name === "dbcinema_chat:inbox")
         return rows.filter((r) => r.source === "dbcinema_web");
       if (name === "dbcinema_chat:rentalControls")

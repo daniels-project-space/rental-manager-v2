@@ -356,6 +356,7 @@ import type * as propose_bmpcc_mapping from "../propose_bmpcc_mapping.js";
 import type * as propose_bundle_mapping from "../propose_bundle_mapping.js";
 import type * as quick_reply_basket_stock from "../quick_reply_basket_stock.js";
 import type * as quick_reply_replacements from "../quick_reply_replacements.js";
+import type * as quick_reply_search from "../quick_reply_search.js";
 import type * as quick_reply_swap_ledger from "../quick_reply_swap_ledger.js";
 import type * as rate_limit_config from "../rate_limit_config.js";
 import type * as reconciliation from "../reconciliation.js";
@@ -764,6 +765,7 @@ declare const fullApi: ApiFromModules<{
   propose_bundle_mapping: typeof propose_bundle_mapping;
   quick_reply_basket_stock: typeof quick_reply_basket_stock;
   quick_reply_replacements: typeof quick_reply_replacements;
+  quick_reply_search: typeof quick_reply_search;
   quick_reply_swap_ledger: typeof quick_reply_swap_ledger;
   rate_limit_config: typeof rate_limit_config;
   reconciliation: typeof reconciliation;
