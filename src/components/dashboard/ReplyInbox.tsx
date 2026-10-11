@@ -1,4 +1,5 @@
 "use client";
+import { useMessageHistorySearch } from "./useMessageHistorySearch";
 import { DbCinemaOrderEditor } from "./DbCinemaOrderEditor";
 import { ItemImage, RequestedItemStack } from "./RequestedItemStack";
 import type { CSSProperties } from "react";
@@ -4816,7 +4817,20 @@ export function ReplyInbox() {
   }, []);
 
   const onActed = (id: string) => setActed((p) => new Set(p).add(id));
-  const all = [...(queue ?? []), ...dbCinemaRows]
+  const searchWords = [
+    ...new Set(search.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)),
+  ];
+  const haystackFor = (t: ReplyTileData) =>
+    [
+      t.renter_name,
+      t.preview,
+      t.search_text ?? "",
+      ...t.items.map((item) => item.name),
+      ...(t.requested_items ?? []).map((item) => item.name),
+    ]
+      .join(" ")
+      .toLocaleLowerCase();
+  const eligible = [...(queue ?? []), ...dbCinemaRows]
     .map(withPortrait)
     .filter((t) => {
       if (acted.has(t.thread_id)) return false;
@@ -4824,23 +4838,6 @@ export function ReplyInbox() {
         t.source === "dbcinema_web" ? "dbcinema_web" : t.account_slug;
       if (accountFilter && slug !== accountFilter) return false;
       if (activeAccountSlug && slug !== activeAccountSlug) return false;
-      const haystack = [
-        t.renter_name,
-        t.preview,
-        t.search_text ?? "",
-        ...t.items.map((item) => item.name),
-        ...(t.requested_items ?? []).map((item) => item.name),
-      ]
-        .join(" ")
-        .toLocaleLowerCase();
-      if (
-        search
-          .trim()
-          .toLocaleLowerCase()
-          .split(/\s+/)
-          .some((word) => !haystack.includes(word))
-      )
-        return false;
       const dismissedAt = dbDismissedAt[t.thread_id];
       return (
         t.source !== "dbcinema_web" ||
@@ -4848,6 +4845,22 @@ export function ReplyInbox() {
         t.last_activity_at > dismissedAt
       );
     });
+  const historyRequests = eligible
+    .map((t) => ({
+      thread_id: t.thread_id,
+      ...(t.source === "dbcinema_web"
+        ? { booking_id: t.source_booking_id }
+        : {}),
+      terms: searchWords.filter((word) => !haystackFor(t).includes(word)),
+      cursor: null,
+    }))
+    .filter((request) => request.terms.length > 0);
+  const historySearch = useMessageHistorySearch(historyRequests);
+  const all = eligible.filter(
+    (t) =>
+      searchWords.every((word) => haystackFor(t).includes(word)) ||
+      historySearch.matches.has(t.thread_id),
+  );
   // A request still "needs me" only until I've replied/approved (owner-last).
   const pendingRequest = (t: ReplyTileData) =>
     t.is_request && !isResolvedClosed(t);
@@ -5022,6 +5035,23 @@ export function ReplyInbox() {
             <i data-on={includePending} />
             Pending {includePending ? "on" : "off"}
           </button>
+          {(historySearch.pending || historySearch.error) && (
+            <span className={styles.searchFeedback} role="status">
+              {historySearch.pending
+                ? "Searching older messages…"
+                : "Message history unavailable"}
+              {historySearch.error && (
+                <button
+                  type="button"
+                  onClick={historySearch.retry}
+                  title={historySearch.error}
+                  aria-label="Retry message history search"
+                >
+                  Retry
+                </button>
+              )}
+            </span>
+          )}
         </div>
         <div
           className={`${styles.split} ${canDock ? styles.withDock : ""} ${canDock && openId ? styles.expandedChat : ""}`}

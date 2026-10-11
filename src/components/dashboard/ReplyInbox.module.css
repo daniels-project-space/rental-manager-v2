@@ -2315,3 +2315,6 @@
     grid-row: 1/4;
   }
 }
+
+.searchFeedback { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 11px; color: #9db4c7; }
+.toolbar .searchFeedback button { min-height: 28px; height: 28px; font-size: 10px; padding: 0 9px; }

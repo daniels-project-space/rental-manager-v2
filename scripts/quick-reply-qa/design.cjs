@@ -57,6 +57,74 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       1,
       "words in recent conversation filter the queue",
     );
+    await ev(
+      `{window.__fixture.rows[0].history_messages=Array.from({length:53},(_,i)=>i===51?'acetate':i===52?'screening':'ordinary archived text');window.__fixture.rows[1].history_messages=Array.from({length:49},(_,i)=>i===48?'cinetape':'ordinary archived text');window.__fixture.changed();}`,
+    );
+    await search("Marcus acetate screening");
+    await pause(450);
+    assert(
+      await ev(
+        `document.querySelectorAll('[aria-label^="Open conversation with"]').length===1&&!!document.querySelector('[aria-label="Open conversation with Marcus Lee"]')`,
+      ),
+      "name and words across older native message pages filter the queue",
+    );
+    await capture("history-search");
+    await search("Priya cinetape");
+    await pause(450);
+    assert(
+      await ev(
+        `document.querySelectorAll('[aria-label^="Open conversation with"]').length===1&&!!document.querySelector('[aria-label="Open conversation with Priya Sharma"]')`,
+      ),
+      "older website messages filter their account's requests",
+    );
+    await ev(`{window.__historyFailure=true;}`);
+    await search("acetate");
+    await pause(450);
+    assert(
+      await ev(
+        `!!document.querySelector('[aria-label="Retry message history search"]')`,
+      ),
+      "history failures offer a controlled retry",
+    );
+    await capture("search-unavailable");
+    await ev(
+      `{window.__historyFailure=false;document.querySelector('[aria-label="Retry message history search"]').click();}`,
+    );
+    await pause(450);
+    assert(
+      await ev(
+        `document.querySelectorAll('[aria-label^="Open conversation with"]').length===1&&!document.querySelector('[aria-label="Retry message history search"]')`,
+      ),
+      "history retry restores results without sending or drafting",
+    );
+    await ev(
+      `{window.__fixture.rows[0].history_messages[0]='acetate';window.__historyDelay=300;}`,
+    );
+    await search("acetate screening");
+    await pause(230);
+    await ev(`{window.__historyDelay=0;}`);
+    await search("Priya");
+    await pause(650);
+    assert(
+      await ev(
+        `document.querySelectorAll('[aria-label^="Open conversation with"]').length===1&&!!document.querySelector('[aria-label="Open conversation with Priya Sharma"]')`,
+      ),
+      "late history responses cannot restore an old search",
+    );
+    await search("");
+    await pause(350);
+    const historyIdleCalls = await ev(
+      `window.__calls.filter(call=>call.name==='quick_reply_search:page').length`,
+    );
+    await ev(`window.__fixture.changed()`);
+    await pause(350);
+    assert.equal(
+      await ev(
+        `window.__calls.filter(call=>call.name==='quick_reply_search:page').length`,
+      ),
+      historyIdleCalls,
+      "cleared search and incoming updates do not read message history",
+    );
     await search("");
     await ev(
       `[...document.querySelector('[aria-label="Filter conversations by account"]').querySelectorAll('button')].find(b=>b.textContent.trim()==='Leo Adams').click()`,

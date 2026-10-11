@@ -25,6 +25,8 @@ export default defineConfig({
     include: [
       "convex/lib/replacement_sets.test.ts",
       "convex/quick_reply_replacements.test.ts",
+      "convex/quick_reply_search.test.ts",
+      "src/lib/message-history-search.test.ts",
       "convex/dbcinema_chat.test.ts",
       "convex/replyInbox.availability.test.ts",
       "convex/renter_trust.cache.test.ts",
