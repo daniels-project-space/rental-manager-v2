@@ -46,6 +46,30 @@ function database() {
   return { ctx: { db }, rows };
 }
 const invoke = (fn: any, ctx: any, args: any) => fn._handler(ctx, args);
+describe("Quick Reply qualified replacement search limit", () => {
+ it("continues beyond six unmapped candidates to verified account listings without writes", async () => {
+  const f=database();
+  await f.ctx.db.insert("items",{name_canonical:"Manfrotto 055",kind:"tripod",status:"active",qty:10,replacement_cost_gbp:1000});
+  for(let n=0;n<6;n++)await f.ctx.db.insert("items",{name_canonical:`Manfrotto 190 alternative ${n}`,kind:"tripod",status:"active",qty:10,replacement_cost_gbp:500});
+  for(let n=0;n<2;n++){
+   const name=`Basic Tripod ${n}`,pid=700+n;
+   const id=await f.ctx.db.insert("items",{name_canonical:name,kind:"tripod",status:"active",qty:10,replacement_cost_gbp:500});
+   await f.ctx.db.insert("online_listings",{account_slug:"leo",product_id:pid,name,description:`Included in this kit: • 1x ${name}`,daily_price:10});
+   await f.ctx.db.insert("listing_resolution_override",{account_slug:"leo",product_id:pid,components:[{item_id:id,qty:1}]});
+   await f.ctx.db.insert("hygglo_products",{accountSlug:"leo",productId:pid,masterItemId:id,prices:[{days:1,pricePerDay:10}]});
+  }
+  const args={account_slug:"leo",item_name:"Manfrotto 055",exclude_name:"Manfrotto 055",start_date:"2026-10-20",end_date:"2026-10-21",quantity:1,booking_use:"standalone"};
+  const publicResult=await invoke(find_owned_alternatives,f.ctx,args);
+  expect(publicResult.alternatives).toHaveLength(6);
+  expect(publicResult.alternatives.every((a:any)=>!a.mapping_complete)).toBe(true);
+  const before=JSON.stringify([...f.rows]);
+  const result=await invoke(__service_basket_replacement_candidates,f.ctx,args);
+  expect(result.alternatives.map((a:any)=>a.product_id)).toEqual([700,701]);
+  expect(result.alternatives.every((a:any)=>a.mapping_complete&&a.availability.available===true&&!a.storage_contents_verification_required)).toBe(true);
+  expect(JSON.stringify([...f.rows])).toBe(before);
+ });
+});
+
 describe("Native independent hire budget qualification",()=>{
  async function fixture(){
   const f=database();const ids:any={};

@@ -2676,6 +2676,10 @@ async function findOwnedAlternatives(
     const kit = kitContext.kit,
       storageNeedsReview = kitContext.contents_review_required;
     const mappingComplete = physical?.complete ?? false;
+    // The complete-basket caller can use only verified account listings.
+    // Review-only candidates must not consume its six-option search limit.
+    if (quickReply && (!mappingComplete || altPid == null || storageNeedsReview))
+      continue;
     const includesLens =
       ["camera", "camera_body"].includes(it.kind ?? "") && mappingComplete
         ? physical!.components.some((c) => c.kind === "lens")
