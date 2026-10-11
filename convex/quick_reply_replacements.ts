@@ -335,14 +335,73 @@ async function nativeBasketOptions(ctx: any, thread_id: string): Promise<any> {
       originals: [],
       reason: "No confirmed stock problem was found.",
     };
-  const unavailable = tile.items
+  const state = tile.has_reservation
+    ? await ctx.runAction(internal.order_edit.__service_getOrderState, {
+        account_slug: tile.account_slug,
+        hygglo_order_id: thread_id,
+      })
+    : null;
+  if (state && !state.ok)
+    return {
+      options: [],
+      originals: [],
+      reason: "Refresh the current order before finding replacement equipment.",
+    };
+  const start = state?.dates?.start ?? tile.start_date;
+  const end = state?.dates?.end ?? tile.end_date;
+  const currentItems = state
+    ? state.items.map((line: any) => {
+        const matches = tile.items.filter(
+          (item: any) => item.product_id === line.product_id,
+        );
+        const cached = matches.length === 1 ? matches[0] : null;
+        return {
+          ...cached,
+          name: cached?.name ?? line.name,
+          product_id: line.product_id,
+          qty: 1,
+          order_item: line,
+        };
+      })
+    : tile.items;
+  const currentStock = await ctx.runQuery(
+    internal.quick_reply_basket_stock.check,
+    {
+      account_slug: tile.account_slug,
+      thread_id,
+      start,
+      end,
+      include_line_checks: true,
+      lines: currentItems.map((item: any) => ({
+        name: item.name,
+        qty: item.qty,
+        ...(item.product_id ? { product_id: item.product_id } : {}),
+      })),
+    },
+  );
+  if (currentStock.available === true)
+    return {
+      originals: [],
+      options: [],
+      reason:
+        "The requested kit is now available. Its queue availability will refresh.",
+    };
+  if (
+    currentStock.available === null ||
+    currentStock.line_checks?.length !== currentItems.length ||
+    currentStock.line_checks.some((check: any) => check.available == null)
+  )
+    return {
+      originals: [],
+      options: [],
+      reason:
+        "The current kit needs a stock identity review before a replacement can be offered.",
+    };
+  const unavailable = currentItems
     .map((item: any, index: number) => ({ item, index }))
-    .filter(({ item, index }: any) =>
-      tile.availability.items.some(
-        (check: any) =>
-          check.available === false &&
-          (check.item_index === index ||
-            (check.item_index == null && check.name === item.name)),
+    .filter(({ index }: any) =>
+      currentStock.line_checks.some(
+        (check: any) => check.item_index === index && check.available === false,
       ),
     );
   if (!unavailable.length || unavailable.length > 8)
@@ -351,12 +410,6 @@ async function nativeBasketOptions(ctx: any, thread_id: string): Promise<any> {
       originals: [],
       reason: "This basket needs an equipment review.",
     };
-  const state = tile.has_reservation
-    ? await ctx.runAction(internal.order_edit.__service_getOrderState, {
-        account_slug: tile.account_slug,
-        hygglo_order_id: thread_id,
-      })
-    : null;
   const originals = unavailable.map(({ item, index }: any) => ({
     name: item.name,
     qty: item.qty,
@@ -366,32 +419,22 @@ async function nativeBasketOptions(ctx: any, thread_id: string): Promise<any> {
         (i: any) => i.origin === "basket" && i.name === item.name,
       )?.image_url ??
       null,
-    image_urls: item.image_urls ?? tile.requested_items?.find(
-      (i: any) => i.origin === "basket" && i.name === item.name,
-    )?.image_urls ?? [],
+    image_urls:
+      item.image_urls ??
+      tile.requested_items?.find(
+        (i: any) => i.origin === "basket" && i.name === item.name,
+      )?.image_urls ??
+      [],
     item_index: index,
-    order_item:(()=>{
-      const matches=state?.items?.filter((line:any)=>item.product_id!=null ? line.product_id===item.product_id : line.name===item.name)??[];
-      return matches.length===1?matches[0]:null;
-    })(),
+    order_item: item.order_item ?? null,
   }));
-  if (
-    state &&
-    (!state.ok || originals.some((item: any) => !item.order_item?.product_id))
-  )
+  if (state && originals.some((item: any) => !item.order_item?.product_id))
     return {
       options: [],
       originals,
       reason:
         "Refresh the order so every requested item has an exact listing identity.",
     };
-  const start=state?.dates?.start??tile.start_date;
-  const end=state?.dates?.end??tile.end_date;
-  if(state){
-    const currentStock=await ctx.runQuery(internal.quick_reply_basket_stock.check,{account_slug:tile.account_slug,thread_id,start,end,lines:state.items.map((item:any)=>({name:item.name,qty:1,...(item.product_id?{product_id:item.product_id}:{})}))});
-    if(currentStock.available===true)return {originals,options:[],reason:"The requested kit is now available. Its queue availability will refresh."};
-    if(currentStock.available===null)return {originals,options:[],reason:"The current kit needs a stock identity review before a replacement can be offered."};
-  }
   const omit = state
     ? originals.map((item: any) => item.order_item.product_id)
     : undefined;
@@ -440,7 +483,7 @@ async function nativeBasketOptions(ctx: any, thread_id: string): Promise<any> {
           qty: 1,
           ...(line.product_id ? { product_id: line.product_id } : {}),
         }))
-    : tile.items
+    : currentItems
         .filter(
           (_: any, index: number) =>
             !unavailable.some((item: any) => item.index === index),
@@ -504,10 +547,16 @@ async function nativeBasketOptions(ctx: any, thread_id: string): Promise<any> {
           )?.image ??
           item.image_url ??
           null,
-        image_urls: [...new Set([
-          listings.find((listing: any) => listing.product_id === item.product_id)?.image,
-          item.image_url,
-        ].filter((url): url is string => typeof url === "string" && !!url))],
+        image_urls: [
+          ...new Set(
+            [
+              listings.find(
+                (listing: any) => listing.product_id === item.product_id,
+              )?.image,
+              item.image_url,
+            ].filter((url): url is string => typeof url === "string" && !!url),
+          ),
+        ],
         qty: originals[i].qty,
         replaces: originals[i].name,
         old_item_id: originals[i].order_item?.item_id ?? null,
