@@ -426,6 +426,7 @@ async function nativeBasketOptions(ctx: any, thread_id: string): Promise<any> {
       )?.image_urls ??
       [],
     item_index: index,
+    product_id: item.product_id ?? null,
     order_item: item.order_item ?? null,
   }));
   if (state && originals.some((item: any) => !item.order_item?.product_id))
@@ -439,11 +440,16 @@ async function nativeBasketOptions(ctx: any, thread_id: string): Promise<any> {
     ? originals.map((item: any) => item.order_item.product_id)
     : undefined;
   const groups: any[][] = [];
+  const groupReasons: string[] = [];
+  let candidateSearchLimited = false;
   for (const original of originals) {
     const result = await ctx.runQuery(
       internal.renter_bot_tools.__service_basket_replacement_candidates,
       {
         account_slug: tile.account_slug,
+        ...(original.product_id != null
+          ? { target_product_id: original.product_id }
+          : {}),
         item_name: original.name,
         exclude_name: original.name,
         start_date: start,
@@ -463,6 +469,8 @@ async function nativeBasketOptions(ctx: any, thread_id: string): Promise<any> {
           : {}),
       },
     );
+    candidateSearchLimited ||= result.limited === true;
+    if (result.reason) groupReasons.push(`${original.name}: ${result.reason}`);
     groups.push(
       (result.alternatives ?? [])
         .filter(
@@ -575,9 +583,11 @@ async function nativeBasketOptions(ctx: any, thread_id: string): Promise<any> {
     })),
     reason: sets.length
       ? null
-      : limited
+      : limited || candidateSearchLimited
         ? "No complete set found within the bounded search. Review the equipment manually."
-        : "No compatible complete set with verified stock was found.",
+        : groupReasons.length
+          ? groupReasons.join(" ")
+          : "No compatible complete set with verified stock was found.",
   };
 }
 export const basketOptions = action({

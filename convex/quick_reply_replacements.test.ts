@@ -150,6 +150,7 @@ describe("registered complete native basket replacement finder", () => {
         c.name === "renter_bot_tools:__service_basket_replacement_candidates",
     );
     expect(candidates).toHaveLength(2);
+    expect(candidates.map((c) => c.args.target_product_id)).toEqual([10, 11]);
     for (const { args } of candidates) {
       expect(args).toMatchObject({
         start_date: "2026-11-05",
