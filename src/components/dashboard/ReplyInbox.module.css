@@ -1995,3 +1995,159 @@
     bottom: 4px;
   }
 }
+
+/* Reference gallery: large gear cards in the full chat, one kit summary in controls. */
+@media (min-width: 1050px) {
+  .chatGear {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 150px;
+    align-items: center;
+    gap: 18px;
+    padding: 16px;
+  }
+  .chatGear section {
+    grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+    align-items: start;
+    gap: 14px;
+    padding: 0;
+  }
+  .chatGear section article {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+    min-width: 0;
+  }
+  .chatGear section article > img,
+  .chatGear section article > span {
+    width: 100%;
+    max-width: 132px;
+    height: 100px;
+    object-fit: contain;
+    border-radius: 8px;
+    background: #22333f;
+  }
+  .chatGear section article > strong {
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .chatGear section article > small {
+    font-size: 10px;
+    line-height: 1.5;
+  }
+  .chatGearDetails,
+  .chatGearMeta {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .chatDates {
+    font-size: 13px;
+  }
+  .chatGearMeta > span {
+    order: 1;
+    font-size: 12px;
+    color: #aec3d6;
+  }
+  .chatGearMeta > span b {
+    display: block;
+    color: #f0f5fa;
+    font-size: 17px;
+  }
+  .chatGearMeta > :first-child {
+    order: 2;
+  }
+  .conversation[data-controls="true"] .chatGear {
+    display: none;
+  }
+  .chatAvatar {
+    width: 64px;
+    height: 64px;
+    min-width: 64px;
+    min-height: 64px;
+  }
+  .bubble {
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .previewEquipment [data-requested-stack] section img {
+    height: 96px;
+    object-fit: contain;
+  }
+}
+
+/* Palette and navigation sampled from the approved reference surfaces. */
+.widget {
+  background: linear-gradient(135deg, #12202b, #101c25) !important;
+}
+.table {
+  background: #111e28;
+}
+.tableHeader {
+  background: #1b2c39;
+}
+.row.selected {
+  background: color-mix(in srgb, var(--account-accent) 12%, #12222d);
+}
+.conversation,
+.queuePreview {
+  background: linear-gradient(145deg, #12232f, #0e1a24);
+}
+.conversationContent {
+  background: linear-gradient(145deg, #12232f, #0e1a24);
+}
+.compose {
+  background: #152633;
+}
+.toolbar .filterTab {
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  padding: 0 14px;
+  font-size: 13px;
+  height: 40px;
+}
+.toolbar .filterTab.activeFilter {
+  border-bottom-color: #3388ff;
+  color: #f0f5fa;
+  font-weight: 600;
+}
+.filterTab > i {
+  display: none;
+}
+.filterTab::after {
+  content: attr(data-count);
+  background: #2a3b4a;
+  border-radius: 10px;
+  padding: 2px 6px;
+  color: #c3d6e6;
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 500;
+}
+.accountFilters button:first-child[aria-pressed="true"] {
+  background: #237fee;
+  border-color: #338aff;
+  color: #fff;
+}
+.searchBar svg {
+  flex-shrink: 0;
+}
+@media (min-width: 1050px) {
+  .titleRow h2 {
+    font-size: 32px;
+    letter-spacing: -0.8px;
+  }
+  .chatGear section article > strong,
+  .chatGear section article > small {
+    align-self: stretch;
+  }
+}
+.dockedDialog .conversation[data-controls="true"] .conversationContent {
+  background: linear-gradient(145deg, #12232f, #0e1a24);
+}
+.previewSummary,
+.previewEquipment {
+  background: #16242f;
+}

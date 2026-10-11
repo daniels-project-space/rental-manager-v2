@@ -183,7 +183,33 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       );
       assert(
         Math.max(...heights) < 165,
-        "medium queue rows retain compact reference density: " + JSON.stringify(heights),
+        "medium queue rows retain compact reference density: " +
+          JSON.stringify(heights),
+      );
+    }
+    if (width === 1505) {
+      const gear = await ev(
+        `(()=>{const root=document.querySelector('[aria-label="Conversation with Marcus Lee"]');return [...root.querySelectorAll('[class*="chatGear"] section article>img')].map(img=>({width:img.getBoundingClientRect().width,height:img.getBoundingClientRect().height}));})()`,
+      );
+      assert.equal(
+        gear.length,
+        3,
+        "full requested equipment remains visible in the reference gallery",
+      );
+      assert(
+        gear.every(
+          (img) =>
+            Math.abs(img.height - 100) < 0.5 &&
+            img.width >= 100 &&
+            img.width <= 132.5,
+        ),
+        "reference gallery image geometry: " + JSON.stringify(gear),
+      );
+      assert(
+        await ev(
+          `(()=>{const btn=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='All');return btn.dataset.count===String(window.__fixture.rows.length)&&btn.getAttribute('aria-pressed')==='true';})()`,
+        ),
+        "view tab count and selected state are real queue data",
       );
     }
     const draftBefore = await ev(
@@ -206,6 +232,25 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     );
     await pause(200);
     await capture("controls");
+    if (width === 1505) {
+      const calendarSpace = await ev(
+        `(()=>{const panel=document.querySelector('[aria-label="Rental controls"]');const cal=panel.querySelector('[class*="inlineCalendar"]');const last=[...cal.querySelectorAll('button')].find(b=>b.textContent.trim()==='31');return {lastDayBottom:last.getBoundingClientRect().bottom,footerTop:panel.querySelector('footer').getBoundingClientRect().top};})()`,
+      );
+      assert(
+        calendarSpace.lastDayBottom < calendarSpace.footerTop,
+        "whole month is visible above the booking navigation: " +
+          JSON.stringify(calendarSpace),
+      );
+    }
+
+    if (width === 1505)
+      assert(
+        await ev(
+          `getComputedStyle(document.querySelector('[aria-label="Conversation with Marcus Lee"] [class*="chatGear"]')).display==='none'`,
+        ),
+        "controls keep one equipment summary in the side panel",
+      );
+
     const geometry = await ev(
       `(()=>{const portrait=document.querySelector('[role=dialog] [aria-label="Expand profile image of Marcus Lee"]');const r=portrait.getBoundingClientRect();const panels=[document.querySelector('[aria-label="Rental controls"]'),document.querySelector('[data-conversation-content]')];return {portrait:{width:r.width,height:r.height},panels:panels.map(p=>{const r=p.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};}),horizontalOverflow:document.documentElement.scrollWidth-innerWidth,drafts:window.__calls.filter(c=>c.name==='replyInbox_actions:generateDraft').length};})()`,
     );
