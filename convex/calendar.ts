@@ -37,13 +37,19 @@ import {
 import { buildRenterDisplayNameMap, getRenterDisplayName } from "./lib/renterLookup";
 
 /** Calendar precision follows the same independently confirmed schedule as stock. */
+type ClockEvidenceStatus="confirmed"|"unconfirmed"|"missing";
+type ClockEvidenceFields={pickup_time_status?:ClockEvidenceStatus;return_time_status?:ClockEvidenceStatus};
+function clockEvidenceStatus(saved:string|null|undefined,confirmed:string|undefined):ClockEvidenceStatus{
+ return confirmed?"confirmed":saved?"unconfirmed":"missing";
+}
 function dedupByLogicalRental<T extends ReservationRow>(rows:T[]):T[]{
  return deduplicateRentals(rows).map(row=>{
   const r=row as T & Partial<Doc<"reservations">>;
-  if(r.account_slug==="dbcinema_web")return row;
   const pickupDate=r.pickup_date??r.start_date??"",returnDate=r.return_date??r.end_date??"";
   const pickup=confirmedClock(r,"pickup",pickupDate),returned=confirmedClock(r,"return",returnDate);
-  return {...row,pickup_date:pickup?pickupDate:r.start_date,return_date:returned?returnDate:r.end_date,pickup_time:pickup,return_time:returned};
+  const status={pickup_time_status:clockEvidenceStatus(r.pickup_time,pickup),return_time_status:clockEvidenceStatus(r.return_time,returned)};
+  if(r.account_slug==="dbcinema_web")return {...row,...status} as T;
+  return {...row,pickup_date:pickup?pickupDate:r.start_date,return_date:returned?returnDate:r.end_date,pickup_time:pickup,return_time:returned,...status} as T;
  });
 }
 
@@ -423,6 +429,8 @@ export async function computeStripLive(
       stripSourceOrders.set(String(startM._id), members);
       let endM = sorted[0];
       for (const m of sorted) if (compareReturnMoment(m, endM) > 0) endM = m;
+      const startClock = startM as typeof startM & ClockEvidenceFields;
+      const endClock = endM as typeof endM & ClockEvidenceFields;
       const grossSum = members.reduce(
         (s, m) => s + ((m as { gross_paid_gbp?: number | null }).gross_paid_gbp ?? 0),
         0,
@@ -433,8 +441,10 @@ export async function computeStripLive(
         return_date: displayReturnDate(endM),
         end_date: endM.end_date,
         pickup_time: startM.pickup_time,
+        pickup_time_status: startClock.pickup_time_status ?? clockEvidenceStatus(startM.pickup_time,confirmedClock(startM,"pickup",startM.pickup_date??startM.start_date??"")),
         pickup_time_provenance: startM.pickup_time_provenance,
         return_time: endM.return_time,
+        return_time_status: endClock.return_time_status ?? clockEvidenceStatus(endM.return_time,confirmedClock(endM,"return",endM.return_date??endM.end_date??"")),
         return_time_provenance: endM.return_time_provenance,
         pickup_method: preferDeliveryMethod(
           members.map((m) => (m as { pickup_method?: string | null }).pickup_method),
@@ -479,6 +489,8 @@ export async function computeStripLive(
       const pickTime = pickMember.pickup_time;
       const retMember = endM;
       const retTime = retMember.return_time;
+      const pickClock = pickMember as typeof pickMember & ClockEvidenceFields;
+      const retClock = retMember as typeof retMember & ClockEvidenceFields;
       // Delivery wins so a planned delivery never gets hidden by a collection
       // member (the grouping guard already keeps conflicting methods apart, but
       // unknown+delivery can still merge — surface the delivery).
@@ -496,8 +508,10 @@ export async function computeStripLive(
         return_date: displayReturnDate(endM),
         end_date: endM.end_date,
         pickup_time: pickTime,
+        pickup_time_status: pickClock.pickup_time_status ?? clockEvidenceStatus(pickTime,confirmedClock(pickMember,"pickup",pickMember.pickup_date??pickMember.start_date??"")),
         pickup_time_provenance: pickMember.pickup_time_provenance,
         return_time: retTime,
+        return_time_status: retClock.return_time_status ?? clockEvidenceStatus(retTime,confirmedClock(retMember,"return",retMember.return_date??retMember.end_date??"")),
         return_time_provenance: retMember.return_time_provenance,
         pickup_method: pickMethod,
         return_method: retMethod,
@@ -906,6 +920,11 @@ export async function computeStripLive(
       );
       const firstImage = rep.imageUrl ?? distinctImages[0] ?? null;
       const imageAlt = rep.name || items[0]?.name || "";
+      const pickupTime = confirmedClock(r,"pickup",r.pickup_date??r.start_date??"");
+      const returnTime = confirmedClock(r,"return",r.return_date??r.end_date??"");
+      const clockFields = r as Doc<"reservations"> & ClockEvidenceFields;
+      const pickupTimeStatus = clockFields.pickup_time_status ?? clockEvidenceStatus(rType.pickup_time,pickupTime);
+      const returnTimeStatus = clockFields.return_time_status ?? clockEvidenceStatus(rType.return_time,returnTime);
       // Pass 11e (2026-05-25) — dropped 3 unused fields:
       //   - progressPercent: frontend re-computes locally (CalendarStrip.tsx:486)
       //   - netToOwnerGbp + multi_item_image_urls: type-declared but never read
@@ -930,8 +949,10 @@ export async function computeStripLive(
         pickupDate: displayPickupDate(r) || (r.start_date ?? null),
         endDate: r.end_date ?? null,
         returnDate: (r as { return_date?: string | null }).return_date ?? r.end_date ?? null,
-        pickupTime: confirmedClock(r,"pickup",r.pickup_date??r.start_date??"") ?? null,
-        returnTime: confirmedClock(r,"return",r.return_date??r.end_date??"") ?? null,
+        pickupTime: pickupTime ?? null,
+        pickupTimeStatus,
+        returnTime: returnTime ?? null,
+        returnTimeStatus,
         pickupMethod: rType.pickup_method ?? null,
         returnMethod: rType.return_method ?? null,
         grossPaidGbp: rType.gross_paid_gbp ?? null,
@@ -988,7 +1009,7 @@ export async function computeStripLive(
           status: h.status,
         }));
 
-      return { calendarWindowVersion: 5 as const, date, pickups, returns, away, holds: dayHolds };
+      return { calendarWindowVersion: 6 as const, date, pickups, returns, away, holds: dayHolds };
     });
 }
 
@@ -1012,7 +1033,7 @@ export const getCalendarStrip = query({
       // Cast the stored v.any() payload back to the live compute's exact type
       // (returning `any` from one branch would widen the whole query return
       // type to `any`). Same pattern as getWeeklyCalendar.
-      if (mv && mv.anchor === startDate && mv.days === days && Array.isArray(mv.payload) && mv.payload.every((d: { calendarWindowVersion?: number }) => d.calendarWindowVersion === 5))
+      if (mv && mv.anchor === startDate && mv.days === days && Array.isArray(mv.payload) && mv.payload.every((d: { calendarWindowVersion?: number }) => d.calendarWindowVersion === 6))
         return mv.payload as Awaited<ReturnType<typeof computeStripLive>>;
     }
     return computeStripLive(ctx, { accountSlug, startDate, days });

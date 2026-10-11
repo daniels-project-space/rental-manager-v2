@@ -49,7 +49,7 @@ describe("saved website calendar windows",()=>{
   expect(days[2].returns).toHaveLength(1);expect(days[2].away).toHaveLength(1);expect(days[2].away[0].items[0].itemId).toBe("lens");
  });
  it("reuses compatible period-aware caches",async()=>{
-  const cache=[{calendarWindowVersion:5,date:"2026-10-05",pickups:[],returns:[],away:[],holds:[]}];
+  const cache=[{calendarWindowVersion:6,date:"2026-10-05",pickups:[],returns:[],away:[],holds:[]}];
   expect(await (getCalendarStrip as any)._handler(context([booking],cache),{accountSlug:null,startDate:"2026-10-05",days:7})).toEqual(cache);
   const weekly={calendarWindowVersion:5,days:[]};expect(await (getWeeklyCalendar as any)._handler(context([booking],weekly),{accountSlug:null,weekStartDate:"2026-10-05"})).toEqual(weekly);
  });
@@ -86,7 +86,7 @@ it('keeps paid website verification periods in strip, week, Gantt and chat stock
 it('rejects caches made before paid pending commitments were included',async()=>{
  const pending={...booking,status:'pending_review',order_step:'VERIFIED'};
  const strip=await (getCalendarStrip as any)._handler(context([pending],[{calendarWindowVersion:3,date:'2026-10-05',pickups:[],returns:[],away:[],holds:[]}]),{accountSlug:null,startDate:'2026-10-05',days:7});
- expect(strip[0].pickups).toHaveLength(1);expect(strip[0].calendarWindowVersion).toBe(5);
+ expect(strip[0].pickups).toHaveLength(1);expect(strip[0].calendarWindowVersion).toBe(6);
  const week=await (getWeeklyCalendar as any)._handler(context([pending],{calendarWindowVersion:3,days:[]}),{accountSlug:null,weekStartDate:'2026-10-05'});expect(week.calendarWindowVersion).toBe(5);expect(week.days[0].reservations).toHaveLength(1);
 });
 
@@ -113,6 +113,20 @@ describe("grouped calendar tiles retain separate physical orders",()=>{
   expect(days[0].pickups[0].items.map(i=>[i.itemId,i.qty])).toEqual([["camera",3]]);
   expect(days[1].returns[0].items.map(i=>[i.itemId,i.qty])).toEqual([["camera",3]]);
   expect(days[1].returns[0].returnTime).toBeNull();
+  expect(days[1].returns[0].returnTimeStatus).toBe("missing");
+ });
+ it("keeps saved return clocks unconfirmed when proof is absent or belongs to another date",async()=>{
+  const rows=[
+   order("no-proof",{renter_name:"No proof",return_time:"18:00"}),
+   order("wrong-date",{renter_name:"Wrong date",return_time:"17:00",return_time_provenance:{source:"agreed_chat",date:"2026-10-05",time:"17:00",confirmedAt:1}}),
+  ];
+  const days=await computeStripLive(context(rows),{accountSlug:"leo",startDate:"2026-10-05",days:2});
+  expect(days[1].returns.map(row=>row.returnTime)).toEqual([null,null]);
+  expect(days[1].returns.map(row=>row.returnTimeStatus)).toEqual(["unconfirmed","unconfirmed"]);
+  const grouped=[order("shared-one",{renter_name:"Shared renter",return_time:"16:00"}),order("shared-two",{renter_name:"Shared renter",return_time:"20:00"})];
+  const groupedDays=await computeStripLive(context(grouped),{accountSlug:"leo",startDate:"2026-10-05",days:2});
+  expect(groupedDays[1].returns).toHaveLength(1);
+  expect(groupedDays[1].returns[0].returnTimeStatus).toBe("unconfirmed");
  });
  it("does not multiply sequential orders that occupy different calendar days",async()=>{
   const rows=[order("first",{end_date:"2026-10-05"}),order("second",{start_date:"2026-10-06"})];
@@ -140,9 +154,9 @@ describe("grouped calendar tiles retain separate physical orders",()=>{
   const days=await computeStripLive(context(rows),{accountSlug:"leo",startDate:"2026-10-05",days:2});
   expect(days[0].pickups[0].items.map(i=>i.qty)).toEqual([2]);
  });
- it("rejects cached tiles from the old grouping implementation",async()=>{
-  const rows=[order("one"),order("two")],old=[{calendarWindowVersion:4,date:"2026-10-05",pickups:[],returns:[],away:[],holds:[]}];
+ it("rejects the prior cache version without clock confirmation status",async()=>{
+  const rows=[order("one"),order("two")],old=[{calendarWindowVersion:5,date:"2026-10-05",pickups:[],returns:[],away:[],holds:[]}];
   const days=await (getCalendarStrip as any)._handler(context(rows,old),{accountSlug:null,startDate:"2026-10-05",days:7});
-  expect(days[0].calendarWindowVersion).toBe(5);expect(days[0].pickups[0].items.map((i:any)=>i.qty)).toEqual([2]);
+  expect(days[0].calendarWindowVersion).toBe(6);expect(days[0].pickups[0].items.map((i:any)=>i.qty)).toEqual([2]);
  });
 });

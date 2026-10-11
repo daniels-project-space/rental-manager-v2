@@ -31,7 +31,9 @@ type ChipData = {
   /** Effective (negotiated) return date; falls back to endDate server-side. */
   returnDate?: string | null;
   pickupTime: string | null;
+  pickupTimeStatus: "confirmed" | "unconfirmed" | "missing";
   returnTime: string | null;
+  returnTimeStatus: "confirmed" | "unconfirmed" | "missing";
   pickupMethod: string | null;
   returnMethod: string | null;
   grossPaidGbp?: number | null;
@@ -102,8 +104,11 @@ function dayLabelSplit(dateStr: string): { wd: string; num: number } {
 }
 
 /** "11:00 AM, 11 May" — pickup/return inline label. */
-function fmtTimeWithDate(time: string | null, isoDate: string | null): string {
-  if (!time || !isoDate) return time ?? "tbd";
+function fmtTimeWithDate(time: string | null, isoDate: string | null, status: ChipData["returnTimeStatus"]): string {
+  if (!time || !isoDate) {
+    if (status === "unconfirmed") return `Unconfirmed${isoDate ? ` · ${new Date(isoDate + "T00:00:00").toLocaleString("en", { day: "numeric", month: "short" })}` : ""}`;
+    return time ?? "tbd";
+  }
   const d = new Date(isoDate + "T00:00:00");
   const m = time.match(/^(\d{1,2}):(\d{2})/);
   if (!m) return time;
@@ -378,8 +383,8 @@ function useTick(ms: number, active: boolean) {
 }
 
 // ── Time formatting helpers used by the timeline ────────────────────────────
-function fmt12Short(time: string | null): string {
-  if (!time) return "TBD";
+function fmt12Short(time: string | null, status: ChipData["returnTimeStatus"]): string {
+  if (!time) return status === "unconfirmed" ? "Unconfirmed" : "TBD";
   const m = time.match(/^(\d{1,2}):(\d{2})/);
   if (!m) return time;
   let h = parseInt(m[1], 10);
@@ -444,6 +449,12 @@ function ProgressTimeline({
       : "0 0 10px rgba(59,130,246,0.55), inset 0 0 6px rgba(255,255,255,0.18)";
   const labelColor = isCompleted ? "#22c55e" : isUpcoming ? "#f87171" : "#60a5fa";
   const labelIcon = isCompleted ? "✓" : isUpcoming ? "⏱" : "●";
+  const pendingPickup = chip.pickupTimeStatus !== "confirmed";
+  const pendingReturn = chip.returnTimeStatus !== "confirmed";
+  const clockIssues = [
+    ...(pendingPickup ? [`Pickup time ${chip.pickupTimeStatus === "unconfirmed" ? "is unconfirmed" : "is not recorded"}`] : []),
+    ...(pendingReturn ? [`Return time ${chip.returnTimeStatus === "unconfirmed" ? "is unconfirmed" : "is not recorded"}`] : []),
+  ];
 
   return (
     <div className="mt-2.5">
@@ -451,17 +462,27 @@ function ProgressTimeline({
       <div className="flex items-baseline justify-between text-[9px] font-medium uppercase tracking-wider mb-1.5">
         <span className="text-emerald-300/90 flex items-center gap-1">
           <span className="text-emerald-400">▶</span>
-          <span className="font-mono text-emerald-200 text-[13px] font-semibold">{fmt12Short(chip.pickupTime)}</span>
+          <span className="font-mono text-emerald-200 text-[13px] font-semibold">{fmt12Short(chip.pickupTime,chip.pickupTimeStatus)}</span>
           <span className="text-[#6b6f80]">·</span>
           <span className="text-[#9ca3af]">{dayShort(chip.startDate)}</span>
         </span>
         <span className="text-violet-300/90 flex items-center gap-1">
           <span className="text-[#9ca3af]">{dayShort(chip.returnDate ?? chip.endDate)}</span>
           <span className="text-[#6b6f80]">·</span>
-          <span className="font-mono text-violet-200 text-[13px] font-semibold">{fmt12Short(chip.returnTime)}</span>
+          <span className="font-mono text-violet-200 text-[13px] font-semibold">{fmt12Short(chip.returnTime,chip.returnTimeStatus)}</span>
           <span className="text-violet-400">◀</span>
         </span>
       </div>
+
+      {clockIssues.length > 0 && (
+        <div
+          role="status"
+          className="mt-1.5 rounded-md border border-amber-400/20 bg-amber-400/[0.06] px-2 py-1 text-[10px] leading-relaxed text-amber-200/90"
+          title="A saved time only releases time-specific stock when it is confirmed in the rental agreement or booking conversation."
+        >
+          {clockIssues.join(" · ")}. Stock stays unavailable for the affected day{pendingReturn ? " plus the one-hour return buffer" : ""}.
+        </div>
+      )}
 
       {/* Bar + now marker */}
       <div
@@ -549,7 +570,7 @@ function ProgressTimeline({
           {progress.label}
           {isUpcoming && chip.pickupTime && (
             <span className="text-[#6b6f80] ml-1">
-              · pickup {fmt12Short(chip.pickupTime)}
+              · pickup {fmt12Short(chip.pickupTime,chip.pickupTimeStatus)}
             </span>
           )}
         </span>
@@ -611,8 +632,8 @@ function BookingCard({ chip }: { chip: ChipData }) {
   // Hygglo end_date when a later negotiated return_date exists.
   const effReturnDate = chip.returnDate ?? chip.endDate ?? null;
   const range = fmtRange(chip.startDate, chip.endDate);
-  const pickupLabel = fmtTimeWithDate(chip.pickupTime, effPickupDate);
-  const returnLabel = fmtTimeWithDate(chip.returnTime, effReturnDate);
+  const pickupLabel = fmtTimeWithDate(chip.pickupTime, effPickupDate, chip.pickupTimeStatus);
+  const returnLabel = fmtTimeWithDate(chip.returnTime, effReturnDate, chip.returnTimeStatus);
   const progress = computeProgress(effPickupDate, effReturnDate, chip.pickupTime, chip.returnTime);
   const noteLines = splitNotes(chip.notes);
   // Card accent by lifecycle so the whole card reads at a glance (Daniel):
