@@ -732,12 +732,8 @@ export function StatsGrid() {
             const span = HERO_SPANS[id];
             let spanClass = "";
             if (span) {
-              // Explicit col/row span (supports 2x2 hero cards like WallE).
-              // Tailwind class names must be literal so JIT can detect them:
-              // col-span-2 row-span-2 col-span-1 row-span-1
-              const colCls = span.col === 2 ? "col-span-2" : "col-span-1";
-              const rowCls = span.row === 2 ? "row-span-2" : "row-span-1";
-              spanClass = `${colCls} ${rowCls}`;
+              // Width is intentional; height follows the measured content.
+              spanClass = span.col === 2 ? "col-span-2" : "col-span-1";
             } else if (HERO_IDS.has(id)) {
               // Legacy hero treatment: 2 cols, 1 row (default row height).
               spanClass = "col-span-2";
@@ -750,7 +746,7 @@ export function StatsGrid() {
                 label={label}
                 className={spanClass}
               >
-                {cards[id]}
+                <div data-packing-content className="flow-root">{cards[id]}</div>
               </EditableWidget>
             );
           })}

@@ -22,6 +22,23 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
     assert.ok(await ev('document.querySelector("main > div.grid").getBoundingClientRect().bottom >= Math.max(...[...document.querySelector("main > div.grid").children].map(e=>e.getBoundingClientRect().bottom))'));
   };
   await assertNoOverlap();
+  const verifyPacking = async () => {
+    const g = await ev(`(()=>{const slots=[...document.querySelectorAll('[data-packing-fixture]')];return slots.map(e=>{const r=e.querySelector('[data-packing-content]').getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom,span:e.style.gridRow}})})()`);
+    assert.ok(g[2].y < g[0].bottom, 'short cards must backfill beside the tall card');
+    assert.ok(g[2].y-g[1].bottom >= 10 && g[2].y-g[1].bottom <= 14, 'packing must leave only the configured gap');
+    for(let i=0;i<g.length;i++) for(let j=i+1;j<g.length;j++) assert.ok(!(Math.min(g[i].right,g[j].right)-Math.max(g[i].x,g[j].x)>1 && Math.min(g[i].bottom,g[j].bottom)-Math.max(g[i].y,g[j].y)>1),'packing content overlaps');
+    assert.ok(g.every(r=>r.span.startsWith('auto / span')), 'both legacy row lines are reset');
+  };
+  await verifyPacking();
+  await ev(`document.querySelector('[data-packing-fixture="1"] [data-packing-content]').style.height='140px'`); await pause(150); await verifyPacking();
+  await ev(`document.querySelector('[data-packing-fixture="1"] [data-packing-content]').style.height='90px'`); await pause(150); await verifyPacking();
+  for(const resizedWidth of [390,1440,width]) {
+    await c.cmd('Emulation.setDeviceMetricsOverride',{width:resizedWidth,height:1000,deviceScaleFactor:1,mobile:resizedWidth===390}); await pause(150); await verifyPacking(); await assertNoOverlap();
+  }
+  for(const [label,count] of [['Add packing card',7],['Hide packing card',5],['Reset packing cards',6]]) {
+    await ev(`[...document.querySelectorAll('[data-packing-tests] button')].find(b=>b.textContent===${JSON.stringify(label)}).click()`); await pause(150);
+    assert.equal(await ev('document.querySelectorAll("[data-packing-fixture]").length'),count); await verifyPacking();
+  }
   const pill = await ev('(()=>{const r=document.querySelector("[data-utility-bar] button").getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()');
   await c.cmd('Input.dispatchMouseEvent',{type:'mouseMoved',...pill});await pause(100);
   assert.equal(await ev('document.querySelector("[data-utility-bar] button").getAttribute("aria-expanded")'),'true');
@@ -36,7 +53,7 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
   await ev('document.querySelector("details summary").click()');await pause(100);await assertNoOverlap();
   await ev('document.querySelector("details summary").click()');await pause(100);await assertNoOverlap();
 
-  assert.ok(await ev('getComputedStyle(document.querySelector("section[aria-label]").parentElement.parentElement).gridAutoRows === "auto"'));
+  assert.equal(await ev('document.querySelector("[data-auto-packing-grid]").dataset.packing'),"masonry");
   await ev('document.querySelector("select").value="7"');
 
   assert.equal(await ev('document.querySelector(".gantt-embedded [aria-label=Close]")'),null);

@@ -15,8 +15,10 @@ export function useQuery(ref,args) {
  if(name.includes('return')||name.includes('Return')) return [];
  return quickQuery(ref,args);
 }
-export function useMutation(){return async()=>{throw Error('Dashboard QA: real writes prohibited')};}
-export function useAction(){return async()=>{throw Error('Dashboard QA: actions prohibited')};}
+const blockedMutation=async()=>{throw Error('Dashboard QA: real writes prohibited')};
+export function useMutation(){return blockedMutation;}
+const blockedAction=async()=>{throw Error('Dashboard QA: actions prohibited')};
+export function useAction(){return blockedAction;}
 export const usePaginatedQuery=()=>({results:[],status:'Exhausted',loadMore:()=>{}});
 export const useConvex=()=>({query:async()=>{throw Error('QA direct client disabled')}});
 export const useConvexAuth=()=>({isAuthenticated:true,isLoading:false});
