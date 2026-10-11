@@ -2,13 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("./auth", () => ({authComponent:{registerRoutes:vi.fn(),safeGetAuthUser:vi.fn()},createAuth:vi.fn()}));
 import http, { storefrontRead } from "./http";
 import { __service_listForStorefront as itemsService, listForReconcile as itemsPublic } from "./items";
-import { __service_listForStorefront as productsService } from "./hygglo_products";
+import { __pushMarketingOverrides, __service_listForStorefront as productsService } from "./hygglo_products";
 import { __service_listActiveForStorefront as activeService, __service_listDemandForStorefront as demandService } from "./reservations";
 import { getFunctionName } from "convex/server";
 const secret="fixture-read-service";
 const request=(body:unknown={path:"items:listForReconcile",args:{}},token:string|null=secret)=>new Request("https://fixture-manager.convex.site/dbcinema/storefront-read",{method:"POST",headers:token?{"x-dbcinema-sync-token":token}:{},body:typeof body==="string"?body:JSON.stringify(body)});
 const invoke=(ctx:any,req:Request)=>(storefrontRead as any)._handler(ctx,req);
-afterEach(()=>{vi.unstubAllEnvs();vi.clearAllMocks()});
+afterEach(()=>{vi.unstubAllEnvs();vi.unstubAllGlobals();vi.clearAllMocks()});
 describe("registered private storefront read transport",()=>{
  it("is routed as POST and rejects missing service setup or wrong credentials before reads",async()=>{
   expect(http.lookup("/dbcinema/storefront-read","POST")?.[0]).toBe(storefrontRead);
@@ -38,6 +38,31 @@ describe("registered private storefront read transport",()=>{
   for(const [path,args] of [["items:listForReconcile",{}],["hygglo_products:list",{accountSlug:"dbcinema"}],["reservations:listActiveForStorefront",{account_slug:"dbcinema"}],["reservations:listForReconcile",{account_slug:"dbcinema"}]] as const){
    const response=await invoke(ctx,request({path,args}));expect(response.status).toBe(200);expect(response.headers.get("Cache-Control")).toBe("no-store");const receipt=await response.json();expect(receipt).toMatchObject({protocolVersion:1,status:"success",path});expect(receipt.value).toHaveLength(1);expect(JSON.stringify(receipt)).not.toMatch(/PRIVATE|SECRET|Other account/);
   }
-  expect(reads).toHaveLength(4);
+ expect(reads).toHaveLength(4);
+ });
+ it("passes effective marketing-tag state through the private catalogue bridge",async()=>{
+  vi.stubEnv("DBCINEMA_WEBHOOK_SECRET",secret);
+  const row={productId:31,name:"Fixture light",isPublished:true,isMarketingOnly:true,marketingOnlyMode:"manual",marketingOnlyUpdatedAt:123,privateNote:"MUST NOT LEAK"};
+  const runQuery=vi.fn(async()=>[row]);
+  const response=await invoke({runQuery},request({path:"hygglo_products:catalogueForStorefront",args:{accountSlug:"dbcinema"}}));
+  expect(response.status).toBe(200);
+  expect(runQuery).toHaveBeenCalledTimes(1);
+  const receipt=await response.json();
+  expect(receipt.value).toEqual([{productId:31,name:"Fixture light",isPublished:true,isMarketingOnly:true,marketingOnlyMode:"manual",marketingOnlyUpdatedAt:123}]);
+ expect(JSON.stringify(receipt)).not.toContain("MUST NOT LEAK");
+ });
+ it("pushes saved tags only to the configured DB Cinema Convex route and verifies the receipt",async()=>{
+  vi.stubEnv("DBCINEMA_WEBHOOK_SECRET",secret);vi.stubEnv("DBCINEMA_MARKETING_SYNC_URL","https://zany-wolf-18.convex.site/dbcinema/manager-marketing-tags");
+  const changes=[{productId:31,marketingOnly:true,mode:"manual" as const,updatedAt:123}];
+  const fetchMock=vi.fn(async(input:any,init:any)=>{expect(String(input)).toBe("https://zany-wolf-18.convex.site/dbcinema/manager-marketing-tags");expect(init.headers["x-dbcinema-sync-token"]).toBe(secret);expect(JSON.parse(init.body)).toEqual({protocolVersion:1,changes});return new Response(JSON.stringify({protocolVersion:1,acknowledged:1,missing:0,stale:0}),{status:200});});
+  vi.stubGlobal("fetch",fetchMock);
+  await expect((__pushMarketingOverrides as any)._handler({}, {changes})).resolves.toEqual({updated:1,missing:0});
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+ });
+ it("refuses an unconfigured or unverified storefront target",async()=>{
+  vi.stubEnv("DBCINEMA_WEBHOOK_SECRET",secret);vi.stubEnv("DBCINEMA_MARKETING_SYNC_URL","https://example.com/dbcinema/manager-marketing-tags");
+  const fetchMock=vi.fn();vi.stubGlobal("fetch",fetchMock);
+  await expect((__pushMarketingOverrides as any)._handler({}, {changes:[{productId:31,marketingOnly:true,mode:"manual",updatedAt:123}]})).rejects.toThrow("URL is invalid");
+  expect(fetchMock).not.toHaveBeenCalled();
  });
 });

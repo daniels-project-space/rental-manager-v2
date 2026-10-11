@@ -32,6 +32,7 @@ import { CompetitorIntelPanel } from "@/components/dashboard/CompetitorIntelPane
 import { PortedListingsPanel } from "@/components/dashboard/PortedListingsPanel";
 import { BrandControlPanel } from "@/components/dashboard/BrandControlPanel";
 import { ListingManagerPanel } from "@/components/dashboard/ListingManagerPanel";
+import { MarketingListingsPanel } from "@/components/dashboard/MarketingListingsPanel";
 
 export type PanelWidget = {
   id: string;
@@ -81,6 +82,7 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
   { id: "ported-listings",     label: "Ported Listings",        component: PortedListingsPanel },
   { id: "brand-control",       label: "Brand Control Center",   component: BrandControlPanel },
   { id: "listing-manager",     label: "Listing Manager",        component: ListingManagerPanel },
+  { id: "marketing-only-listings", label: "Marketing-only Listings", component: MarketingListingsPanel },
 ];
 
 export const STAT_WIDGETS: readonly StatWidget[] = [
@@ -143,6 +145,6 @@ export const COMPACT_PANELS: ReadonlySet<string> = new Set([
   "out-of-stock", "sell-recommender", "price-recos", "conversation-funnel",
   "verification-funnel", "item-roi", "lost-revenue-buy",
 ]);
-const PRIMARY_PANELS = ["stats-grid", "lifetime", "reply-inbox", "live-calendar", "return-hub"];
+const PRIMARY_PANELS = ["stats-grid", "lifetime", "reply-inbox", "live-calendar", "return-hub", "marketing-only-listings"];
 export const DEFAULT_PANEL_ORDER = [...PRIMARY_PANELS, ...PANEL_WIDGETS.map((w) => w.id).filter((id) => !PRIMARY_PANELS.includes(id))];
 export const DEFAULT_STAT_ORDER  = STAT_WIDGETS.map((w) => w.id);
