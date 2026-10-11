@@ -56,6 +56,7 @@ function fixture() {
     },
   };
   let currentAvailable: boolean | null = false;
+  let unavailableProducts = [10, 11];
   const ctx: any = {
     auth: {
       getUserIdentity: async () => ({
@@ -83,6 +84,19 @@ function fixture() {
           available: args.lines.some((line: any) => line.product_id === 10)
             ? currentAvailable
             : true,
+          ...(args.include_line_checks
+            ? {
+                line_checks: args.lines.map(
+                  (line: any, item_index: number) => ({
+                    item_index,
+                    available:
+                      currentAvailable == null
+                        ? null
+                        : !unavailableProducts.includes(line.product_id),
+                  }),
+                ),
+              }
+            : {}),
         };
       if (name === "renter_bot_tools:__service_basket_replacement_candidates")
         return {
@@ -109,6 +123,10 @@ function fixture() {
     ctx,
     calls,
     state,
+    tile,
+    setUnavailableProducts: (ids: number[]) => {
+      unavailableProducts = ids;
+    },
     setCurrentStock: (value: boolean | null) => {
       currentAvailable = value;
     },
@@ -182,6 +200,81 @@ describe("registered complete native basket replacement finder", () => {
       ).toBe(false);
       expect(f.ctx.runMutation).not.toHaveBeenCalled();
     }
+  });
+  it("replaces every currently unavailable line instead of the stale queue subset", async () => {
+    const f = fixture();
+    f.setUnavailableProducts([10, 12]);
+    const r = await invoke(f.ctx);
+    expect(r.originals.map((o: any) => o.order_item.product_id)).toEqual([
+      10, 12,
+    ]);
+    expect(r.options).toHaveLength(2);
+    const candidates = f.calls.filter(
+      (c) =>
+        c.name === "renter_bot_tools:__service_basket_replacement_candidates",
+    );
+    expect(candidates.map((c) => c.args.item_name)).toEqual([
+      "Original camera",
+      "Retained tripod",
+    ]);
+    expect(
+      candidates.every(
+        (c) => JSON.stringify(c.args.omit_product_ids) === "[10,12]",
+      ),
+    ).toBe(true);
+    const sets = f.calls.filter(
+      (c) =>
+        c.name === "quick_reply_basket_stock:check" &&
+        !c.args.include_line_checks,
+    );
+    expect(
+      sets.every((c) =>
+        c.args.lines.some((line: any) => line.product_id === 11),
+      ),
+    ).toBe(true);
+    expect(f.ctx.runMutation).not.toHaveBeenCalled();
+  });
+  it("fresh stock follows the current order line sequence after reordering", async () => {
+    const f = fixture();
+    f.state.items.reverse();
+    const r = await invoke(f.ctx);
+    expect(r.originals.map((o: any) => o.order_item.product_id)).toEqual([
+      11, 10,
+    ]);
+    expect(r.originals.map((o: any) => o.item_index)).toEqual([1, 2]);
+    expect(f.ctx.runMutation).not.toHaveBeenCalled();
+  });
+  it("includes newly added unavailable order lines absent from the cached request", async () => {
+    const f = fixture();
+    f.state.items.push({
+      item_id: 1004,
+      product_id: 14,
+      name: "New lens",
+      can_remove: true,
+    });
+    f.setUnavailableProducts([10, 14]);
+    const r = await invoke(f.ctx);
+    expect(r.originals.map((o: any) => o.order_item.product_id)).toEqual([
+      10, 14,
+    ]);
+    expect(r.originals[1].name).toBe("New lens");
+    expect(r.options).toHaveLength(2);
+    expect(f.ctx.runMutation).not.toHaveBeenCalled();
+  });
+  it("checks enquiry stock freshly and offers complete sets without applying an order edit", async () => {
+    const f = fixture();
+    f.tile.has_reservation = false;
+    f.setUnavailableProducts([10, 12]);
+    const r = await invoke(f.ctx);
+    expect(r.originals.map((o: any) => o.item_index)).toEqual([0, 2]);
+    expect(r.options).toHaveLength(2);
+    expect(
+      r.options.every((o: any) => !o.can_apply && o.items.length === 2),
+    ).toBe(true);
+    expect(
+      f.calls.some((c) => c.name === "order_edit:__service_getOrderState"),
+    ).toBe(false);
+    expect(f.ctx.runMutation).not.toHaveBeenCalled();
   });
   it("denies unauthenticated access before order or stock reads", async () => {
     const f = fixture();
