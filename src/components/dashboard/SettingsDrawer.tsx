@@ -33,6 +33,7 @@ import {
   PANEL_WIDGETS,
   STAT_WIDGETS,
 } from "@/lib/dashboard/widget-registry";
+import { ListingMappingReview } from "./ListingMappingReview";
 
 const INPUT_STYLE = {
   background: "rgba(255,255,255,0.05)",
@@ -1556,6 +1557,7 @@ export function SettingsWorkspace({ onBack }: SettingsWorkspaceProps) {
               ["#operations", "Operations"],
               ["#pricing", "Listing prices"],
               ["#intelligence", "AI drafts"],
+              ["#stock-mapping", "Inventory mapping"],
               ["#returns", "Returns"],
             ].map(([href, label]) => (
               <a key={href} href={href} className="shrink-0 rounded-xl px-3 py-2 text-xs font-medium text-[#9aa0ad] transition hover:bg-violet-500/10 hover:text-violet-100">
@@ -1739,6 +1741,10 @@ export function SettingsWorkspace({ onBack }: SettingsWorkspaceProps) {
 
         <PersonaFieldsEditor />
 
+        </SettingsSection>
+
+        <SettingsSection id="stock-mapping" eyebrow="Rental Manager inventory" title="Listing-to-stock mapping" description="Review real stock links for DB Cinema listings. Ambiguous or incomplete records remain unavailable until an owner maps the actual equipment.">
+          <ListingMappingReview />
         </SettingsSection>
 
         <SettingsSection id="returns" eyebrow="After return" title="Review & discount texts" description="Per-account wording used when you deliberately finalise a return.">

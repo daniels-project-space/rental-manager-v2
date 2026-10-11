@@ -20,8 +20,8 @@ describe("renter stock verdicts", () => {
   it("deducts multi-unit bookings and independent renters", () => {
     expect(evaluate({ occupancy: [hire(2), hire(1, "B")] }).free_units).toBe(1);
   });
-  it("counts a proven matching-basket extension once", () => {
-    expect(evaluate({ occupancy: [{ ...hire(2), extension_key: "same-basket" }, { ...hire(2), extension_key: "same-basket" }] }).free_units).toBe(2);
+  it("counts distinct orders separately even when renter and kit match", () => {
+    expect(evaluate({ occupancy: [{ ...hire(2), order_id: "order-a" }, { ...hire(2), order_id: "order-b" }] }).free_units).toBe(0);
   });
   it("does not merge occupancy by renter name alone", () => {
     expect(evaluate({ occupancy: [hire(1), hire(2)] }).free_units).toBe(1);
@@ -84,8 +84,11 @@ describe("shared kit stock across separate reservations", () => {
     expect(result.available).toBe(false);
     expect(result.per_day.map(d=>d.booked)).toEqual([10,10]);
   });
-  it("preserves matching kit extensions with normalized names",()=>{
-    expect(check([reservation("original",1),reservation("extension",1,{renter_name:" SAME   RENTER "})]).free_units).toBe(7);
+  it("counts matching renter and kit on separate orders as separate physical bookings",()=>{
+    const result=check([reservation("original",1),reservation("second-order",1,{renter_name:" SAME   RENTER "})]);
+    expect(result.free_units).toBe(2);
+    expect(result.available).toBe(false);
+    expect(result.per_day.map(d=>d.booked)).toEqual([10,10]);
   });
   it("counts different renter IDs separately even when names match",()=>{
     expect(check([reservation("a",1,{renter_id:"person-a"}),reservation("b",1,{renter_id:"person-b"})]).free_units).toBe(2);

@@ -189,7 +189,7 @@ export const __service_catalogueForStorefront = internalQuery({
       const resolved = resolveListingComponents(inventory,
         mapping.get(product.productId)?.components.map(c => ({item_id:String(c.item_id),qty:c.qty})),
         product.masterItemId ? String(product.masterItemId) : undefined, 1,
-        product.description ?? descriptions.get(product.productId)?.description,context);
+        product.description ?? descriptions.get(product.productId)?.description,context,product.name);
       const components = resolved.components.filter(c => c.stock_required && byId.has(c.item_id)).map(c => {
         const item = byId.get(c.item_id)!;
         const active = item.status === "active" && item.is_marketing_only === false;

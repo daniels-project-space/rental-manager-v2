@@ -199,7 +199,8 @@ const operationalSchema = defineSchema({
   })
     .index("by_canonical_name", ["name_canonical"])
     .index("by_slug", ["slug"])
-    .index("by_kind", ["kind"]),
+    .index("by_kind", ["kind"])
+    .index("by_status", ["status"]),
 
   // Owner-confirmed WallE intake. The single item_id is the physical stock
   // pool; account listings below never create additional units.

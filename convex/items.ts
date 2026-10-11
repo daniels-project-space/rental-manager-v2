@@ -1,8 +1,9 @@
 import { shortItemName } from "./lib/item_display_name";
-import { mutation, query, internalQuery, internalQueryOf } from "./owner_functions";
+import { mutation, query, internalQuery, internalQueryOf, requireOwner } from "./owner_functions";
 import { loadStockSources } from "./lib/renter_stock";
 import { sharedStockSnapshot } from "./lib/storefront_stock";
 import { isPaid } from "./order_step_semantics";
+import { isSelectableListingMappingItem } from "./lib/listing_mapping_review";
 import { v } from "convex/values";
 
 import { infoPoolEnabledAccounts } from "./lib/feature_flags_helper";
@@ -808,6 +809,47 @@ export const listActive = query({
       .filter((i) => i.status === "active" && !i.is_marketing_only)
       .map((i) => ({ id: i._id, name: shortItemName(i) }))
       .sort((a, b) => a.name.localeCompare(b.name));
+  },
+});
+
+
+/** Bounded rentable inventory choices for the owner-only listing map editor. */
+export const listForListingMapping = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireOwner(ctx, true);
+    const items = await ctx.db.query("items")
+      .withIndex("by_status")
+      .take(1001);
+    if (items.length > 1000) {
+      throw new Error("Inventory exceeds the 1,000-item mapping review limit; paginate the resolver inventory before continuing.");
+    }
+    const resolverItems = items.map(item => ({
+      _id: item._id,
+      name_canonical: item.name_canonical,
+      kind: item.kind,
+      qty: item.qty,
+      aliases: item.aliases,
+      lens_mount: item.lens_mount,
+      status: item.status,
+      is_marketing_only: item.is_marketing_only,
+      track_independent_stock: item.track_independent_stock,
+      unit_kind: item.unit_kind,
+      supplied_stock: item.supplied_stock,
+      compatibility: item.compatibility ? { included_with_rental: item.compatibility.included_with_rental } : undefined,
+    }));
+    const selectableItems = items
+      .filter(isSelectableListingMappingItem)
+      .map(item => ({
+        id: item._id,
+        name: item.name_canonical,
+        displayName: shortItemName(item),
+        kind: item.kind,
+        qty: item.qty,
+        aliases: item.aliases ?? [],
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return { resolverItems, selectableItems };
   },
 });
 
