@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import styles from "./RequestedItemStack.module.css";
 export type StackItem = {
   name: string;
@@ -116,6 +116,11 @@ export function RequestedItemStack({
         <section
           className={styles.expansion}
           aria-label={expandedLabel}
+          style={
+            {
+              "--requested-item-columns": Math.min(items.length, 3),
+            } as CSSProperties
+          }
           onClick={(event) => event.stopPropagation()}
         >
           {items.map((item, index) => (
