@@ -330,6 +330,15 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       `document.querySelector('[aria-label="pickup with Marcus Lee"]').click()`,
     );
     await pause(150);
+    if (width === 1505) {
+      for (const height of [1045, 900]) {
+        await c.cmd("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+        await pause(150);
+        assert(await ev(`(()=>{const d=document.querySelector('[role="dialog"]');const b=[...d.querySelectorAll('button')].find(b=>b.textContent.trim()==='Send');const r=b.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;})()`), "desktop Send stays fully inside the viewport at " + height);
+      }
+      await c.cmd("Emulation.setDeviceMetricsOverride", { width, height: 1045, deviceScaleFactor: 1, mobile: false });
+      await pause(150);
+    }
     await capture("chat");
     await ev(`document.querySelector('[class*="customizeButton"]').click()`);
     await pause(100);

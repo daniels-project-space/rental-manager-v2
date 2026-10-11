@@ -4743,6 +4743,33 @@ export function ReplyInbox() {
       viewport?.removeEventListener("resize", updateDock);
     };
   }, []);
+  useEffect(() => {
+    if (!dockTarget) return;
+    const viewport = window.visualViewport;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const top = Math.max(72, dockTarget.getBoundingClientRect().top);
+      const height = Math.max(320, (viewport?.height ?? window.innerHeight) - top - 16);
+      const value = `${Math.floor(height)}px`;
+      if (dockTarget.style.getPropertyValue("--quick-reply-chat-height") !== value)
+        dockTarget.style.setProperty("--quick-reply-chat-height", value);
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
+    const observer = new ResizeObserver(schedule);
+    if (widgetRef.current) observer.observe(widgetRef.current);
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    viewport?.addEventListener("resize", schedule);
+    measure();
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      viewport?.removeEventListener("resize", schedule);
+    };
+  }, [dockTarget]);
   const openThread = (tile: ReplyTileData, reviews = false) => {
     setPreviewId(tile.thread_id);
     setOpenRevision((value) => value + 1);

@@ -2571,7 +2571,7 @@
 .toolbar { margin-bottom: 10px; }
 .toolbar select { margin-left: auto; }
 .expandedChat { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-.chatDock { height: calc(100dvh - 200px); min-height: 540px; }
+.chatDock { position: sticky; top: 72px; height: var(--quick-reply-chat-height, calc(100dvh - 285px)); min-height: 320px; }
 .rows { max-height: calc(100dvh - 220px); }
 .row { min-height: 90px; padding-block: 11px; }
 .chatHeader { padding: 12px 16px; }
