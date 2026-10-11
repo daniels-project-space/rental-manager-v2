@@ -76,6 +76,12 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
   assert.ok(calendarProof.clocks.every(c=>c.scrollWidth<=c.width+1));
   assert.ok(!calendarProof.text.includes('no return time yet'));
   assert.ok(!calendarProof.text.includes('Reported · not confirmed'));
+  for(const scrollLeft of [0,180,400,0]) {
+    await ev(`document.querySelector('[data-calendar-viewport]').scrollLeft=${scrollLeft}`);await pause(120);
+    const fit=await ev(`(()=>{const viewport=document.querySelector('[data-calendar-viewport]').getBoundingClientRect();return [...document.querySelectorAll('[data-calendar-name-placement="bar"],[data-calendar-endpoint]')].map(e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right,viewportLeft:viewport.left,viewportRight:viewport.right,text:e.textContent}})})()`);
+    assert.ok(fit.length>0);
+    assert.ok(fit.every(r=>r.left>=r.viewportLeft-1 && r.right<=r.viewportRight+1),JSON.stringify({width,scrollLeft,fit}));
+  }
   await ev(`document.querySelector('[data-calendar-bar]').click()`);await pause(80);
   assert.ok(await ev(`document.querySelector('.gantt-embedded [aria-label="Close detail"]')!==null`));
   await ev(`document.querySelector('.gantt-embedded [aria-label="Close detail"]').click()`);
