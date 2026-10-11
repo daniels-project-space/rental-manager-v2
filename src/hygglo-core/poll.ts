@@ -36,6 +36,7 @@
 import { createHyggloCore, type HyggloCore } from "./index";
 import type { HyggloAccount } from "./auth-account";
 import { ALL_FILTERS } from "./orders";
+import { providerReturnCompleted } from "../lib/provider-return-evidence";
 import {
   orderToReservation,
   orderToRenter,
@@ -93,6 +94,7 @@ function extractStep(order: unknown): string | undefined {
   const o = order as any;
   const steps = o?.steps ?? o?.detail?.steps ?? o?._detail?.steps;
   if (!Array.isArray(steps)) return undefined;
+  if (providerReturnCompleted(order)) return "REVIEWED";
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const active = steps.find((s: any) => s?.active === true);
   if (active) return active.key;
@@ -469,14 +471,17 @@ export async function corePoll(
   for (const order of selectedOrders) {
     const stored = storedActivity[String(order.id)];
     if (
-      !custodyReconciliation.has(order.id) && stored?.has_order_step === true &&
+      order.sourceFilter !== "current" && !custodyReconciliation.has(order.id) && stored?.has_order_step === true &&
       activityStampUnchanged(stored.latest_activity, order.latest_activity)
     ) {
+      // Current rentals must always re-read their workflow: an external return
+      // may leave the list endpoint's chat activity timestamp unchanged.
+      // Other buckets retain the unchanged-activity optimisation.
       // Hygglo's own list-endpoint activity stamp matches what we stored the
       // last time we fetched this order's detail, AND that stored row already
       // has an order_step (so we are not backfilling a legacy pre-Phase-18.2
-      // row). Nothing about this order — status, messages, steps, price — can
-      // have changed since then, so the detail GET+parse is skipped. The order
+      // row). For non-current buckets, retain the existing activity-based
+      // detail GET optimisation. The order
       // is still recorded as present (presentOrderIds) for hygglo_presence /
       // Return Hub freshness; it is deliberately NOT re-added to
       // reservations/messages/conversations/renters since there is nothing new

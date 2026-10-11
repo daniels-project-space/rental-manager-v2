@@ -4,7 +4,7 @@
  */
 
 import { v } from "convex/values";
-import { internalQuery, internalMutation, query, mutation } from "./owner_functions";
+import { internalQuery, internalMutation, internalMutationOf, query, mutation } from "./owner_functions";
 import { internal } from "./_generated/api";
 import { confirmedChatClock, recoverConfirmedChatClock } from "../src/lib/booking-schedule-evidence";
 import { hashBookingTimeTranscript } from "../src/lib/booking-time-transcript";
@@ -21,6 +21,12 @@ async function persistTimes(ctx:MutationCtx,id:Id<"reservations">,hash:string,pa
  const next={...row,...patch};
  let pickup=confirmedChatClock(messages,"pickup",next.pickup_time,next.pickup_date??next.start_date,next.start_date,hash);
  let returned=confirmedChatClock(messages,"return",next.return_time,next.return_date??next.end_date,next.end_date,hash);
+ // A literal agreement can be recovered without a model guess or another
+ // paid extraction. This also repairs an old candidate rejected for its date.
+ const recoveredPickup = !pickup && next.start_date ? recoverConfirmedChatClock(messages,"pickup",next.start_date,hash) : undefined;
+ const recoveredReturn = !returned && next.end_date ? recoverConfirmedChatClock(messages,"return",next.end_date,hash) : undefined;
+ if(recoveredPickup){pickup=recoveredPickup;patch={...patch,pickup_time:pickup.time,pickup_date:pickup.date};next.pickup_time=pickup.time;next.pickup_date=pickup.date;}
+ if(recoveredReturn){returned=recoveredReturn;patch={...patch,return_time:returned.time,return_date:returned.date};next.return_time=returned.time;next.return_date=returned.date;}
  // Keep independently established history when the bounded latest window
  // has simply moved past it. New schedule language after that agreement
  // invalidates precision until it is accepted again.
@@ -340,3 +346,6 @@ export const reconcileTimeProvenance = mutation({
   return results;
  }
 });
+
+/** Bounded evidence recovery on new chat messages; no provider action or LLM. */
+export const __service_reconcileTimeProvenance = internalMutationOf(reconcileTimeProvenance);

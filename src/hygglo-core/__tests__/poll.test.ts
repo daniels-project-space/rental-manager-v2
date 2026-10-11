@@ -348,9 +348,9 @@ describe("corePoll — Phase 18.2 skip-fetch optimisation", () => {
   it("skips the detail GET for an order whose stamp is unchanged and has order_step", async () => {
     const core = makeMockCore({
       ordersByFilter: {
-        current: [
-          { id: 1, sourceFilter: "current", latest_activity: 1000 },
-          { id: 2, sourceFilter: "current", latest_activity: 2000 },
+        future: [
+          { id: 1, sourceFilter: "future", latest_activity: 1000 },
+          { id: 2, sourceFilter: "future", latest_activity: 2000 },
         ],
       },
       details: {
@@ -385,8 +385,8 @@ describe("corePoll — Phase 18.2 skip-fetch optimisation", () => {
     // Hub, even though it produced no reservation row this cycle.
     expect(result.presentOrderIds).toEqual(
       expect.arrayContaining([
-        { id: "1", sourceFilter: "current" },
-        { id: "2", sourceFilter: "current" },
+        { id: "1", sourceFilter: "future" },
+        { id: "2", sourceFilter: "future" },
       ]),
     );
     expect(result.presentOrderIds).toHaveLength(2);
@@ -454,4 +454,13 @@ describe("corePoll — Phase 18.2 skip-fetch optimisation", () => {
     expect(result.meta.orders_skipped_unchanged).toBe(0);
     expect(result.presentOrderIds).toEqual([{ id: "1", sourceFilter: "current" }]);
   });
+});
+
+describe("source return reconciliation",()=>{
+ it("re-reads a current workflow even with unchanged chat activity",async()=>{
+  const detail=makeOrderDetail(1);detail.steps=[{key:"RETURNED",active:true,completed:true,failure:false}];
+  const core=makeMockCore({ordersByFilter:{current:[{id:1,sourceFilter:"current",latest_activity:1000}]},details:{1:detail}});
+  const result=await corePoll("test-account",{core,fetchedAt:1,getStoredActivity:async()=>({"1":{latest_activity:1000,has_order_step:true}})});
+  expect(core.getOrder).toHaveBeenCalledWith(1);expect(result.reservations[0].order_step_extracted).toBe("REVIEWED");
+ });
 });

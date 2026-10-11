@@ -62,3 +62,8 @@ describe("filterByCurrentOrderPresence", () => {
     ).toBe(false);
   });
 });
+
+describe("external returned status",()=>{
+ it("hides a website-marked return even if the cached local lifecycle lagged",()=>expect(isOutstandingReturnState({status:"confirmed",order_step:"DELIVERED",booking_status:"returned",account_slug:"dbcinema_web"},"2026-10-11")).toBe(false));
+ it("keeps a next-to-do RETURNED step outstanding",()=>expect(isOutstandingReturnState({status:"confirmed",order_step:"RETURNED"},"2026-10-11")).toBe(true));
+});

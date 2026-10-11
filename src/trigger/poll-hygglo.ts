@@ -1,3 +1,4 @@
+import { providerReturnCompleted } from "../lib/provider-return-evidence";
 /**
  * poll-hygglo-inbox — Phase 6.1
  *
@@ -787,6 +788,7 @@ export const pollHyggloInbox = schedules.task({
               const o = order as any;
               const steps = o?.steps ?? o?.detail?.steps ?? o?._detail?.steps;
               if (!Array.isArray(steps)) return undefined;
+              if (providerReturnCompleted(order)) return "REVIEWED";
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const active = steps.find((s: any) => s?.active === true);
               return active?.key;

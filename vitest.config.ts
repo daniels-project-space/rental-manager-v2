@@ -26,6 +26,7 @@ export default defineConfig({
       "convex/quick_reply_manual_draft.test.ts",
       "src/lib/dashboard/layout-order.test.ts",
       "src/lib/rental-calendar-time.test.ts",
+      "src/lib/provider-return-evidence.test.ts",
       "convex/lib/replacement_sets.test.ts",
       "convex/quick_reply_replacements.test.ts",
       "convex/quick_reply_basket_stock.test.ts",
