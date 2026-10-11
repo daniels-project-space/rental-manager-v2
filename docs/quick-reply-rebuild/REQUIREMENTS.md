@@ -32,3 +32,11 @@ User goal: restore the approved reference hierarchy through a ground-up Quick Re
 - Actual native successful sends do not immediately notify the queue; DB Cinema also waits for polling.
 
 Prior goal turn classification: progress (calendar/return-source behavior deployed and verified). This broader goal remains active; that release did not establish Quick Reply/reference/mobile completion.
+
+## Calendar correction — 11 October 2026
+- Preserve compact calendar rows, bars and item tiles. No handover cards or agenda replacement.
+- Pickup/return clocks remain at the corresponding bar endpoints, with brighter 12px clocks and endpoint ticks. Narrow same-day bars put the return clock below to avoid a collision.
+- Renter names scale with the visible bar width (up to 15px), then shrink only when measured text needs to fit. Mobile horizontal scrolling still recalculates the visible name segment.
+- Actual fixture UI checked at 1440, 1024, 768 and 390px, including horizontal pan, clipping, original compact bar heights, calendar controls and no page overflow. Typecheck and 18 focused regressions passed.
+- Evidence: `/root/CODEX_ARTIFACTS/rental-manager/calendar-compact-endpoints/` (screenshots and fixture-only receipt). No real renter messages or rental/listing changes.
+- Saved locally for the final production batch; broader Quick Reply audit remains open.

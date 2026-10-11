@@ -11,19 +11,32 @@
 }
 .barPickup, .barReturn {
   position: absolute;
-  top: -18px;
-  font-size: 11px;
+  top: -20px;
+  font-size: 12px;
   font-weight: 700;
-  line-height: 14px;
+  line-height: 16px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  width: 62px;
   padding: 0 3px;
   border-radius: 3px;
   background: #0c1423e8;
-  color: #b9cce5;
+  color: #d5e3f4;
 }
+.barPickup::after, .barReturn::after {
+  content: "";
+  position: absolute;
+  bottom: -4px;
+  width: 2px;
+  height: 4px;
+  background: currentColor;
+  opacity: .7;
+}
+.barPickup::after { left: 3px; }
+.barReturn::after { right: 3px; }
 .barPickup { left: -2px; }
-.barReturn { right: -2px; color: #86e0ff; }
+.barReturn { right: -2px; color: #86e0ff; text-align: right; }
+.barReturn[data-calendar-below]::after { top: -4px; bottom: auto; }
 .barPickup i, .barReturn i { font-size: 8px; margin-left: 2px; color: #c7a766; }
 .controls { min-width: 0; }
 .accountFilters { flex-wrap: wrap; min-width: 0; }

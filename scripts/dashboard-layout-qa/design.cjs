@@ -76,6 +76,11 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
   assert.ok(calendarProof.clocks.every(c=>c.scrollWidth<=c.width+1));
   assert.ok(!calendarProof.text.includes('no return time yet'));
   assert.ok(!calendarProof.text.includes('Reported · not confirmed'));
+  const compactBars=await ev(`(()=>{const bars=[...document.querySelectorAll('[data-calendar-bar]')];return bars.map(b=>{const name=b.querySelector('[data-calendar-bar-name]');return {height:b.getBoundingClientRect().height,width:b.getBoundingClientRect().width,name:name?.textContent,font:name?parseFloat(getComputedStyle(name).fontSize):null,clocks:[...b.querySelectorAll('[data-calendar-endpoint]')].map(e=>({font:parseFloat(getComputedStyle(e).fontSize),width:e.getBoundingClientRect().width}))}})})()`);
+  assert.ok(compactBars.every(b=>b.height<=36), 'calendar must keep compact bars');
+  assert.ok(compactBars.flatMap(b=>b.clocks).every(c=>c.font>=12 && c.width===62), 'endpoint clocks must remain readable and reserved at the bar ends');
+  if(width>=1024) assert.ok(compactBars.some(b=>b.width>400 && b.font>=14), 'wide bars must scale the renter name up');
+  assert.equal(await ev('document.querySelectorAll("[data-calendar-handover],[data-calendar-agenda]").length'),0);
   for(const scrollLeft of [0,180,400,0]) {
     await ev(`document.querySelector('[data-calendar-viewport]').scrollLeft=${scrollLeft}`);await pause(120);
     const fit=await ev(`(()=>{const viewport=document.querySelector('[data-calendar-viewport]').getBoundingClientRect();return [...document.querySelectorAll('[data-calendar-name-placement="bar"],[data-calendar-endpoint]')].map(e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right,viewportLeft:viewport.left,viewportRight:viewport.right,text:e.textContent}})})()`);

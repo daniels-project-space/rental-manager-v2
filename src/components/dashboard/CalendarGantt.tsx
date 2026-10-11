@@ -4,7 +4,7 @@ import { rentalCalendarTimestamp } from "../../lib/rental-calendar-time";
 type CalendarClockStatus = "confirmed" | "reported" | "missing";
 import WebsiteVerificationPanel from "./WebsiteVerificationPanel";
 import { websiteVerificationLabel, type WebsiteVerification } from "../../../convex/lib/websiteVerification";
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useLayoutEffect, useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -497,7 +497,7 @@ function ReservationBar({ row, height, isNext, isFocused, onSelect, liveProgress
   const nameGeometry=calendarBarLabelGeometry(row.left,row.width,viewportLeft,viewportRight);
   const pickupVisible=row.left>=viewportLeft && row.left<=viewportRight;
   const returnVisible=row.left+row.width>=viewportLeft && row.left+row.width<=viewportRight;
-  const clockOffset=(anchor:number)=>Math.max(viewportLeft+2,Math.min(anchor,viewportRight-54))-row.left;
+  const clockOffset=(anchor:number)=>Math.max(viewportLeft+2,Math.min(anchor,viewportRight-64))-row.left;
   const tooltip = [
     renterLabel,
     row.items.map((i) => i.name).join(", "),
@@ -538,7 +538,8 @@ function ReservationBar({ row, height, isNext, isFocused, onSelect, liveProgress
       </span>}
       {nameGeometry && <CalendarBarName name={renterLabel} width={nameGeometry.width} color={ss.text} strike={ss.strikethrough} offset={nameGeometry.offset} />}
       {returnInWeek && returnVisible && <span data-calendar-endpoint="return" className={styles.barReturn}
-        style={{top:row.width<115 ? height+3 : undefined,left:clockOffset(row.left+row.width-52),right:"auto"}}
+        data-calendar-below={row.width<128 || undefined}
+        style={{top:row.width<128 ? height+3 : undefined,left:clockOffset(row.left+row.width-62),right:"auto"}}
         title={`${returnDay} · Return ${ret ?? "time not recorded"}${block.return_time_status === "reported" ? " · reported, not confirmed" : ""}`}>
         {ret ?? "—"} ↓{block.return_time_status === "reported" && <i>•</i>}
       </span>}
@@ -554,10 +555,13 @@ function ReservationBar({ row, height, isNext, isFocused, onSelect, liveProgress
 
 function CalendarBarName({name,width,color,strike,sidebar=false,offset=4}:{name:string;width:number;color:string;strike?:boolean;sidebar?:boolean;offset?:number}) {
   const ref=useRef<HTMLSpanElement>(null);
-  useEffect(()=>{
+  useLayoutEffect(()=>{
     const e=ref.current;if(!e)return;
     const fit=()=>{
-      let size=11;e.style.fontSize=`${size}px`;
+      // Use the bar's actual visible width, including a horizontally panned
+      // mobile timeline. Wide bars deserve a readable name, not tiny text.
+      let size=sidebar?12:Math.min(15,11+Math.max(0,width-100)/60);
+      e.style.fontSize=`${size}px`;
       while(size>5 && (e.scrollHeight>(sidebar?22:25) || e.scrollWidth>e.clientWidth+1)) {
         size-=.5;e.style.fontSize=`${size}px`;
       }
