@@ -38,6 +38,7 @@ function database() {
         collect: async () => { const found=[...rows.values()].filter(r => r.table === table && filters.every(f => f(r))); return descending ? found.sort((a,b)=>b._creationTime-a._creationTime) : found; },
         order: (direction:string) => { descending=direction==="desc"; return query; },
         take: async (count:number) => (await query.collect()).slice(0,count),
+        paginate: async ({cursor,numItems}:any) => {const found=(await query.collect()).sort((a:any,b:any)=>a._creationTime-b._creationTime),start=cursor?Number(cursor):0,end=start+numItems;return {page:found.slice(start,end),isDone:end>=found.length,continueCursor:String(end)};},
         first: async () => (await query.collect())[0] ?? null,
         unique: async () => {const found=await query.collect();if(found.length>1)throw new Error("Duplicate rows");return found[0]??null;} };
       return query;
@@ -94,6 +95,24 @@ describe("Identity-backed complete listing replacements", () => {
   const result=await invoke(__service_basket_replacement_candidates,f.ctx,f.args);
   expect(result.alternatives.map((a:any)=>a.product_id).sort()).toEqual([21,22]);
   expect(JSON.stringify([...f.rows])).toBe(before);
+ });
+ it("finds verified candidates beyond the first 128 account listings with indexed cursor pages", async()=>{
+  const f=await fixture();
+  for(let n=0;n<130;n++)await f.ctx.db.insert("online_listings",{account_slug:"leo",product_id:900+n,name:`Unmapped listing ${n}`,is_published:true});
+  for(const row of f.rows.values())if(row.table==="online_listings"&&[21,22].includes(row.product_id))await f.ctx.db.patch(row._id,{_creationTime:999999+row.product_id});
+  const before=JSON.stringify([...f.rows]),found:any[]=[];let cursor:string|undefined,pages=0;
+  do {
+   const result=await invoke(__service_basket_replacement_candidates,f.ctx,{...f.args,...(cursor?{candidate_cursor:cursor}:{})});pages++;
+   found.push(...result.alternatives);cursor=result.is_done?undefined:result.continue_cursor;
+  }while(cursor&&pages<10);
+  expect(pages).toBe(3);expect(found.map(a=>a.product_id).sort()).toEqual([21,22]);
+  expect(JSON.stringify([...f.rows])).toBe(before);
+ });
+ it("does not offer unpublished candidate listings", async()=>{
+  const f=await fixture();const row=[...f.rows.values()].find(r=>r.table==="online_listings"&&r.product_id===22);
+  await f.ctx.db.patch(row._id,{is_published:false});
+  const result=await invoke(__service_basket_replacement_candidates,f.ctx,f.args);
+  expect(result.alternatives.map((a:any)=>a.product_id)).toEqual([21]);
  });
  it("keeps source value unknown rather than borrowing a fuzzy title match", async()=>{
   const f=await fixture();await f.ctx.db.patch(f.ids[10],{replacement_cost_gbp:undefined});
