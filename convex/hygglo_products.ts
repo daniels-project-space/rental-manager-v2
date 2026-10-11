@@ -207,7 +207,7 @@ export const __service_catalogueForStorefront = internalQuery({
         marketingOnlyMode:product.isMarketingOnlyOverride === undefined ? "automatic" as const : "manual" as const,
         marketingOnlyUpdatedAt:product.marketingOnlyUpdatedAt ?? 0,
         valuation,minimumRentalDays,prices,images,unavailableDates,listings,masterItemId,
-        stockMapping:{version:1,complete,owned:resolved.owned,components} };
+        stockMapping:{version:1,complete,owned:(product.isMarketingOnlyOverride ?? isMarketingOnly)?false:resolved.owned,components} };
     });
   },
 });
@@ -285,6 +285,11 @@ export const __saveMarketingOverrides = internalMutation({
         isMarketingOnlyOverride: change.marketingOnly === null ? undefined : change.marketingOnly,
         marketingOnlyUpdatedAt: at,
       });
+    }
+    // Existing caches must not retain an Available badge after an operator changes a tag.
+    if(rows.length)for(const account of ["all","all:pending"]){
+      const cache=await ctx.db.query("mv_reply_queue").withIndex("by_account",q=>q.eq("account",account)).first();
+      if(cache)await ctx.db.delete(cache._id);
     }
     return rows.map(({ product, change }) => ({
       productId: product.productId,

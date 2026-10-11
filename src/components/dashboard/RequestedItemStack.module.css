@@ -124,20 +124,15 @@
   border-radius: 8px;
 }
 
-/* Absolute cards keep the collapsed stack's exact row footprint. */
-.container { position: relative; width: fit-content; }
-.container[data-expanded="true"] .stack { margin-bottom: 0; }
+/* Unfold inside the equipment cell; no popup, shadow, or covering other rows. */
+.container { position: relative; width: 100%; }
+.container[data-expanded="true"] .stack { margin: 0; }
+.foldLabel { color: #9fc4df; font-size: 11px; white-space: nowrap; }
 .container:not([data-inline-expanded="true"]) .expansion {
-  position: absolute;
-  z-index: 40;
-  top: 0;
-  left: var(--stack-offset, 0px);
-  width: min(380px, 75vw);
-  grid-template-columns: repeat(var(--requested-item-columns), minmax(0, 1fr));
-  padding: 12px;
-  border: 1px solid #536a7b;
-  border-radius: 12px;
-  background: #192a37;
-  box-shadow: 0 12px 32px #0009;
+  position: static;
+  grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
-.container[data-inline-expanded="true"] { width: 100%; }

@@ -1,4 +1,8 @@
 "use client";
+import {
+  rentalCalendarParts,
+  rentalCalendarTimestamp,
+} from "@/lib/rental-calendar-time";
 import { useAction } from "convex/react";
 import { makeFunctionReference } from "convex/server";
 import {
@@ -58,7 +62,14 @@ export function DbCinemaOrderEditor({
     start: string;
     end: string;
     busy: boolean;
-    onReview: (start: string, end: string) => void;
+    startTime: string;
+    endTime: string;
+    onReview: (
+      start: string,
+      end: string,
+      startTime?: string,
+      endTime?: string,
+    ) => void;
     onCancel: () => void;
     revision: number;
     canReview: boolean;
@@ -115,14 +126,23 @@ export function DbCinemaOrderEditor({
   const locked = details.refunds.some((r) =>
     ["prepared", "pending"].includes(r.status),
   );
-  async function review(start: string, end: string) {
+  async function review(
+    start: string,
+    end: string,
+    startTime?: string,
+    endTime?: string,
+  ) {
     setBusy(true);
     setNote("");
     setProposal(null);
     try {
       const args = {
-        start: Date.parse(start + "T00:00:00Z"),
-        end: Date.parse(end + "T00:00:00Z"),
+        start: startTime
+          ? rentalCalendarTimestamp(start, startTime)
+          : Date.parse(start + "T00:00:00Z"),
+        end: endTime
+          ? rentalCalendarTimestamp(end, endTime)
+          : Date.parse(end + "T00:00:00Z"),
         reason,
         keep_agreed_price: keep,
       };
@@ -192,12 +212,16 @@ export function DbCinemaOrderEditor({
       setBusy(false);
     }
   }
-  const start = new Date(Math.min(...details.lines.map((l) => l.start)))
-      .toISOString()
-      .slice(0, 10),
-    end = new Date(Math.max(...details.lines.map((l) => l.end)))
-      .toISOString()
-      .slice(0, 10);
+  const first = details.lines.length
+    ? Math.min(...details.lines.map((l) => l.start))
+    : Date.now();
+  const last = details.lines.length
+    ? Math.max(...details.lines.map((l) => l.end))
+    : first;
+  const pickup = rentalCalendarParts(first),
+    returned = rentalCalendarParts(last);
+  const start = pickup.date,
+    end = returned.date;
   return (
     <div className={styles.sourceActions}>
       <section ref={equipmentSection}>
@@ -213,10 +237,7 @@ export function DbCinemaOrderEditor({
       </section>
       <section ref={datesSection}>
         <h4>2. Rental dates</h4>
-        <p>
-          Stock is verified for the complete rental when you review and confirm
-          dates.
-        </p>
+        <p>Select dates and handover times.</p>
         <label>
           Reason
           <input
@@ -247,6 +268,8 @@ export function DbCinemaOrderEditor({
           calendar({
             start,
             end,
+            startTime: pickup.time,
+            endTime: returned.time,
             busy,
             canReview: reason.trim().length >= 5,
             onReview: review,
@@ -260,8 +283,13 @@ export function DbCinemaOrderEditor({
         {proposal && (
           <div role="region" aria-label="Review date change">
             <p>
-              {new Date(proposal.start).toLocaleDateString("en-GB")} –{" "}
-              {new Date(proposal.end).toLocaleDateString("en-GB")}
+              {new Date(proposal.start).toLocaleString("en-GB", {
+                timeZone: "Europe/London",
+              })}{" "}
+              –{" "}
+              {new Date(proposal.end).toLocaleString("en-GB", {
+                timeZone: "Europe/London",
+              })}
               <br />
               Agreed rental charge {money(details.total)}. Security unchanged.
             </p>
@@ -276,13 +304,20 @@ export function DbCinemaOrderEditor({
       </section>
       <section ref={pricingSection}>
         <h4>3. Pricing</h4>
-        <p>
-          Agreed charge <b>{money(details.total)}</b>
-        </p>
-        <p>
-          Discounts on paid rentals use an eligible rental refund. Security is
-          handled separately.
-        </p>
+        <div className={styles.moneyOverview}>
+          <div>
+            <small>Rental payment</small>
+            <strong>{money(details.total)}</strong>
+          </div>
+          <div>
+            <small>Refund</small>
+            <strong>{money(Number(amount) || 0)}</strong>
+          </div>
+          <div>
+            <small>Payment change</small>
+            <strong>{money(-(Number(amount) || 0))}</strong>
+          </div>
+        </div>
         <label>
           Rental refund (£)
           <input

@@ -1,5 +1,5 @@
 "use client";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import styles from "./RentalControls.module.css";
 import { ItemImage } from "./RequestedItemStack";
 import { ProfilePortrait } from "./ProfilePortrait";
@@ -72,6 +72,7 @@ export function RentalControls({
     itemPicker?: ReactNode;
   };
 }) {
+  const [confirmReplacement, setConfirmReplacement] = useState(false);
   const selected = replacement?.choices.find(
     (choice) => choice.id === replacement.selected,
   );
@@ -251,6 +252,33 @@ export function RentalControls({
       </div>
       {replacement ? (
         <footer className={styles.footer}>
+          {confirmReplacement && selected && (
+            <section
+              role="region"
+              aria-label="Confirm equipment replacement"
+              className={styles.changeReview}
+            >
+              <h4>Replace unavailable equipment?</h4>
+              <strong>{selected.name}</strong>
+              <div className={styles.confirmActions}>
+                <button
+                  disabled={!!replacement.busy}
+                  onClick={() => setConfirmReplacement(false)}
+                >
+                  Cancel replacement
+                </button>
+                <button
+                  disabled={!!replacement.busy}
+                  onClick={() => {
+                    setConfirmReplacement(false);
+                    replacement.onApply();
+                  }}
+                >
+                  Confirm replacement
+                </button>
+              </div>
+            </section>
+          )}
           {selected && (
             <>
               {selected.can_apply && (
@@ -262,7 +290,7 @@ export function RentalControls({
                     replacement.sending ||
                     replacement.applied
                   }
-                  onClick={replacement.onApply}
+                  onClick={() => setConfirmReplacement(true)}
                 >
                   {replacement.busy === "apply"
                     ? "Updating booking…"

@@ -1,6 +1,7 @@
 "use client";
 import { useMessageHistorySearch } from "./useMessageHistorySearch";
 import { DbCinemaOrderEditor } from "./DbCinemaOrderEditor";
+import { ChangeReview } from "./ChangeReview";
 import { ItemImage, RequestedItemStack } from "./RequestedItemStack";
 import type { CSSProperties } from "react";
 import { OwnerChecksPanel } from "./OwnerChecksPanel";
@@ -1941,19 +1942,25 @@ function DateCalendar({
   inline = false,
   applyLabel = "Apply dates",
   applyDisabled = false,
+  initialStartTime,
+  initialEndTime,
 }: {
   applyLabel?: string;
   applyDisabled?: boolean;
+  initialStartTime?: string;
+  initialEndTime?: string;
   initialStart: string | null;
   initialEnd: string | null;
   unavailable: Set<string>;
   minDays: number;
   accent: string;
-  onApply: (start: string, end: string) => void;
+  onApply: (start: string, end: string, startTime?:string,endTime?:string) => void;
   onClose: () => void;
   busy: boolean;
   inline?: boolean;
 }) {
+  const [startTime,setStartTime]=useState(initialStartTime ?? "00:00");
+  const [endTime,setEndTime]=useState(initialEndTime ?? "00:00");
   const [start, setStart] = useState<string | null>(initialStart);
   const [end, setEnd] = useState<string | null>(initialEnd);
   const [cursor, setCursor] = useState<Date>(() =>
@@ -2002,13 +2009,15 @@ function DateCalendar({
         ? 1
         : 0;
   const tooShort = rangeDays > 0 && rangeDays < minDays;
+  const rangeBlocked=!!start && [...unavailable].some(day=>day>=start&&day<=(end??start));
   const datesChanged =
-    start !== initialStart || (end ?? start) !== (initialEnd ?? initialStart);
+    start !== initialStart || (end ?? start) !== (initialEnd ?? initialStart) || (initialStartTime!==undefined && (startTime!==initialStartTime || endTime!==initialEndTime));
   const showDateActions =
     !inline || applyLabel !== "Apply dates" || datesChanged;
   const canApply =
     !!start &&
     rangeDays >= minDays &&
+    !rangeBlocked &&
     !busy &&
     !applyDisabled &&
     showDateActions;
@@ -2100,6 +2109,7 @@ function DateCalendar({
               );
             })}
           </div>
+          {initialStartTime!==undefined && <div className={styles.calendarTimes}><label>Pickup · London time<input type="time" aria-label="Pickup time" value={startTime} disabled={busy||applyDisabled} onChange={e=>setStartTime(e.target.value)} /></label><label>Return · London time<input type="time" aria-label="Return time" value={endTime} disabled={busy||applyDisabled} onChange={e=>setEndTime(e.target.value)} /></label></div>}
           {showDateActions && (
             <div
               className={`${styles.calendarRange} mt-3 text-[12px] text-[#9aa0ad]`}
@@ -2109,6 +2119,7 @@ function DateCalendar({
                   {prettyDay(start)}
                   {end && end !== start ? ` → ${prettyDay(end)}` : ""} ·{" "}
                   {rangeDays} day{rangeDays === 1 ? "" : "s"}
+                  {rangeBlocked && <span className="text-rose-300"> · Includes unavailable days</span>}
                   {tooShort && (
                     <span className="text-amber-400">
                       {" "}
@@ -2133,7 +2144,7 @@ function DateCalendar({
               </button>
               <button
                 disabled={!canApply}
-                onClick={() => start && onApply(start, end ?? start)}
+                onClick={() => start && onApply(start, end ?? start, initialStartTime===undefined?undefined:startTime, initialEndTime===undefined?undefined:endTime)}
                 className="ml-auto text-[13px] font-semibold px-5 py-2 rounded-lg text-white disabled:opacity-40"
                 style={{ background: accent }}
               >
@@ -2248,17 +2259,19 @@ function OrderEditor({
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
+  const [changeReview, setChangeReview] = useState<{title:string;before:string;after:string;run:()=>Promise<void>} | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<number | null>(null);
   const [editingPrice, setEditingPrice] = useState(false);
   const [priceInput, setPriceInput] = useState("");
   const [pricePreview, setPricePreview] = useState<string | null>(null);
   const [editingRefund, setEditingRefund] = useState(false);
   const [refundInput, setRefundInput] = useState("");
-  const [showCal, setShowCal] = useState(false);
+  const [showCal, setShowCal] = useState(inline);
   const [unavail, setUnavail] = useState<{
     dates: Set<string>;
     minDays: number;
-  }>({ dates: new Set(), minDays: 1 });
+    verified:boolean;
+  }>({ dates: new Set(), minDays: 1,verified:false });
   // Collapsed by default so the conversation stays visible — expand to edit.
   const [expanded, setExpanded] = useState(inline || !!initialAction);
 
@@ -2300,7 +2313,20 @@ function OrderEditor({
     return false;
   }
 
-  async function onAdd(productId: number, name: string) {
+  async function onAdd(productId:number,name:string) {
+    setShowPicker(false);
+    setChangeReview({title:"Add equipment",before:`${st?.items.length ?? 0} items`,after:name,run:()=>performAdd(productId,name)});
+  }
+  function reviewDates(start:string,end:string) {
+    setChangeReview({title:"Change rental dates",before:`${prettyDay(st?.dates.start ?? null)} – ${prettyDay(st?.dates.end ?? null)}`,after:`${prettyDay(start)} – ${prettyDay(end)}`,run:()=>onApplyDates(start,end)});
+  }
+  async function confirmChange() {
+    const review=changeReview;
+    if(!review || busy)return;
+    try { await review.run(); setChangeReview(null); }
+    catch(error) { setNote(error instanceof Error?error.message:"Change failed. Review the booking before retrying."); }
+  }
+  async function performAdd(productId: number, name: string) {
     setBusy("add");
     setNote(null);
     try {
@@ -2408,10 +2434,11 @@ function OrderEditor({
       })) as {
         dates: string[];
         min_rental_days: number;
+        verified:boolean;
       };
-      setUnavail({ dates: new Set(r.dates), minDays: r.min_rental_days || 1 });
+      setUnavail({ dates: new Set(r.dates), minDays: r.min_rental_days || 1,verified:r.verified===true });
     } catch {
-      setUnavail({ dates: new Set(), minDays: 1 });
+      setUnavail({ dates: new Set(), minDays: 1,verified:false });
     } finally {
       setBusy(null);
       setShowCal(true);
@@ -2614,6 +2641,7 @@ function OrderEditor({
           </div>
 
           <h4>2. Rental dates</h4>
+          <small className="text-slate-400">Hygglo controls booking dates; handover times are agreed in the chat.</small>
           <div className={styles.dateSettings}>
             {" "}
             <div className="flex items-center gap-2 text-[12.5px]">
@@ -2636,6 +2664,7 @@ function OrderEditor({
                 </button>
               )}
             </div>
+            {showCal && !unavail.verified && busy!=="cal-load" && <p role="alert" className="text-xs text-amber-300">Stock could not be verified. <button onClick={()=>void openCalendar()}>Retry calendar</button></p>}
             {inline && showCal && (
               <DateCalendar
                 inline
@@ -2645,7 +2674,8 @@ function OrderEditor({
                 minDays={unavail.minDays}
                 accent={accent}
                 busy={busy === "dates"}
-                onApply={onApplyDates}
+                onApply={reviewDates}
+                applyDisabled={!unavail.verified || !(a.change_dates || a.select_dates)}
                 onClose={() => setShowCal(false)}
               />
             )}
@@ -2654,13 +2684,7 @@ function OrderEditor({
           {/* Price + dates */}
           <div className="px-4 pb-3 flex flex-col gap-1.5">
             <div className="flex items-center gap-2 text-[12.5px]">
-              <span className="text-[#7a8190]">Price</span>
-              <span className="text-[#e6e9ef] font-medium">
-                {money(st.price.order_price, st.currency)} rental
-              </span>
-              <span className="text-[#6b7280]">
-                · {money(st.price.total, st.currency)} total
-              </span>
+              <div className={styles.moneyOverview}><div><small>Rental price</small><strong>{money(st.price.order_price,st.currency)}</strong></div><div><small>Renter pays</small><strong>{money(st.price.total,st.currency)}</strong></div><div><small>Owner earns</small><strong>{money(st.price.earnings,st.currency)}</strong></div></div>
               {canDiscount && (
                 <button
                   onClick={() => {
@@ -2730,8 +2754,8 @@ function OrderEditor({
                     Cancel
                   </button>
                   <button
-                    disabled={busy === "price"}
-                    onClick={() => void onApplyPrice()}
+                    disabled={!!busy || !priceInput || !Number.isFinite(Number(priceInput)) || Number(priceInput)<0}
+                    onClick={() => setChangeReview({title:"Change rental price",before:money(st.price.order_price,st.currency),after:money(Number(priceInput),st.currency),run:onApplyPrice})}
                     className="ml-auto text-[12px] font-semibold px-4 py-1.5 rounded-lg text-white disabled:opacity-50"
                     style={{ background: accent }}
                   >
@@ -2785,10 +2809,7 @@ function OrderEditor({
                         />
                       </div>
                     </div>
-                    <p className="text-[10.5px] leading-relaxed text-[#737b89]">
-                      This sends a partial refund to the renter’s original
-                      payment method.
-                    </p>
+
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => {
@@ -2805,7 +2826,7 @@ function OrderEditor({
                           !refundInput ||
                           Number(refundInput) <= 0
                         }
-                        onClick={() => void onApplyRefund()}
+                        onClick={() => setChangeReview({title:"Refund rental payment",before:money(st.price.total,st.currency),after:money(Number(refundInput),st.currency)+" refund",run:onApplyRefund})}
                         className="ml-auto rounded-lg bg-rose-600 px-3.5 py-1.5 text-[11px] font-semibold text-white hover:bg-rose-500 disabled:opacity-40"
                       >
                         {busy === "refund"
@@ -2821,6 +2842,7 @@ function OrderEditor({
         </>
       )}
 
+      {changeReview && <ChangeReview {...changeReview} busy={!!busy} onConfirm={()=>void confirmChange()} onCancel={()=>setChangeReview(null)} />}
       {note && (
         <div
           className={`px-4 pb-2 text-[11px] ${note.startsWith("✓") ? "text-emerald-400" : "text-amber-400"}`}
@@ -2845,7 +2867,8 @@ function OrderEditor({
           minDays={unavail.minDays}
           accent={accent}
           busy={busy === "dates"}
-          onApply={onApplyDates}
+          onApply={reviewDates}
+          applyDisabled={!unavail.verified}
           onClose={() => setShowCal(false)}
         />
       )}
@@ -3840,6 +3863,8 @@ export function ReplyModal({
                     calendar={({
                       start,
                       end,
+                      startTime,
+                      endTime,
                       busy,
                       onReview,
                       onCancel,
@@ -3851,6 +3876,8 @@ export function ReplyModal({
                         inline
                         initialStart={start}
                         initialEnd={end}
+                        initialStartTime={startTime}
+                        initialEndTime={endTime}
                         unavailable={new Set()}
                         minDays={1}
                         accent={accent}
@@ -3975,8 +4002,7 @@ export function ReplyModal({
             <div className={styles.chatGear}>
               <RequestedItemStack
                 items={tile.requested_items ?? tile.items}
-                size={controlsOpen ? 60 : 90}
-                alwaysExpanded
+                size={controlsOpen ? 60 : 80}
               />
               <div className={styles.chatGearDetails}>
                 <strong>{itemLineShort(tile) || "General inquiry"}</strong>
@@ -4743,33 +4769,14 @@ export function ReplyInbox() {
       viewport?.removeEventListener("resize", updateDock);
     };
   }, []);
-  useEffect(() => {
-    if (!dockTarget) return;
-    const viewport = window.visualViewport;
-    let frame = 0;
-    const measure = () => {
-      frame = 0;
-      const top = Math.max(72, dockTarget.getBoundingClientRect().top);
-      const height = Math.max(320, (viewport?.height ?? window.innerHeight) - top - 16);
-      const value = `${Math.floor(height)}px`;
-      if (dockTarget.style.getPropertyValue("--quick-reply-chat-height") !== value)
-        dockTarget.style.setProperty("--quick-reply-chat-height", value);
-    };
-    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
-    const observer = new ResizeObserver(schedule);
-    if (widgetRef.current) observer.observe(widgetRef.current);
-    window.addEventListener("scroll", schedule, { passive: true });
-    window.addEventListener("resize", schedule);
-    viewport?.addEventListener("resize", schedule);
-    measure();
-    return () => {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-      window.removeEventListener("scroll", schedule);
-      window.removeEventListener("resize", schedule);
-      viewport?.removeEventListener("resize", schedule);
-    };
-  }, [dockTarget]);
+  useLayoutEffect(() => {
+    if(!openId || !canDock)return;
+    const frame=requestAnimationFrame(()=>{
+      const split=widgetRef.current?.querySelector('[data-quick-reply-split]');
+      if(split){const top=split.getBoundingClientRect().top;if(top>100)window.scrollBy({top:top-80,behavior:"instant"});}
+    });
+    return ()=>cancelAnimationFrame(frame);
+  },[openId,canDock]);
   const openThread = (tile: ReplyTileData, reviews = false) => {
     setPreviewId(tile.thread_id);
     setOpenRevision((value) => value + 1);
@@ -5178,6 +5185,7 @@ export function ReplyInbox() {
           )}
         </div>
         <div
+          data-quick-reply-split
           className={`${styles.split} ${canDock ? styles.withDock : ""} ${canDock && openId ? styles.expandedChat : ""}`}
         >
           <div className={styles.inbox}>

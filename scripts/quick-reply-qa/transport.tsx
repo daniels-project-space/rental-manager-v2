@@ -490,7 +490,7 @@ export function useAction(ref) {
           step: "VERIFIED",
         };
       if (name === "order_edit:itemUnavailableDates")
-        return { dates: [], min_rental_days: 1 };
+        return { dates: window.__calendarBlockedDates??[], min_rental_days: 1, verified:window.__calendarFailure!==true };
       if (name === "order_edit:previewPrice")
         return { ok: true, new_total: args.new_order_price + 5 };
       if (
