@@ -22,7 +22,7 @@ import { EditModeBar } from "@/components/dashboard/EditModeBar";
 import { AddWidgetDrawer } from "@/components/dashboard/AddWidgetDrawer";
 import { EditableWidget } from "@/components/dashboard/EditableWidget";
 import { WidgetErrorBoundary } from "@/components/dashboard/WidgetErrorBoundary";
-import { PANEL_WIDGETS, COMPACT_PANELS } from "@/lib/dashboard/widget-registry";
+import { PANEL_WIDGETS, panelLayoutClass } from "@/lib/dashboard/widget-registry";
 import { useEditMode } from "@/lib/dashboard/edit-mode-context";
 import { DeferredMount } from "@/lib/dashboard/deferred-mount";
 import { DashboardHydrationProvider } from "@/lib/dashboard/hydration-context";
@@ -138,11 +138,11 @@ export default function DashboardPage() {
               items={visiblePanels.map((w) => w.id)}
               strategy={rectSortingStrategy}
             >
-              <AutoPackingGrid className="dashboard-panels grid-cols-1 xl:grid-cols-2 gap-3">
+              <AutoPackingGrid className="dashboard-panels grid-cols-1 lg:grid-cols-2 gap-3">
               {visiblePanels.map(({ id, label, component: Component }) => {
                 const skel = PANEL_SKELETON[id];
                 return (
-                  <div key={id} className={COMPACT_PANELS.has(id) ? "min-w-0" : "min-w-0 xl:col-span-2"}>
+                  <div key={id} className={panelLayoutClass(id)}>
                     <div data-packing-content className="flow-root">
                     <EditableWidget id={id} kind="panel" label={label}>
                       <WidgetErrorBoundary label={label}>

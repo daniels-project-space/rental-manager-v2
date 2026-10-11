@@ -105,3 +105,5 @@ describe("priority reply lifecycle",()=>{
   expect([a,b].sort((x,y)=>compareQuickReplies(x,y,"priority",1000)).map(x=>x.thread_id)).toEqual(["a","b"]);
  });
 });
+
+it("also keeps a new request without any messages above already answered threads",()=>expect(compareQuickReplies(row("new",{last_sender:null,last_renter_msg_at:0,estimate_earnings_gbp:1}),row("answered",{last_sender:"owner",estimate_earnings_gbp:100000}),"priority",1000)).toBeLessThan(0));

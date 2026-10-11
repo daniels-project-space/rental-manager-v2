@@ -102,6 +102,30 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
   await ev('document.querySelector(".gantt-embedded").scrollIntoView({block:"start"})');await pause(150);await shot('calendar');
   const geometry=await ev('(()=>{const c=document.querySelector(".gantt-embedded").getBoundingClientRect(); const r=document.querySelector("section[aria-label]").getBoundingClientRect(); return {calendarWidth:c.width,responseHeight:r.height,pageWidth:document.documentElement.scrollWidth,viewport:innerWidth}})()');
   assert.ok(geometry.pageWidth<=width+1,JSON.stringify(geometry));assert.ok(geometry.responseHeight<230,JSON.stringify(geometry));
+  assert.ok(await ev('window.__layout.compact.every(p=>p.className==="min-w-0")'));
+  await ev(`document.querySelector('[data-secondary-widget="item-revenue"]').scrollIntoView({block:'start'})`);await pause(180);
+  const secondary=await ev(`(()=>{return [...document.querySelectorAll('[data-secondary-widget]')].map(e=>{const r=e.getBoundingClientRect();return {id:e.dataset.secondaryWidget,x:r.x,y:r.y,width:r.width,right:r.right,bottom:r.bottom,text:e.textContent}})})()`);
+  assert.equal(secondary.length,6);
+  assert.ok(secondary[0].text.includes('Sony FX6')&&secondary[0].text.includes('Show all 12 items'),'actual earnings card is loaded');
+  assert.ok(secondary[1].text.includes('£4,200'),'actual value card is loaded');
+  if(width>=1024) assert.ok(secondary[1].x>secondary[0].right&&Math.abs(secondary[0].y-secondary[1].y)<2,'secondary panels sit beside each other');
+  else assert.ok(secondary[1].y>=secondary[0].bottom,'mobile panels remain full width');
+  assert.ok(secondary.every(r=>r.x>=0&&r.right<=width),'secondary content stays inside the page');
+  for(let i=0;i<secondary.length;i++) for(let j=i+1;j<secondary.length;j++) {
+    const a=secondary[i],b=secondary[j];
+    assert.ok(Math.min(a.right,b.right)-Math.max(a.x,b.x)<=1||Math.min(a.bottom,b.bottom)-Math.max(a.y,b.y)<=1,`actual secondary cards ${a.id}/${b.id} overlap`);
+  }
+  assert.ok(secondary.every(r=>!r.text.includes('Loading')),'all six actual compact panels are populated');
+  await shot('secondary-widgets');
+  for(const id of ['item-cycle','scorecard','ai-insights','health-scanner']) {
+    await ev(`document.querySelector('[data-secondary-widget="${id}"]').scrollIntoView({block:'start'})`);await pause(100);
+    assert.ok(await ev(`(()=>{const p=document.querySelector('[data-secondary-widget="${id}"]');return p.scrollWidth<=p.clientWidth+1})()`),`${id} content overflows`);
+    await shot(id);
+  }
+  await ev(`[...document.querySelector('[data-secondary-widget="item-revenue"]').querySelectorAll('button')].find(b=>b.textContent.includes('Show all')).click()`);await pause(180);
+  assert.ok(await ev(`document.querySelector('[data-secondary-widget="item-revenue"]').textContent.includes('Fixture lens 11')`));
+  const expandedSecondary=await ev(`(()=>{const a=document.querySelector('[data-secondary-widget="item-revenue"]').getBoundingClientRect(),b=document.querySelector('[data-secondary-widget="equipment-value"]').getBoundingClientRect();return Math.min(a.right,b.right)-Math.max(a.left,b.left)<=1||Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)<=1})()`);
+  assert.ok(expandedSecondary,'expanding a real secondary card never overlaps its neighbor');
   receipts.push({width,...geometry,checks:17});await c.close();
  }
  fs.writeFileSync(`${process.env.RM_QA_OUTPUT}/receipt.json`,JSON.stringify({receipts,realSends:0,realRentalChanges:0},null,2));

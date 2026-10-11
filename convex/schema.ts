@@ -19,6 +19,11 @@ import { invoiceStatsValidator } from "./lib/invoice_stats_fields";
 // (renters, reservations, conversations, rules, denial_records).
 // MASTER SAFETY RAIL: settings.ALLOW_HYGGLO_SEND must remain false.
 const operationalSchema = defineSchema({
+  // Operator queue preferences only; never changes a booking or conversation.
+  quick_reply_thread_state: defineTable({
+    thread_id: v.string(), through_renter_msg_at: v.number(),
+    reason: v.union(v.literal("dismissed"), v.literal("declined")), updated_at: v.number(),
+  }).index("by_thread", ["thread_id"]),
   finance_snapshots: defineTable({
     month: v.string(), revision: v.number(), revenue: v.number(), expenses: v.number(), profit: v.number(),
     daniel_bps: v.number(), daniel: v.number(), leo: v.number(), source_revenue: v.number(),

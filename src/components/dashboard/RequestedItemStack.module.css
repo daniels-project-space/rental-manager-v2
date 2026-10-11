@@ -1,138 +1,19 @@
-.stack {
-  position: relative;
-  flex-shrink: 0;
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  padding: 0;
-  overflow: visible;
-}
-.stack:focus-visible {
-  outline: 2px solid #72cfff;
-  outline-offset: 4px;
-  border-radius: 8px;
-}
-.layer {
-  position: absolute;
-  display: grid;
-  place-items: center;
-  border: 1px solid #465965;
-  border-radius: 8px;
-  background: #1b2a34;
-  box-shadow: 0 2px 7px #0006;
-  overflow: hidden;
-}
-.layer img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-.count {
-  position: absolute;
-  right: -5px;
-  bottom: -5px;
-  z-index: 5;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 4px;
-  border-radius: 9px;
-  background: #283c4b;
-  border: 1px solid #618097;
-  color: #e7f1fa;
-  font-size: 10px;
-  display: grid;
-  place-items: center;
-}
-.container {
-  min-width: 0;
-  width: 100%;
-}
-.container[data-expanded="true"] .stack {
-  margin-bottom: 8px;
-}
-.expansion {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(70px, 1fr));
-  gap: 10px;
-  padding: 6px 0;
-  width: 100%;
-  text-align: left;
-}
-.expansion article {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-.expansion img,
-.expansion .missing {
-  width: 100%;
-  height: 72px;
-  object-fit: contain;
-  border-radius: 8px;
-  background: #20313d;
-  display: grid;
-  place-items: center;
-}
-.expansion strong {
-  font-size: 11px;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-.expansion small {
-  font-size: 10px;
-  color: #a1b8c8;
-  line-height: 1.4;
-}
-.empty {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  color: #89a2b6;
-}
-.collapse {
-  grid-column: 1/-1;
-  border: 0;
-  background: transparent;
-  color: #91b6d3;
-  font-size: 10px;
-  text-align: left;
-  padding: 4px 0;
-  cursor: pointer;
-}
-.expansion {
-  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
-}
-.expansion article img {
-  height: 86px;
-}
-
-.expandedAnchor {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-.container:focus-within .expansion {
-  outline: 2px solid #72cfff;
-  outline-offset: 4px;
-  border-radius: 8px;
-}
-
-/* Unfold inside the equipment cell; no popup, shadow, or covering other rows. */
-.container { position: relative; width: 100%; }
-.container[data-expanded="true"] .stack { margin: 0; }
-.foldLabel { color: #9fc4df; font-size: 11px; white-space: nowrap; }
-.container:not([data-inline-expanded="true"]) .expansion {
-  position: static;
-  grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
-  padding: 4px 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
+/* The stack owns one fixed layout slot. Only its existing image layers move. */
+.container { position: relative; flex: 0 0 auto; overflow: visible; isolation: isolate; }
+.container[data-expanded="true"] { z-index: 20; }
+.stack { position: relative; display: block; padding: 0; border: 0; background: transparent; cursor: pointer; overflow: visible; }
+.stack:focus-visible { outline: 2px solid #72cfff; outline-offset: 4px; border-radius: 8px; }
+.layer { position: absolute; top: 0; left: 0; display: grid; place-items: center; border: 1px solid #465965; border-radius: 8px; background: #1b2a34; overflow: hidden;
+  transition: transform 240ms cubic-bezier(.2,.8,.2,1), opacity 160ms ease; transform-origin: center; box-shadow: 0 2px 7px #0006; }
+.layer img { width: 100%; height: 100%; object-fit: contain; }
+.count { position: absolute; right: -5px; bottom: -5px; z-index: 30; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; background: #283c4b; border: 1px solid #618097; color: #e7f1fa; font-size: 10px; display: grid; place-items: center; }
+.quantity { position: absolute; right: 2px; bottom: 2px; border-radius: 4px; padding: 1px 3px; color: #fff; background: #101d29e8; font-size: 9px; }
+.inline { min-width: 0; width: 100%; }
+.expansion { display: grid; grid-template-columns: repeat(auto-fit,minmax(70px,1fr)); gap: 10px; padding: 6px 0; width: 100%; text-align: left; }
+.expansion article { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.expansion img, .expansion .missing { width: 100%; height: 86px; object-fit: contain; border-radius: 8px; background: #20313d; display: grid; place-items: center; }
+.expansion strong { font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.expansion small { font-size: 10px; color: #a1b8c8; line-height: 1.4; }
+.missing { color: #89a2b6; font-size: 20px; }
+.empty { display: grid; place-items: center; width: 38px; height: 38px; color: #89a2b6; }
+@media (prefers-reduced-motion: reduce) { .layer { transition: none; } }

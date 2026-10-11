@@ -24,6 +24,9 @@ export default defineConfig({
     globals: false,
     include: [
       "convex/quick_reply_manual_draft.test.ts",
+      "convex/quick_reply_thread_state.test.ts",
+      "convex/lib/renter_message_watermark.test.ts",
+      "src/lib/quick-reply-queue-state.test.ts",
       "src/lib/dashboard/layout-order.test.ts",
       "src/lib/rental-calendar-time.test.ts",
       "src/lib/provider-return-evidence.test.ts",

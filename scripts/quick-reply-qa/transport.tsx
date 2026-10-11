@@ -13,7 +13,8 @@ const changed = () => {
   listeners.forEach((fn) => fn());
 };
 import { getFunctionName } from "convex/server";
-const now = Date.now();
+const now = Number(sessionStorage.getItem("qa-fixture-now")??Date.now());
+sessionStorage.setItem("qa-fixture-now",String(now));
 const names = [
   "Marcus Lee",
   "Priya Sharma",
@@ -135,6 +136,7 @@ const messages = [
   },
 ];
 const settings = { availability_include_pending: false };
+const hidden = JSON.parse(sessionStorage.getItem("qa-server-hidden")??"{}");
 const canned = [
   {
     _id: "preset1",
@@ -168,6 +170,7 @@ export function useQuery(ref, args) {
     return rows.filter((r) => r.source === "hygglo");
   if (name === "replyInbox:getThreadById")
     return rows.find((r) => r.thread_id === args.thread_id);
+  if(name === "quick_reply_thread_state:getForThreads") return Object.fromEntries(args.thread_ids.map(id=>[id,hidden[id]??null]));
   if (name === "settings:get") return settings;
   if (name === "hygglo:listByThread") return messages;
   if (name === "replyInbox:getImminentHandoffs")
@@ -497,7 +500,7 @@ export function useAction(ref) {
         name.startsWith("order_edit:") ||
         name.startsWith("replyInbox_actions:")
       )
-        return { status: "sent", reason: "DRY_RUN" };
+        return { status: "sent", reason: window.__acknowledgeFixture ? "FIXTURE_ACK" : "DRY_RUN" };
       if (/resolve|refresh/.test(name)) return {};
       throw Error("Fixture blocked production action: " + name);
     },
@@ -532,6 +535,10 @@ export function useMutation(ref) {
         if (i >= 0) canned.splice(i, 1);
         changed();
         return;
+      }
+      if(name === "quick_reply_thread_state:hide") {
+        hidden[args.thread_id]=Math.max(hidden[args.thread_id]??0,args.through_renter_msg_at);
+        sessionStorage.setItem("qa-server-hidden",JSON.stringify(hidden));changed();return {ok:true};
       }
       if (name === "replyInbox:dismissThread") return;
       throw Error("Fixture blocked production mutation: " + name);

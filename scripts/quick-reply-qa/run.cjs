@@ -140,11 +140,25 @@ let browser, server;
   console.log(
     "Testing Quick Reply with fixture-only transport and external DNS disabled.",
   );
+  if(process.env.RM_QA_VIEW_ONLY) {
+    await child(process.execPath,[__dirname+"/reference.cjs"],{env});
+  } else if(process.env.RM_QA_PHONE_ONLY) {
+    await child(process.execPath,[__dirname+"/phone-close.cjs"],{env});
+  } else if(process.env.RM_QA_QUEUE_ONLY) {
+    await child(process.execPath,[__dirname+"/queue.cjs"],{env});
+  } else if (process.env.RM_QA_STACK_ONLY) {
+    await child(process.execPath, [__dirname + "/stack.cjs"], { env });
+  await child(process.execPath, [__dirname + "/reference.cjs"], { env });
+  } else {
   if (!process.env.RM_QA_DESIGN_ONLY) {
     await child(process.execPath, [__dirname + "/controls.cjs"], { env });
     await child(process.execPath, [__dirname + "/phone-close.cjs"], { env });
+    await child(process.execPath, [__dirname + "/queue.cjs"], { env });
   }
   await child(process.execPath, [__dirname + "/design.cjs"], { env });
+  await child(process.execPath, [__dirname + "/stack.cjs"], { env });
+  await child(process.execPath, [__dirname + "/reference.cjs"], { env });
+  }
   console.log(
     "Quick Reply selected fixture checks passed. Receipts: " + output,
   );

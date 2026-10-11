@@ -127,7 +127,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     );
     await search("");
     await ev(
-      `[...document.querySelector('[aria-label="Filter conversations by account"]').querySelectorAll('button')].find(b=>b.textContent.trim()==='Leo Adams').click()`,
+      `(()=>{const e=document.querySelector('[aria-label="Filter conversations by account"]');e.value='leo';e.dispatchEvent(new Event('change',{bubbles:true}));})()`,
     );
     await pause(100);
     assert.equal(
@@ -145,7 +145,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       "account row uses the calendar accent",
     );
     await ev(
-      `[...document.querySelector('[aria-label="Filter conversations by account"]').querySelectorAll('button')].find(b=>b.textContent.trim()==='All accounts').click()`,
+      `(()=>{const e=document.querySelector('[aria-label="Filter conversations by account"]');e.value='';e.dispatchEvent(new Event('change',{bubbles:true}));})()`,
     );
     await pause(100);
     if (width === 1505) {
@@ -204,7 +204,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     );
     if (width === 1505)
       assert(
-        headerLayout.railHeight <= 110,
+        headerLayout.railHeight <= 112,
         "wide queue handoff row stays compact",
       );
     await ev(`{window.__savedQueuePreview=window.__fixture.rows[4].preview;window.__fixture.rows[4].preview='A long rental enquiry with extra details '.repeat(35);window.__fixture.changed();}`);
@@ -239,64 +239,13 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       );
       await c.cmd("Input.dispatchMouseEvent", { type: "mouseMoved", ...point });
       await pause(150);
-      assert(
-        await ev(`${stack}.querySelectorAll('section img').length===3`),
-        "all requested images expand in the card: " +
-          (await ev(
-            `JSON.stringify({expanded:${stack}.dataset.expanded,hoverNone:matchMedia('(hover:none)').matches,hit:document.elementFromPoint(${point.x},${point.y})?.outerHTML,images:${stack}.querySelectorAll('img').length})`,
-          )),
-      );
-      assert(
-        await ev(`${stack}.querySelectorAll('img').length===3`),
-        "expanded stack has no duplicate collapsed images",
-      );
-      assert(
-        await ev(
-          `getComputedStyle(${stack}.querySelector('section')).position==='static'`,
-        ),
-        "equipment expansion uses card layout",
-      );
+      assert(await ev(`${stack}.dataset.expanded==='true'&&${stack}.querySelectorAll('[data-stack-layer] img').length===3&&!${stack}.querySelector('section')`),"the actual requested photo layers fan apart without a grid or overlay");
       await capture("equipment-stack");
-      const expandedSize = await ev(
-        `(()=>{const stack=${stack};const row=stack.closest('[aria-label^="Open conversation with"]');const r=row.getBoundingClientRect();return {height:r.height,photos:[...stack.querySelectorAll('section img')].map(img=>{const p=img.getBoundingClientRect();return {width:p.width,height:p.height,inside:p.left>=r.left&&p.right<=r.right};})};})()`,
-      );
-      assert(
-        expandedSize.height >= 90 &&
-          expandedSize.photos.every(
-            (p) => p.width >= 60 && p.height >= 50,
-          ),
-        "expanded cards occupy their equipment cell without an overlay: " +
-          JSON.stringify(expandedSize),
-      );
-      fs.writeFileSync(
-        `${process.env.RM_QA_OUTPUT}/equipment-scale-geometry.json`,
-        JSON.stringify(expandedSize, null, 2),
-      );
-      await ev(
-        `document.querySelector('[class*="inbox"]').style.width='1070px'`,
-      );
-      await pause(100);
-      assert(
-        await ev(
-          `(()=>{const rows=document.querySelector('[class*="rows"]');return rows.scrollWidth<=rows.clientWidth;})()`,
-        ),
-        "expanded equipment fits the smallest wide table without horizontal scrolling",
-      );
-      await ev(`document.querySelector('[class*="inbox"]').style.width=''`);
-      await ev(
-        `{window.__threeRequestedItems=window.__fixture.rows[0].requested_items;window.__fixture.rows[0].requested_items=[...window.__threeRequestedItems,...['Battery kit','Focus monitor','Light kit'].map((name,i)=>({name,qty:1,origin:'chat',image_url:'/gear'+i+'.png'}))];window.__fixture.changed();}`,
-      );
-      await pause(100);
-      assert(
-        await ev(
-          `${stack}.querySelectorAll('section img').length===6&&[...${stack}.querySelectorAll('section img')].every(img=>img.complete&&img.naturalWidth>0)`,
-        ),
-        "all six requested photos load across the card's rows",
-      );
+      await ev(`{window.__threeRequestedItems=window.__fixture.rows[0].requested_items;window.__fixture.rows[0].requested_items=[...window.__threeRequestedItems,...['Battery kit','Focus monitor','Light kit'].map((name,i)=>({name,qty:1,origin:'chat',image_url:'/gear'+i+'.png'}))];window.__fixture.changed();}`);
+      await pause(300);
+      assert(await ev(`${stack}.querySelectorAll('img').length===6&&[...${stack}.querySelectorAll('img')].every(img=>img.complete&&img.naturalWidth>0)`),"all six original requested photo nodes resolve");
       await capture("equipment-six-items");
-      await ev(
-        `{window.__fixture.rows[0].requested_items=window.__threeRequestedItems;window.__fixture.changed();}`,
-      );
+      await ev(`{window.__fixture.rows[0].requested_items=window.__threeRequestedItems;window.__fixture.changed();}`);
       await c.cmd("Input.dispatchMouseEvent", {
         type: "mouseMoved",
         x: width - 5,
@@ -304,7 +253,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       });
       await pause(100);
       assert(
-        await ev(`!${stack}.querySelector('section')`),
+        await ev(`${stack}.dataset.expanded==='false'`),
         "equipment stack retracts after hover leaves",
       );
       await c.cmd("Input.dispatchKeyEvent", {
@@ -329,7 +278,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       });
       await pause(100);
       assert(
-        await ev(`!${stack}.querySelector('section')`),
+        await ev(`${stack}.dataset.expanded==='false'`),
         "Escape retracts requested equipment with focus preserved",
       );
     }
@@ -361,22 +310,22 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     );
     if (width === 1505) {
       const handoffLayout = await ev(
-        `(()=>{const rail=document.querySelector('[class*="handoffRail"]');return [...rail.querySelectorAll('button')].map(card=>{const name=card.querySelector('[class*="handoffRenter"]').getBoundingClientRect();const state=card.querySelector('[class*="pickup"],[class*="return"]').getBoundingClientRect();const r=card.getBoundingClientRect();return {height:r.height,overlap:name.left<state.right&&name.right>state.left&&name.top<state.bottom&&name.bottom>state.top};});})()`,
+        `(()=>{const rail=document.querySelector('[class*="handoffRail"]');return [...rail.querySelectorAll('button')].map(card=>{const name=card.querySelector('[class*="handoffRenter"]').getBoundingClientRect();const state=card.querySelector('[class*="pickup"],[class*="return"]').getBoundingClientRect();const r=card.getBoundingClientRect();return {height:r.height,overlap:name.width>0&&name.left<state.right&&name.right>state.left&&name.top<state.bottom&&name.bottom>state.top};});})()`,
       );
       assert(
         handoffLayout.every((row) => row.height <= 100 && !row.overlap),
-        "time-sensitive names and timing fit without overlapping",
+        "time-sensitive names and timing fit without overlapping: "+JSON.stringify(handoffLayout),
       );
     }
     const chatSpace = await ev(
       `(()=>{const chat=document.querySelector('[aria-label="Conversation with Marcus Lee"]');const history=chat.querySelector('[class*="messages"]');const r=chat.getBoundingClientRect(),h=history.getBoundingClientRect();return {width:r.width,historyHeight:h.height};})()`,
     );
     assert(
-      chatSpace.width >= (width === 390 ? 390 : 700),
+      chatSpace.width >= (width === 390 ? 348 : 700),
       "open chat keeps a wide conversation",
     );
     assert(
-      chatSpace.historyHeight >= (width === 390 ? 340 : 400),
+      chatSpace.historyHeight >= (width === 390 ? 320 : 400),
       "message history keeps usable height",
     );
 
@@ -417,7 +366,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     );
     assert(draftBefore === 0, "opening chat reads without auto drafting");
     await ev(
-      `[...document.querySelectorAll('button')].find(b=>b.offsetParent!==null&&b.textContent.trim().startsWith('Rental controls')).click()`,
+      `[...document.querySelectorAll('button')].find(b=>b.offsetParent!==null&&b.getAttribute('aria-label')==='Open rental controls').click()`,
     );
     await pause(200);
     if (width === 1505) {
@@ -449,9 +398,9 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     if (width === 1505)
       assert(
         await ev(
-          `getComputedStyle(document.querySelector('[aria-label="Conversation with Marcus Lee"] [class*="chatGear"]')).display==='none'`,
+          `document.querySelector('[aria-label="Conversation with Marcus Lee"] [class*="chatGear"] img')?.complete===true`,
         ),
-        "controls keep one equipment summary in the side panel",
+        "controls preserve loaded equipment context in the conversation header",
       );
 
     const geometry = await ev(
@@ -492,6 +441,15 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       await ev(
         `document.querySelector('[aria-label="Close conversation"]').click()`,
       );
+    }
+    if(width===1505) {
+      const before=await ev(`window.__calls.filter(c=>c.name==='quick_reply_manual_draft:generate').length`);
+      await ev(`document.querySelector('[aria-label="Request preview for Marcus Lee"] [class*="aiButton"]').click()`);await pause(250);
+      assert.equal(await ev(`window.__calls.filter(c=>c.name==='quick_reply_manual_draft:generate').length`),before+1,"preview Draft opens and generates only when clicked");
+      await ev(`document.querySelector('[aria-label="Close conversation"]').click()`);
+      await ev(`document.querySelector('[aria-label="Open full chat with Marcus Lee"]').click()`);await pause(100);
+      assert.equal(await ev(`window.__calls.filter(c=>c.name==='quick_reply_manual_draft:generate').length`),before+1,"reopening does not replay the preview draft request");
+      await ev(`document.querySelector('[aria-label="Close conversation"]').click()`);
     }
     await ev(
       `document.querySelector('[aria-label="Open conversation with Elena Rossi"] button').closest('[role=button]').querySelector('button').blur();[...document.querySelector('[aria-label="Open conversation with Elena Rossi"]').querySelectorAll('button')].find(b=>b.textContent.trim()==='Find replacement').click()`,

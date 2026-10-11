@@ -144,7 +144,9 @@ export const COMPACT_PANELS: ReadonlySet<string> = new Set([
   "earnings-chart", "live-activity", "top-bundles", "missed-revenue",
   "out-of-stock", "sell-recommender", "price-recos", "conversation-funnel",
   "verification-funnel", "item-roi", "lost-revenue-buy",
+  "item-revenue", "item-cycle", "scorecard", "ai-insights", "health-scanner", "equipment-value",
 ]);
+export const panelLayoutClass = (id:string) => COMPACT_PANELS.has(id) ? "min-w-0" : "min-w-0 lg:col-span-2";
 const PRIMARY_PANELS = ["stats-grid", "lifetime", "reply-inbox", "live-calendar", "return-hub", "marketing-only-listings"];
 export const DEFAULT_PANEL_ORDER = [...PRIMARY_PANELS, ...PANEL_WIDGETS.map((w) => w.id).filter((id) => !PRIMARY_PANELS.includes(id))];
 export const DEFAULT_STAT_ORDER  = STAT_WIDGETS.map((w) => w.id);

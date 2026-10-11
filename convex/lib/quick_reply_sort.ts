@@ -71,7 +71,7 @@ export function compareQuickReplies(
   }
   // Priority starts with the operator’s outstanding replies. Money can never
   // pull an answered conversation above one still waiting for a response.
-  const aWaiting = a.last_sender === "renter", bWaiting = b.last_sender === "renter";
+  const aWaiting = a.last_sender !== "owner", bWaiting = b.last_sender !== "owner";
   if (aWaiting !== bWaiting) return aWaiting ? -1 : 1;
   const score = (row: Row) =>
     2 * Math.log1p(Math.max(0, earnings(row) ?? 0)) +

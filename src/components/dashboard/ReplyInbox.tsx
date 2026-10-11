@@ -47,7 +47,11 @@ import {
   calendarAccountAccent,
 } from "@/lib/account-theme";
 import { Card } from "@/components/ui/Card";
-import styles from "./ReplyInbox.module.css";
+import panelStyles from "./ReplyInbox.module.css";
+import workspaceStyles from "./ReplyWorkspace.module.css";
+const styles={...panelStyles,...workspaceStyles};
+import {applyReplyReceipt,threadHidden,type ReplyReceipt} from "@/lib/quick-reply-queue-state";
+type QueueEvent = {kind:"replied"|"approved"|"declined"|"dismissed";thread_id:string;through:number;text?:string};
 import { ProfilePortrait } from "./ProfilePortrait";
 import {
   compareQuickReplies,
@@ -97,9 +101,8 @@ const reviewsGetRef = makeFunctionReference<"query">(
 );
 // locations is a new convex module — reference by name so `next build`'s
 // typecheck stays green against the committed (lagging) _generated api.
-const dismissThreadRef = makeFunctionReference<"mutation">(
-  "replyInbox:dismissThread",
-);
+const hideThreadRef = makeFunctionReference<"mutation">("quick_reply_thread_state:hide");
+const threadStateRef = makeFunctionReference<"query">("quick_reply_thread_state:getForThreads");
 const resolveLocRef = makeFunctionReference<"action">(
   "locations:resolveForThread",
 );
@@ -1231,89 +1234,69 @@ function AccountTag({
 
 // ── card ──────────────────────────────────────────────────────────
 
-function ConversationPreview({
-  tile,
-  onOpen,
-  onReviews,
-}: {
-  tile: ReplyTileData;
-  onOpen: () => void;
-  onReviews: () => void;
+function ConversationHeader({tile,onReviews,onClose,headerRef,extras}: {
+  tile:ReplyTileData;onReviews:()=>void;onClose?:()=>void;
+  headerRef?:React.Ref<HTMLDivElement>;extras?:React.ReactNode;
 }) {
-  return (
-    <aside
-      className={styles.queuePreview}
-      aria-label={`Request preview for ${tile.renter_name}`}
-    >
-      <header>
-        <ProfilePortrait
-          src={tile.renter_image_url}
-          name={tile.renter_name}
-          className={styles.previewPortrait}
-        />
-        <div>
-          <h3>{tile.renter_name}</h3>
-          <button
-            type="button"
-            className={styles.rating}
-            onClick={onReviews}
-            title="View renter reviews"
-          >
-            <span>★</span> {tile.renter_rating?.toFixed(1) ?? "Unrated"}
-            {tile.renter_review_count != null && (
-              <small> · {tile.renter_review_count} reviews</small>
-            )}
+  return <div className={styles.chatHeader} ref={headerRef} data-conversation-header>
+    <div className={styles.chatIdentity}>
+      <ProfilePortrait src={tile.renter_image_url} name={tile.renter_name} className={styles.chatAvatar}/>
+      <div className="min-w-0">
+        <h3>{tile.renter_name}</h3>
+        <div className={styles.chatReputation}>
+          <button type="button" className={styles.rating} title="View all renter reviews" onClick={onReviews}>
+            {tile.renter_rating?.toFixed(1)??"Unrated"} <span>★</span>
+            {tile.renter_review_count!=null&&<small className={styles.reviewCount}> · {tile.renter_review_count} reviews</small>}
           </button>
-          <div className={styles.previewAccount}>
-            <AccountTag slug={tile.account_slug} source={tile.source} />
-          </div>
+          <AccountTag slug={tile.account_slug} source={tile.source}/>
         </div>
-      </header>
-      <div className={styles.previewSummary}>
-        <div>
-          <span>Rental dates</span>
-          <strong>
-            {tile.start_date
-              ? `${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date ?? tile.start_date)}`
-              : "Dates pending"}
-          </strong>
-        </div>
-        <div>
-          <span>Est. earn</span>
-          <strong>
-            {fmtMoney(tile.net_to_owner_gbp ?? tile.estimate_earnings_gbp) ??
-              "Price pending"}
-          </strong>
-        </div>
-        <QueueAvailability tile={tile} />
+        <div className={styles.identityDates}>{tile.start_date?`${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date??tile.start_date)}`:"Dates pending"}</div>
       </div>
-      <section className={styles.previewEquipment}>
-        <h4>Requested equipment</h4>
-        <RequestedItemStack
-          items={tile.requested_items ?? tile.items}
-          alwaysExpanded
-          expandedLabel="Preview requested equipment"
-          size={72}
-        />
-      </section>
-      <section className={styles.previewLatest}>
-        <h4>Latest message</h4>
-        <p>{tile.preview || statusText(tile)}</p>
-        {tile.last_activity_at && (
-          <time>{fmtMsgTime(tile.last_activity_at)}</time>
-        )}
-      </section>
-      <footer>
-        <button
-          type="button"
-          onClick={onOpen}
-          aria-label={`Open full chat with ${tile.renter_name}`}
-        >
-          Open chat to reply <span aria-hidden="true">↗</span>
-        </button>
-      </footer>
-    </aside>
-  );
+    </div>
+    {onClose&&<button type="button" onClick={onClose} aria-label="Close conversation" data-testid="quick-reply-close" className={styles.chatClose}><span>×</span><small>Close</small></button>}
+    <div className={styles.chatGear}>
+      <RequestedItemStack items={tile.requested_items??tile.items} size={100} boundarySelector="[data-conversation-header]"/>
+      <div className={styles.chatGearDetails}>
+        <strong>{itemLineShort(tile)||"General inquiry"}</strong>
+        <div className={styles.chatDates}>{tile.start_date?`${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date??tile.start_date)}`:"Dates pending"}</div>
+        <div className={styles.chatGearMeta}><span>{tile.net_to_owner_gbp!=null?"Owner earns":"Est. earn"} <b>{fmtMoney(tile.net_to_owner_gbp??tile.estimate_earnings_gbp)??"—"}</b></span></div>
+      </div>
+    </div>
+    <div className={styles.headerAvailability}><QueueAvailability tile={tile}/></div>
+    {extras&&<div className={styles.headerExtras}>{extras}</div>}
+  </div>;
+}
+
+function ConversationPreview({tile,onOpen,onReviews,onDraft}:{tile:ReplyTileData;onOpen:()=>void;onReviews:()=>void;onDraft:()=>void}) {
+  const native=useQuery(api.hygglo.listByThread,tile.source==="dbcinema_web"?"skip":{thread_id:tile.thread_id});
+  const loadWeb=useAction(dbCinemaThreadRef);
+  const [website,setWebsite]=useState<{thread:string;messages:Array<{role:string;content:string;timestamp:number}>}|null>(null);
+  useEffect(()=>{
+    if(tile.source!=="dbcinema_web"||!tile.source_booking_id)return;
+    let alive=true;
+    void loadWeb({booking_id:tile.source_booking_id}).then(result=>{if(alive)setWebsite({thread:tile.thread_id,messages:result.messages});}).catch(()=>{if(alive)setWebsite(null);});
+    return ()=>{alive=false;};
+  },[tile.source,tile.source_booking_id,tile.thread_id,loadWeb]);
+  const messages=tile.source==="dbcinema_web"?(website?.thread===tile.thread_id?website.messages:[]):native??[];
+  return <aside className={styles.queuePreview} aria-label={`Request preview for ${tile.renter_name}`}>
+    <ConversationHeader tile={tile} onReviews={onReviews}/>
+    <div className={styles.verificationStrip}><span className={styles.sectionLabel}>Booking progress</span><StageBar t={tile}/></div>
+    <div className={styles.messages}>
+      {(messages.length?messages.slice(-6):[{role:tile.last_sender??"renter",content:tile.preview||statusText(tile),timestamp:tile.last_activity_at}]).map((m,i)=><div key={i} className={`${styles.message} ${m.role==="owner"?styles.ownerMessage:""}`}>
+        {m.role==="owner"?<div className={styles.messageAvatar}><span>Me</span></div>:<ProfilePortrait src={tile.renter_image_url} name={tile.renter_name} className={styles.messageAvatar}/>}
+        <div className={styles.bubble}>{m.content}{m.role==="owner"&&<span className={styles.messageTime}>{fmtMsgTime(m.timestamp)} <b>✓</b></span>}</div>
+        {m.role!=="owner"&&<span className={styles.messageTime}>{fmtMsgTime(m.timestamp)}</span>}
+      </div>)}
+    </div>
+    <footer className={styles.previewComposer}>
+      <button type="button" className={styles.aiButton} onClick={onDraft}><span>✦</span> Draft reply from chat context</button>
+      <div className={styles.composeInput}>
+        <button type="button" className={styles.attachButton} aria-label="Open reply attachments" onClick={onOpen}><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m9 17 8-8a3 3 0 0 0-4-4L5 13a5 5 0 0 0 7 7l8-8a7 7 0 0 0-10-10L3 9"/></svg></button>
+        <button type="button" className={styles.previewWrite} onClick={onOpen} aria-label={`Open full chat with ${tile.renter_name}`}>Write a reply…</button>
+        <button type="button" className={styles.sendButton} onClick={onOpen}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m21 3-7 18-4-7-7-4 18-7Z"/><path d="m10 14 6-6"/></svg>Send</button>
+      </div>
+    </footer>
+  </aside>;
 }
 
 function ReplyCard({
@@ -1331,7 +1314,7 @@ function ReplyCard({
   tile: ReplyTileData;
   now: number;
   onOpen: () => void;
-  onActed: (id: string) => void;
+  onActed: (event: QueueEvent) => void;
   dryRun: boolean;
   duplicate?: boolean;
   selected?: boolean;
@@ -1355,28 +1338,9 @@ function ReplyCard({
     null,
   );
   const [note, setNote] = useState<string | null>(null);
-  const dismiss = useMutation(dismissThreadRef);
-
-  // "× close" — hide the tile now (optimistic), persist the dismissal so it stays
-  // gone across reloads, and let it re-surface only when the renter messages again.
+  // Queue preferences are owned by the workspace, separate from rental data.
   async function onDismiss() {
-    onActed(tile.thread_id);
-    if (tile.source === "dbcinema_web") {
-      try {
-        window.localStorage.setItem(
-          `rm-quick-reply-dismissed:${tile.thread_id}`,
-          String(tile.last_activity_at),
-        );
-      } catch {
-        /* browser storage can be disabled */
-      }
-      return;
-    }
-    try {
-      await dismiss({ thread_id: tile.thread_id });
-    } catch {
-      /* a failed close just means the next queue refresh re-lists it */
-    }
+    onActed({kind:"dismissed",thread_id:tile.thread_id,through:tile.last_renter_msg_at});
   }
 
   // OPTIMISTIC — flip to "✓ done" the instant you confirm, fire the Hygglo call
@@ -1398,7 +1362,7 @@ function ReplyCard({
       if (r.status === "sent") {
         if (r.reason === "DRY_RUN")
           setNote(`✓ ${kind} OK (test — nothing sent)`);
-        else onActed(tile.thread_id);
+        else onActed({kind:kind === "approve" ? "approved" : "declined",thread_id:tile.thread_id,through:tile.last_renter_msg_at});
       } else if (r.status === "skipped") {
         setOptimistic(null);
         setNote("Order actions disabled (ALLOW_MANUAL_ORDER_ACTIONS off).");
@@ -1436,6 +1400,7 @@ function ReplyCard({
           onOpen();
         }
       }}
+      data-thread-id={tile.thread_id}
       aria-label={`Open conversation with ${tile.renter_name}`}
     >
       <div className={styles.renterCell}>
@@ -2885,20 +2850,20 @@ export function ReplyModal({
   onClose,
   onActed,
   dryRun,
-  zClass = "z-[200]",
   dockTarget,
   initialShowReviews = false,
   initialReplacementRequest = 0,
+  initialDraftRequest = 0,
   openRevision = 0,
 }: {
   tile: ReplyTileData;
   onClose: () => void;
-  onActed: (id: string) => void;
+  onActed: (event: QueueEvent) => void;
   dryRun: boolean;
-  zClass?: string;
-  dockTarget?: HTMLElement | null;
+  dockTarget: HTMLElement;
   initialShowReviews?: boolean;
   initialReplacementRequest?: number;
+  initialDraftRequest?: number;
   openRevision?: number;
 }) {
   const accent = tileAccent(tile);
@@ -2910,23 +2875,35 @@ export function ReplyModal({
     left: number;
   } | null>(null);
   useEffect(() => {
-    if (dockTarget) return;
     const visible = window.visualViewport;
-    const update = () =>
-      setViewport({
+    const update = () => {
+      dockTarget.style.setProperty("--quick-reply-viewport-height",`${visible?.height ?? window.innerHeight}px`);
+      if(window.innerWidth<900 && visible) {
+        const top=dockTarget.getBoundingClientRect().top;
+        const desired=visible.offsetTop+16;
+        if(Math.abs(top-desired)>2)window.scrollBy({top:top-desired,behavior:"instant"});
+      }
+      const visibleTop=visible?.offsetTop??0;
+      const top=dockTarget.getBoundingClientRect().top;
+      dockTarget.style.setProperty("--quick-reply-pane-height",`${Math.max(240,(visible?.height??window.innerHeight)-Math.max(16,top-visibleTop)-16)}px`);
+      const next={
         height: visible?.height ?? window.innerHeight,
         width: visible?.width ?? window.innerWidth,
         top: visible?.offsetTop ?? 0,
         left: visible?.offsetLeft ?? 0,
-      });
+      };
+      setViewport(previous=>previous&&Object.keys(next).every(key=>previous[key as keyof typeof next]===next[key as keyof typeof next])?previous:next);
+    };
     update();
     visible?.addEventListener("resize", update);
     visible?.addEventListener("scroll", update);
     window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, {passive:true});
     return () => {
       visible?.removeEventListener("resize", update);
       visible?.removeEventListener("scroll", update);
       window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update);
     };
   }, [dockTarget]);
   const [bookingAction, setBookingAction] = useState<
@@ -3565,6 +3542,13 @@ export function ReplyModal({
     // update context without generating another reply or overwriting typed text.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openRevision]);
+  useEffect(()=>{
+    if(!initialDraftRequest)return;
+    setComposeOpen(true);
+    void onGenerate();
+    // The revision changes only on an explicit preview Draft click.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[initialDraftRequest]);
 
   function onCopyDraft() {
     if (tile.source === "dbcinema_web") {
@@ -3616,6 +3600,7 @@ export function ReplyModal({
         if (clearBox) setText("");
         setNote("Reply sent to the DB Cinema rental chat.");
         setDbCinemaRefresh((value) => value + 1);
+        onActed({kind:"replied",thread_id:tile.thread_id,through:tile.last_renter_msg_at,text:body.trim()});
         return true;
       }
       const r = await sendReply({
@@ -3638,6 +3623,7 @@ export function ReplyModal({
         setNote(
           r.reason === "DRY_RUN" ? "✓ Reply OK (test — nothing sent)" : null,
         );
+        if(r.reason !== "DRY_RUN") onActed({kind:"replied",thread_id:tile.thread_id,through:tile.last_renter_msg_at,text:body.trim()});
         return true;
       }
       if (r.status === "skipped")
@@ -3682,7 +3668,7 @@ export function ReplyModal({
           setNote(
             `✓ ${kind === "approve" ? "Approved" : "Declined"} (test — nothing sent)`,
           );
-        else onActed(tile.thread_id);
+        else onActed({kind:kind === "approve" ? "approved" : "declined",thread_id:tile.thread_id,through:tile.last_renter_msg_at});
       } else if (r.status === "skipped") {
         setDecided(null);
         setNote("Order actions disabled (ALLOW_MANUAL_ORDER_ACTIONS off).");
@@ -3703,29 +3689,12 @@ export function ReplyModal({
   return createPortal(
     <div
       role="dialog"
-      aria-modal={dockTarget ? false : true}
+      aria-modal={false}
       aria-label={`Conversation with ${tile.renter_name}`}
-      className={
-        dockTarget
-          ? styles.dockedDialog
-          : `${styles.overlay} fixed inset-0 ${zClass}`
-      }
-      style={
-        dockTarget || !viewport
-          ? undefined
-          : ({
-              height: viewport.height,
-              width: viewport.width,
-              top: viewport.top,
-              left: viewport.left,
-              right: "auto",
-              bottom: "auto",
-              "--quick-reply-viewport-height": `${viewport.height}px`,
-            } as CSSProperties)
-      }
+      className={styles.dockedDialog}
+      style={viewport ? ({"--quick-reply-viewport-height":`${viewport.height}px`} as CSSProperties) : undefined}
     >
-      {/* Backdrop click does NOT close — only the × button (or Esc) closes, so
-          you can text AND approve/decline in one session without losing it. */}
+      {/* The conversation belongs to the workspace pane at every viewport. */}
       <div
         className={styles.conversation}
         data-composing={composeOpen}
@@ -3927,135 +3896,13 @@ export function ReplyModal({
           />
         )}
         <div className={styles.conversationContent} data-conversation-content>
-          <div className={styles.chatHeader} ref={quickHeaderRef}>
-            {!controlsOpen && (
-              <button
-                type="button"
-                className={styles.headerControls}
-                aria-label="Open rental controls"
-                onClick={() => {
-                  setControlsOpen(true);
-                  setControlTab("gear");
-                  setReplacementOpen(false);
-                }}
-              >
-                Rental controls{" "}
-                <svg
-                  aria-hidden="true"
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                >
-                  <path d="M3 6h7m4 0h7M3 12h3m4 0h11M3 18h11m4 0h3" />
-                  <circle cx="12" cy="6" r="2" />
-                  <circle cx="8" cy="12" r="2" />
-                  <circle cx="16" cy="18" r="2" />
-                </svg>
-              </button>
-            )}
-            <div className={styles.chatIdentity}>
-              <ProfilePortrait
-                src={tile.renter_image_url}
-                name={tile.renter_name}
-                className={styles.chatAvatar}
-              />
-              <div className="min-w-0">
-                <h3>{tile.renter_name}</h3>
-                <div className={styles.chatReputation}>
-                  <button
-                    type="button"
-                    onClick={() => setShowReviews((value) => !value)}
-                    className={styles.rating}
-                    title="View all renter reviews"
-                  >
-                    {tile.renter_rating?.toFixed(1) ?? "Unrated"} <span>★</span>
-                    {tile.renter_review_count != null && (
-                      <small className={styles.reviewCount}>
-                        {" "}
-                        · {tile.renter_review_count} reviews
-                      </small>
-                    )}
-                  </button>
-                  <AccountTag slug={tile.account_slug} source={tile.source} />
-                </div>
-                <div className={styles.identityDates}>
-                  {tile.start_date
-                    ? `${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date ?? tile.start_date)}`
-                    : "Dates pending"}
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close conversation"
-              data-testid="quick-reply-close"
-              className={styles.chatClose}
-            >
-              <span>×</span>
-              <small>Close</small>
-            </button>
-            <div className={styles.chatGear}>
-              <RequestedItemStack
-                items={tile.requested_items ?? tile.items}
-                size={controlsOpen ? 60 : 80}
-              />
-              <div className={styles.chatGearDetails}>
-                <strong>{itemLineShort(tile) || "General inquiry"}</strong>
-                <div className={styles.chatDates}>
-                  {tile.start_date
-                    ? `${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date ?? tile.start_date)}`
-                    : "Dates pending"}
-                </div>
-                <div className={styles.chatGearMeta}>
-                  <QueueAvailability tile={tile} />
-                  <span>
-                    {tile.net_to_owner_gbp != null
-                      ? "Owner earns"
-                      : "Est. earn"}{" "}
-                    <b>
-                      {fmtMoney(
-                        tile.net_to_owner_gbp ?? tile.estimate_earnings_gbp,
-                      ) ?? "—"}
-                    </b>
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {tile.availability?.status === "conflict" && (
-              <button
-                type="button"
-                className={styles.replacementButton}
-                onClick={() =>
-                  void findReplacements(
-                    Math.max(
-                      0,
-                      tile.availability?.items.findIndex(
-                        (item) => item.available === false,
-                      ) ?? 0,
-                    ),
-                  )
-                }
-              >
-                Find replacement <span>↗</span>
-              </button>
-            )}
-            {loc && (
-              <div className={styles.chatLocation}>
-                <LocationBadge loc={loc} onOpenMap={() => setShowMap(true)} />
-              </div>
-            )}
-            {tile.renter_rating != null && tile.renter_rating < 4 && (
-              <div className="mt-2 text-[11px] text-red-300">
-                Low-rated renter · review before accepting
-              </div>
-            )}
-          </div>
+          <ConversationHeader tile={tile} headerRef={quickHeaderRef}
+            onReviews={()=>setShowReviews(value=>!value)} onClose={onClose}
+            extras={<>
+              {tile.availability?.status==="conflict"&&<button type="button" className={styles.replacementButton} onClick={()=>void findReplacements(Math.max(0,tile.availability?.items.findIndex(item=>item.available===false)??0))}>Find replacement <span>↗</span></button>}
+              {loc&&<div className={styles.chatLocation}><LocationBadge loc={loc} onOpenMap={()=>setShowMap(true)}/></div>}
+              {tile.renter_rating!=null&&tile.renter_rating<4&&<span className="text-[11px] text-red-300">Low-rated renter · review before accepting</span>}
+            </>}/>
 
           {/* Body panel (2026-08-16) — everything below the header lives inside
             this ONE `position: relative` wrapper, so it is the containing
@@ -4075,6 +3922,7 @@ export function ReplyModal({
                 <StageBar t={tile} />
               </div>
 
+              {!controlsOpen&&<button type="button" className={styles.headerControls} aria-label="Open rental controls" onClick={()=>{setControlsOpen(true);setControlTab("gear");setReplacementOpen(false);}}>Booking actions <span aria-hidden="true">⌄</span></button>}
               {/* Order editor — live items + add/remove + price + dates (has_reservation
               threads only; inquiries with no booking have nothing to edit). */}
             </div>
@@ -4650,7 +4498,7 @@ export function ReplyModal({
         </div>
       </div>
     </div>,
-    dockTarget ?? document.body,
+    dockTarget,
   );
 }
 
@@ -4746,38 +4594,21 @@ export function ReplyInbox() {
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [reviewId, setReviewId] = useState<string | null>(null);
+  const [draftRequest,setDraftRequest] = useState({thread:"",revision:0});
   const widgetRef = useRef<HTMLDivElement>(null);
-  const [canDock, setCanDock] = useState(false);
   const [dockTarget, setDockTarget] = useState<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const element = widgetRef.current;
-    if (!element) return;
-    const viewport = window.visualViewport;
-    const updateDock = () => {
-      const width = element.getBoundingClientRect().width;
-      const height = viewport?.height ?? window.innerHeight;
-      setCanDock(width >= 760 && height >= 760);
-    };
-    const observer = new ResizeObserver(updateDock);
-    observer.observe(element);
-    window.addEventListener("resize", updateDock);
-    viewport?.addEventListener("resize", updateDock);
-    updateDock();
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", updateDock);
-      viewport?.removeEventListener("resize", updateDock);
-    };
-  }, []);
   useLayoutEffect(() => {
-    if(!openId || !canDock)return;
+    if(!openId)return;
     const frame=requestAnimationFrame(()=>{
       const split=widgetRef.current?.querySelector('[data-quick-reply-split]');
-      if(split){const top=split.getBoundingClientRect().top;if(top>100)window.scrollBy({top:top-80,behavior:"instant"});}
+      const pane=widgetRef.current?.querySelector('[data-conversation-pane]');
+      const target=widgetRef.current && widgetRef.current.clientWidth<900 ? pane : split;
+      if(target){const top=target.getBoundingClientRect().top;if(top>16)window.scrollBy({top:top-16,behavior:"instant"});}
     });
     return ()=>cancelAnimationFrame(frame);
-  },[openId,canDock]);
+  },[openId]);
   const openThread = (tile: ReplyTileData, reviews = false) => {
+    setDraftRequest(previous=>({...previous,thread:""}));
     setPreviewId(tile.thread_id);
     setOpenRevision((value) => value + 1);
     openCacheRef.current = tile;
@@ -4790,6 +4621,7 @@ export function ReplyInbox() {
     // dialog mounted. Preserve unrelated dashboard parameters and hash.
     setOpenId(null);
     setReviewId(null);
+    setDraftRequest(previous=>({...previous,thread:""}));
     const url = new URL(window.location.href);
     if (url.searchParams.has("thread")) {
       url.searchParams.delete("thread");
@@ -4800,10 +4632,10 @@ export function ReplyInbox() {
   // Last-known row for the open thread, so the overlay survives the thread
   // leaving the queue after a send/approve (see `open` below).
   const openCacheRef = useRef<ReplyTileData | null>(null);
-  const [acted, setActed] = useState<Set<string>>(new Set());
-  const [dbDismissedAt, setDbDismissedAt] = useState<Record<string, number>>(
-    {},
-  );
+  const hideThread = useMutation(hideThreadRef);
+  const [hiddenThrough,setHiddenThrough] = useState<Record<string,number>>({});
+  const [replyReceipts,setReplyReceipts] = useState<Record<string,ReplyReceipt>>({});
+  const [queueNotice,setQueueNotice] = useState<string|null>(null);
   const [now, setNow] = useState(() => Date.now());
   // Renters with a pickup/return within ±60 min — the pinned current-rental bar. Bump
   // `_tick` each minute (via `now`) so the time-window query re-runs live.
@@ -4856,15 +4688,15 @@ export function ReplyInbox() {
         ];
       }),
     );
+  const stateIds=[...new Set([...(queue??[]).map(t=>t.thread_id),...dbCinemaRows.map(t=>t.thread_id),...(handoffs??[]).flatMap(h=>h.thread_id?[h.thread_id]:[]),...(openId?[openId]:[])])].sort();
+  const remoteHidden=useQuery(threadStateRef,{thread_ids:stateIds}) as Record<string,number|null>|undefined;
+  const watermark=(id:string)=>Math.max(hiddenThrough[id]??-1,remoteHidden?.[id]??-1);
+  const rawRows=[...(queue??[]),...dbCinemaRows].map(t=>applyReplyReceipt(withPortrait(t),replyReceipts[t.thread_id]));
+  const isHidden=(t:ReplyTileData)=>threadHidden(t,watermark(t.thread_id)<0?null:watermark(t.thread_id));
   const currentHandoffs = [...(handoffs ?? []), ...dbHandoffs]
+    .filter(entry=>{if(!entry.thread_id)return true;const row=rawRows.find(t=>t.thread_id===entry.thread_id);return row?!isHidden(row):watermark(entry.thread_id)<0;})
     .filter((entry) => !accountFilter || entry.account_slug === accountFilter)
-    .filter(
-      (entry, index, all) =>
-        all.findIndex(
-          (other) =>
-            other.thread_id === entry.thread_id && other.kind === entry.kind,
-        ) === index,
-    );
+    .filter((entry,index,all)=>all.findIndex(other=>other.thread_id===entry.thread_id&&other.kind===entry.kind)===index);
   const [mounted, setMounted] = useState(false);
   // Default to "To reply" so chats I already answered (owner spoke last) DON'T
   // clutter the view — only new requests + renters waiting on me.
@@ -4880,28 +4712,19 @@ export function ReplyInbox() {
   useEffect(() => setMounted(true), []);
   useEffect(() => {
     try {
-      const restored: Record<string, number> = {};
-      for (let index = 0; index < window.localStorage.length; index++) {
-        const key = window.localStorage.key(index);
-        if (!key?.startsWith("rm-quick-reply-dismissed:dbcinema:")) continue;
-        const value = Number(window.localStorage.getItem(key));
-        if (Number.isFinite(value))
-          restored[key.slice("rm-quick-reply-dismissed:".length)] = value;
-      }
-      setDbDismissedAt(restored);
-    } catch {
-      /* browser storage can be disabled */
-    }
+      const parsed=JSON.parse(window.localStorage.getItem("rm-quick-reply-hidden:v2")??"{}");
+      setHiddenThrough(Object.fromEntries(Object.entries(parsed).filter(([id,value])=>id.length<=160&&typeof value==="number"&&Number.isFinite(value)&&value>=0)) as Record<string,number>);
+    } catch { /* disabled browser storage: server preferences remain authoritative */ }
   }, []);
   useEffect(() => {
     const openNotification = (thread: string | null) => {
       if (!thread) return;
       openCacheRef.current = null;
       setReviewId(null);
+      setDraftRequest(previous=>({...previous,thread:""}));
       setPreviewId(thread);
       setOpenId(thread);
       setOpenRevision((value) => value + 1);
-      requestAnimationFrame(() => widgetRef.current?.scrollIntoView({ block: "start", behavior: "instant" }));
     };
     const onOpen = (event: Event) => {
       const thread = (event as CustomEvent<unknown>).detail;
@@ -4926,7 +4749,19 @@ export function ReplyInbox() {
     return () => clearInterval(id);
   }, []);
 
-  const onActed = (id: string) => setActed((p) => new Set(p).add(id));
+  const onActed = (event:QueueEvent) => {
+    if(event.kind==="replied") {
+      setReplyReceipts(previous=>({...previous,[event.thread_id]:{through:event.through,at:Date.now(),text:event.text??""}}));
+      return;
+    }
+    if(event.kind==="approved")return;
+    setHiddenThrough(previous=>{
+      const next={...previous,[event.thread_id]:Math.max(previous[event.thread_id]??0,event.through)};
+      try{window.localStorage.setItem("rm-quick-reply-hidden:v2",JSON.stringify(next));}catch{/* server preference is still saved */}
+      return next;
+    });
+    void hideThread({thread_id:event.thread_id,through_renter_msg_at:event.through,reason:event.kind}).catch(()=>setQueueNotice("Hidden on this browser. Sync failed; please retry when connected."));
+  };
   const searchWords = [
     ...new Set(search.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)),
   ];
@@ -4940,20 +4775,7 @@ export function ReplyInbox() {
     ]
       .join(" ")
       .toLocaleLowerCase();
-  const eligible = [...(queue ?? []), ...dbCinemaRows]
-    .map(withPortrait)
-    .filter((t) => {
-      if (acted.has(t.thread_id)) return false;
-      const slug =
-        t.source === "dbcinema_web" ? "dbcinema_web" : t.account_slug;
-      if (accountFilter && slug !== accountFilter) return false;
-      const dismissedAt = dbDismissedAt[t.thread_id];
-      return (
-        t.source !== "dbcinema_web" ||
-        dismissedAt == null ||
-        t.last_activity_at > dismissedAt
-      );
-    });
+  const eligible = rawRows.filter(t=>!isHidden(t)).filter(t=>!accountFilter || (t.source==="dbcinema_web"?"dbcinema_web":t.account_slug)===accountFilter);
   const historyRequests = eligible
     .map((t) => ({
       thread_id: t.thread_id,
@@ -4988,10 +4810,10 @@ export function ReplyInbox() {
     compareQuickReplies(a, b, sortBy, now),
   );
   const duplicateIds = quickReplyDuplicateIds(sorted.filter(pendingRequest));
-  const displayRows = [
-    ...sorted.filter((row) => !duplicateIds.has(row.thread_id)),
-    ...sorted.filter((row) => duplicateIds.has(row.thread_id)),
-  ];
+  const duplicateLast=(rows:ReplyTileData[])=>[...rows.filter(row=>!duplicateIds.has(row.thread_id)),...rows.filter(row=>duplicateIds.has(row.thread_id))];
+  const displayRows = sortBy==="priority"
+    ? [...duplicateLast(sorted.filter(row=>row.last_sender!=="owner")),...duplicateLast(sorted.filter(row=>row.last_sender==="owner"))]
+    : duplicateLast(sorted);
   const previewTile =
     displayRows.find((tile) => tile.thread_id === previewId) ??
     displayRows[0] ??
@@ -5007,7 +4829,7 @@ export function ReplyInbox() {
     openId && !openId.startsWith("dbcinema:") ? { thread_id: openId } : "skip",
   ) as ReplyTileData | null | undefined;
   const openFromQueue = openId
-    ? ([...(queue ?? []), ...dbCinemaRows].find(
+    ? (rawRows.find(
         (t) => t.thread_id === openId,
       ) ?? null)
     : null;
@@ -5038,11 +4860,7 @@ export function ReplyInbox() {
         <div className={styles.heading}>
           <div className={styles.titleRow}>
             <div className={styles.workspaceTitle}>
-              <span>Rental workspace</span>
               <h2>Quick Reply</h2>
-              <p>
-                Respond to enquiries, manage bookings and keep your gear moving.
-              </p>
             </div>
             <label className={styles.searchBar}>
               <svg
@@ -5065,50 +4883,11 @@ export function ReplyInbox() {
                 onChange={(event) => setSearch(event.target.value)}
               />
             </label>
-            <button
-              type="button"
-              className={styles.quickTextsButton}
-              onClick={() => setShowManager(true)}
-            >
-              <svg
-                aria-hidden="true"
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.7"
-              >
-                <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2v-9.5a8.5 8.5 0 1 1 19-1Z" />
-              </svg>
-              Quick texts
-              <span aria-hidden="true">⌄</span>
-            </button>
             {dbCinemaLoadFailed && (
               <span className="text-amber-300">DB Cinema offline</span>
             )}
           </div>
-          <div
-            className={styles.accountFilters}
-            aria-label="Filter conversations by account"
-          >
-            {[null, "dbcinema", "leo", "diogo", "dbcinema_web"].map((slug) => (
-              <button
-                type="button"
-                key={slug ?? "all"}
-                aria-pressed={accountFilter === slug}
-                onClick={() => setAccountFilter(slug)}
-                style={
-                  {
-                    "--account-accent": calendarAccountAccent(slug),
-                  } as CSSProperties
-                }
-              >
-                {slug && <i />}
-                {slug ? accountLabel(slug) : "All accounts"}
-              </button>
-            ))}
-          </div>
+
         </div>
         <div className={styles.toolbar}>
           {(
@@ -5153,6 +4932,29 @@ export function ReplyInbox() {
             <option value="newest">Newest activity</option>
             <option value="oldest">Oldest request</option>
           </select>
+            <button
+              type="button"
+              className={styles.quickTextsButton}
+              onClick={() => setShowManager(true)}
+            >
+              <svg
+                aria-hidden="true"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+              >
+                <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2v-9.5a8.5 8.5 0 1 1 19-1Z" />
+              </svg>
+              Quick texts
+              <span aria-hidden="true">⌄</span>
+            </button>
+          <select className={styles.accountSelect} aria-label="Filter conversations by account" value={accountFilter??""} onChange={event=>setAccountFilter(event.target.value||null)}>
+            <option value="">All accounts</option>
+            {["dbcinema","leo","diogo","dbcinema_web"].map(slug=><option key={slug} value={slug}>{accountLabel(slug)}</option>)}
+          </select>
           <button
             type="button"
             onClick={() =>
@@ -5184,9 +4986,11 @@ export function ReplyInbox() {
             </span>
           )}
         </div>
+        {queueNotice && <p role="status" className={styles.searchFeedback}>{queueNotice}</p>}
         <div
           data-quick-reply-split
-          className={`${styles.split} ${canDock ? styles.withDock : ""} ${canDock && openId ? styles.expandedChat : ""}`}
+          data-conversation-open={!!openId}
+          className={`${styles.split} ${styles.withDock} ${openId ? styles.expandedChat : ""}`}
         >
           <div className={styles.inbox}>
             {currentHandoffs.length > 0 && (
@@ -5362,13 +5166,13 @@ export function ReplyInbox() {
               )}
             </div>
           </div>
-          {canDock && (
-            <div ref={setDockTarget} className={styles.chatDock}>
+          <div ref={setDockTarget} className={styles.chatDock} data-conversation-pane>
               {!open && previewTile ? (
                 <ConversationPreview
                   tile={withPortrait(previewTile)}
-                  onOpen={() => openThread(previewTile)}
+                  onOpen={()=>{openThread(previewTile);requestAnimationFrame(()=>widgetRef.current?.querySelector<HTMLTextAreaElement>('textarea[aria-label^="Reply to"]')?.focus({preventScroll:true}));}}
                   onReviews={() => openThread(previewTile, true)}
+                  onDraft={()=>{openThread(previewTile);setDraftRequest(previous=>({thread:previewTile.thread_id,revision:previous.revision+1}));}}
                 />
               ) : !open ? (
                 <div className={styles.emptyChat}>
@@ -5377,18 +5181,18 @@ export function ReplyInbox() {
                   <p>Select a renter to see the request and reply.</p>
                 </div>
               ) : null}
-            </div>
-          )}
+          </div>
         </div>
-        {mounted && open && (
+        {mounted && open && dockTarget && (
           <ReplyModal
             key={open.thread_id}
             tile={withPortrait(open)}
             onClose={closeModal}
             onActed={onActed}
             dryRun={testMode}
-            dockTarget={canDock ? dockTarget : null}
+            dockTarget={dockTarget}
             openRevision={openRevision}
+            initialDraftRequest={draftRequest.thread===open.thread_id?draftRequest.revision:0}
             initialShowReviews={reviewId === open.thread_id}
             initialReplacementRequest={
               replacementRequest.thread === open.thread_id

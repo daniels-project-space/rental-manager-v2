@@ -96,7 +96,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
         if (state === "quick text") await tap(btn("Customize"));
         if (state === "calendar") {
           await tap(
-            `[...document.querySelectorAll('button')].find(button=>button.offsetParent!==null&&button.textContent.trim().startsWith('Rental controls'))`,
+            `[...document.querySelectorAll('button')].find(button=>button.offsetParent!==null&&button.getAttribute('aria-label')==='Open rental controls')`,
           );
           if (
             !(await ev(

@@ -105,6 +105,7 @@ export const inbox = action({
         unreadOwner?: number;
         lastMessage?: string | null;
         lastSender?: string | null;
+        lastRenterAt?: number;
         requestedGearTexts?: string[];
         searchText?: string;
         createdAt?: number;
@@ -313,7 +314,11 @@ export const inbox = action({
         unread_owner: booking.unreadOwner ?? 0,
         last_message: booking.lastMessage!,
         last_sender: booking.lastSender ?? null,
-        last_renter_msg_at: booking.updatedAt!,
+        // The website supplies a renter-only indexed timestamp. Legacy feeds
+        // may use latest activity only when the actual sender is the renter.
+        last_renter_msg_at: Number.isFinite(booking.lastRenterAt)
+          ? booking.lastRenterAt!
+          : booking.lastSender === "renter" ? booking.updatedAt! : booking.createdAt ?? 0,
         request_created_at: booking.createdAt ?? null,
         last_activity_at: booking.updatedAt!,
         last_msg_at: booking.updatedAt!,

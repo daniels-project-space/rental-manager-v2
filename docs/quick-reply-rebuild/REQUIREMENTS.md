@@ -40,3 +40,28 @@ Prior goal turn classification: progress (calendar/return-source behavior deploy
 - Actual fixture UI checked at 1440, 1024, 768 and 390px, including horizontal pan, clipping, original compact bar heights, calendar controls and no page overflow. Typecheck and 18 focused regressions passed.
 - Evidence: `/root/CODEX_ARTIFACTS/rental-manager/calendar-compact-endpoints/` (screenshots and fixture-only receipt). No real renter messages or rental/listing changes.
 - Saved locally for the final production batch; broader Quick Reply audit remains open.
+
+## Local rebuild checkpoint — 11 October 2026
+
+Production has not been changed by this rebuild. Calendar correction is saved in `eb8c694`.
+
+- The workspace now has a dedicated stylesheet; legacy workspace selectors were removed. Closed view follows the reference's list/preview ratio; opening a conversation uses a 50/50 split. The portal only targets its inline pane. Mobile and shorter desktop views cannot fall back to a body overlay.
+- Actual photo nodes animate outward and fold back. Node identity and row, parent, sibling and page geometry are asserted before/during/after. Touch, focus, Escape and failed-photo fallback remain wired.
+- Confirmed sends immediately demote answered threads. Decline hides the queue entry while keeping its conversation open. Disregard/decline use owner-only indexed preference metadata and genuine renter watermarks, including refresh and filters. Approval does not falsely hide a request.
+- Native renter timestamps now ignore owner activity and use actual renter history or stable request creation. DB Cinema requires the paired local source fix in `/root/dbcinema-queue-watermark`: `adminInbox` exposes an account-scoped renter-only timestamp using one indexed message read. No rental/message/listing write path changed.
+- All six newly compact secondary panels render actual components with populated fixture data. Automatic packing, expansion, desktop pairs and full-width phone content pass at 1440/1024/768/390. Screenshots were inspected for Item Cycle and Scorecard, including mobile.
+- Reference-size desktop measurements: title 32px; portraits 52×52px; toolbar 38px versus reference39; rows96px versus reference94; closed queue ratio64.63% versus reference64.68%. The layout was inspected repeatedly and spacing was refined after those comparisons. This is geometry evidence, not a claim of an identical bitmap with different customer data and requested new controls.
+
+### Evidence
+
+- `/root/CODEX_ARTIFACTS/rental-manager/quick-reply-reference-rebuild/full-current/`: individual fixture controls, 48 phone/keyboard/subpanel close conditions, queue lifecycle, design and actual photo fan proofs.
+- `/root/CODEX_ARTIFACTS/rental-manager/quick-reply-reference-rebuild/dashboard-all/`: six actual secondary panels, packing and compact calendar at four widths.
+- `/root/CODEX_ARTIFACTS/rental-manager/quick-reply-reference-rebuild/reference-final/`: reference-size screenshot and measured differences.
+- Full Rental Manager unit suite: 178 files, 2558 passed,14 skipped. Types and production Next build passed. Owner guard has zero failures.
+- DB Cinema full synthetic test suite and types passed; exact renter-clock handler tests include >40 owner/bot/system messages, foreign account exclusion, request fallback, new renter activity and zero source writes.
+- Final local browser rerun passed, including the reference measurement check. Both production builds passed locally. Graphs updated locally. No branch has been pushed. Paired DB Cinema source commit: `6cc4642`.
+
+### Remaining release work
+
+- Check the entire actual dashboard and permitted source reads with production writes blocked; preserve all prior safety gates.
+- Release the paired DB Cinema read field/index and Rental Manager changes as the final Git batch, qualify current-head CI, verify exact production aliases and inspect the deployed UI. The broader goal remains active until this is done.
