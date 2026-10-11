@@ -266,6 +266,18 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     );
     await pause(150);
     await capture("chat");
+    await ev(`document.querySelector('[class*="customizeButton"]').click()`);
+    await pause(100);
+    assert(
+      await ev(
+        `(()=>{const panel=document.querySelector('[aria-label="Account quick replies"]').getBoundingClientRect();const header=document.querySelector('[class*="chatHeader"]').getBoundingClientRect();return panel.top>=header.bottom&&panel.bottom<=innerHeight&&panel.left>=0&&panel.right<=innerWidth;})()`,
+      ),
+      "quick-text customization stays below the header and inside the viewport",
+    );
+    await capture("quick-texts");
+    await ev(
+      `document.querySelector('[aria-label="Account quick replies"] button').click()`,
+    );
     if (width === 1505) {
       const handoffLayout = await ev(
         `(()=>{const rail=document.querySelector('[class*="handoffRail"]');return [...rail.querySelectorAll('button')].map(card=>{const name=card.querySelector('[class*="handoffRenter"]').getBoundingClientRect();const state=card.querySelector('[class*="pickup"],[class*="return"]').getBoundingClientRect();const r=card.getBoundingClientRect();return {height:r.height,overlap:name.left<state.right&&name.right>state.left&&name.top<state.bottom&&name.bottom>state.top};});})()`,

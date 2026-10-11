@@ -25,7 +25,13 @@ import { inclusiveRentalDays } from "../../../convex/lib/hygglo_pricing";
  * ALLOW_MANUAL_ORDER_ACTIONS). Click a card → a body-portaled modal (escapes the
  * widget's clipping) with the full thread + AI draft + Send.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -3325,6 +3331,36 @@ export function ReplyModal({
   const [quickSlot, setQuickSlot] = useState<
     "location" | "times" | "delivery" | null
   >(null);
+  const quickHeaderRef = useRef<HTMLDivElement>(null);
+  const [quickPanelPlacement, setQuickPanelPlacement] = useState<CSSProperties>(
+    { visibility: "hidden" },
+  );
+  useLayoutEffect(() => {
+    const header = quickHeaderRef.current;
+    if (!quickSlot || !header) return;
+    const place = () => {
+      const rect = header.getBoundingClientRect();
+      const top = rect.bottom + 8;
+      const bottom =
+        (viewport?.top ?? 0) + (viewport?.height ?? window.innerHeight);
+      setQuickPanelPlacement({
+        top,
+        right: Math.max(12, window.innerWidth - rect.right + 12),
+        width: Math.min(370, rect.width - 24),
+        maxHeight: Math.max(96, bottom - top - 12),
+      });
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(header);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [quickSlot, viewport?.height, viewport?.top, dockTarget]);
   const [quickDraft, setQuickDraft] = useState("");
   const [quickSaving, setQuickSaving] = useState(false);
   const [quickError, setQuickError] = useState<string | null>(null);
@@ -3867,7 +3903,7 @@ export function ReplyModal({
           />
         )}
         <div className={styles.conversationContent} data-conversation-content>
-          <div className={styles.chatHeader}>
+          <div className={styles.chatHeader} ref={quickHeaderRef}>
             {!controlsOpen && (
               <button
                 type="button"
@@ -4432,15 +4468,7 @@ export function ReplyModal({
                     className={styles.quickPanel}
                     role="dialog"
                     aria-label="Account quick replies"
-                    style={
-                      viewport
-                        ? {
-                            top: viewport.top + viewport.height * 0.18,
-                            height: viewport.height * 0.64,
-                            maxHeight: viewport.height * 0.64,
-                          }
-                        : undefined
-                    }
+                    style={quickPanelPlacement}
                   >
                     <div className="mb-2 flex items-center justify-between">
                       <div>
