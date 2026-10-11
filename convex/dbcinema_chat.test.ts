@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("./auth", () => ({ authComponent: { safeGetAuthUser: vi.fn() } }));
-import { inbox } from "./dbcinema_chat";
+import { inbox, replacementBasketOptions } from "./dbcinema_chat";
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -479,5 +479,57 @@ describe("equipment review refusal versus unknown outcome", () => {
     await expect(
       (module.addEquipment as any)._handler(ctx, args),
     ).rejects.toThrow("Unknown transport result");
+  });
+});
+
+describe("replacement image sources", () => {
+  it("normalizes website-relative fallback images without altering the replacement snapshot", async () => {
+    vi.stubEnv("OWNER_AUTH_REQUIRED", "false");
+    vi.stubEnv("DBCINEMA_CONVEX_URL", "https://fixture.invalid");
+    vi.stubEnv("DBCINEMA_ADMIN_TOKEN", "fixture-only");
+    const original = { lines: [{ listingId: "original", qty: 1 }] };
+    const image = {
+      name: "Camera",
+      image_url: "/primary.png",
+      image_urls: [
+        "/alternate.png",
+        "https://photos.rental-test.invalid/third.png",
+        "data:invalid",
+      ],
+    };
+    const fetchMock = vi.fn(async (_url: string, options: RequestInit) => {
+      expect(JSON.parse(String(options.body)).path).toBe(
+        "rentalReplacements:basketOptions",
+      );
+      return new Response(
+        JSON.stringify({
+          status: "success",
+          value: {
+            originals: [image],
+            options: [
+              {
+                id: "replacement",
+                original,
+                items: [{ ...image, id: "replacement", qty: 1 }],
+              },
+            ],
+          },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await (replacementBasketOptions as any)._handler(
+      {},
+      { booking_id: "fixture-booking" },
+    );
+    const expected = [
+      "https://dbcinemarentals.com/primary.png",
+      "https://dbcinemarentals.com/alternate.png",
+      "https://photos.rental-test.invalid/third.png",
+    ];
+    expect(result.originals[0].image_urls).toEqual(expected);
+    expect(result.options[0].items[0].image_urls).toEqual(expected);
+    expect(result.options[0].original).toEqual(original);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

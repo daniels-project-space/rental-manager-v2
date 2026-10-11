@@ -580,9 +580,21 @@ export const replacementBasketOptions = action({
   args: { booking_id: v.string() },
   handler: async (ctx, a): Promise<any> => {
     await requireOwner(ctx);
-    return callDbCinema<any>("query", "rentalReplacements:basketOptions", {
+    const result = await callDbCinema<any>("query", "rentalReplacements:basketOptions", {
       bookingId: a.booking_id,
     });
+    const withImages = (item: any) => {
+      const image_urls = equipmentImages([item.image_url, ...(item.image_urls ?? [])]);
+      return { ...item, image_url: image_urls[0] ?? null, image_urls };
+    };
+    return {
+      ...result,
+      originals: result.originals?.map(withImages),
+      options: result.options?.map((choice: any) => ({
+        ...withImages(choice),
+        items: choice.items?.map(withImages),
+      })),
+    };
   },
 });
 export const acceptReplacementBasket = action({

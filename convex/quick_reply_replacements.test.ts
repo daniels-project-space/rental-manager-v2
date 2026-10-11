@@ -164,6 +164,7 @@ describe("registered complete native basket replacement finder", () => {
     expect(r.options[0].items[0]).toMatchObject({
       name: "Exact listing 20",
       image_url: "/fresh-20",
+      image_urls: ["/fresh-20"],
     });
     expect(f.ctx.runMutation).not.toHaveBeenCalled();
   });

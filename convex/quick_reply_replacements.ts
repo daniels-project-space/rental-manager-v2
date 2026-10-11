@@ -366,6 +366,9 @@ async function nativeBasketOptions(ctx: any, thread_id: string): Promise<any> {
         (i: any) => i.origin === "basket" && i.name === item.name,
       )?.image_url ??
       null,
+    image_urls: item.image_urls ?? tile.requested_items?.find(
+      (i: any) => i.origin === "basket" && i.name === item.name,
+    )?.image_urls ?? [],
     item_index: index,
     order_item:(()=>{
       const matches=state?.items?.filter((line:any)=>item.product_id!=null ? line.product_id===item.product_id : line.name===item.name)??[];
@@ -501,6 +504,10 @@ async function nativeBasketOptions(ctx: any, thread_id: string): Promise<any> {
           )?.image ??
           item.image_url ??
           null,
+        image_urls: [...new Set([
+          listings.find((listing: any) => listing.product_id === item.product_id)?.image,
+          item.image_url,
+        ].filter((url): url is string => typeof url === "string" && !!url))],
         qty: originals[i].qty,
         replaces: originals[i].name,
         old_item_id: originals[i].order_item?.item_id ?? null,

@@ -321,6 +321,12 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       `document.querySelector('[aria-label="Open conversation with Elena Rossi"] button').closest('[role=button]').querySelector('button').blur();[...document.querySelector('[aria-label="Open conversation with Elena Rossi"]').querySelectorAll('button')].find(b=>b.textContent.trim()==='Find replacement').click()`,
     );
     await pause(250);
+    assert(
+      await ev(
+        `(()=>{const images=[...document.querySelector('[aria-label="Replacement options"]').querySelectorAll('img')];return images.length>=3&&images.every(img=>img.complete&&img.naturalWidth>0&&!img.src.includes('missing-replacement'));})()`,
+      ),
+      "original and complete-set replacement photos recover from failed primary URLs",
+    );
     await capture("replacements");
     await c.closePage();
     c.close();

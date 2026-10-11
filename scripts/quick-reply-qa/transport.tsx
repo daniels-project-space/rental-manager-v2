@@ -392,7 +392,11 @@ export function useAction(ref) {
           ),
         );
         return {
-          originals,
+          originals: originals.map((item) => ({
+            ...item,
+            image_url: "/missing-replacement-original.png",
+            image_urls: [item.image_url],
+          })),
           options: ["33", "34"].map((id, index) => ({
             id,
             name: `Replacement set ${index + 1}`,
@@ -406,7 +410,8 @@ export function useAction(ref) {
                     ? "Sony FX3 replacement"
                     : "Canon C70 replacement"
                   : "Available replacement lens",
-              image_url: `/gear${i}.png`,
+              image_url: "/missing-replacement-choice.png",
+              image_urls: [`/gear${i}.png`],
               qty: item.qty,
               replaces: item.name,
             })),
