@@ -1,4 +1,5 @@
 "use client";
+import { AutoPackingGrid } from "@/components/dashboard/StatPackingGrid";
 import {
   DndContext,
   KeyboardSensor,
@@ -132,11 +133,12 @@ export default function DashboardPage() {
               items={visiblePanels.map((w) => w.id)}
               strategy={rectSortingStrategy}
             >
-              <div className="dashboard-panels grid grid-cols-1 xl:grid-cols-2 gap-3 items-start">
+              <AutoPackingGrid className="dashboard-panels grid-cols-1 xl:grid-cols-2 gap-3">
               {visiblePanels.map(({ id, label, component: Component }) => {
                 const skel = PANEL_SKELETON[id];
                 return (
                   <div key={id} className={COMPACT_PANELS.has(id) ? "min-w-0" : "min-w-0 xl:col-span-2"}>
+                    <div data-packing-content className="flow-root">
                     <EditableWidget id={id} kind="panel" label={label}>
                       <WidgetErrorBoundary label={label}>
                         <DeferredMount
@@ -148,10 +150,11 @@ export default function DashboardPage() {
                         </DeferredMount>
                       </WidgetErrorBoundary>
                     </EditableWidget>
+                    </div>
                   </div>
                 );
               })}
-              </div>
+              </AutoPackingGrid>
             </SortableContext>
           </DndContext>
         </main>
