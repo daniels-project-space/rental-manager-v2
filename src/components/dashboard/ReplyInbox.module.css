@@ -2582,3 +2582,16 @@
 .dateSettings > div:first-child { flex-wrap: wrap; gap: 6px; }
 .dateSettings > div:first-child > span:nth-child(2) { min-width: 0; max-width: 100%; }
 .dateSettings > div:first-child > button { flex-shrink: 0; white-space: nowrap; }
+
+/* Keep queue rows paced like the reference; full content stays in the chat
+   and expanded equipment stack. Long enquiries must not stretch the table. */
+.previewCell p,
+.gearLine > span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  min-width: 0;
+  max-height: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

@@ -207,6 +207,13 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         headerLayout.railHeight <= 110,
         "wide queue handoff row stays compact",
       );
+    await ev(`{window.__savedQueuePreview=window.__fixture.rows[4].preview;window.__fixture.rows[4].preview='A long rental enquiry with extra details '.repeat(35);window.__fixture.changed();}`);
+    await pause(100);
+    const longPreview = await ev(`(()=>{const row=document.querySelector('[aria-label="Open conversation with James Carter"]');const p=row.querySelector('[class*="previewCell"] p');const r=p.getBoundingClientRect(),c=getComputedStyle(p);return{previewHeight:r.height,lineHeight:parseFloat(c.lineHeight),rowHeight:row.getBoundingClientRect().height,characters:p.textContent.length,clamp:c.webkitLineClamp};})()`);
+    assert(longPreview.previewHeight<=2*longPreview.lineHeight+1&&longPreview.rowHeight<(width===390?210:160)&&longPreview.characters>1000, "long enquiries keep two complete preview lines without discarding chat content: "+JSON.stringify({width,...longPreview}));
+    await capture("long-enquiry");
+    await ev(`{window.__fixture.rows[4].preview=window.__savedQueuePreview;window.__fixture.changed();}`);
+    await pause(100);
     await capture("queue");
     if (width === 1505) {
       await ev(
