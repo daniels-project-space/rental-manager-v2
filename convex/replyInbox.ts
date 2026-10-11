@@ -352,7 +352,7 @@ type ItemAvail = {
 type TileAvailability = {
   status: "available" | "conflict" | "unknown";
   include_pending: boolean;
-  stock_rules_version: 2;
+  stock_rules_version: 3;
   reason?: string;
   checked_at?: number;
   items: ItemAvail[];
@@ -505,7 +505,7 @@ export function computeAvailability(reservation:BotBooking|null,av?:AvailCtx,req
   });
   const conflict=items.some(item=>item.available===false);
   const complete=items.length>0&&items.every(item=>item.available===true);
-  return {status:conflict?"conflict":complete?"available":"unknown",stock_rules_version:2,include_pending,checked_at,items,...(!conflict&&!complete?{reason:items.find(item=>item.available===null)?.reason??"No requested gear to check"}:{})};
+  return {status:conflict?"conflict":complete?"available":"unknown",stock_rules_version:3,include_pending,checked_at,items,...(!conflict&&!complete?{reason:items.find(item=>item.available===null)?.reason??"No requested gear to check"}:{})};
 }
 
 
@@ -1015,12 +1015,19 @@ export const getReplyQueue = query({
       if (cached) return cached;
       // Not in any collected status (e.g. completed/cancelled/declined orders
       // that live inquiries land on) — one indexed read, only for these.
-      return await ctx.db
+      const reservation = await ctx.db
         .query("reservations")
         .withIndex("by_hygglo_order_id", (q) =>
           q.eq("hygglo_order_id", threadId),
         )
         .first();
+      if (reservation) {
+        resByOrderId.set(threadId, reservation);
+        // Completed/declined chats are outside the status batch above. Qualify
+        // their actual listing before the tile can claim its gear is available.
+        await extendAvailabilityMappings(ctx, availCtx, [reservation]);
+      }
+      return reservation;
     };
 
     // Pass 1 — conversations awaiting my reply (renter spoke last), windowed.

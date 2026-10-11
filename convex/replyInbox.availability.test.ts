@@ -233,7 +233,7 @@ describe("marketing-only listing availability",()=>{
     const ctx={db:{query:(table:string)=>{const q={withIndex:()=>q,first:async()=>table==="hygglo_products"?product:null};return q;}}} as any;
     const rental={...booking,hygglo_items:[{name:"ViewSonic projector",product_id:7,qty:1}]};
     await extendAvailabilityMappings(ctx,av,[rental]);
-    expect(computeAvailability(rental,av,[{...line("ViewSonic projector"),product_id:7}])).toMatchObject({status:"conflict",stock_rules_version:2,items:[{available:false,reason:"Marketing-only listing · not stocked for hire"}]});
+    expect(computeAvailability(rental,av,[{...line("ViewSonic projector"),product_id:7}])).toMatchObject({status:"conflict",stock_rules_version:3,items:[{available:false,reason:"Marketing-only listing · not stocked for hire"}]});
     expect(computeAvailability({...rental,start_date:undefined,end_date:undefined},av,[{...line("ViewSonic projector"),product_id:7}])).toMatchObject({status:"conflict"});
   });
 });
