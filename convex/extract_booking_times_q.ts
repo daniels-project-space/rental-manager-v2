@@ -4,7 +4,7 @@
  */
 
 import { v } from "convex/values";
-import { internalQuery, internalMutation, query, mutation } from "./owner_functions";
+import { internalQuery, internalMutation, internalMutationOf, query, mutation } from "./owner_functions";
 import { internal } from "./_generated/api";
 import { confirmedChatClock, recoverConfirmedChatClock } from "../src/lib/booking-schedule-evidence";
 import { hashBookingTimeTranscript } from "../src/lib/booking-time-transcript";
@@ -13,7 +13,7 @@ import type { Id } from "./_generated/dataModel";
 
 /** Re-read the real stored transcript; model/client confidence is not evidence.
  * A stale asynchronous model response must never overwrite a newer agreement. */
-async function persistTimes(ctx:MutationCtx,id:Id<"reservations">,hash:string,patch:{pickup_time?:string;return_time?:string;pickup_date?:string;return_date?:string;pickup_method?:string;return_method?:string}) {
+async function persistTimes(ctx:MutationCtx,id:Id<"reservations">,hash:string,patch:{pickup_time?:string;return_time?:string;pickup_date?:string;return_date?:string;pickup_method?:string;return_method?:string},stampExtraction=true) {
  const row=await ctx.db.get(id);if(!row?.hygglo_order_id)return false;
  const rows=await ctx.db.query("hygglo_messages").withIndex("by_thread",q=>q.eq("thread_id",row.hygglo_order_id!)).order("desc").take(32);
  const messages=rows.reverse().map(m=>({sender:m.sender,body_text:m.body_text,hygglo_sent_at:m.hygglo_sent_at??m.fetched_at}));
@@ -21,6 +21,12 @@ async function persistTimes(ctx:MutationCtx,id:Id<"reservations">,hash:string,pa
  const next={...row,...patch};
  let pickup=confirmedChatClock(messages,"pickup",next.pickup_time,next.pickup_date??next.start_date,next.start_date,hash);
  let returned=confirmedChatClock(messages,"return",next.return_time,next.return_date??next.end_date,next.end_date,hash);
+ // A literal agreement can be recovered without a model guess or another
+ // paid extraction. This also repairs an old candidate rejected for its date.
+ const recoveredPickup = !pickup && next.start_date ? recoverConfirmedChatClock(messages,"pickup",next.start_date,hash) : undefined;
+ const recoveredReturn = !returned && next.end_date ? recoverConfirmedChatClock(messages,"return",next.end_date,hash) : undefined;
+ if(recoveredPickup){pickup=recoveredPickup;patch={...patch,pickup_time:pickup.time,pickup_date:pickup.date};next.pickup_time=pickup.time;next.pickup_date=pickup.date;}
+ if(recoveredReturn){returned=recoveredReturn;patch={...patch,return_time:returned.time,return_date:returned.date};next.return_time=returned.time;next.return_date=returned.date;}
  // Keep independently established history when the bounded latest window
  // has simply moved past it. New schedule language after that agreement
  // invalidates precision until it is accepted again.
@@ -30,7 +36,7 @@ async function persistTimes(ctx:MutationCtx,id:Id<"reservations">,hash:string,pa
   return proof.time===time&&proof.date===date&&!messages.some(m=>(m.hygglo_sent_at??0)>proof.confirmedAt&&context.test(m.body_text)&&/\d|morning|evening|afternoon|noon|midday|midnight|day|tonight|tomorrow/i.test(m.body_text))?proof:undefined;
  };
  pickup??=keep(row.pickup_time_provenance,"pickup");returned??=keep(row.return_time_provenance,"return");
- await ctx.db.patch(id,{...patch,pickup_time_provenance:pickup,return_time_provenance:returned,times_transcript_hash:hash,times_extracted_at:Date.now()});
+ await ctx.db.patch(id,{...patch,pickup_time_provenance:pickup,return_time_provenance:returned,...(stampExtraction?{times_transcript_hash:hash,times_extracted_at:Date.now()}:{} )});
  return true;
 }
 
@@ -330,7 +336,7 @@ export const reconcileTimeProvenance = mutation({
    const hash=hashBookingTimeTranscript(messages);
    const pickup=row.start_date?recoverConfirmedChatClock(messages,"pickup",row.start_date,hash):undefined;
    const returned=row.end_date?recoverConfirmedChatClock(messages,"return",row.end_date,hash):undefined;
-   await persistTimes(ctx,id,hash,{...(pickup?{pickup_time:pickup.time,pickup_date:pickup.date}:{}),...(returned?{return_time:returned.time,return_date:returned.date}:{})});
+   await persistTimes(ctx,id,hash,{...(pickup?{pickup_time:pickup.time,pickup_date:pickup.date}:{}),...(returned?{return_time:returned.time,return_date:returned.date}:{})},false);
    const next=await ctx.db.get(id);
    const changed=JSON.stringify([row.pickup_time_provenance,row.return_time_provenance])!==JSON.stringify([next?.pickup_time_provenance,next?.return_time_provenance]);
    if(changed)await ctx.db.insert("audit_log",{table_name:"reservations",actor:"system:confirmed-schedule-reconciliation",op:"update",count:1,note:JSON.stringify({reservation_id:id,evidenceHash:hash,pickupConfirmed:!!next?.pickup_time_provenance,returnConfirmed:!!next?.return_time_provenance}),ts:Date.now()});
@@ -340,3 +346,6 @@ export const reconcileTimeProvenance = mutation({
   return results;
  }
 });
+
+/** Bounded evidence recovery on new chat messages; no provider action or LLM. */
+export const __service_reconcileTimeProvenance = internalMutationOf(reconcileTimeProvenance);

@@ -3,7 +3,7 @@ import {
   confirmedChatClock,
   recoverConfirmedChatClock,
 } from "../../src/lib/booking-schedule-evidence";
-import { londonStockInstant, confirmedClock } from "./confirmed_schedule";
+import { londonStockInstant, confirmedClock, calendarClock } from "./confirmed_schedule";
 const messages = (values: [string, string][]) =>
   values.map(([sender, body_text], i) => ({
     sender,
@@ -132,4 +132,10 @@ describe("true UTC London stock boundaries", () => {
     expect(
       confirmedClock({ return_time: "17:00" }, "return", "2026-10-09"),
     ).toBeUndefined());
+});
+
+describe("calendar clock display",()=>{
+ it("shows a valid legacy time as reported without changing the stock clock",()=>{const row={return_time:"17:30"};expect(calendarClock(row,"return","2026-10-11")).toEqual({time:"17:30",status:"reported"});expect(confirmedClock(row,"return","2026-10-11")).toBeUndefined();});
+ it("shows a contract time as confirmed",()=>expect(calendarClock({account_slug:"dbcinema_web",return_time:"17:30"},"return","2026-10-11")).toEqual({time:"17:30",status:"confirmed"}));
+ it("does not invent a clock for a passed date",()=>expect(calendarClock({},"return","2026-09-01")).toEqual({time:null,status:"missing"}));
 });

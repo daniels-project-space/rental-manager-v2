@@ -1,0 +1,37 @@
+.label { min-width: 0; }
+.barName {
+  position: absolute;
+  display: block;
+  text-align: center;
+  font-weight: 600;
+  line-height: 1.12;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+.barPickup, .barReturn {
+  position: absolute;
+  top: -18px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: #0c1423e8;
+  color: #b9cce5;
+}
+.barPickup { left: -2px; }
+.barReturn { right: -2px; color: #86e0ff; }
+.barPickup i, .barReturn i { font-size: 8px; margin-left: 2px; color: #c7a766; }
+.controls { min-width: 0; }
+.accountFilters { flex-wrap: wrap; min-width: 0; }
+.detail { max-width: calc(100% - 24px); }
+@media (max-width: 700px) {
+  .controls { gap: 6px !important; padding: 10px 12px !important; }
+  .controls > button { padding: 6px 8px; font-size: 12px; }
+  .controls > div:last-child { margin-left: 0; width: 100%; }
+  .accountFilters { gap: 5px; }
+  .detail { left: 12px; right: 12px; bottom: 12px; width: auto !important; }
+}

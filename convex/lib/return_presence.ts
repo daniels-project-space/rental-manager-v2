@@ -13,6 +13,7 @@ export type ReturnStateRow = {
   is_obsolete?: boolean;
   platform_close_pending?: boolean;
   platform_closed_at?: number;
+  booking_status?: string;
 };
 
 /** A locally completed return whose final Hygglo workflow still has work. */
@@ -31,7 +32,7 @@ export function isPlatformClosePending(row: ReturnStateRow): boolean {
  * that is fully closed must never re-enter the ordinary return flow.
  */
 export function isOutstandingReturnState(row: ReturnStateRow, today: string): boolean {
-  if (row.case_open || row.is_obsolete || row.order_step === "REVIEWED") return false;
+  if (row.case_open || row.is_obsolete || row.order_step === "REVIEWED" || row.booking_status === "returned") return false;
 
   const physicallyOut =
     row.order_step === "DELIVERED" ||

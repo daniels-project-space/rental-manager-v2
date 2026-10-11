@@ -1,3 +1,4 @@
+import { providerReturnCompleted } from "../src/lib/provider-return-evidence";
 import {internalQueryOf} from "./owner_functions";
 import { mutation, query } from "./owner_functions";
 import type { MutationCtx } from "./_generated/server";
@@ -64,6 +65,7 @@ function extractActiveOrderStep(order: unknown): string | null | undefined {
     : {};
   const steps = record.steps ?? record.detail?.steps ?? record._detail?.steps;
   if (!Array.isArray(steps)) return null;
+  if (providerReturnCompleted(order)) return "REVIEWED";
   const active = steps.find((step) =>
     typeof step === "object" &&
     step !== null &&
@@ -286,6 +288,9 @@ export const upsertMessages = mutation({
       if (!reservation) continue;
       if (reservation.is_obsolete) continue;
       if (!reservation.start_date || !reservation.end_date) continue;
+      await ctx.scheduler.runAfter(0, internal.extract_booking_times_q.__service_reconcileTimeProvenance, {
+        reservation_ids: [reservation._id],
+      });
       await ctx.scheduler.runAfter(0, internal.extract_booking_times.__service_extractForReservation, {
         reservation_id: reservation._id,
       });

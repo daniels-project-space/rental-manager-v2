@@ -1,4 +1,7 @@
 "use client";
+import styles from "./CalendarGantt.module.css";
+import { rentalCalendarTimestamp } from "../../lib/rental-calendar-time";
+type CalendarClockStatus = "confirmed" | "reported" | "missing";
 import WebsiteVerificationPanel from "./WebsiteVerificationPanel";
 import { websiteVerificationLabel, type WebsiteVerification } from "../../../convex/lib/websiteVerification";
 import React, { useEffect, useState, useCallback, useRef } from "react";
@@ -31,6 +34,8 @@ interface Block {
   return_date: string | null | undefined;
   renter_name: string | null;
   order_step: string | null;
+  pickup_time_status?: CalendarClockStatus;
+  return_time_status?: CalendarClockStatus;
   pickup_time: string | null;
   return_time: string | null;
   pickup_method: string | null;
@@ -169,6 +174,7 @@ function statusStyle(orderStep: string | null): StatusStyle {
     case "DELIVERED":
       return { bg: "rgba(59,130,246,0.12)", border: "#3b82f6", text: "#60a5fa" };
     case "RETURNED":
+      return { bg: "rgba(59,130,246,0.12)", border: "#3b82f6", text: "#60a5fa" };
     case "REVIEWED":
       return { bg: "rgba(16,185,129,0.18)", border: "#10b981", text: "#34d399" };
     case "CANCELED":
@@ -213,7 +219,7 @@ function orderStepLabel(step: string | null): string {
     case "VERIFIED": return "Verifying";        // paid, doing ID/doc check
     case "BOOKED_AFTER_VERIFIED": return "Confirmed";
     case "DELIVERED": return "Out";
-    case "RETURNED": return "Returning";
+    case "RETURNED": return "Awaiting return";
     case "REVIEWED": return "Done";
     case "CANCELED": return "Cancelled";
     case "VERIFICATION_FAILED": return "Failed";
@@ -292,8 +298,8 @@ function groupByReservation(items: GanttItem[], weekStart: string, xAt: (dayFloa
     // Confirmed handover times can sit on a DIFFERENT member than the one that
     // defines the span date (a grouped booking where only one order carries the
     // negotiated time, e.g. Nartay's early-pickup order). Pull the earliest
-    // CONFIRMED pickup + latest CONFIRMED return across the group so the bar
-    // shows real times instead of landing in the "not defined" slot.
+    // clock on the actual pickup/return endpoint date so an extension does not
+    // inherit the earlier order’s return clock on a different day.
     const byPickup = [...g.blocks].sort((a, b) =>
       (a.start_date ?? "").localeCompare(b.start_date ?? ""),
     );
@@ -303,8 +309,10 @@ function groupByReservation(items: GanttItem[], weekStart: string, xAt: (dayFloa
       return eb.localeCompare(ea);
     });
     const definedMethod = (v?: string | null): v is string => !!v && v !== "unknown";
-    const pickupTime = byPickup.find((b) => b.pickup_time)?.pickup_time ?? startMember.pickup_time ?? null;
-    const returnTime = byReturn.find((b) => b.return_time)?.return_time ?? endMember.return_time ?? null;
+    const pickupClockMember = byPickup.find(b => b.start_date === startMember.start_date && b.pickup_time);
+    const returnClockMember = byReturn.find(b => (b.return_date ?? b.end_date) === spanEnd && b.return_time);
+    const pickupTime = pickupClockMember?.pickup_time ?? null;
+    const returnTime = returnClockMember?.return_time ?? null;
     const pickupMethod = byPickup.find((b) => definedMethod(b.pickup_method))?.pickup_method ?? startMember.pickup_method ?? null;
     const returnMethod = byReturn.find((b) => definedMethod(b.return_method))?.return_method ?? endMember.return_method ?? null;
     // Synthetic block spanning the whole rental, carrying the earliest pickup
@@ -319,6 +327,9 @@ function groupByReservation(items: GanttItem[], weekStart: string, xAt: (dayFloa
       order_step: rep.order_step,
       pickup_time: pickupTime,
       return_time: returnTime,
+      pickup_time_status: pickupClockMember?.pickup_time_status,
+      return_time_status: returnClockMember?.return_time_status,
+      site_verification: rep.site_verification,
       pickup_method: pickupMethod,
       return_method: returnMethod,
       progress_percent: rep.progress_percent,
@@ -326,7 +337,7 @@ function groupByReservation(items: GanttItem[], weekStart: string, xAt: (dayFloa
     };
     const geom = barGeom(merged, weekStart, xAt);
     if (!geom) continue;
-    const ongoing = !!startMember.start_date && startMember.start_date <= today && today <= spanEnd;
+    const ongoing = !["REVIEWED", "CANCELED", "VERIFICATION_FAILED"].includes(rep.order_step ?? "") && !!startMember.start_date && startMember.start_date <= today && today <= spanEnd;
     const accColor: "blue" | "purple" | "orange" | "emerald" =
       rep.account_slug === "dbcinema_web" && rep.order_step === "VERIFIED" ? "orange"
       : rep.account_slug === "leo" ? "purple"
@@ -360,7 +371,7 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
-function ResThumbs({ items, ring }: { items: ResItem[]; ring: string }) {
+function ResThumbs({ items, ring, size = 56 }: { items: ResItem[]; ring: string; size?: number }) {
   const shown = items.slice(0, 6);
   const extra = items.length - shown.length;
   const [preview, setPreview] = useState<{ src: string; name: string; cx: number; cy: number } | null>(null);
@@ -382,7 +393,7 @@ function ResThumbs({ items, ring }: { items: ResItem[]; ring: string }) {
             alt=""
             title={it.name}
             className="w-14 h-14 rounded-lg object-cover first:ml-0 -ml-3 cursor-zoom-in transition-transform hover:-translate-y-0.5"
-            style={{ border: `2px solid ${ring}`, background: "#0b0f1c" }}
+            style={{ width:size,height:size,border: `2px solid ${ring}`, background: "#0b0f1c" }}
             onMouseEnter={onEnter(it.image, it.name)}
             onMouseLeave={onLeave}
           />
@@ -391,7 +402,7 @@ function ResThumbs({ items, ring }: { items: ResItem[]; ring: string }) {
             key={i}
             title={it.name}
             className="w-14 h-14 rounded-lg flex items-center justify-center text-sm font-bold first:ml-0 -ml-3"
-            style={{ border: `2px solid ${ring}`, background: `${ring}33`, color: ring }}
+            style={{ width:size,height:size,border: `2px solid ${ring}`, background: `${ring}33`, color: ring }}
           >
             {it.name.charAt(0).toUpperCase()}
           </div>
@@ -454,16 +465,6 @@ function ReservationBar({ row, height, isNext, isFocused, onSelect, liveProgress
   const renterLabel = hasRenter ? block.renter_name!.trim() : orderStepLabel(block.order_step);
   const pickup = block.pickup_time ? block.pickup_time.slice(0, 5) : null;
   const ret = block.return_time ? block.return_time.slice(0, 5) : null;
-  const showTimes = row.width >= 140;
-  const compactTime = row.width < 140
-    ? pickup && ret
-      ? `${pickup}–${ret}`
-      : pickup
-        ? `↑${pickup}`
-        : ret
-          ? `${ret}↓`
-          : null
-    : null;
   // Pickup or return happening TODAY → cyan glow, distinct from the amber
   // next-upcoming pulse and the status "ongoing" glow.
   const pickupDay = block.start_date;
@@ -472,14 +473,12 @@ function ReservationBar({ row, height, isNext, isFocused, onSelect, liveProgress
   // moment (time, or end-of-day if no time) passes, the glow stops (Daniel).
   const momentMs = (day: string | null | undefined, time: string | null | undefined): number | null => {
     if (!day) return null;
-    const d = new Date(day + "T00:00:00");
-    if (time && /^\d\d:\d\d/.test(time)) {
-      const [h, m] = time.split(":").map(Number);
-      d.setHours(h, m || 0, 0, 0);
-    } else {
-      d.setHours(23, 59, 59, 999);
+    try {
+      return rentalCalendarTimestamp(day, time?.slice(0, 5) || "23:59");
+    } catch {
+      // An ambiguous daylight-saving clock must not invent an exact moment.
+      return null;
     }
-    return d.getTime();
   };
   const pickupMs = momentMs(pickupDay, block.pickup_time);
   const returnMs = momentMs(returnDay, block.return_time);
@@ -504,7 +503,7 @@ function ReservationBar({ row, height, isNext, isFocused, onSelect, liveProgress
 
   return (
     <div
-      className={`absolute rounded-md cursor-pointer overflow-hidden flex items-center gap-1.5 pl-2 pr-1.5 select-none transition-all hover:brightness-125${isNext ? " gantt-next-pulse" : todayEvent ? " gantt-today-glow" : ""}`}
+      className={`absolute rounded-md cursor-pointer flex items-center select-none transition-all hover:brightness-125${isNext ? " gantt-next-pulse" : todayEvent ? " gantt-today-glow" : ""}`}
       style={{
         left: row.left,
         width: row.width,
@@ -517,81 +516,24 @@ function ReservationBar({ row, height, isNext, isFocused, onSelect, liveProgress
           ? "0 0 0 2px rgba(59,130,246,0.45), 0 0 22px rgba(59,130,246,0.85)"
           : ongoing && !isNext && !todayEvent ? `0 0 0 1.5px ${ss.border}, 0 0 10px ${ss.border}aa` : undefined,
       }}
+      data-calendar-bar
+      role="button"
+      tabIndex={0}
+      aria-label={tooltip}
       title={tooltip}
       onClick={onSelect}
+      onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onSelect();}}}
     >
-      {ongoing && (
-        <span className="flex-shrink-0 w-1.5 h-1.5 rounded-full" style={{ background: ss.text, boxShadow: `0 0 6px ${ss.text}` }} />
-      )}
-      {/* Merged-rental indicator: N bookings chained into one continuous bar */}
-      {row.memberCount > 1 && (
-        <span
-          className="flex-shrink-0 text-[9px] font-bold leading-none px-1 rounded-sm tabular-nums"
-          style={{ background: ss.text, color: ss.bg }}
-          title={`${row.memberCount} bookings merged into one rental`}
-        >
-          ⛓{row.memberCount}
-        </span>
-      )}
-      {compactTime && (
-        <span
-          className="text-[10.5px] font-mono font-semibold truncate flex-1 text-center tabular-nums"
-          style={{ color: ss.text }}
-        >
-          {compactTime}
-        </span>
-      )}
-      {/* Pickup time pinned to the START of the bar — only on the pickup day */}
-      {showTimes && pickup && pickupInWeek && (
-        <span
-          className="text-[10.5px] font-mono flex-shrink-0 leading-none tabular-nums"
-          style={{
-            color: pickupToday ? "#67e8f9" : ss.text,
-            opacity: pickupToday ? 1 : 0.8,
-            fontWeight: pickupToday ? 700 : 600,
-            textShadow: pickupToday ? "0 0 6px rgba(34,211,238,0.9)" : undefined,
-          }}
-          title={`Out ${pickup}${pickupToday ? " — today" : ""}`}
-        >
-          ↑{pickup}
-        </span>
-      )}
-      {!compactTime && <span
-        className="text-[11px] font-semibold truncate flex-1 leading-none text-center"
-        style={{
-          color: ss.text,
-          textDecoration: ss.strikethrough ? "line-through" : undefined,
-          fontStyle: hasRenter ? undefined : "italic",
-          opacity: hasRenter ? undefined : 0.8,
-        }}
-      >
-        {renterLabel}
+      {pickupInWeek && <span data-calendar-endpoint="pickup" className={styles.barPickup}
+        title={`${pickupDay} · Pickup ${pickup ?? "time not recorded"}${block.pickup_time_status === "reported" ? " · reported, not confirmed" : ""}`}>
+        ↑ {pickup ?? "—"}{block.pickup_time_status === "reported" && <i>•</i>}
       </span>}
-      {/* No confirmed pickup/return times yet — say so instead of an empty bar */}
-      {showTimes && !pickup && !ret && (
-        <span
-          className="text-[10px] font-medium flex-shrink-0 leading-none italic"
-          style={{ color: ss.text, opacity: 0.65 }}
-          title="No pickup / return times confirmed yet"
-        >
-          no times yet
-        </span>
-      )}
-      {/* Drop-off time pinned to the END of the bar — only on the return day */}
-      {showTimes && ret && returnInWeek && (
-        <span
-          className="text-[10.5px] font-mono flex-shrink-0 leading-none tabular-nums"
-          style={{
-            color: returnToday ? "#67e8f9" : ss.text,
-            opacity: returnToday ? 1 : 0.8,
-            fontWeight: returnToday ? 700 : 600,
-            textShadow: returnToday ? "0 0 6px rgba(34,211,238,0.9)" : undefined,
-          }}
-          title={`Back ${ret}${returnToday ? " — today" : ""}`}
-        >
-          {ret}↓
-        </span>
-      )}
+      <CalendarBarName name={renterLabel} width={Math.max(44,row.width-8)} color={ss.text} strike={ss.strikethrough} offset={row.width<44 ? Math.max(-row.left,row.width-44) : 4} />
+      {returnInWeek && <span data-calendar-endpoint="return" className={styles.barReturn}
+        style={{top:row.width<115 ? height+3 : undefined,left:row.left+row.width<55 ? 0 : undefined,right:row.left+row.width<55 ? "auto" : undefined}}
+        title={`${returnDay} · Return ${ret ?? "time not recorded"}${block.return_time_status === "reported" ? " · reported, not confirmed" : ""}`}>
+        {ret ?? "—"} ↓{block.return_time_status === "reported" && <i>•</i>}
+      </span>}
       {showProgress && (
         <div
           className="absolute left-0 bottom-0 h-0.5 rounded-full"
@@ -600,6 +542,24 @@ function ReservationBar({ row, height, isNext, isFocused, onSelect, liveProgress
       )}
     </div>
   );
+}
+
+function CalendarBarName({name,width,color,strike,sidebar=false,offset=4}:{name:string;width:number;color:string;strike?:boolean;sidebar?:boolean;offset?:number}) {
+  const ref=useRef<HTMLSpanElement>(null);
+  useEffect(()=>{
+    const e=ref.current;if(!e)return;
+    const fit=()=>{
+      let size=11;e.style.fontSize=`${size}px`;
+      while(size>5 && (e.scrollHeight>(sidebar?22:25) || e.scrollWidth>e.clientWidth+1)) {
+        size-=.5;e.style.fontSize=`${size}px`;
+      }
+    };
+    fit();let active=true;
+    void document.fonts.ready.then(()=>{if(active)fit();});
+    return ()=>{active=false;};
+  },[name,width,sidebar]);
+  return <span ref={ref} data-calendar-bar-name className={styles.barName}
+    style={{width,position:sidebar?"relative":undefined,left:sidebar?undefined:offset,textAlign:sidebar?"left":undefined,color,textDecoration:strike?"line-through":undefined}}>{name}</span>;
 }
 
 // ---------------------------------------------------------------------------
@@ -623,7 +583,7 @@ function BlockDetail({ block, items, accent, onClose }: { block: Block; items: R
   ];
   return (
     <div
-      className="absolute bottom-4 right-4 z-30 rounded-xl p-4 shadow-2xl w-[270px] max-h-[60%] overflow-auto"
+      className={`absolute bottom-4 right-4 z-30 rounded-xl p-4 shadow-2xl w-[330px] max-h-[70%] overflow-auto ${styles.detail}`}
       style={{
         background: "rgba(14,17,28,0.99)",
         border: `1px solid ${ss.border}`,
@@ -635,7 +595,7 @@ function BlockDetail({ block, items, accent, onClose }: { block: Block; items: R
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: accent }} />
-            <span className="text-sm font-bold truncate" style={{ color: ss.text }}>
+            <span className="text-sm font-bold break-words" style={{ color: ss.text }}>
               {block.renter_name && block.renter_name !== "?" ? block.renter_name : "Booking"}
             </span>
           </div>
@@ -684,9 +644,8 @@ function BlockDetail({ block, items, accent, onClose }: { block: Block; items: R
 // Main component
 // ---------------------------------------------------------------------------
 const COL_WIDTH = 150; // px per day column (fallback before width is measured)
-const LABEL_WIDTH = 300; // px for left "renter + thumbnails" column
 const RES_ROW_HEIGHT = 84; // one reservation per row (renter + large thumbnails)
-const BAR_HEIGHT = 28; // fixed bar height, vertically centered in the row
+const BAR_HEIGHT = 32; // fixed bar height, vertically centered in the row
 
 export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug, focusedReservationId, embedded = false }: Props): React.ReactElement | null {
   const [weekStart, setWeekStart] = useState<string>(() => weekStartIso ?? viewAnchor());
@@ -699,6 +658,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
   // scroll) instead of a fixed 150px/col that overflowed a 1200px modal.
   const gridRef = useRef<HTMLDivElement>(null);
   const [gridWidth, setGridWidth] = useState(0);
+  const LABEL_WIDTH = gridWidth > 0 && gridWidth < 640 ? 140 : 300;
   const focusedRowRef = useRef<HTMLDivElement>(null);
   // W08 search — filter rentals by item name / tag and (lazily) show per-day
   // availability. The query string is debounced before hitting the backend so
@@ -935,7 +895,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
         >
           <div>
             <h2 className="text-white font-bold text-lg leading-tight">Weekly Calendar</h2>
-            <p className="text-gray-400 text-sm mt-0.5">{formatWeekRange(weekStart)}</p>
+            <p className="text-gray-400 text-sm mt-0.5">{formatWeekRange(weekStart)} <span className="text-xs text-gray-500">· London times</span></p>
           </div>
           {!embedded && <button
             className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 transition-colors text-xl leading-none"
@@ -948,7 +908,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
 
         {/* ---- Sub-header navigation ---- */}
         <div
-          className="flex flex-wrap items-center gap-2 px-3 md:px-6 py-3 flex-shrink-0"
+          className={`flex flex-wrap items-center gap-2 px-3 md:px-6 py-3 flex-shrink-0 ${styles.controls}`}
           style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
         >
           <button
@@ -1019,7 +979,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
 
           {/* Account filter (interactive) + booking-status legend. */}
           <div className="ml-auto flex items-center gap-2">
-            <div className="flex items-center gap-1">
+            <div className={`flex items-center gap-1 ${styles.accountFilters}`}>
               {([
                 { slug: null, label: "All", color: "#9aa0ad" },
                 { slug: "dbcinema", label: "DB Cinema", color: "#3b82f6" },
@@ -1067,7 +1027,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
         </div>
 
         {/* ---- Grid area ---- */}
-        <div ref={gridRef} className="flex-1 overflow-auto">
+        <div ref={gridRef} className={`flex-1 overflow-auto`}>
           {data === undefined ? (
             // Loading skeleton
             <div className="flex flex-col gap-2 p-6">
@@ -1244,7 +1204,8 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                           colored band (left bar + fading tint + dot) makes the
                           two accounts read apart clearly in the sidebar. */}
                       <div
-                        className="flex-shrink-0 flex flex-col justify-center gap-1 pl-3 pr-3"
+                        data-calendar-booking-id={row.reservationId}
+                        className={`flex-shrink-0 flex flex-col justify-center gap-1 pl-3 pr-3 ${styles.label}`}
                         style={{
                           width: LABEL_WIDTH,
                           borderLeft: `6px solid ${row.acc}`,
@@ -1257,9 +1218,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                             className="w-2 h-2 rounded-full flex-shrink-0"
                             style={{ background: row.acc, boxShadow: `0 0 5px ${row.acc}` }}
                           />
-                          <span className="text-[11px] text-gray-100 truncate leading-none font-semibold" title={renter}>
-                            {renter}
-                          </span>
+                          <CalendarBarName name={renter} width={LABEL_WIDTH-36} color="#f3f4f6" sidebar />
                         </span>
                         <ResThumbs items={row.items} ring={row.acc} />
                       </div>
@@ -1295,6 +1254,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                             ))}
                           </React.Fragment>
                         ))}
+
 
                         {/* The reservation bar — time-accurate */}
                         <ReservationBar

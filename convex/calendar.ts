@@ -1,5 +1,5 @@
 import { loadCanonicalListingAllocation } from "./lib/canonical_listing_allocation";
-import { confirmedClock } from "./lib/confirmed_schedule";
+import { calendarClock, confirmedClock } from "./lib/confirmed_schedule";
 import { shortItemName } from "./lib/item_display_name";
 import { mutation, query, type QueryCtx } from "./owner_functions";
 import { v } from "convex/values";
@@ -1711,8 +1711,10 @@ export const getGanttWeek = query({
           account_slug: (r as { account_slug?: string | null }).account_slug ?? null,
           order_step: rType.order_step ?? null,
           site_verification: r.account_slug === "dbcinema_web" && r.site_verification ? { approved: r.site_verification.approved, documentsApproved: r.site_verification.documentsApproved, status: r.site_verification.status } : null,
-          pickup_time: confirmedClock(r,"pickup",r.pickup_date??r.start_date??"") ?? null,
-          return_time: confirmedClock(r,"return",r.return_date??r.end_date??"") ?? null,
+          pickup_time: calendarClock(r,"pickup",r.pickup_date??r.start_date??"").time,
+          return_time: calendarClock(r,"return",r.return_date??r.end_date??"").time,
+          pickup_time_status: calendarClock(r,"pickup",r.pickup_date??r.start_date??"").status,
+          return_time_status: calendarClock(r,"return",r.return_date??r.end_date??"").status,
           pickup_method: rType.pickup_method ?? null,
           return_method: rType.return_method ?? null,
           progress_percent: chipProgress(

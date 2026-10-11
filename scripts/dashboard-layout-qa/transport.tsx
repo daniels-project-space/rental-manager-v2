@@ -10,7 +10,18 @@ export function useQuery(ref,args) {
  if(name==='reservations:getConversionFunnel') return funnel;
  if(name==='revenue:getLifetimeByMonth') return {currentMonth:'2026-10',months:['2026-07','2026-08','2026-09','2026-10'].map(month=>({month,dbcinemaOrganic:1000,leoOrganic:500,diogoOrganic:250,damageClaims:50})),forecast:[]};
  if(name==='dashboard:getStatsDrawerData') return {monthly:{target_gbp:2200}};
- if(name==='calendar:getGanttWeek') return {items:[{item_id:'qa',item_name:'Sony FX6',image_url:null,account_slug:'dbcinema',account_color:'blue',blocks:[{reservation_id:'qa-res',start_date:args.weekStartIso,end_date:args.weekStartIso,return_date:args.weekStartIso,renter_name:'Fixture only',order_step:'VERIFIED',account_slug:'dbcinema'}]}]};
+ if(name==='calendar:getGanttWeek') {
+   const day=n=>new Date(Date.parse(args.weekStartIso+'T12:00Z')+n*86400000).toISOString().slice(0,10);
+   const block=(id,n,extra={})=>({reservation_id:id,start_date:day(n),end_date:day(n),return_date:day(n),renter_name:'Fixture only',order_step:'RETURNED',account_slug:'dbcinema',...extra});
+   return {items:[{item_id:'qa',item_name:'Sony FX6',image_url:null,account_slug:'dbcinema',account_color:'blue',blocks:[
+     block('qa-res',0,{pickup_time:'09:15',return_time:'10:00',pickup_time_status:'reported',return_time_status:'reported'}),
+     block('qa-long',1,{renter_name:'Long fixture name to check handover information never clips',pickup_time:'08:00',return_time:'22:00',pickup_time_status:'confirmed',return_time_status:'confirmed'}),
+     block('qa-missing',2),
+     block('qa-web',3,{account_slug:'dbcinema_web',pickup_time:'13:00',return_time:'14:45',pickup_time_status:'confirmed',return_time_status:'confirmed'}),
+     block('qa-extension',4,{start_date:day(3),return_time:'17:30',return_time_status:'reported'}),
+     block('qa-extension',5,{start_date:day(4)})
+   ]}]};
+ }
  if(name==='calendar:searchCalendarInventory') return {items:[],reservations:[]};
  if(name.includes('return')||name.includes('Return')) return [];
  return quickQuery(ref,args);
