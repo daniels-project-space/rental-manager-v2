@@ -339,23 +339,6 @@ export function LifetimeRevenue() {
           </div>
         )}
 
-        {raw && <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4">
-          {forecast.map((entry: RawRow) => <div key={entry.month} className="rounded-lg border border-slate-700/60 bg-slate-900/50 px-3 py-2">
-            <div className="text-[10px] uppercase tracking-wide text-slate-400">{fmtMonth(entry.month)} · rental estimate</div>
-            <div className="mt-1 text-lg font-semibold text-slate-200">{fmtGbp(entry.value)}</div>
-            <div className="text-[10px] text-emerald-300">{fmtGbp(entry.committed ?? 0)} confirmed</div>
-            <div className="text-[10px] text-slate-500">Recent range {fmtGbp(entry.low ?? entry.value)}–{fmtGbp(entry.high ?? entry.value)}</div>
-            {(() => { const pipeline = raw.months.find((r) => r.month === entry.month); return <>
-              {Number(pipeline?.pendingNext ?? 0) > 0 && <div className="mt-1 text-[10px] text-amber-400">{fmtGbp(pipeline!.pendingNext)} awaiting verification</div>}
-              {Number(pipeline?.awaitingPaymentNext ?? 0) > 0 && <div className="text-[10px] text-orange-400">{fmtGbp(pipeline!.awaitingPaymentNext)} awaiting payment</div>}
-            </>; })()}
-          </div>)}
-          <div className="col-span-2 text-[10px] leading-relaxed text-slate-500 md:col-span-4">
-            <p>Confirmed bookings are the minimum; dashed sections show expected additional bookings. Pending payments, verification and claims are excluded from the estimate.</p>
-            <details className="mt-1"><summary className="cursor-pointer text-slate-400">How estimates work</summary><p className="mt-1">The last 3 completed months set the usual month. Pace uses completed days, stabilised with 14 days of historical revenue; inferred new demand is capped at twice the usual daily rate. The range shows recent historical variation, rather than a guaranteed outcome.</p></details>
-          </div>
-        </div>}
-
         {/* Chart mode toggle */}
         <div className="flex gap-1 mb-2">
           <button onClick={() => setChartWindow((w) => w === "recent" ? "all" : "recent")} className="mr-2 rounded-full border border-slate-700 px-2.5 py-0.5 text-[11px] text-slate-300">{chartWindow === "recent" ? "Last 12 months · show all" : "All history · show recent"}</button>
