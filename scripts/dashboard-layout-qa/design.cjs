@@ -14,14 +14,25 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
   assert.equal(await ev('document.querySelector("section[aria-label]").textContent.includes("DB Cinema Web")'),false);
   assert.equal(await ev('document.body.style.overflow'), '');
   const assertNoOverlap = async () => {
-    const bounds = await ev('[...document.querySelector("main > div").children].map(e=>{const r=e.getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom}})');
+    const bounds = await ev('[...document.querySelector("main > div.grid").children].map(e=>{const r=e.getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom}})');
     for (let i=0;i<bounds.length;i++) for(let j=i+1;j<bounds.length;j++) {
       const a=bounds[i],b=bounds[j];
       assert.ok(!(Math.min(a.right,b.right)-Math.max(a.x,b.x)>1 && Math.min(a.bottom,b.bottom)-Math.max(a.y,b.y)>1), `Widgets ${i}/${j} overlap at ${width}px`);
     }
-    assert.ok(await ev('document.querySelector("main > div").getBoundingClientRect().bottom >= Math.max(...[...document.querySelector("main > div").children].map(e=>e.getBoundingClientRect().bottom))'));
+    assert.ok(await ev('document.querySelector("main > div.grid").getBoundingClientRect().bottom >= Math.max(...[...document.querySelector("main > div.grid").children].map(e=>e.getBoundingClientRect().bottom))'));
   };
   await assertNoOverlap();
+  const pill = await ev('(()=>{const r=document.querySelector("[data-utility-bar] button").getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()');
+  await c.cmd('Input.dispatchMouseEvent',{type:'mouseMoved',...pill});await pause(100);
+  assert.equal(await ev('document.querySelector("[data-utility-bar] button").getAttribute("aria-expanded")'),'true');
+  await c.cmd('Input.dispatchMouseEvent',{type:'mouseMoved',x:0,y:900});await pause(100);
+  assert.equal(await ev('document.querySelector("[data-utility-bar] button").getAttribute("aria-expanded")'),'false');
+  for (const label of ['Vacation Mode','To-Do','Insurance Claims']) {
+    await ev(`[...document.querySelectorAll('[data-utility-bar] button')].find(b=>b.textContent.startsWith(${JSON.stringify(label)})).click()`);await pause(80);
+    assert.equal(await ev(`[...document.querySelectorAll('[data-utility-bar] button')].find(b=>b.textContent.startsWith(${JSON.stringify(label)})).getAttribute('aria-expanded')`),'true');
+    await assertNoOverlap();
+    await ev(`[...document.querySelectorAll('[data-utility-bar] button')].find(b=>b.getAttribute('aria-label')===${JSON.stringify('Close '+label)}).click()`);await pause(80);
+  }
   await ev('document.querySelector("details summary").click()');await pause(100);await assertNoOverlap();
   await ev('document.querySelector("details summary").click()');await pause(100);await assertNoOverlap();
 
