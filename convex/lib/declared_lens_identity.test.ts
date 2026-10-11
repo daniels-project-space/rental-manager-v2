@@ -58,4 +58,21 @@ describe("declared lens model identity",()=>{
   const result=resolveListingComponents([{...lens,is_marketing_only:true}] as any,[{item_id:"gm",qty:1}],"gm",1,"Included in this rental: • 1x Sony 70-200mm f2.8 zoom lens");
   expect(result.owned).toBe(false);
  });
+ it.each(["Sony 28-70mm f3.5-5.6 lens","Sony 28-70mm f/3.5–5.6 lens"])("matches an aperture-unspecified stock row only when it is the unique compatible lens: %s",name=>{
+  const generic={...lens,_id:"sony-28-70",name_canonical:"Sony 28-70mm",aliases:[],lens_mount:"E-mount"};
+  const text="Included in this rental: • 1x "+name;
+  expect(declaredLensIdentity(name,[generic]).item?._id).toBe("sony-28-70");
+  const stockRow=generic as unknown as Parameters<typeof resolveListingComponents>[0][number];
+  const inventory=[stockRow];
+  const context=createBundleMappingContext(inventory);
+  const resolved=resolveListingComponents(inventory,[{item_id:generic._id,qty:1}],generic._id,1,text,context);
+  expect(resolved).toMatchObject({complete:true,owned:true,coverage:{missing:[],unresolved:[]}});
+ });
+ it("does not infer an unspecified aperture when another aperture-specific identity is recorded",()=>{
+  const generic={...lens,_id:"sony-28-70",name_canonical:"Sony 28-70mm",aliases:[],lens_mount:"E-mount"};
+  const explicit={...generic,_id:"sony-28-70-f2",name_canonical:"Sony 28-70mm f2",lens_mount:"E-mount"};
+  expect(declaredLensIdentity("Sony 28-70mm f3.5-5.6 lens",[generic,explicit]).item).toBeNull();
+  const aliasWithAperture={...generic,aliases:["Sony 28-70mm f2"]};
+  expect(declaredLensIdentity("Sony 28-70mm f3.5-5.6 lens",[aliasWithAperture]).item).toBeNull();
+ });
 });

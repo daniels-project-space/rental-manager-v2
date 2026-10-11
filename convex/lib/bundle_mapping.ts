@@ -25,7 +25,7 @@ export type BundleMappingContext = {
   matches: Map<string, { item: Inventory | null; ambiguous: boolean }>;
   tokens: Map<string, string[]>;
   rankedTokens: Map<string, Set<string>>;
-  lenses: Map<string, { ranges: number[][]; words: Set<string> }>;
+  lenses: Map<string, { ranges: number[][]; words: Set<string>; coreWords?: Set<string> }>;
 };
 /** One immutable query snapshot. Do not reuse across inventory reads. */
 export function createBundleMappingContext(inventory: Inventory[]): BundleMappingContext {

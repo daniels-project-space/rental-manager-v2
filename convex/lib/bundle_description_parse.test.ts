@@ -467,3 +467,16 @@ it("does not discard the alternative to an individually tracked camera",()=>{
  const body={_id:"fx3",name_canonical:"Sony FX3",kind:"camera",unit_kind:"unit",status:"active",is_marketing_only:false,qty:4};
  const r=resolveListingComponents([body] as any,[{item_id:body._id,qty:1}],body._id,1,"Included in this rental: • 1x Sony FX3 (or Sony FX6)");expect(r.complete).toBe(false);expect(r.coverage?.unresolved).toHaveLength(1);
 });
+
+describe("marketing and feature boundaries in rental contents",()=>{
+ it("stops before operating hours, location, delivery, and promotion copy",()=>{
+  const description=`Included in this rental:\n• 1x Sony FX3\n• 1x Sony GM 24-70mm lens\nOperation times: 9am-10pm\nDelivery is always available!\nLocated 3 min away from Kings Cross Station\nWe're a London based commercial equipment rental company since 2019\nWeekend hires are available as well!\nDISCOUNTS\n• Get 7 Days for the price of 5`;
+  expect(extractComponents(description).components).toEqual([
+   {qty:1,name:"Sony FX3"},{qty:1,name:"Sony GM 24-70mm lens"},
+  ]);
+ });
+ it("skips feature headings while keeping a genuinely named equipment line",()=>{
+  const description=`Included in this rental:\n• 4x Astera Titan Tubes (RGBWW)\n• Power & Charging:\n• Control &\n• Integrated wireless DMX\n• App control (Astera App)\n• Built-in magnets & mounting options`;
+  expect(names(description)).toEqual(["Astera Titan Tubes (RGBWW)"]);
+ });
+});

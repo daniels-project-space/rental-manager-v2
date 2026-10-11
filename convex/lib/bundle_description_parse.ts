@@ -17,7 +17,7 @@ const ADDON_RE =
   /\d\s*\/\s*day|\bcan be added\b|\bis available for\b|\bavailable for\b|\badd my\b|\badd an?\b|\badd \d\b|\bupgrade\b|\bfor an additional\b|\bextra\b/i;
 
 const NOISE_RE =
-  /^(various|needed|cables?|carrying|carry|bag|bags|case|cases|packaged|all items|charger|chargers|cable)\b/i;
+  /^(various|needed|cables?|carrying|carry|bag|bags|case|cases|packaged|all items|charger|chargers|cable|tripod collar(?: attached)?)\b/i;
 /** Protective caps and lens hoods are supplied packaging, not separate rented
  * lenses. Match the whole component so mixed gear lines remain unresolved. */
 const PROTECTIVE_PACKAGING_RE = /^(?:(?:front(?:\s+(?:and|&)\s+rear)?|rear)\s+)?(?:lens\s+(?:mount\s+)?|(?:camera\s+)?body\s+)?caps?$|^lens\s+hoods?$/i;
@@ -57,6 +57,12 @@ export function extractComponents(desc: string): {
   // Everything after "About this ..." is marketing prose, not contents.
   body = body.split(
     /\bAbout (?:th(?:is|e)|us|me)\b|\bWe (?:also offer|offer a variety)\b|\bWhat you see on the picture\b|\(\s*No batteries or special cables required\b|\bA quick note\b|\bPlease(?: kindly)? note\b|\bI do my best\b|\busually available\b/i,
+  )[0];
+  // Some descriptions put operational/location and promotional copy directly
+  // after the included items, before an "About us" heading. These are clear
+  // section boundaries, never physical inventory lines.
+  body = body.split(
+    /\bOperation(?:\s+|\s+of\s+)?times?\s*:|\bOperating hours\s*:|\bDelivery is (?:always )?available\b|\bLocated\s+\d+\s*(?:min|minutes)\s+away\b|\bWe(?:'|’|´|\s+)re\s+(?:a|an)\b[^*]{0,100}\brental company\b|\bWeekend hires? (?:are )?available\b|\bDISCOUNTS?\s*:?|\bGet\s+\d+\s+days?\s+for the price\b/i,
   )[0];
   // A notes heading starts prose, not further supplied equipment. Requiring
   // a structural boundary preserves counted names such as "1x Notes recorder".
@@ -146,6 +152,10 @@ export function extractComponents(desc: string): {
     // A fragment with no letters or digits is a leftover delimiter, not a
     // component: a lone "*" survived the numeric-split fallback.
     if (!/[a-z0-9]/i.test(name)) continue;
+    // Hygglo descriptions use short subheadings within the contents block;
+    // these labels and product feature notes are not separate rental units.
+    if (/^(?:power\s*&\s*charging|controls?\s*&?|lights?|connectivity|mounting|sets?|kits?)\s*:?$/i.test(name) ||
+        /^(?:integrated wireless (?:dmx|control)\b|app control(?:\s+\([^)]*\))?$|built[- ]in (?:magnets|mounting options)\b)/i.test(name)) continue;
     if (!name || NOISE_RE.test(name) || isProtectivePackaging(name) || ADDON_RE.test(name) || /\(\s*optional\s*\)\s*$/i.test(name)) continue;
     // Model and mount suffixes participate in identity and ambiguity checks.
     // Truncating here can silently turn a different kit into available stock.
