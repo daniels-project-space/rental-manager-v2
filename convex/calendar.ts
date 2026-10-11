@@ -1514,7 +1514,9 @@ export const getGanttWeek = query({
     }
     // Calendar commitments include paid website verification, keeping the
     // physical reservation visible without counting it as confirmed revenue.
-    reservations = dedupByLogicalRental(
+    // This surface displays reported clocks; stock queries keep the strict
+    // confirmed-schedule wrapper. Do not erase saved times before labeling them.
+    reservations = deduplicateRentals(
       (reservations as ReservationRow[]).filter(
         (r) => isInventoryCommittedWithDates(r),
       ),

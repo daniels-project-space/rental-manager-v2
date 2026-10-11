@@ -88,3 +88,16 @@ it('rejects caches made before paid pending commitments were included',async()=>
  expect(strip[0].pickups).toHaveLength(1);expect(strip[0].calendarWindowVersion).toBe(4);
  const week=await (getWeeklyCalendar as any)._handler(context([pending],{calendarWindowVersion:3,days:[]}),{accountSlug:null,weekStartDate:'2026-10-05'});expect(week.calendarWindowVersion).toBe(4);expect(week.days[0].reservations).toHaveLength(1);
 });
+
+
+it("keeps saved native clocks through the real Gantt query while stock calendars stay conservative",async()=>{
+ const native={...booking,_id:"native-rental",account_slug:"leo",hygglo_order_id:"native-order",site_item_windows:undefined,
+   items:[{item_name:"Sony FX3",qty:1}],resolved_items:[{item_id:"camera",qty:1}],pickup_time:"09:15",return_time:"17:30"};
+ const ctx=context([native]);
+ const gantt=await(getGanttWeek as any)._handler(ctx,{weekStartIso:"2026-10-05",accountSlug:"leo"});
+ const blocks=gantt.items.flatMap((i:any)=>i.blocks);
+ expect(blocks.length).toBeGreaterThan(0);
+ expect(blocks[0]).toMatchObject({pickup_time:"09:15",return_time:"17:30",pickup_time_status:"reported",return_time_status:"reported"});
+ const week=await computeWeeklyLive(ctx,{accountSlug:"leo",weekStartDate:"2026-10-05"});
+ expect(week.days[6].reservations[0].returnTime).toBeNull();
+});
