@@ -652,3 +652,12 @@
 .replacementPanel .original { padding: 8px; }
 .replacementPanel .original img { width: 44px; height: 44px; }
 .replacementPanel .footer button { border-radius: 22px; }
+
+.changeReview { margin: 12px 0; padding: 16px; border: 1px solid #487595; border-radius: 16px; background: #172b3b; }
+.changeAmounts { display: grid; grid-template-columns: minmax(0,1fr) 20px minmax(0,1fr); align-items: center; gap: 12px; margin-block: 12px; }
+.changeAmounts > div { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.changeAmounts small { font-size: 10px; color: #acc0d0; }
+.changeAmounts strong { font-size: 20px; overflow-wrap: anywhere; }
+.confirmActions { display: flex; gap: 8px; flex-wrap: wrap; }
+.confirmActions button { padding: 10px 16px; border-radius: 999px; border: 1px solid #49687e; background: #203746; }
+.confirmActions button:last-child { background: #287ff1; border-color: #4e9dff; color: white; }

@@ -268,7 +268,7 @@ export const itemUnavailableDates = action({
   handler: async (
     _ctx,
     { account_slug, hygglo_order_id },
-  ): Promise<{ dates: string[]; min_rental_days: number }> => {
+  ): Promise<{ dates: string[]; min_rental_days: number; verified:boolean }> => {
     try {
       const token = await tokenFor(account_slug);
       const order = await fetchOrder(account_slug, hygglo_order_id);
@@ -281,13 +281,14 @@ export const itemUnavailableDates = action({
       ];
       const out = new Set<string>();
       let minDays = 1;
+      let verified=productIds.length>0;
       for (const pid of productIds) {
         try {
           const res = await fetch(
             `${HYGGLO_API_BASE}/v2/my/products/${pid}`,
             { headers: hyggloAuthHeaders(token) },
           );
-          if (!res.ok) continue;
+          if (!res.ok) {verified=false;continue;}
           const p = (await res.json()) as {
             minimumRentalDays?: number;
             unavailableDates?: unknown[];
@@ -300,16 +301,21 @@ export const itemUnavailableDates = action({
             else if (d && typeof d === "object") {
               const obj = d as { date?: string; from?: string; to?: string };
               if (obj.date) out.add(obj.date.slice(0, 10));
-              if (obj.from) out.add(obj.from.slice(0, 10));
+              if (obj.from) {
+                const start=obj.from.slice(0,10),end=(obj.to??obj.from).slice(0,10);
+                const first=Date.parse(start+"T00:00:00Z"),last=Date.parse(end+"T00:00:00Z");
+                if(!Number.isFinite(first)||!Number.isFinite(last)||last<first||last-first>366*86400000)throw Error("Invalid blocked date range");
+                for(let day=first;day<=last;day+=86400000)out.add(new Date(day).toISOString().slice(0,10));
+              }
             }
           }
         } catch {
-          /* skip this product's blocked dates */
+          verified=false;
         }
       }
-      return { dates: [...out].sort(), min_rental_days: minDays };
+      return { dates: [...out].sort(), min_rental_days: minDays,verified };
     } catch {
-      return { dates: [], min_rental_days: 1 };
+      return { dates: [], min_rental_days: 1,verified:false };
     }
   },
 });

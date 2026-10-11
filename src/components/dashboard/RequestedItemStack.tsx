@@ -9,18 +9,42 @@ export type StackItem = {
   image_urls?: string[];
   origin?: "basket" | "chat";
 };
+const failedImageUntil = new Map<string, number>();
+const loadedImage = new Map<string, { url: string; until: number }>();
+const IMAGE_CACHE_MS = 5 * 60_000;
+function rememberFailure(url: string) {
+  if (failedImageUntil.size >= 1000)
+    failedImageUntil.delete(failedImageUntil.keys().next().value!);
+  failedImageUntil.set(url, Date.now() + IMAGE_CACHE_MS);
+}
 export function ItemImage({ item }: { item: StackItem }) {
   const sources = [
     ...new Set([item.image_url, ...(item.image_urls ?? [])].filter(Boolean)),
   ] as string[];
   const [failed, setFailed] = useState<string[]>([]);
-  const src = sources.find((url) => !failed.includes(url));
+  const key = JSON.stringify(sources),
+    cached = loadedImage.get(key);
+  const usable = (url: string) =>
+    !failed.includes(url) && (failedImageUntil.get(url) ?? 0) <= Date.now();
+  const src =
+    cached && cached.until > Date.now() && usable(cached.url)
+      ? cached.url
+      : sources.find(usable);
   return src ? (
     <img
       data-no-zoom
       src={src}
       alt={item.display_name ?? item.name}
-      onError={() => setFailed((old) => [...old, src])}
+      onLoad={() => {
+        if (loadedImage.size >= 1000)
+          loadedImage.delete(loadedImage.keys().next().value!);
+        loadedImage.set(key, { url: src, until: Date.now() + IMAGE_CACHE_MS });
+      }}
+      onError={() => {
+        rememberFailure(src);
+        loadedImage.delete(key);
+        setFailed((old) => [...old, src]);
+      }}
     />
   ) : (
     <span
@@ -44,13 +68,6 @@ export function RequestedItemStack({
   expandedLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const [offset, setOffset] = useState(0);
-  const positionExpansion = (element: HTMLElement) => {
-    const bounds = element.getBoundingClientRect();
-    const row = element.closest('[aria-label^="Open conversation with"]')?.getBoundingClientRect();
-    const edge = Math.min(window.innerWidth - 12, row?.right ?? window.innerWidth - 12);
-    setOffset(Math.min(0, edge - bounds.left - Math.min(380, window.innerWidth * 0.75)));
-  };
   if (!items.length) return <span className={styles.empty}>◇</span>;
   return (
     <div
@@ -58,9 +75,10 @@ export function RequestedItemStack({
       data-expanded={open || alwaysExpanded}
       className={styles.container}
       data-inline-expanded={alwaysExpanded}
-      style={{ "--stack-offset": `${offset}px` } as CSSProperties}
       onPointerEnter={(event) => {
-        if (event.pointerType === "mouse") { positionExpansion(event.currentTarget); setOpen(true); }
+        if (event.pointerType === "mouse") {
+          setOpen(true);
+        }
       }}
       onPointerLeave={(event) => {
         if (event.pointerType === "mouse") setOpen(false);
@@ -77,17 +95,18 @@ export function RequestedItemStack({
           type="button"
           className={styles.stack}
           style={{
-            width: size + Math.min(items.length - 1, 2) * 7,
-            height: size + Math.min(items.length - 1, 2) * 4,
+            width: open ? 110 : size + Math.min(items.length - 1, 2) * 7,
+            height: open ? 28 : size + Math.min(items.length - 1, 2) * 4,
           }}
           aria-label={`Show all ${items.length} requested items`}
           aria-expanded={open}
           onFocus={(event) => {
-            if (event.currentTarget.matches(":focus-visible")) { positionExpansion(event.currentTarget.parentElement!); setOpen(true); }
+            if (event.currentTarget.matches(":focus-visible")) {
+              setOpen(true);
+            }
           }}
           onClick={(event) => {
             event.stopPropagation();
-            positionExpansion(event.currentTarget.parentElement!);
             const pointer = event.nativeEvent as MouseEvent & {
               pointerType?: string;
             };
@@ -96,7 +115,11 @@ export function RequestedItemStack({
             );
           }}
         >
-          {!open && items.slice(0, 3).map((item, index) => (
+          {open && (
+            <span className={styles.foldLabel}>{items.length} items ▾</span>
+          )}
+          {!open &&
+            items.slice(0, 3).map((item, index) => (
               <span
                 key={`${index}-${item.name}`}
                 className={styles.layer}

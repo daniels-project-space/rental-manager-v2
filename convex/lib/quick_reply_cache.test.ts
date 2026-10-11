@@ -24,11 +24,13 @@ describe("Quick Reply cache compatibility", () => {
           requested_items: [],
           items: [{}],
           availability: {
+            stock_rules_version:2,
             items: [{ available: null, reason: "Dates needed" }],
           },
         },
       ]),
     ).toBe(true));
+  it("rejects complete old checks that did not enforce marketing-only tags",()=>expect(currentQuickReplyCache([{request_created_at:1,requested_items:[],items:[{}],availability:{items:[{available:true}]}}])).toBe(false));
   it("accepts the empty queue and rejects non-array snapshots", () => {
     expect(currentQuickReplyCache([])).toBe(true);
     expect(currentQuickReplyCache(null)).toBe(false);

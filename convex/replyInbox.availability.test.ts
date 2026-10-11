@@ -224,3 +224,16 @@ describe("Quick Reply full-basket shared stock checks", () => {
     ).toBe("available");
   });
 });
+
+describe("marketing-only listing availability",()=>{
+  for(const mode of ["automatic","manual"] as const)it(`refuses a ${mode} marketing listing despite a valid owned inventory mapping`,async()=>{
+    const items=[{...gear("projector","ViewSonic projector"),is_marketing_only:false}],av=context(items);
+    av.productIndex.set("fixture#7","projector");
+    const product={accountSlug:"fixture",productId:7,masterItemId:"projector",isMarketingOnly:mode==="automatic",...(mode==="manual"?{isMarketingOnlyOverride:true}:{})};
+    const ctx={db:{query:(table:string)=>{const q={withIndex:()=>q,first:async()=>table==="hygglo_products"?product:null};return q;}}} as any;
+    const rental={...booking,hygglo_items:[{name:"ViewSonic projector",product_id:7,qty:1}]};
+    await extendAvailabilityMappings(ctx,av,[rental]);
+    expect(computeAvailability(rental,av,[{...line("ViewSonic projector"),product_id:7}])).toMatchObject({status:"conflict",stock_rules_version:2,items:[{available:false,reason:"Marketing-only listing · not stocked for hire"}]});
+    expect(computeAvailability({...rental,start_date:undefined,end_date:undefined},av,[{...line("ViewSonic projector"),product_id:7}])).toMatchObject({status:"conflict"});
+  });
+});

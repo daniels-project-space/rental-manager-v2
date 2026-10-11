@@ -250,7 +250,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       "stack shows all basket and chat images without opening chat",
       `document.querySelector('[aria-label="All requested items"]')?.querySelectorAll('article').length===3&&document.querySelector('[aria-label="All requested items"]').querySelectorAll('article img').length===3&&document.body.textContent.includes('Mentioned in chat')&&!document.querySelector('[aria-label="Close conversation"]')`,
     );
-    await ok("equipment expansion never reflows the conversation list", `(()=>{const row=${stack}.closest('[aria-label^="Open conversation with"]'),r=row.getBoundingClientRect(),next=row.nextElementSibling?.getBoundingClientRect();return Math.abs(r.height-${beforeStack.height})<1&&Math.abs(next.y-${beforeStack.nextY})<1})()`);
+    await ok("equipment unfolds inside its row without covering the next row", `(()=>{const row=${stack}.closest('[aria-label^="Open conversation with"]'),r=row.getBoundingClientRect(),next=row.nextElementSibling?.getBoundingClientRect();const section=row.querySelector("[data-requested-stack] section");return getComputedStyle(section).position==="static"&&r.height>=${beforeStack.height}&&next.y>=r.bottom-1})()`);
     fs.writeFileSync(
       root + `/requested-stack-${width}.png`,
       Buffer.from(
@@ -336,8 +336,8 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     );
     if (width === 1192)
       await ok(
-        "chat expands to half the workspace",
-        `(()=>{const dock=document.querySelector('[role=dialog]').parentElement,r=dock.getBoundingClientRect(),split=dock.parentElement.getBoundingClientRect();return Math.abs(r.width-(split.width-12)*0.5)<2})()`,
+        "chat expands to a larger reading area",
+        `(()=>{const dock=document.querySelector('[role=dialog]').parentElement,r=dock.getBoundingClientRect(),split=dock.parentElement.getBoundingClientRect();return r.width >= (split.width-12)*0.59 && r.height>=700})()`,
       );
     await ok(
       "composer visible without opening drawer",
@@ -527,6 +527,8 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     );
     await tap(contains("Add item"));
     await tap(button("Add"));
+    await ok("addItem waits for confirmation",`!window.__calls.some(c=>c.name==='order_edit:addItem')`);
+    await tap(button("Confirm change"));
     await ok(
       "add item dry run",
       `window.__calls.some(c=>c.name==='order_edit:addItem'&&c.args.dryRun===false)`,
@@ -539,6 +541,8 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       checks.push("price delta " + delta);
     }
     await tap(button("Apply price"));
+    await ok("setPrice waits for confirmation",`!window.__calls.some(c=>c.name==='order_edit:setPrice')`);
+    await tap(button("Confirm change"));
     await ok(
       "discount apply dry run",
       `window.__calls.some(c=>c.name==='order_edit:setPrice'&&c.args.dryRun===false)`,
@@ -549,6 +553,10 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     );
     await pause(30);
     await tap(contains("Refund £"));
+    await ok("refund waits for confirmation",`!window.__calls.some(c=>c.name==='order_edit:refund')`);
+    await tap(button("Cancel change"));
+    await tap(contains("Refund £"));
+    await tap(button("Confirm change"));
     await ok(
       "refund dry run",
       `window.__calls.some(c=>c.name==='order_edit:refund'&&c.args.dryRun===false)`,
@@ -558,7 +566,17 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     await tap(button("‹"));
     await tap(button("20"));
     await tap(button("22"));
+    await ev('window.__calendarFailure=true');
+    await tap(`document.querySelector('[title="Change the rental dates"]')`);
+    await ok("unverified calendar cannot apply a date change",`document.querySelector('[role="alert"]').textContent.includes('Stock could not be verified')&&[...document.querySelectorAll('button')].find(b=>b.textContent==='Apply dates').disabled`);
+    await ev('window.__calendarFailure=false;window.__calendarBlockedDates=["2026-10-21"]');
+    await tap(button("Retry calendar"));
+    await ok("a blocked day inside the range prevents applying dates",`[...document.querySelectorAll('button')].find(b=>b.textContent==='Apply dates').disabled&&document.body.textContent.includes('Includes unavailable days')`);
+    await ev('window.__calendarBlockedDates=[]');
+    await tap(`document.querySelector('[title="Change the rental dates"]')`);
     await tap(button("Apply dates"));
+    await ok("setDates waits for confirmation",`!window.__calls.some(c=>c.name==='order_edit:setDates')`);
+    await tap(button("Confirm change"));
     await ok(
       "reschedule dry run",
       `window.__calls.some(c=>c.name==='order_edit:setDates'&&c.args.dryRun===false)`,
@@ -628,6 +646,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       `window.__calls.filter(c=>/sendRenterReply|sendOwnerReply/.test(c.name)).length`,
     );
     await tap(button("Replace all unavailable items"));
+    await tap(button("Confirm replacement"));
     await ok(
       "replacement approval never sends a message",
       `window.__calls.filter(c=>/sendRenterReply|sendOwnerReply/.test(c.name)).length===${sendsBeforeReplacement}`,
@@ -746,6 +765,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       `window.__calls.filter(c=>c.name==='dbcinema_chat:sendOwnerReply').length`,
     );
     await tap(button("Replace all unavailable items"));
+    await tap(button("Confirm replacement"));
     await ok(
       "website replacement approval uses website guarded action",
       `window.__calls.some(c=>c.name==='dbcinema_chat:acceptReplacementBasket'&&c.args.booking_id&&c.args.dryRun===false)`,
@@ -895,7 +915,10 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       `{const i=document.querySelector('[aria-label="Date change reason"]');const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;setter.call(i,'Operator approved later collection');i.dispatchEvent(new Event('input',{bubbles:true}));}`,
     );
     await pause(50);
+    await ev(`(()=>{const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;for(const [label,value] of [['Pickup time','10:45'],['Return time','17:20']]){const input=document.querySelector('[aria-label="'+label+'"]');setter.call(input,value);input.dispatchEvent(new Event('input',{bubbles:true}));}})()`);
+    await pause(50);
     await tap(button("Review dates"));
+    await ok("calendar reviews the selected handover times",`(()=>{const call=window.__calls.find(c=>c.name==='dbcinema_chat:previewRentalDates');const time=t=>new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(t);return time(call.args.start)==='10:45'&&time(call.args.end)==='17:20';})()`);
     await ok(
       "website dates preview is read only",
       `window.__calls.some(c=>c.name==='dbcinema_chat:previewRentalDates')&&!window.__calls.some(c=>c.name==='dbcinema_chat:applyRentalDates')`,

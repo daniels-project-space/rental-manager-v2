@@ -252,7 +252,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       );
       assert(
         await ev(
-          `getComputedStyle(${stack}.querySelector('section')).position==='absolute'`,
+          `getComputedStyle(${stack}.querySelector('section')).position==='static'`,
         ),
         "equipment expansion uses card layout",
       );
@@ -261,11 +261,11 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         `(()=>{const stack=${stack};const row=stack.closest('[aria-label^="Open conversation with"]');const r=row.getBoundingClientRect();return {height:r.height,photos:[...stack.querySelectorAll('section img')].map(img=>{const p=img.getBoundingClientRect();return {width:p.width,height:p.height,inside:p.left>=r.left&&p.right<=r.right};})};})()`,
       );
       assert(
-        expandedSize.height <= 245 &&
+        expandedSize.height >= 90 &&
           expandedSize.photos.every(
-            (p) => p.width >= 88 && p.height >= 86,
+            (p) => p.width >= 60 && p.height >= 50,
           ),
-        "expanded cards preserve the compact row footprint: " +
+        "expanded cards occupy their equipment cell without an overlay: " +
           JSON.stringify(expandedSize),
       );
       fs.writeFileSync(
@@ -376,7 +376,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       "open chat keeps a wide conversation",
     );
     assert(
-      chatSpace.historyHeight >= (width === 390 ? 340 : 260),
+      chatSpace.historyHeight >= (width === 390 ? 340 : 400),
       "message history keeps usable height",
     );
 
@@ -391,23 +391,9 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       );
     }
     if (width === 1505) {
-      const gear = await ev(
-        `(()=>{const root=document.querySelector('[aria-label="Conversation with Marcus Lee"]');return [...root.querySelectorAll('[class*="chatGear"] section article>img')].map(img=>({width:img.getBoundingClientRect().width,height:img.getBoundingClientRect().height}));})()`,
-      );
-      assert.equal(
-        gear.length,
-        3,
-        "full requested equipment remains visible in the reference gallery",
-      );
-      assert(
-        gear.every(
-          (img) =>
-            Math.abs(img.height - 100) < 0.5 &&
-            img.width >= 100 &&
-            img.width <= 132.5,
-        ),
-        "reference gallery image geometry: " + JSON.stringify(gear),
-      );
+      const gear = await ev(`(()=>{const root=document.querySelector('[aria-label="Conversation with Marcus Lee"]');return [...root.querySelectorAll('[class*="chatGear"] img')].map(img=>({width:img.getBoundingClientRect().width,height:img.getBoundingClientRect().height,loaded:img.complete&&img.naturalWidth>0}));})()`);
+      assert.equal(gear.length,3,"all requested equipment remains in the expandable chat stack");
+      assert(gear.every(img=>img.height>=70&&img.width>=70&&img.loaded),"compact chat stack keeps readable loaded photos");
       assert(
         await ev(
           `(()=>{const btn=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='All');return btn.dataset.count===String(window.__fixture.rows.length)&&btn.getAttribute('aria-pressed')==='true';})()`,

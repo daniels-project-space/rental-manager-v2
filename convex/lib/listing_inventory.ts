@@ -16,6 +16,7 @@ export async function loadListingInventory(ctx: QueryCtx, account: string, produ
   ]);
   const inventory = sources?.items ?? await ctx.db.query("items").collect();
   return { ...resolveListingComponents(inventory, override?.components.map((c) => ({ item_id: String(c.item_id), qty: c.qty })), product?.masterItemId ? String(product.masterItemId) : undefined, quantity, product?.description ?? listing?.description),
+    ...((product?.isMarketingOnlyOverride ?? product?.isMarketingOnly)===true?{owned:false,complete:true,components:[]}:{}),
     product_id: productId, listing_name: product?.name ?? null,
     // Already read for physical resolution: reuse this exact offering's price
     // instead of another tool call or repeating catalogue reads per component.
