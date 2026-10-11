@@ -192,6 +192,7 @@ interface RichItem {
   name: string;
   qty: number;
   image_url: string | null;
+  image_urls?: string[];
 }
 interface ItemAvail {
   name: string;
