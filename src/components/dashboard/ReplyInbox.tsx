@@ -4602,8 +4602,10 @@ export function ReplyInbox() {
     const frame=requestAnimationFrame(()=>{
       const split=widgetRef.current?.querySelector('[data-quick-reply-split]');
       const pane=widgetRef.current?.querySelector('[data-conversation-pane]');
-      const target=widgetRef.current && widgetRef.current.clientWidth<900 ? pane : split;
-      if(target){const top=target.getBoundingClientRect().top;if(top>16)window.scrollBy({top:top-16,behavior:"instant"});}
+      const target=window.innerWidth<900 ? pane : split;
+      const header=document.querySelector('[data-manager-header]');
+      const offset=Math.max(16,(header?.getBoundingClientRect().bottom??0)+16);
+      if(target){const top=target.getBoundingClientRect().top;if(Math.abs(top-offset)>2)window.scrollBy({top:top-offset,behavior:"instant"});}
     });
     return ()=>cancelAnimationFrame(frame);
   },[openId]);

@@ -88,7 +88,7 @@
 .handoffIdentity small { display: block; margin-top: 4px; font-size: 12px; }
 .handoffIdentity small b { color: #ffc24c; }
 .handoffArrow { font-size: 21px; color: #cedbeb; }
-.chatDock { position: sticky; top: 16px; height: var(--quick-reply-pane-height,calc(100dvh - 32px)); min-width: 0; max-height: 1000px; }
+.chatDock { position: sticky; top: var(--quick-reply-sticky-top,16px); height: var(--quick-reply-pane-height,calc(100dvh - 32px)); min-width: 0; max-height: 1000px; }
 .split[data-conversation-open="false"] .chatDock { height: calc(100dvh - 180px); }
 .dockedDialog,.conversation { width: 100%; height: 100%; min-height: 0; min-width: 0; }
 .dockedDialog { height: min(100%,var(--quick-reply-pane-height,calc(100dvh - 32px))); }

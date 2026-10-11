@@ -738,6 +738,9 @@ export function StatsGrid() {
               // Legacy hero treatment: 2 cols, 1 row (default row height).
               spanClass = "col-span-2";
             }
+            if (["conversation_funnel", "channel_response_rates"].includes(id)) {
+              spanClass = "col-span-2 min-[380px]:col-span-1";
+            }
             return (
               <EditableWidget
                 key={id}

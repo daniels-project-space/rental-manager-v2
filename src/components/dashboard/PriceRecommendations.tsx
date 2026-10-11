@@ -104,7 +104,7 @@ export function PriceRecommendations() {
             const err = localErrors[item!.name];
             return (
               <div
-                key={String(item!.itemId)}
+                key={String(item!.itemId ?? `unmapped:${item!.name}`)}
                 className="px-3 py-2.5 rounded-lg"
                 style={{
                   background: "rgba(255,255,255,0.03)",

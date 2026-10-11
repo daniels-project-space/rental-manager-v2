@@ -11,17 +11,17 @@ User goal: restore the approved reference hierarchy through a ground-up Quick Re
 ## Required evidence
 | Requirement | Proof required | State |
 | --- | --- | --- |
-| Approved reference hierarchy, spacing, color and typography | Measured reference/actual screenshots; repeated vision review at desktop and mobile | Open |
-| Chat side view; no shading or overlay over the conversation; wide desktop split and reliable notification close | Actual desktop/short-height/mobile/notification UI; physical close clicks; no backdrop | Open |
-| Real listing tiles fan apart and fold back without row/widget/page reflow | Image node identity, parent/sibling geometry before/during/after animated hover; resolved photos | Open |
-| Priority always puts answered chats below unanswered chats; independent money/oldest sorts | Comparator regressions plus actual post-send fixture queue movement | Open |
-| Declined chat disappears from list; active chat stays open and allows follow-up; new renter message restores it | Fixture decline/send/close/new-message lifecycle; no real mutation | Open |
-| Disregard X hides until a newer renter message, across filters and refresh; owner replies do not restore it | Durable watermark regressions and fixture UI reload/filter/send/new-renter cases for both sources | Open |
-| Smaller secondary widgets below Return Hub arranged horizontally where readable | Actual full dashboard responsive screenshots, automatic packing and no overlap/blank-grid regressions | Open |
-| Whole mobile page, calendar, quick reply controls and subpanels have appropriate space | Actual 320/390/430/768 widths, keyboard/composer/scroll, every relevant panel and control | Open |
-| Preserve all earlier approved controls and information: accounts, money, elapsed wait, requested items, portraits/reviews, source stage/progress, stock, replacement whole-basket proposals, quick texts, context AI draft, confirmed rental changes | Source/caller/data audit; individually tested fixture buttons; permitted read-only source actions | Open |
-| Next-hour rail only inside ±60 minutes, duplicates only same person/same item/different accounts, DB Cinema messages/quick texts and source lifecycle | Existing contracts plus live read-only observations; no renter message test | Open |
-| Final production release | Full tests/typecheck/build, owner guards, graph update, exact Git deployment + canonical alias + live read-only vision checks | Open |
+| Approved reference hierarchy, spacing, color and typography | Measured reference/actual screenshots; repeated vision review at desktop and mobile | Locally qualified; final live audit pending |
+| Chat side view; no shading or overlay over the conversation; wide desktop split and reliable notification close | Actual desktop/short-height/mobile/notification UI; physical close clicks; no backdrop | Locally qualified; final live audit pending |
+| Real listing tiles fan apart and fold back without row/widget/page reflow | Image node identity, parent/sibling geometry before/during/after animated hover; resolved photos | Locally qualified; final live audit pending |
+| Priority always puts answered chats below unanswered chats; independent money/oldest sorts | Comparator regressions plus actual post-send fixture queue movement | Locally qualified; final live audit pending |
+| Declined chat disappears from list; active chat stays open and allows follow-up; new renter message restores it | Fixture decline/send/close/new-message lifecycle; no real mutation | Locally qualified; final live audit pending |
+| Disregard X hides until a newer renter message, across filters and refresh; owner replies do not restore it | Durable watermark regressions and fixture UI reload/filter/send/new-renter cases for both sources | Locally qualified; final live audit pending |
+| Smaller secondary widgets below Return Hub arranged horizontally where readable | Actual full dashboard responsive screenshots, automatic packing and no overlap/blank-grid regressions | Locally qualified; final live audit pending |
+| Whole mobile page, calendar, quick reply controls and subpanels have appropriate space | Actual 320/390/430/768 widths, keyboard/composer/scroll, every relevant panel and control | Locally qualified; final live audit pending |
+| Preserve all earlier approved controls and information: accounts, money, elapsed wait, requested items, portraits/reviews, source stage/progress, stock, replacement whole-basket proposals, quick texts, context AI draft, confirmed rental changes | Source/caller/data audit; individually tested fixture buttons; permitted read-only source actions | Locally qualified; final live audit pending |
+| Next-hour rail only inside ±60 minutes, duplicates only same person/same item/different accounts, DB Cinema messages/quick texts and source lifecycle | Existing contracts plus live read-only observations; no renter message test | Locally qualified; final live audit pending |
+| Final production release | Full tests/typecheck/build, owner guards, graph update, exact Git deployment + canonical alias + live read-only vision checks | Locally qualified; final live audit pending |
 
 ## Initial findings
 - Stack expansion is a second static grid, changing equipment-cell layout. The original image nodes disappear during expansion.
@@ -65,3 +65,17 @@ Production has not been changed by this rebuild. Calendar correction is saved in
 
 - Check the entire actual dashboard and permitted source reads with production writes blocked; preserve all prior safety gates.
 - Release the paired DB Cinema read field/index and Rental Manager changes as the final Git batch, qualify current-head CI, verify exact production aliases and inspect the deployed UI. The broader goal remains active until this is done.
+
+## Whole-page qualification — 11 October 2026
+
+Previous goal turn: progress (committed the rebuild and paired source clock; gathered full local control/queue/vision evidence).
+
+- Inspected the real production dashboard at 1505/768/430/390/320 with mutation, messaging, finance and listing writes blocked. The 320px response-rate footer was the only overflowing card. Header account buttons also wrapped outside their fixed header height.
+- Added a full-page harness that renders the actual `DashboardPage`, `AccountProvider`, `EditModeProvider`, deferred widgets and automatic grids. It replays owner-authorized read-only query snapshots, rather than manually recreating the page. All 60 panel/stat wrappers render without missing queries, boundary failures, JavaScript errors or duplicate-key warnings at five widths. No real write transport exists in this harness; screenshots can show photo placeholders because external DNS is blocked.
+- On narrow phones, the app header gives account avatars a separate row; at320px the funnel and response-rate cards span both columns. The response footer wraps within its card. Price recommendations with no mapped inventory ID now have stable canonical-name keys; actual read data contained three such entries.
+- Full-page physical close checks exposed a genuine scroll-context issue: opening a chat while its widget was above the viewport did not scroll back up, and the sticky app header could cover the close button. Alignment now scrolls in either direction. Desktop chat docking stays below the app header; phone chats naturally scroll past the header without an overlay. Normal and notification close are physically clicked in the actual full page at all five widths, and the desktop50/50 split is asserted there.
+- Added the widget registry to the QA Tailwind inputs, so library-owned primary-panel span classes are present exactly as in the production build. Five primary panels are asserted to occupy the complete page width.
+- Full isolated Quick Reply controls/phone/queue/fan/reference suite passed again after these changes. Standard dashboard suite passed. Live manual-send gate read back enabled; native manual sender and DB Cinema owner-send bridge remain wired to the existing real providers. No test message was sent.
+- Both backend dry runs validate the intended production deployments and add only the indexed queue preference/read indexes; no indexes are deleted. No backend publish or Git push has occurred yet.
+
+Evidence: `quick-reply-reference-rebuild/live-baseline/`, `full-page/`, `final-controls/`, `query-read-receipt.json`; backend dry-run logs and manual-send flag retained as local diagnostics. Final types/build and graph update precede the single Git release batch.

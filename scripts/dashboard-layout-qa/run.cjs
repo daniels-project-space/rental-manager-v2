@@ -30,21 +30,21 @@ let browser, server;
       .readFileSync(repo + "/src/app/globals.css", "utf8")
       .replace(
         '@import "tailwindcss";',
-        '@import "tailwindcss" source(none);\n@source "../components/dashboard"; @source "../app/page.tsx";\n@source "../components/ui";',
+        '@import "tailwindcss" source(none);\n@source "../components/dashboard"; @source "../app/page.tsx";\n@source "../components/ui"; @source "../lib/dashboard";',
       ),
     { from: repo + "/src/app/globals.css" },
   );
   fs.writeFileSync(publicDir + "/tailwind.css", css.css);
   await esbuild.build({
-    entryPoints: [__dirname + "/harness.tsx"],
+    entryPoints: [__dirname + (process.env.RM_QA_FULL_PAGE ? "/full-page.tsx" : "/harness.tsx")],
     bundle: true,
     external: ["/fonts/*"],
     outfile: publicDir + "/bundle.js",
     loader: { ".tsx": "tsx", ".ts": "ts", ".module.css": "local-css" },
     jsx: "automatic",
-    alias: { "convex/react": __dirname + "/transport.tsx", "@": repo + "/src" },
+    alias: { "convex/react": __dirname + "/transport.tsx", "next/navigation": __dirname + "/navigation.ts", "@": repo + "/src" },
     nodePaths: [repo + "/node_modules"],
-    define: { "process.env": "{}", "process.env.NODE_ENV": '"development"' },
+    define: { "process.env": "{}", "process.env.NODE_ENV": '"development"', "globalThis.__RM_QA_FULL_PAGE": process.env.RM_QA_FULL_PAGE ? "true" : "false", "globalThis.__RM_QA_READ_VALUES": process.env.RM_QA_READ_VALUES ? fs.readFileSync(process.env.RM_QA_READ_VALUES,"utf8") : "{}" },
   });
   fs.writeFileSync(
     publicDir + "/index.html",
@@ -140,7 +140,7 @@ let browser, server;
   console.log(
     "Testing Dashboard layout with fixture-only transport and external DNS disabled.",
   );
-  await child(process.execPath, [__dirname + "/design.cjs"], { env });
+  await child(process.execPath, [__dirname + (process.env.RM_QA_FULL_PAGE ? "/full-page.cjs" : "/design.cjs")], { env });
   console.log(
     "Dashboard layout fixture checks passed. Receipts: " + output,
   );

@@ -103,7 +103,8 @@ export function HeaderBar() {
                       "#ef4444";
   return (
     <header
-        className="sticky top-0 z-40 flex items-center justify-between px-4 md:px-6 h-14 border-b"
+        data-manager-header
+        className="sticky top-0 z-40 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-y-2 px-4 py-2 sm:flex sm:justify-between sm:py-0 sm:h-14 md:px-6 border-b"
         style={{
           background: "rgba(7,9,16,0.92)",
           backdropFilter: "blur(16px)",
@@ -119,7 +120,7 @@ export function HeaderBar() {
           </span>
         </div>
 
-        <nav className="flex items-center gap-1.5">
+        <nav className="col-span-2 order-3 flex min-w-0 items-center gap-1.5 overflow-x-auto sm:order-none sm:overflow-visible" aria-label="Rental accounts">
           {ACCOUNTS.map((a) => {
             const active = activeAccountSlug === a.slug;
             const accent = a.color ?? "#e4e6eb";
@@ -153,7 +154,7 @@ export function HeaderBar() {
           })}
         </nav>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center justify-end gap-2 sm:gap-3">
           {freshnessLabel && (
             <span
               className={`hidden sm:inline text-[11px] px-2 py-0.5 rounded-full border${isStale ? " text-red-400/80" : ""}`}

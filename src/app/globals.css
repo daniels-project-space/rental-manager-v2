@@ -201,16 +201,6 @@
 
 /* ── Mobile tweaks ──────────────────────────────────────────────────────── */
 @media (max-width: 390px) {
-  /* Header: ensure pills don't overflow, allow wrapping */
-  header nav {
-    flex-wrap: wrap;
-    gap: 2px;
-  }
-  header nav button {
-    padding: 2px 8px;
-    font-size: 0.65rem;
-  }
-
   /* AI chat input: full width, no Send button height mismatch */
   .ai-input-row {
     flex-direction: column;
@@ -330,4 +320,14 @@
 
 .settings-workspace-enter {
   animation: settings-workspace-enter 180ms ease-out both;
+}
+
+/* A phone conversation scrolls naturally past the app header, leaving its close
+   control and composer reachable without stacking another surface above it. */
+@media (max-width: 899px) {
+  body:has([data-conversation-open="true"]) [data-manager-header] { position: static; }
+}
+
+@media (min-width: 900px) {
+  body:has([data-manager-header]) { --quick-reply-sticky-top: 72px; }
 }
