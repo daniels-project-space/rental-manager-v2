@@ -258,6 +258,14 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       `[...document.querySelectorAll('button')].find(b=>b.offsetParent!==null&&b.textContent.trim().startsWith('Rental controls')).click()`,
     );
     await pause(200);
+    if (width === 1505) {
+      assert(
+        await ev(
+          `(()=>[...document.querySelector('[class*="handoffRail"]').querySelectorAll('button')].every(card=>{const identity=card.querySelector('[class*="handoffIdentity"]').getBoundingClientRect();const state=card.querySelector('[class*="pickup"],[class*="return"]').getBoundingClientRect();return !(identity.left<state.right&&identity.right>state.left&&identity.top<state.bottom&&identity.bottom>state.top);} ))()`,
+        ),
+        "narrow controls list keeps account identity clear of timing",
+      );
+    }
     await capture("controls");
     if (width === 1505) {
       const calendarSpace = await ev(
@@ -321,6 +329,22 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       `document.querySelector('[aria-label="Open conversation with Elena Rossi"] button').closest('[role=button]').querySelector('button').blur();[...document.querySelector('[aria-label="Open conversation with Elena Rossi"]').querySelectorAll('button')].find(b=>b.textContent.trim()==='Find replacement').click()`,
     );
     await pause(250);
+    assert(
+      await ev(
+        `(()=>{const images=[...document.querySelector('[aria-label="Replacement options"]').querySelectorAll('img')];return images.length>=3&&images.every(img=>img.complete&&img.naturalWidth>0&&!img.src.includes('missing-replacement'));})()`,
+      ),
+      "original and complete-set replacement photos recover from failed primary URLs",
+    );
+    const replacementFrame = await ev(
+      `(()=>{const panel=document.querySelector('[aria-label="Rental controls"]');const header=panel.querySelector('header').getBoundingClientRect();const close=document.querySelector('[aria-label="Close conversation"]').getBoundingClientRect();return {header:{top:header.top,bottom:header.bottom},close:{top:close.top,bottom:close.bottom},scrollY,viewport:innerHeight};})()`,
+    );
+    assert(
+      replacementFrame.header.top >= 0 &&
+        replacementFrame.close.top >= 0 &&
+        replacementFrame.close.bottom <= replacementFrame.viewport,
+      "replacement heading and single close stay onscreen: " +
+        JSON.stringify(replacementFrame),
+    );
     await capture("replacements");
     await c.closePage();
     c.close();

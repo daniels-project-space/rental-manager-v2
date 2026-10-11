@@ -2294,3 +2294,24 @@
   display: grid;
   place-items: center;
 }
+
+/* The three-panel list gives identity and timing separate rows when space is tight. */
+@container (max-width:400px) {
+  .handoffCard {
+    grid-template-columns: 48px minmax(0, 1fr) 12px;
+    grid-template-rows: auto auto auto;
+  }
+  .handoffCard > :first-child {
+    grid-row: 1/4;
+  }
+  .handoffCard .pickup,
+  .handoffCard .return {
+    grid-column: 2;
+    grid-row: 3;
+    justify-self: start;
+  }
+  .handoffArrow {
+    grid-column: 3;
+    grid-row: 1/4;
+  }
+}

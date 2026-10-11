@@ -2888,6 +2888,7 @@ export function ReplyModal({
       id: string;
       name: string;
       image_url: string | null;
+      image_urls?: string[];
       qty: number;
       replaces: string;
     }>;
@@ -2917,7 +2918,12 @@ export function ReplyModal({
   const [replacementOpen, setReplacementOpen] = useState(false);
   const [replacementIndex, setReplacementIndex] = useState(0);
   const [replacementOriginals, setReplacementOriginals] = useState<
-    Array<{ name: string; image_url: string | null; qty: number }>
+    Array<{
+      name: string;
+      image_url: string | null;
+      image_urls?: string[];
+      qty: number;
+    }>
   >([]);
   const [replacementChoices, setReplacementChoices] = useState<
     ReplacementOption[]

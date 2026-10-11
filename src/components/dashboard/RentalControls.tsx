@@ -1,10 +1,18 @@
 "use client";
 import type { ReactNode } from "react";
 import styles from "./RentalControls.module.css";
+import { ItemImage } from "./RequestedItemStack";
 import { ProfilePortrait } from "./ProfilePortrait";
 export type RentalControlTab = "gear" | "dates" | "pricing";
 export type ReplacementCard = {
-  items?:Array<{id:string;name:string;image_url:string|null;qty:number;replaces:string}>;
+  items?: Array<{
+    id: string;
+    name: string;
+    image_url: string | null;
+    image_urls?: string[];
+    qty: number;
+    replaces: string;
+  }>;
   id: string;
   name: string;
   image_url: string | null;
@@ -37,8 +45,18 @@ export function RentalControls({
   editor?: ReactNode;
   actions: ReactNode;
   replacement?: {
-    originals?:Array<{name:string;image_url:string|null;qty:number}>;
-    original: { name: string; image_url: string | null; qty: number };
+    originals?: Array<{
+      name: string;
+      image_url: string | null;
+      image_urls?: string[];
+      qty: number;
+    }>;
+    original: {
+      name: string;
+      image_url: string | null;
+      image_urls?: string[];
+      qty: number;
+    };
     choices: ReplacementCard[];
     selected: string | null;
     text: string;
@@ -69,11 +87,7 @@ export function RentalControls({
           </small>
           <h3>{replacement ? "Find a replacement" : "Rental controls"}</h3>
         </div>
-        <button
-          type="button"
-          aria-label="Back to chat"
-          onClick={onClose}
-        >
+        <button type="button" aria-label="Back to chat" onClick={onClose}>
           ← Back to chat
         </button>
       </header>
@@ -83,7 +97,21 @@ export function RentalControls({
             aria-label="Replacement options"
             className={styles.replacements}
           >
-            <div className={styles.originals}>{(replacement.originals?.length ? replacement.originals : [replacement.original]).map((item,index)=><div key={index} className={styles.original}>{item.image_url?<img data-no-zoom src={item.image_url} alt={item.name}/>:<span className={styles.noImage}>◇</span>}<div><span className={styles.unavailable}>Unavailable</span><strong>{item.name}</strong><small>{item.qty}× requested</small></div></div>)}</div>
+            <div className={styles.originals}>
+              {(replacement.originals?.length
+                ? replacement.originals
+                : [replacement.original]
+              ).map((item, index) => (
+                <div key={index} className={styles.original}>
+                  <ItemImage item={item} />
+                  <div>
+                    <span className={styles.unavailable}>Unavailable</span>
+                    <strong>{item.name}</strong>
+                    <small>{item.qty}× requested</small>
+                  </div>
+                </div>
+              ))}
+            </div>
             <h4>
               <span>1</span> Choose a complete replacement set
             </h4>
@@ -108,7 +136,27 @@ export function RentalControls({
                     {choice.id === replacement.selected ? "✓" : ""}
                   </span>
                   <strong>{choice.name}</strong>
-                  {(choice.items??[{id:choice.id,name:choice.name,image_url:choice.image_url,qty:1,replaces:replacement.original.name}]).map(item=><span key={item.id} className={styles.setItem}>{item.image_url?<img data-no-zoom src={item.image_url} alt={item.name}/>:<span className={styles.noImage}>◇</span>}<span><b>{item.qty}× {item.name}</b><small>Replaces {item.replaces}</small></span></span>)}
+                  {(
+                    choice.items ?? [
+                      {
+                        id: choice.id,
+                        name: choice.name,
+                        image_url: choice.image_url,
+                        qty: 1,
+                        replaces: replacement.original.name,
+                      },
+                    ]
+                  ).map((item) => (
+                    <span key={item.id} className={styles.setItem}>
+                      <ItemImage item={item} />
+                      <span>
+                        <b>
+                          {item.qty}× {item.name}
+                        </b>
+                        <small>Replaces {item.replaces}</small>
+                      </span>
+                    </span>
+                  ))}
                   <span className={styles.available}>● Available</span>
                   <small>
                     {choice.id === replacement.selected
@@ -191,7 +239,12 @@ export function RentalControls({
               </div>
             </div>
             <div className={styles.progress}>{progress}</div>
-            {!editor && <><h4>1. Equipment</h4><div className={styles.gear}>{gear}</div></>}
+            {!editor && (
+              <>
+                <h4>1. Equipment</h4>
+                <div className={styles.gear}>{gear}</div>
+              </>
+            )}
             {editor}
           </>
         )}
