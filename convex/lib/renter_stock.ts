@@ -37,8 +37,6 @@ export type Occupancy = {
   endInstant?:number;
   renter_name?: string | null;
   order_id?: string;
-  /** Account + renter identity + complete physical basket, never name alone. */
-  extension_key?: string;
 };
 type DateBlock = { start_date: string; end_date: string };
 
@@ -47,13 +45,10 @@ export function stockWindowPeak(occupancy: Occupancy[], start: string, end: stri
   const instants = new Set([start, ...occupancy.map((r) => r.start).filter((t) => t >= start && t < end)]);
   let peak = 0;
   for (const at of instants) {
-    const extensions = new Map<string, number>();
-    let independent = 0;
-    for (const row of occupancy.filter((r) => r.start <= at && r.end > at)) {
-      if (!row.extension_key) independent += row.qty;
-      else extensions.set(row.extension_key, Math.max(extensions.get(row.extension_key) ?? 0, row.qty));
-    }
-    peak = Math.max(peak, independent + [...extensions.values()].reduce((sum, qty) => sum + qty, 0));
+    const booked = occupancy
+      .filter((row) => row.start <= at && row.end > at)
+      .reduce((sum, row) => sum + row.qty, 0);
+    peak = Math.max(peak, booked);
   }
   return peak;
 }
@@ -188,12 +183,10 @@ export function stockOccupancyForItem(sources: Awaited<ReturnType<typeof loadSto
       start = `${r.start_date}T00:00`;
       end = `${shiftStockDate(r.end_date, 1)}T00:00`;
     }
-    const name = r.renter_name?.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
-    const renter = r.renter_id ? `id:${r.renter_id}` : name && !["unknown", "unknown renter", "?", "—"].includes(name) ? `name:${name}` : undefined;
-    // Preserve same-kit extensions; sharing a battery or adapter does not make
-    // two different kits one rental. Quantity is part of the complete basket.
-    const extension_key = renter && r.account_slug ? JSON.stringify([r.account_slug, renter, [...units].sort(([a], [b]) => a.localeCompare(b))]) : undefined;
-    occupancy.push({ start, startInstant:londonStockInstant(start,"start"), ...bufferedStockEnd(end), qty, renter_name: r.renter_name, order_id: r.hygglo_order_id, extension_key });
+    // Separate Hygglo order IDs are separate physical commitments, even when
+    // renter and kit match. loadStockSources deduplicates repeated lifecycle
+    // copies by order ID; matching names/baskets alone cannot prove an extension.
+    occupancy.push({ start, startInstant:londonStockInstant(start,"start"), ...bufferedStockEnd(end), qty, renter_name: r.renter_name, order_id: r.hygglo_order_id });
   }
   return occupancy;
 }

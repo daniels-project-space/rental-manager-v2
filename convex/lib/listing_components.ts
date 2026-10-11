@@ -5,7 +5,12 @@ import { resolveBundleMapping, declaredRentalBlockers, type BundleMappingContext
 import { withDefaultAdapters } from "./default_adapter_units";
 
 type Component = { item_id: string; qty: number };
-export function resolveListingComponents(items: Doc<"items">[], override: Component[] | undefined, primaryId?: string, quantity = 1, description?: string, context?: BundleMappingContext) {
+export type ListingResolverItem = Pick<Doc<"items">,
+  "_id" | "name_canonical" | "kind" | "qty" | "aliases" | "lens_mount" | "status" |
+  "is_marketing_only" | "track_independent_stock" | "unit_kind" | "supplied_stock" | "compatibility"
+>;
+
+export function resolveListingComponents(items: ListingResolverItem[], override: Component[] | undefined, primaryId?: string, quantity = 1, description?: string, context?: BundleMappingContext, productTitle?: string) {
   const validQuantity = Number.isInteger(quantity) && quantity >= 1 && quantity <= 20;
   const rawDeclared = description ? resolveBundleMapping(description, items, context) : null;
   // Exact structured contents may complete a partial mapping, using only
@@ -22,6 +27,17 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
     });
   const derive = override === undefined && verifiedContents && !!primaryId &&
     rawDeclared!.components.some(c=>c.item_id===primaryId);
+  const primary=primaryId?items.find(i=>String(i._id)===String(primaryId)):undefined;
+  const normalizedTitle=productTitle?.toLowerCase().replace(/[^a-z0-9]+/g," ").trim()??"";
+  const normalizedPrimary=typeof primary?.name_canonical==="string"?primary.name_canonical.toLowerCase().replace(/[^a-z0-9]+/g," ").trim():"";
+  const titleShowsBundle=!!productTitle&&(/\b(?:kit|set|bundle|combo|package|collection|with|and)\b|[+&]|(?<![\d.])\b(?:2|3|4|5|6|7|8|9|10)\s*(?:x|×)\s*(?:[a-z0-9])/i.test(productTitle));
+  // A direct Rental Manager master-item link can certify a clearly standalone
+  // item. Product contents, bundle titles, weak name matches and unowned rows
+  // still need an explicit override or verified structured contents.
+  const standalonePrimary = override === undefined && !!primaryId && !rawDeclared?.explicit &&
+    !!normalizedTitle && !!normalizedPrimary && normalizedTitle.includes(normalizedPrimary) &&
+    !titleShowsBundle && primary?.status==="active" && primary.is_marketing_only===false &&
+    Number.isSafeInteger(primary.qty) && primary.qty>0;
   const quantities = new Map<string, number>();
   for (const c of override ?? (derive ? rawDeclared!.components.map(c=>({item_id:c.item_id,qty:c.qty})) : primaryId ? [{ item_id: primaryId, qty: 1 }] : []))
     quantities.set(c.item_id, (quantities.get(c.item_id) ?? 0) + c.qty);
@@ -53,9 +69,8 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
     structured: declared.structured || (declared.components.length === 1 && declared.components[0].qty === 1),
   } : null;
   const coverageComplete = !coverage || (coverage.structured && !coverage.missing.length && !coverage.unresolved.length);
-  const complete = !supplied.unresolved.length && coverageComplete && (override !== undefined || derive) && validQuantity && components.every((c) => c.owned !== null);
+  const complete = !supplied.unresolved.length && coverageComplete && (override !== undefined || derive || standalonePrimary) && validQuantity && components.every((c) => c.owned !== null);
   const owned = !validQuantity ? null : override?.length === 0 || ownership_blockers.length > 0 || components.some((c) => c.owned === false) ? false
     : !complete || !components.length ? null : true;
   return { components, complete, owned, primary_camera, ownership_blockers, valid_quantity: validQuantity, supplied_part_bindings:suppliedParts?.bindings??[], declared_components_added, source:derive?"declared_contents":override === undefined ? "primary_item_only" : "listing_override", coverage, unresolved_default_adapters:supplied.unresolved };
 }
-

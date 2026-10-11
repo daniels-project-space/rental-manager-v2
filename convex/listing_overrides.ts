@@ -1,10 +1,11 @@
 import { mutation, query, requireOwner } from "./owner_functions";
 import { v } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 import type {MutationCtx,QueryCtx} from "./_generated/server";
 import type {Doc,Id} from "./_generated/dataModel";
 
 async function currentOverride(ctx:QueryCtx,account:string,product:number) {
-  const rows=await ctx.db.query("listing_resolution_override").withIndex("by_account_product",q=>q.eq("account_slug",account).eq("product_id",product)).collect();
+  const rows=await ctx.db.query("listing_resolution_override").withIndex("by_account_product",q=>q.eq("account_slug",account).eq("product_id",product)).take(2);
   if(rows.length>1)throw new Error("Duplicate listing mappings need reconciliation before editing");
   return rows[0]??null;
 }
@@ -22,7 +23,9 @@ async function recordMappingChange(ctx:MutationCtx,before:Doc<"listing_resolutio
 export const getAll = query({
   args: {},
   handler: async (ctx) => {
-    const rows = await ctx.db.query("listing_resolution_override").collect();
+    await requireOwner(ctx,true);
+    const rows = await ctx.db.query("listing_resolution_override").take(501);
+    if(rows.length>500)throw new Error("Use the paged listing mapping review for this catalogue.");
     return rows.map((r) => ({
       account_slug: r.account_slug,
       product_id: r.product_id,
@@ -35,9 +38,67 @@ export const getAll = query({
 
 /** A scoped snapshot for dashboard edits; avoids fetching every mapping. */
 export const getRevision=query({args:{account_slug:v.string(),product_id:v.number()},handler:async(ctx,a)=>{
+  await requireOwner(ctx,true);
   try{return {available:true as const,revision:JSON.stringify(await currentOverride(ctx,a.account_slug,a.product_id))};}
   catch(error){return {available:false as const,message:error instanceof Error?error.message:"Mapping unavailable"};}
 }});
+
+/** Owner-only, bounded listing review for the DB Cinema stock map. */
+export const mappingReviewPage = query({
+  args: {
+    account_slug: v.literal("dbcinema"),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    await requireOwner(ctx, true);
+    if (args.paginationOpts.numItems > 25) {
+      throw new Error("Listing review pages are limited to 25 rows.");
+    }
+    const result = await ctx.db
+      .query("hygglo_products")
+      .withIndex("by_account", q => q.eq("accountSlug", args.account_slug))
+      .order("asc")
+      .paginate(args.paginationOpts);
+    const page = await Promise.all(result.page.map(async product => {
+      const [overrideRows, listing, primary] = await Promise.all([
+        ctx.db.query("listing_resolution_override")
+          .withIndex("by_account_product", q => q.eq("account_slug", args.account_slug).eq("product_id", product.productId))
+          .take(2),
+        product.description ? Promise.resolve(null) : ctx.db.query("online_listings")
+          .withIndex("by_account_product", q => q.eq("account_slug", args.account_slug).eq("product_id", product.productId))
+          .first(),
+        product.masterItemId ? ctx.db.get(product.masterItemId) : Promise.resolve(null),
+      ]);
+      const mappingConflict = overrideRows.length > 1;
+      const override = mappingConflict ? null : overrideRows[0] ?? null;
+      const description = product.description ?? listing?.description ?? "";
+      return {
+        productId: product.productId,
+        name: product.name ?? `Listing #${product.productId}`,
+        isPublished: product.isPublished ?? false,
+        isMarketingOnly: product.isMarketingOnly ?? false,
+        masterItemId: product.masterItemId ? String(product.masterItemId) : null,
+        primaryItem: primary ? {
+          id: String(primary._id),
+          name: primary.name_canonical,
+          status: primary.status,
+          qty: primary.qty,
+          marketingOnly: primary.is_marketing_only,
+        } : null,
+        description: description.slice(0, 2400),
+        resolutionDescription: description.slice(0, 20000),
+        descriptionTruncated: description.length > 20000,
+        override: override ? {
+          components: override.components.map(c => ({ item_id: String(c.item_id), qty: c.qty })),
+          note: override.note ?? null,
+        } : null,
+        revision: mappingConflict ? null : JSON.stringify(override),
+        mappingConflict,
+      };
+    }));
+    return { ...result, page };
+  },
+});
 
 /** Pin a Hygglo listing (account#product_id) to its true item composition. */
 export const setOverride = mutation({

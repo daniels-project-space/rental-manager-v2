@@ -5,26 +5,23 @@ import { londonStockInstant,TURNAROUND_BUFFER_MINUTES } from "./confirmed_schedu
 const coordinate = (value:string) => Date.parse(value+"Z");
 const from = "0001-01-01", through = "9999-12-30";
 
-/** Sparse, disjoint occupancy windows. Same-kit extensions use their maximum
- * units, matching stockWindowPeak; independent rentals still add together. */
+/** Sparse, disjoint occupancy windows. Every committed allocation contributes
+ * its units; upstream lifecycle copies are deduplicated by logical order ID. */
 export function stockWindows(occupancy:Occupancy[]) {
-  const events = new Map<number,{id:number;group:string;qty:number;add:boolean}[]>();
+  const events = new Map<number,{id:number;qty:number;add:boolean}[]>();
   occupancy.forEach((row,id) => {
     if (row.end <= row.start || !Number.isSafeInteger(row.qty) || row.qty < 1) throw Error("Invalid shared occupancy");
-    const group=row.extension_key ?? `independent:${id}`;
     for(const [at,add] of [[row.startInstant??londonStockInstant(row.start,"start"),true],[row.endInstant??londonStockInstant(row.end,"end"),false]] as const) {
-      const values=events.get(at)??[];values.push({id,group,qty:row.qty,add});events.set(at,values);
+      const values=events.get(at)??[];values.push({id,qty:row.qty,add});events.set(at,values);
     }
   });
-  const groups=new Map<string,Map<number,number>>(), points=[...events.keys()].sort((a,b)=>a-b);
+  const active=new Map<number,number>(), points=[...events.keys()].sort((a,b)=>a-b);
   const windows:{start:number;end:number;qty:number}[]=[];
   for(let i=0;i<points.length-1;i++) {
     for(const event of events.get(points[i])!) {
-      const members=groups.get(event.group)??new Map<number,number>();
-      if(event.add)members.set(event.id,event.qty);else members.delete(event.id);
-      if(members.size)groups.set(event.group,members);else groups.delete(event.group);
+      if(event.add)active.set(event.id,event.qty);else active.delete(event.id);
     }
-    const qty=[...groups.values()].reduce((sum,members)=>sum+Math.max(...members.values()),0);
+    const qty=[...active.values()].reduce((sum,value)=>sum+value,0);
     if(!qty)continue;
     const start=points[i],end=points[i+1];
     if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||end<=start)throw Error("Invalid shared stock dates");
