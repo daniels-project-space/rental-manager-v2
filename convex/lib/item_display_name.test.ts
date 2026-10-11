@@ -36,3 +36,26 @@ describe("shared item presentation identity", () => {
     expect(shortItemName("Sony GM 90mm f2.8")).toBe("Sony 90mm f/2.8 Macro G OSS");
   });
 });
+
+import { listingDisplayCatalog } from "./listing_display_catalog";
+describe("exact requested item image fallbacks", () => {
+ it("keeps saved thumbnail and full-size URLs scoped to the account listing and caches reads", async () => {
+  const reads:string[]=[];
+  const ctx:any={db:{query:(table:string)=>{
+   const filters:Record<string,unknown>={};
+   const chain:any={eq:(k:string,v:unknown)=>{filters[k]=v;return chain}};
+   const q:any={withIndex:(_name:string,fn:any)=>{fn(chain);return q},collect:async()=>[],first:async()=>{
+    reads.push(table);
+    expect(filters[table==="hygglo_products"?"accountSlug":"account_slug"]).toBe("leo");
+    if(table==="online_listings")return {image:"/saved.png"};
+    if(table==="listing_images")return {image_url:"/backup.png"};
+    return {images:[{thumbnailUrl:"/thumb.png",fullSizeUrl:"/full.png"},{thumbnailUrl:"/thumb.png"}]};
+   }};return q;
+  }}};
+  const display=await listingDisplayCatalog(ctx);
+  const urls=(await display.imageChoicesFor("leo",[77])).get(77);
+  expect(urls).toEqual(["/saved.png","/backup.png","/thumb.png","/full.png"]);
+  await display.imageChoicesFor("leo",[77]);
+  expect(reads).toHaveLength(3);
+ });
+});

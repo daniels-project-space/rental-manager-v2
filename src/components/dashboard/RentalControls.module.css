@@ -641,3 +641,14 @@
     font-size: 12px;
   }
 }
+
+/* Both complete choices stay visible together; the review remains one flow. */
+.replacementPanel .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.replacementPanel .cards button { padding: 12px 8px; gap: 8px; }
+.replacementPanel .setItem { flex-direction: column; align-items: stretch; gap: 5px; }
+.replacementPanel .cards .setItem img { width: 100%; height: 72px; }
+.replacementPanel .setItem b { font-size: 11px; line-height: 1.4; }
+.replacementPanel .setItem small { font-size: 9px; }
+.replacementPanel .original { padding: 8px; }
+.replacementPanel .original img { width: 44px; height: 44px; }
+.replacementPanel .footer button { border-radius: 22px; }

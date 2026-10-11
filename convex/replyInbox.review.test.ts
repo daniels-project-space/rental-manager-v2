@@ -71,6 +71,23 @@ describe("Quick Reply qualified replacement search limit", () => {
  });
 });
 
+describe("DB Cinema style replacement type matching", () => {
+ it("offers two complete action-camera kits without requiring unrelated recording-mode reviews", async () => {
+  const f=database();
+  for(const [pid,name,cost] of [[10,"DJI Osmo Action 5 Pro",300],[20,"GoPro Hero 12",200],[21,"GoPro Hero 10",150],[22,"Sony FX3",100]] as const){
+   const id=await f.ctx.db.insert("items",{name_canonical:name,kind:"camera",status:"active",qty:8,replacement_cost_gbp:cost});
+   await f.ctx.db.insert("online_listings",{account_slug:"leo",product_id:pid,name:`2x ${name}`,description:`Included in this kit: • 2x ${name}`,daily_price:20});
+   await f.ctx.db.insert("listing_resolution_override",{account_slug:"leo",product_id:pid,components:[{item_id:id,qty:2}]});
+   await f.ctx.db.insert("hygglo_products",{accountSlug:"leo",productId:pid,masterItemId:id,name:`2x ${name}`});
+  }
+  const before=JSON.stringify([...f.rows]);
+  const result=await invoke(__service_basket_replacement_candidates,f.ctx,{account_slug:"leo",target_product_id:10,item_name:"2x DJI Osmo Action 5 Pro",start_date:"2026-10-20",end_date:"2026-10-21",quantity:1,booking_use:"standalone"});
+  expect(result.alternatives.map((a:any)=>a.product_id).sort()).toEqual([20,21]);
+  expect(result.alternatives.every((a:any)=>a.mapping_complete&&a.availability.available)).toBe(true);
+  expect(JSON.stringify([...f.rows])).toBe(before);
+ });
+});
+
 describe("Identity-backed complete listing replacements", () => {
  async function fixture(){
   const f=database();const ids:any={};

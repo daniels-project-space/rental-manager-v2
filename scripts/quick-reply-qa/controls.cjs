@@ -90,6 +90,26 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       `[...([...document.querySelectorAll('[role=dialog]')].at(-1)??document).querySelectorAll('button')].find(e=>e.offsetParent!==null&&e.textContent.includes(${JSON.stringify(text)}))`;
     const close = `document.querySelector('[aria-label="Close conversation"]')`,
       marcus = `document.querySelector('[aria-label="Open conversation with Marcus Lee"]')`;
+    await c.cmd("Page.navigate", {url: process.env.RM_QA_ORIGIN + '/?deferred=1&thread=fixture-2'});
+    await pause(300);
+    await ok("cold notification inbox starts deferred", `!document.querySelector('[role=dialog]')&&!!document.querySelector('[data-deferred]')`);
+    await ev(`window.__mountInbox()`); await pause(250);
+    await ok("notification is recovered after deferred inbox becomes eager", `document.querySelectorAll('[role=dialog]').length===1&&document.querySelector('[role=dialog]').getAttribute('aria-label')==='Conversation with Daniel Kim'`);
+    await ok("cold notification does not generate or send", `!window.__calls.some(c=>/generate|sendRenterReply|sendOwnerReply/.test(c.name))`);
+    await tap(close);
+    await ok("cold notification X clears URL and window", `!document.querySelector('[role=dialog]')&&!new URL(location.href).searchParams.has('thread')`);
+    await c.cmd("Page.navigate", {url: process.env.RM_QA_ORIGIN}); await pause(300);
+    await ev(`{history.replaceState(history.state,'','/?thread=fixture-2&keep=1#inbox');window.dispatchEvent(new CustomEvent('rm-open-thread',{detail:'fixture-2'}));}`);
+    await pause(150);
+    await ok("notification opens exactly one conversation", `document.querySelectorAll('[role=dialog]').length===1&&document.querySelector('[role=dialog]').getAttribute('aria-label')==='Conversation with Daniel Kim'`);
+    if(width===1192) await ok("notification uses the inbox side view", `document.querySelector('[role=dialog]').getAttribute('aria-modal')==='false'`);
+    await tap(close);
+    await ok("notification X clears conversation and only thread parameter", `!document.querySelector('[role=dialog]')&&!new URL(location.href).searchParams.has('thread')&&new URL(location.href).searchParams.get('keep')==='1'&&location.hash==='#inbox'`);
+    await ev(`window.__fixture.changed()`); await pause(100);
+    await ok("notification stays closed after a data update", `!document.querySelector('[role=dialog]')`);
+    await ev(`window.dispatchEvent(new CustomEvent('rm-open-thread',{detail:'fixture-2'}))`); await pause(100);
+    await ok("same notification can reopen after close", `document.querySelectorAll('[role=dialog]').length===1`);
+    await tap(close);
     await ok(
       "test toggle removed",
       `![...document.querySelectorAll('button')].some(e=>e.textContent.includes('Test mode'))`,
@@ -208,6 +228,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     );
     await pause(100);
     const stack = `document.querySelector('[aria-label="Open conversation with Marcus Lee"] [aria-label="Show all 3 requested items"]')`;
+    const beforeStack = await ev(`(()=>{const row=${stack}.closest('[aria-label^="Open conversation with"]'),r=row.getBoundingClientRect(),next=row.nextElementSibling?.getBoundingClientRect();return {height:r.height,nextY:next?.y};})()`);
     if (width === 1192) {
       const r = await ev(
         `(()=>{const r=${stack}.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`,
@@ -229,6 +250,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       "stack shows all basket and chat images without opening chat",
       `document.querySelector('[aria-label="All requested items"]')?.querySelectorAll('article').length===3&&document.querySelector('[aria-label="All requested items"]').querySelectorAll('article img').length===3&&document.body.textContent.includes('Mentioned in chat')&&!document.querySelector('[aria-label="Close conversation"]')`,
     );
+    await ok("equipment expansion never reflows the conversation list", `(()=>{const row=${stack}.closest('[aria-label^="Open conversation with"]'),r=row.getBoundingClientRect(),next=row.nextElementSibling?.getBoundingClientRect();return Math.abs(r.height-${beforeStack.height})<1&&Math.abs(next.y-${beforeStack.nextY})<1})()`);
     fs.writeFileSync(
       root + `/requested-stack-${width}.png`,
       Buffer.from(
@@ -314,8 +336,8 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     );
     if (width === 1192)
       await ok(
-        "chat expands to sixty percent of the workspace",
-        `(()=>{const dock=document.querySelector('[role=dialog]').parentElement,r=dock.getBoundingClientRect(),split=dock.parentElement.getBoundingClientRect();return Math.abs(r.width-(split.width-12)*0.6)<2})()`,
+        "chat expands to half the workspace",
+        `(()=>{const dock=document.querySelector('[role=dialog]').parentElement,r=dock.getBoundingClientRect(),split=dock.parentElement.getBoundingClientRect();return Math.abs(r.width-(split.width-12)*0.5)<2})()`,
       );
     await ok(
       "composer visible without opening drawer",
@@ -444,7 +466,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     await tap(contains("Draft reply"));
     await ok(
       "context AI draft action",
-      `window.__calls.some(c=>c.name==='replyInbox_actions:generateDraft')`,
+      `window.__calls.some(c=>c.name==='quick_reply_manual_draft:generate')`,
     );
     await tap(close);
     await ok(
@@ -476,7 +498,8 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
         ))
       )
         await tap(contains("Rental controls"));
-      await tap(button(action));
+      // Sections are always visible; the redundant four footer shortcuts were removed.
+      await ev(`document.querySelector('[aria-label="Rental controls"] h4')?.scrollIntoView({block:'nearest'})`);
       await pause(100);
     }
     await tap(contains("Rental controls"));
@@ -543,20 +566,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     await tap(`document.querySelector('[aria-label="Back to chat"]')`);
     checks.push("close booking editor");
     if (width !== 390) {
-      for (const action of ["Reschedule", "Discount", "Refund"]) {
-        await tap(contains("Rental controls"));
-        await tap(button(action));
-        await ok(
-          "dropdown " + action,
-          `document.querySelector('[aria-label="Rental controls"]')!==null`,
-        );
-        await tap(close);
-        await ok(
-          "close conversation with " + action + " panel",
-          `!document.querySelector('[role=dialog]')`,
-        );
-        await tap(marcus);
-      }
+      await ok("redundant bottom actions removed", `!document.querySelector('[aria-label="Rental controls"] footer')`);
     }
     await tap(close);
     // The list button opens a prepared proposal, with no booking or message write.
@@ -617,7 +627,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     const sendsBeforeReplacement = await ev(
       `window.__calls.filter(c=>/sendRenterReply|sendOwnerReply/.test(c.name)).length`,
     );
-    await tap(button("Use complete set in booking"));
+    await tap(button("Replace all unavailable items"));
     await ok(
       "replacement approval never sends a message",
       `window.__calls.filter(c=>/sendRenterReply|sendOwnerReply/.test(c.name)).length===${sendsBeforeReplacement}`,
@@ -735,7 +745,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     const websiteSendCount = await ev(
       `window.__calls.filter(c=>c.name==='dbcinema_chat:sendOwnerReply').length`,
     );
-    await tap(button("Use complete set in booking"));
+    await tap(button("Replace all unavailable items"));
     await ok(
       "website replacement approval uses website guarded action",
       `window.__calls.some(c=>c.name==='dbcinema_chat:acceptReplacementBasket'&&c.args.booking_id&&c.args.dryRun===false)`,
@@ -750,13 +760,13 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       `window.__calls.filter(c=>c.name==='dbcinema_chat:sendOwnerReply').length===${websiteSendCount + 1}`,
     );
     await tap(contains("Rental controls"));
-    await tap(button("Refund"));
+    await ev(`document.querySelector('[aria-label="Rental controls"]')?.querySelectorAll('h4')[2]?.scrollIntoView({block:"nearest"})`);
     await pause(100);
     await ok(
       "website controls load authoritative rental",
       `window.__calls.some(c=>c.name==='dbcinema_chat:rentalControls'&&c.args.booking_id)`,
     );
-    await tap(button("Reschedule"));
+    await ev(`document.querySelector('[aria-label="Rental controls"]')?.querySelectorAll('h4')[1]?.scrollIntoView({block:"nearest"})`);
     fs.writeFileSync(
       root + `/db-controls-${width}.png`,
       Buffer.from(
@@ -768,7 +778,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
         "base64",
       ),
     );
-    await tap(button("Change rental"));
+    await ev(`document.querySelector('[aria-label="Rental controls"]')?.querySelectorAll('h4')[0]?.scrollIntoView({block:"nearest"})`);
     await tap(button("＋ Add equipment"));
     await ok(
       "website equipment browser is inline and read only",
@@ -880,7 +890,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       "website removal binds snapshot and exact line",
       `window.__calls.some(c=>c.name==='dbcinema_chat:removeEquipment'&&c.args.listing_id==='fixture-tripod'&&c.args.expected_snapshot==='fixture-booking-version'&&c.args.operator_confirmed===true)`,
     );
-    await tap(button("Reschedule"));
+    await ev(`document.querySelector('[aria-label="Rental controls"]')?.querySelectorAll('h4')[1]?.scrollIntoView({block:"nearest"})`);
     await ev(
       `{const i=document.querySelector('[aria-label="Date change reason"]');const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;setter.call(i,'Operator approved later collection');i.dispatchEvent(new Event('input',{bubbles:true}));}`,
     );

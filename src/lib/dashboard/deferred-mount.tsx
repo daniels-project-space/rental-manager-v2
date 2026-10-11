@@ -52,6 +52,10 @@ export function DeferredMount({
   const ref = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    if (eager && !visible) {
+      setVisible(true);
+      return;
+    }
     if (visible) return; // once-only
 
     // Browsers without IntersectionObserver: fall through to eager render.
@@ -74,7 +78,7 @@ export function DeferredMount({
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [visible, rootMargin]);
+  }, [visible, rootMargin, eager]);
 
   if (visible) return <>{children}</>;
   return (

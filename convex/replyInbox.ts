@@ -542,8 +542,8 @@ async function assembleTile(
   const latestMsg=mentionMessages[0]??null;
 
   const sourceItems: RichItem[] = simOrder ? simOrder.items.map(i => ({ name: i.name, qty: i.qty, product_id: i.product_id, image_url: null })) : buildRichItems(reservation, conv);
-  const imageBank=slug&&display?await display.imagesFor(slug,sourceItems.flatMap(item=>item.product_id!=null?[item.product_id]:[])):new Map<number,string>();
-  const richItems = sourceItems.map(i => ({ ...i, image_url:i.image_url??(i.product_id!=null?imageBank.get(i.product_id):undefined)??null, image_urls:[...new Set([i.image_url,i.product_id!=null?imageBank.get(i.product_id):undefined].filter(Boolean))] as string[], display_name: i.product_id != null && slug && display ? display.name(slug, i.product_id, i.name) : shortItemName(shortListingTitle(i.name)) }));
+  const imageBank=slug&&display?await display.imageChoicesFor(slug,sourceItems.flatMap(item=>item.product_id!=null?[item.product_id]:[])):new Map<number,string[]>();
+  const richItems = sourceItems.map(i => ({ ...i, image_url:i.image_url??(i.product_id!=null?imageBank.get(i.product_id)?.[0]:undefined)??null, image_urls:[...new Set([i.image_url,...(i.product_id!=null?imageBank.get(i.product_id)??[]:[])].filter(Boolean))] as string[], display_name: i.product_id != null && slug && display ? display.name(slug, i.product_id, i.name) : shortItemName(shortListingTitle(i.name)) }));
 
   // Only renter text supplements display context.
   const requestedItemsRaw=requestedImageItems(richItems,(conv?.inquiry_items??[]).map(i=>({...i,qty:i.qty??1,image_url:i.image_url??null})),mentionMessages.filter(m=>m.sender==="renter").map(m=>m.body_text??""),display?.items??[]);

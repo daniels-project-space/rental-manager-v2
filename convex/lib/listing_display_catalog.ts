@@ -76,9 +76,17 @@ export async function listingDisplayCatalog(ctx: QueryCtx, account?: string) {
               q.eq("account_slug", slug).eq("product_id", pid),
             )
             .first(),
-        ]).then(([listing, bank]) => [
+          ctx.db
+            .query("hygglo_products")
+            .withIndex("by_account_product", (q) =>
+              q.eq("accountSlug", slug).eq("productId", pid),
+            )
+            .first(),
+        ]).then(([listing, bank, product]) => [
           ...new Set(
-            [listing?.image, bank?.image_url].filter(
+            [listing?.image, bank?.image_url,
+              ...(product?.images ?? []).slice(0, 6).flatMap((image) => [image.thumbnailUrl, image.fullSizeUrl]),
+            ].filter(
               (url): url is string => typeof url === "string" && !!url,
             ),
           ),

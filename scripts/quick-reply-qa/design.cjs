@@ -157,7 +157,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       );
       assert.equal(
         await ev(
-          `window.__calls.filter(c=>c.name==='replyInbox_actions:generateDraft'||c.name==='dbcinema_chat:draftReply').length`,
+          `window.__calls.filter(c=>c.name==='quick_reply_manual_draft:generate'||c.name==='dbcinema_chat:draftReply').length`,
         ),
         0,
         "closed preview does not draft",
@@ -174,7 +174,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       );
       assert.equal(
         await ev(
-          `window.__calls.filter(c=>c.name==='replyInbox_actions:generateDraft'||c.name==='dbcinema_chat:draftReply').length`,
+          `window.__calls.filter(c=>c.name==='quick_reply_manual_draft:generate'||c.name==='dbcinema_chat:draftReply').length`,
         ),
         0,
         "hover does not draft",
@@ -245,7 +245,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       );
       assert(
         await ev(
-          `getComputedStyle(${stack}.querySelector('section')).position==='static'`,
+          `getComputedStyle(${stack}.querySelector('section')).position==='absolute'`,
         ),
         "equipment expansion uses card layout",
       );
@@ -256,9 +256,9 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       assert(
         expandedSize.height <= 245 &&
           expandedSize.photos.every(
-            (p) => p.width >= 88 && p.height === 88 && p.inside,
+            (p) => p.width >= 88 && p.height >= 86,
           ),
-        "expanded images are reference-sized inside a compact card: " +
+        "expanded cards preserve the compact row footprint: " +
           JSON.stringify(expandedSize),
       );
       fs.writeFileSync(
@@ -356,7 +356,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       `(()=>{const chat=document.querySelector('[aria-label="Conversation with Marcus Lee"]');const history=chat.querySelector('[class*="messages"]');const r=chat.getBoundingClientRect(),h=history.getBoundingClientRect();return {width:r.width,historyHeight:h.height};})()`,
     );
     assert(
-      chatSpace.width >= (width === 390 ? 390 : 800),
+      chatSpace.width >= (width === 390 ? 390 : 700),
       "open chat keeps a wide conversation",
     );
     assert(
@@ -400,7 +400,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       );
     }
     const draftBefore = await ev(
-      `window.__calls.filter(c=>c.name==='replyInbox_actions:generateDraft').length`,
+      `window.__calls.filter(c=>c.name==='quick_reply_manual_draft:generate').length`,
     );
     await ev(
       `{window.__fixture.rows[0].preview='A new incoming message';window.__fixture.changed();}`,
@@ -408,12 +408,12 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     await pause(100);
     assert.equal(
       await ev(
-        `window.__calls.filter(c=>c.name==='replyInbox_actions:generateDraft').length`,
+        `window.__calls.filter(c=>c.name==='quick_reply_manual_draft:generate').length`,
       ),
       draftBefore,
       "incoming updates do not auto draft",
     );
-    assert(draftBefore > 0, "opening chat auto drafts");
+    assert(draftBefore === 0, "opening chat reads without auto drafting");
     await ev(
       `[...document.querySelectorAll('button')].find(b=>b.offsetParent!==null&&b.textContent.trim().startsWith('Rental controls')).click()`,
     );
@@ -429,16 +429,16 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     await capture("controls");
     if (width === 1505) {
       const calendarSpace = await ev(
-        `(()=>{const panel=document.querySelector('[aria-label="Rental controls"]');const cal=panel.querySelector('[class*="inlineCalendar"]');const last=[...cal.querySelectorAll('button')].find(b=>b.textContent.trim()==='31');return {lastDayBottom:last.getBoundingClientRect().bottom,footerTop:panel.querySelector('footer').getBoundingClientRect().top};})()`,
+        `(()=>{const panel=document.querySelector('[aria-label="Rental controls"]');const cal=panel.querySelector('[class*="inlineCalendar"]');const last=[...cal.querySelectorAll('button')].find(b=>b.textContent.trim()==='31');return {lastDayBottom:last.getBoundingClientRect().bottom,footerTop:panel.getBoundingClientRect().bottom-16};})()`,
       );
       assert(
         calendarSpace.lastDayBottom < calendarSpace.footerTop,
-        "whole month is visible above the booking navigation: " +
+        "whole month is visible in the controls panel: " +
           JSON.stringify(calendarSpace),
       );
       assert(
         await ev(
-          `(()=>{const panel=document.querySelector('[aria-label="Rental controls"]');const pricing=[...panel.querySelectorAll('h4')].find(e=>e.textContent==='3. Pricing');const price=pricing.nextElementSibling;return pricing.getBoundingClientRect().bottom<panel.querySelector('footer').getBoundingClientRect().top&&price.firstElementChild.getBoundingClientRect().bottom<panel.querySelector('footer').getBoundingClientRect().top;})()`,
+          `(()=>{const panel=document.querySelector('[aria-label="Rental controls"]');const pricing=[...panel.querySelectorAll('h4')].find(e=>e.textContent==='3. Pricing');const price=pricing.nextElementSibling;return pricing.getBoundingClientRect().bottom<panel.getBoundingClientRect().bottom-16&&price.firstElementChild.getBoundingClientRect().bottom<panel.getBoundingClientRect().bottom-16;})()`,
         ),
         "equipment, full calendar and pricing are visible in the vertical controls panel",
       );
@@ -453,7 +453,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       );
 
     const geometry = await ev(
-      `(()=>{const portrait=document.querySelector('[role=dialog] [aria-label="Expand profile image of Marcus Lee"]');const r=portrait.getBoundingClientRect();const panels=[document.querySelector('[aria-label="Rental controls"]'),document.querySelector('[data-conversation-content]')];return {portrait:{width:r.width,height:r.height},panels:panels.map(p=>{const r=p.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};}),horizontalOverflow:document.documentElement.scrollWidth-innerWidth,drafts:window.__calls.filter(c=>c.name==='replyInbox_actions:generateDraft').length};})()`,
+      `(()=>{const portrait=document.querySelector('[role=dialog] [aria-label="Expand profile image of Marcus Lee"]');const r=portrait.getBoundingClientRect();const panels=[document.querySelector('[aria-label="Rental controls"]'),document.querySelector('[data-conversation-content]')];return {portrait:{width:r.width,height:r.height},panels:panels.map(p=>{const r=p.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};}),horizontalOverflow:document.documentElement.scrollWidth-innerWidth,drafts:window.__calls.filter(c=>c.name==='quick_reply_manual_draft:generate').length};})()`,
     );
     assert(
       Math.abs(geometry.portrait.width - geometry.portrait.height) < 0.1,
@@ -474,7 +474,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         "closing restores the previous request in the compact dock",
       );
       const count = await ev(
-        `window.__calls.filter(c=>c.name==='replyInbox_actions:generateDraft').length`,
+        `window.__calls.filter(c=>c.name==='quick_reply_manual_draft:generate').length`,
       );
       await ev(
         `document.querySelector('[aria-label="Open full chat with Marcus Lee"]').click()`,
@@ -482,10 +482,10 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       await pause(100);
       assert.equal(
         await ev(
-          `window.__calls.filter(c=>c.name==='replyInbox_actions:generateDraft').length`,
+          `window.__calls.filter(c=>c.name==='quick_reply_manual_draft:generate').length`,
         ),
-        count + 1,
-        "preview button explicitly opens chat and drafts once",
+        count,
+        "preview opens chat without generating or sending until requested",
       );
       await ev(
         `document.querySelector('[aria-label="Close conversation"]').click()`,

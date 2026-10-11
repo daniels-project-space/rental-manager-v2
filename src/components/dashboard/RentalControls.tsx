@@ -268,7 +268,7 @@ export function RentalControls({
                     ? "Updating booking…"
                     : replacement.applied
                       ? "✓ Booking updated"
-                      : "Use complete set in booking"}
+                      : "Replace all unavailable items"}
                 </button>
               )}
               <button
@@ -287,14 +287,14 @@ export function RentalControls({
             </>
           )}
         </footer>
-      ) : (
+      ) : !editor ? (
         <footer className={styles.footer}>
           <div className={styles.actions}>
             <h4>Booking actions</h4>
             {actions}
           </div>
         </footer>
-      )}
+      ) : null}
     </aside>
   );
 }

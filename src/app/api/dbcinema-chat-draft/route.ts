@@ -12,7 +12,7 @@ export async function POST(request: Request) {
   if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  let body: { renter_name?: string; booking?: { status?: string; start?: number; end?: number; items?: Array<{ name?: string; qty?: number }> }; messages?: ContextMessage[]; replacement?: {original?:string;new_item?:string;available?:boolean;price_note?:string} };
+  let body: { renter_name?: string; booking?: { status?: string; start?: number; end?: number; items?: Array<{ name?: string; qty?: number }> }; messages?: ContextMessage[]; account?: string; availability?: { status?: string; checked_at?: number; items?: Array<{ name?: string; available?: boolean | null; reason?: string }> }; replacement?: {original?:string;new_item?:string;available?:boolean;price_note?:string} };
   try {
     body = await request.json();
   } catch {
@@ -46,6 +46,10 @@ export async function POST(request: Request) {
         `Rental status: ${String(body.booking?.status ?? "unknown").slice(0, 80)}`,
         `Dates: ${date(body.booking?.start)} to ${date(body.booking?.end)}`,
         `Items: ${items.join(", ") || "not supplied"}`,
+        `Requested account: ${String(body.account ?? "DB Cinema Web").slice(0, 80)}`,
+        ...(body.availability?.checked_at && Date.now() - body.availability.checked_at >= 0 && Date.now() - body.availability.checked_at < 60_000 ? [
+          `Fresh stock check: ${JSON.stringify(body.availability.items ?? []).slice(0, 4000)}. Each true means available for the requested dates; false means unavailable; null means unknown.`,
+        ] : []),
         ...(body.replacement?.available===true && body.replacement.new_item ? [
           `Verified replacement facts: requested ${String(body.replacement.original??"item").slice(0,120)} is unavailable for this booking; ${String(body.replacement.new_item).slice(0,120)} has freshly checked stock for the complete proposed basket.`,
           `Replacement price information: ${String(body.replacement.price_note??"Price needs checking.").slice(0,300)}`,

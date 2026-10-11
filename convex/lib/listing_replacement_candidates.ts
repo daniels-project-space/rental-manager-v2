@@ -8,12 +8,7 @@ import { inventorySpecMap } from "./inventory_spec_grounding";
 import {
   requestedCameraRole,
   verifiedCameraCapabilities,
-  assessCameraRequirements,
 } from "./camera_requirements";
-import {
-  verifiedLensCapabilities,
-  assessLensRequirements,
-} from "./lens_requirements";
 
 const kind = (value: string | null | undefined) =>
   (value ?? "")
@@ -121,30 +116,15 @@ export async function listingReplacementCandidates(ctx: QueryCtx, a: Args) {
           const role =
             profile?.role ??
             requestedCameraRole(sourceItem.name_canonical, sourceItem.kind);
-          if (
-            !role ||
-            assessCameraRequirements(
-              verifiedCameraCapabilities(
-                specs.get(String(item._id)),
-                item.name_canonical,
-              ),
-              { role },
-              sourceItem.lens_mount ?? undefined,
-            ).status !== "match"
-          )
-            continue;
+          const candidateRole = verifiedCameraCapabilities(
+            specs.get(String(item._id)), item.name_canonical,
+          )?.role ?? requestedCameraRole(item.name_canonical, item.kind);
+          // Match the known inventory equipment type, as DB Cinema does.
+          // A missing manufacturer recording-mode review cannot rule out a
+          // known action-camera replacement. This does not attest technical
+          // specs: only the type, mount, quantity, value and physical stock.
+          if (!role || candidateRole !== role) continue;
         }
-        if (
-          kind(source.kind) === "lens" &&
-          assessLensRequirements(
-            verifiedLensCapabilities(
-              specs.get(String(item._id)),
-              item.name_canonical,
-            ),
-            {},
-          ).status !== "match"
-        )
-          continue;
         const used = Math.min(required, candidate.remaining);
         required -= used;
         candidate.remaining -= used;
