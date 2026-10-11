@@ -277,6 +277,90 @@ describe("registered complete native basket replacement finder", () => {
     ).toBe(false);
     expect(f.ctx.runMutation).not.toHaveBeenCalled();
   });
+  it("continues every unavailable item across catalogue pages before checking complete sets", async () => {
+    const f = fixture(),
+      base = f.ctx.runQuery,
+      pages: any[] = [];
+    f.ctx.runQuery = async (ref: any, args: any) => {
+      if (
+        getFunctionName(ref) ===
+        "renter_bot_tools:__service_basket_replacement_candidates"
+      ) {
+        pages.push({
+          product: args.target_product_id,
+          cursor: args.candidate_cursor ?? null,
+        });
+        if (!args.candidate_cursor)
+          return {
+            alternatives: [],
+            is_done: false,
+            continue_cursor: "next-page",
+            reason: "No matches on this page",
+          };
+        return {
+          ...(await base(ref, args)),
+          is_done: true,
+          continue_cursor: null,
+        };
+      }
+      return base(ref, args);
+    };
+    const r = await invoke(f.ctx);
+    expect(r.options).toHaveLength(2);
+    expect(pages).toEqual([
+      { product: 10, cursor: null },
+      { product: 10, cursor: "next-page" },
+      { product: 11, cursor: null },
+      { product: 11, cursor: "next-page" },
+    ]);
+    expect(f.ctx.runMutation).not.toHaveBeenCalled();
+  });
+  it("bounds an unfinished catalogue and stops repeated cursors without writes", async () => {
+    for (const repeated of [false, true]) {
+      const f = fixture(),
+        base = f.ctx.runQuery;
+      let pages = 0;
+      f.ctx.runQuery = async (ref: any, args: any) => {
+        if (
+          getFunctionName(ref) ===
+          "renter_bot_tools:__service_basket_replacement_candidates"
+        )
+          return {
+            alternatives: [],
+            is_done: false,
+            continue_cursor: repeated ? "stalled" : String(++pages),
+          };
+        return base(ref, args);
+      };
+      const r = await invoke(f.ctx);
+      expect(r.options).toEqual([]);
+      expect(r.reason).toContain("bounded search");
+      expect(pages).toBe(repeated ? 0 : 64);
+      expect(f.ctx.runMutation).not.toHaveBeenCalled();
+    }
+  });
+  it("stops malformed catalogue cursors before sending another page query", async () => {
+    const f = fixture(),
+      base = f.ctx.runQuery;
+    let calls = 0;
+    f.ctx.runQuery = async (ref: any, args: any) => {
+      if (
+        getFunctionName(ref) ===
+        "renter_bot_tools:__service_basket_replacement_candidates"
+      ) {
+        calls++;
+        return {
+          alternatives: [],
+          is_done: false,
+          continue_cursor: { invalid: true },
+        };
+      }
+      return base(ref, args);
+    };
+    expect((await invoke(f.ctx)).options).toEqual([]);
+    expect(calls).toBe(2);
+    expect(f.ctx.runMutation).not.toHaveBeenCalled();
+  });
   it("denies unauthenticated access before order or stock reads", async () => {
     const f = fixture();
     f.ctx.auth.getUserIdentity = async () => null;
