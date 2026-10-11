@@ -6,7 +6,14 @@ import { declaredLensIdentity } from "./declared_lens_identity";
 
 type Inventory = CountedMaster & { _id: unknown; name_canonical: string; kind?: string; qty?: number; aliases?: string[]; lens_mount?: string | null; status?: string; is_marketing_only?: boolean; track_independent_stock?: boolean };
 const mountTokens = new Set(["ef", "l", "rf", "e", "pl", "mount"]);
-const tokens = (text: string) => (text.toLowerCase().replace(/\bg\s*-?\s*master\b/g, "gm").replace(/\bfx\s+(\d+)\b/g, "fx$1").replace(/\ba7\s*(s|r)?\s*(iii|iv|ii|v)\b/g, "a7$1$2").match(/[a-z0-9]+/g) ?? [])
+const tokens = (text: string) => (text.toLowerCase()
+  // Hygglo descriptions often abbreviate a Sony G Master zoom as e.g.
+  // "24-70gm". Canonical inventory names spell the focal range as
+  // "24-70mm GM"; normalize only this explicit GM form so model variants
+  // and apertures remain part of the identity.
+  .replace(/\b(\d+)\s*[-–]\s*(\d+)(?:\s*mm)?\s*g\s*-?\s*master\b/g, "$1-$2mm gm")
+  .replace(/\b(\d+)\s*[-–]\s*(\d+)(?:\s*mm)?\s*gm\b/g, "$1-$2mm gm")
+  .replace(/\bg\s*-?\s*master\b/g, "gm").replace(/\bfx\s+(\d+)\b/g, "fx$1").replace(/\ba7\s*(s|r)?\s*(iii|iv|ii|v)\b/g, "a7$1$2").match(/[a-z0-9]+/g) ?? [])
   .map(token => token.length > 3 && token.endsWith("s") ? token.slice(0, -1) : token);
 // Whole generic supplied hardware lines do not describe independent rentals.
 // Named or explicitly tracked matching pools still participate in coverage.
