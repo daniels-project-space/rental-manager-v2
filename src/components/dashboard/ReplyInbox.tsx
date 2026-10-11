@@ -1,6 +1,6 @@
 "use client";
 import { DbCinemaOrderEditor } from "./DbCinemaOrderEditor";
-import { RequestedItemStack } from "./RequestedItemStack";
+import { ItemImage, RequestedItemStack } from "./RequestedItemStack";
 import type { CSSProperties } from "react";
 import { OwnerChecksPanel } from "./OwnerChecksPanel";
 import {
@@ -192,6 +192,7 @@ interface RichItem {
   name: string;
   qty: number;
   image_url: string | null;
+  image_urls?: string[];
 }
 interface ItemAvail {
   name: string;
@@ -5023,14 +5024,14 @@ export function ReplyInbox() {
             {currentHandoffs.length > 0 && (
               <div className={styles.handoffRail}>
                 <div className={styles.handoffIntro}>
-                  <span>◷</span>
+                  <span aria-hidden="true">◷</span>
                   <div>
                     <strong>Next 60 min</strong>
-                    <p>
-                      Rentals within 1 hour
-                      <br />
-                      before or after.
-                    </p>
+                    <small className={styles.handoffCount}>
+                      {currentHandoffs.length}{" "}
+                      {currentHandoffs.length === 1 ? "rental" : "rentals"}
+                    </small>
+                    <p>Rentals within 1 hour before or after.</p>
                   </div>
                 </div>
                 <div className={styles.handoffs}>
@@ -5038,6 +5039,7 @@ export function ReplyInbox() {
                     const row = all.find(
                       (candidate) => candidate.thread_id === h.thread_id,
                     );
+                    const gear = row?.requested_items?.[0] ?? row?.items[0];
                     return (
                       <button
                         type="button"
@@ -5055,12 +5057,24 @@ export function ReplyInbox() {
                         aria-label={`${h.kind} with ${h.renter_name}`}
                         title={h.renter_name}
                       >
-                        <Thumb
-                          src={row?.image_url ?? null}
-                          accent={row ? tileAccent(row) : "#86baff"}
-                          size={75}
-                        />
+                        <div className={styles.handoffGear}>
+                          <ItemImage
+                            item={{
+                              name:
+                                gear?.name ??
+                                h.items[0] ??
+                                "Requested equipment",
+                              qty: gear?.qty ?? 1,
+                              image_url:
+                                gear?.image_url ?? row?.image_url ?? null,
+                              image_urls: gear?.image_urls,
+                            }}
+                          />
+                        </div>
                         <div>
+                          <strong className={styles.handoffRenter}>
+                            {h.renter_name}
+                          </strong>
                           <span
                             className={
                               h.kind === "pickup"

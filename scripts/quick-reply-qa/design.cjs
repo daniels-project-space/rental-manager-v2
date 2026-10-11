@@ -112,6 +112,18 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         "hover does not draft",
       );
     }
+    const handoffSummary = await ev(
+      `(()=>{const rail=document.querySelector('[class*="handoffRail"]');const heading=rail.querySelector('[class*="handoffIntro"]');return {headingVisible:getComputedStyle(heading).display!=='none',nameCount:rail.querySelectorAll('[class*="handoffRenter"]').length,cardCount:rail.querySelectorAll('button').length};})()`,
+    );
+    assert(
+      handoffSummary.headingVisible,
+      "time-sensitive rail keeps its heading visible at every viewport",
+    );
+    assert.equal(
+      handoffSummary.nameCount,
+      handoffSummary.cardCount,
+      "every time-sensitive rental displays the renter name",
+    );
     await capture("queue");
     if (width === 1505) {
       await ev(
@@ -125,6 +137,12 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
           `(()=>{const img=${stack}.querySelector('img');return img?.complete&&img.naturalWidth>0&&img.src.endsWith('/gear0.png');})()`,
         ),
         "failed primary equipment image uses the loaded fallback",
+      );
+      assert(
+        await ev(
+          `(()=>{const img=document.querySelector('[aria-label="pickup with Marcus Lee"] [class*="handoffGear"] img');return img?.complete&&img.naturalWidth>0&&img.src.endsWith('/gear0.png');})()`,
+        ),
+        "time-sensitive rental gear shares the verified image fallback",
       );
       const point = await ev(
         `(()=>{const r=${stack}.getBoundingClientRect();return {x:r.x+10,y:r.y+10};})()`,
@@ -161,10 +179,19 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       );
     }
     await ev(
-      `document.querySelector('[aria-label="Open conversation with Marcus Lee"]').click()`,
+      `document.querySelector('[aria-label="pickup with Marcus Lee"]').click()`,
     );
     await pause(150);
     await capture("chat");
+    if (width === 1505) {
+      const handoffLayout = await ev(
+        `(()=>{const rail=document.querySelector('[class*="handoffRail"]');return [...rail.querySelectorAll('button')].map(card=>{const name=card.querySelector('[class*="handoffRenter"]').getBoundingClientRect();const state=card.querySelector('[class*="pickup"],[class*="return"]').getBoundingClientRect();const r=card.getBoundingClientRect();return {height:r.height,overlap:name.left<state.right&&name.right>state.left&&name.top<state.bottom&&name.bottom>state.top};});})()`,
+      );
+      assert(
+        handoffLayout.every((row) => row.height <= 100 && !row.overlap),
+        "time-sensitive names and timing fit without overlapping",
+      );
+    }
     const chatSpace = await ev(
       `(()=>{const chat=document.querySelector('[aria-label="Conversation with Marcus Lee"]');const history=chat.querySelector('[class*="messages"]');const r=chat.getBoundingClientRect(),h=history.getBoundingClientRect();return {width:r.width,historyHeight:h.height};})()`,
     );
