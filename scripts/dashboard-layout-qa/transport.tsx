@@ -16,6 +16,7 @@ export function useQuery(ref,args) {
    return {items:[{item_id:'qa',item_name:'Sony FX6',image_url:null,account_slug:'dbcinema',account_color:'blue',blocks:[
      block('qa-res',0,{pickup_time:'09:15',return_time:'10:00',pickup_time_status:'reported',return_time_status:'reported'}),
      block('qa-long',1,{renter_name:'Long fixture name to check handover information never clips',pickup_time:'08:00',return_time:'22:00',pickup_time_status:'confirmed',return_time_status:'confirmed'}),
+     block('qa-wide',0,{end_date:day(6),return_date:day(6),renter_name:'Yevhenii Petrusenko',pickup_time:'09:15',return_time:'17:30',pickup_time_status:'reported',return_time_status:'reported'}),
      block('qa-missing',2),
      block('qa-web',3,{account_slug:'dbcinema_web',pickup_time:'13:00',return_time:'14:45',pickup_time_status:'confirmed',return_time_status:'confirmed'}),
      block('qa-extension',4,{start_date:day(3),return_time:'17:30',return_time_status:'reported'}),

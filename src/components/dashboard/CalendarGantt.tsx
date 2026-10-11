@@ -10,6 +10,7 @@ import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import {
   calendarBarGeometry as barGeom,
+  calendarBarLabelGeometry,
   DAY_MS,
   DAY_WINDOW_END_MIN,
   DAY_WINDOW_START_MIN,
@@ -447,12 +448,14 @@ interface BarProps {
   liveProgress: number | null;
   today: string;       // YYYY-MM-DD (London) — for the pickup/return-today glow
   nowMs: number;       // current instant (ticks) — glow stops once event passes
+  viewportLeft: number;
+  viewportRight: number;
   weekStart: string;   // visible week start — gate time labels to the real day
 }
 
 // One time-accurate bar per reservation. Left stripe = account color, fill =
 // status, glow + dot = ongoing. The bar physically ends at the return time.
-function ReservationBar({ row, height, isNext, isFocused, onSelect, liveProgress, today, nowMs, weekStart }: BarProps) {
+function ReservationBar({ row, height, isNext, isFocused, onSelect, liveProgress, today, nowMs, weekStart, viewportLeft, viewportRight }: BarProps) {
   const { block, acc, ongoing } = row;
   // DB Cinema Web rentals read as a distinct emerald bar (not the status palette)
   // so the website channel is unmistakable in the calendar.
@@ -491,6 +494,10 @@ function ReservationBar({ row, height, isNext, isFocused, onSelect, liveProgress
   const weekEnd = addDays(weekStart, 6);
   const pickupInWeek = !!pickupDay && pickupDay >= weekStart && pickupDay <= weekEnd;
   const returnInWeek = !!returnDay && returnDay >= weekStart && returnDay <= weekEnd;
+  const nameGeometry=calendarBarLabelGeometry(row.left,row.width,viewportLeft,viewportRight);
+  const pickupVisible=row.left>=viewportLeft && row.left<=viewportRight;
+  const returnVisible=row.left+row.width>=viewportLeft && row.left+row.width<=viewportRight;
+  const clockOffset=(anchor:number)=>Math.max(viewportLeft+2,Math.min(anchor,viewportRight-54))-row.left;
   const tooltip = [
     renterLabel,
     row.items.map((i) => i.name).join(", "),
@@ -524,13 +531,14 @@ function ReservationBar({ row, height, isNext, isFocused, onSelect, liveProgress
       onClick={onSelect}
       onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onSelect();}}}
     >
-      {pickupInWeek && <span data-calendar-endpoint="pickup" className={styles.barPickup}
+      {pickupInWeek && pickupVisible && <span data-calendar-endpoint="pickup" className={styles.barPickup}
+        style={{left:clockOffset(row.left)}}
         title={`${pickupDay} · Pickup ${pickup ?? "time not recorded"}${block.pickup_time_status === "reported" ? " · reported, not confirmed" : ""}`}>
         ↑ {pickup ?? "—"}{block.pickup_time_status === "reported" && <i>•</i>}
       </span>}
-      <CalendarBarName name={renterLabel} width={Math.max(44,row.width-8)} color={ss.text} strike={ss.strikethrough} offset={row.width<44 ? Math.max(-row.left,row.width-44) : 4} />
-      {returnInWeek && <span data-calendar-endpoint="return" className={styles.barReturn}
-        style={{top:row.width<115 ? height+3 : undefined,left:row.left+row.width<55 ? 0 : undefined,right:row.left+row.width<55 ? "auto" : undefined}}
+      {nameGeometry && <CalendarBarName name={renterLabel} width={nameGeometry.width} color={ss.text} strike={ss.strikethrough} offset={nameGeometry.offset} />}
+      {returnInWeek && returnVisible && <span data-calendar-endpoint="return" className={styles.barReturn}
+        style={{top:row.width<115 ? height+3 : undefined,left:clockOffset(row.left+row.width-52),right:"auto"}}
         title={`${returnDay} · Return ${ret ?? "time not recorded"}${block.return_time_status === "reported" ? " · reported, not confirmed" : ""}`}>
         {ret ?? "—"} ↓{block.return_time_status === "reported" && <i>•</i>}
       </span>}
@@ -558,7 +566,7 @@ function CalendarBarName({name,width,color,strike,sidebar=false,offset=4}:{name:
     void document.fonts.ready.then(()=>{if(active)fit();});
     return ()=>{active=false;};
   },[name,width,sidebar]);
-  return <span ref={ref} data-calendar-bar-name className={styles.barName}
+  return <span ref={ref} data-calendar-bar-name data-calendar-name-placement={sidebar?"sidebar":"bar"} className={styles.barName}
     style={{width,position:sidebar?"relative":undefined,left:sidebar?undefined:offset,textAlign:sidebar?"left":undefined,color,textDecoration:strike?"line-through":undefined}}>{name}</span>;
 }
 
@@ -658,6 +666,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
   // scroll) instead of a fixed 150px/col that overflowed a 1200px modal.
   const gridRef = useRef<HTMLDivElement>(null);
   const [gridWidth, setGridWidth] = useState(0);
+  const [gridScrollLeft,setGridScrollLeft]=useState(0);
   const LABEL_WIDTH = gridWidth > 0 && gridWidth < 640 ? 140 : 300;
   const focusedRowRef = useRef<HTMLDivElement>(null);
   // W08 search — filter rentals by item name / tag and (lazily) show per-day
@@ -1027,7 +1036,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
         </div>
 
         {/* ---- Grid area ---- */}
-        <div ref={gridRef} className={`flex-1 overflow-auto`}>
+        <div ref={gridRef} data-calendar-viewport onScroll={e=>setGridScrollLeft(e.currentTarget.scrollLeft)} className={`flex-1 overflow-auto`}>
           {data === undefined ? (
             // Loading skeleton
             <div className="flex flex-col gap-2 p-6">
@@ -1266,6 +1275,8 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                           liveProgress={liveProgress[row.reservationId] ?? null}
                           today={today}
                           nowMs={nowMs}
+                          viewportLeft={Math.max(0,gridScrollLeft-LABEL_WIDTH)}
+                          viewportRight={Math.max(0,gridScrollLeft+gridWidth-LABEL_WIDTH-6)}
                           weekStart={weekStart}
                         />
                       </div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calendarBarGeometry } from "./calendar-bar-geometry";
+import { calendarBarGeometry, calendarBarLabelGeometry } from "./calendar-bar-geometry";
 
 const desktopX = (day: number) => day * 150;
 
@@ -48,4 +48,11 @@ describe("calendar rental bar geometry", () => {
     expect(geometry!.left).toBeGreaterThanOrEqual(196);
     expect(geometry!.left + geometry!.width).toBeLessThanOrEqual(284);
   });
+});
+
+describe("names in the visible bar segment",()=>{
+ it("fits long mobile bars into the visible timeline",()=>expect(calendarBarLabelGeometry(0,650,0,214)).toEqual({offset:4,width:206}));
+ it("follows the visible segment after horizontal scrolling",()=>expect(calendarBarLabelGeometry(0,650,180,394)).toEqual({offset:184,width:206}));
+ it("keeps short edge fragments fully readable inside the viewport",()=>expect(calendarBarLabelGeometry(210,80,0,214)).toEqual({offset:-44,width:44}));
+ it("does not paint a name for a bar outside the viewport",()=>expect(calendarBarLabelGeometry(700,80,0,214)).toBeNull());
 });

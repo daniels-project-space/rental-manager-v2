@@ -64,3 +64,12 @@ export function calendarBarGeometry(
 
   return { left: rawLeft, width: Math.max(rawWidth, 8) };
 }
+
+/** Fit a full name to the visible portion of its bar, including horizontal scroll. */
+export function calendarBarLabelGeometry(left:number,width:number,viewportLeft:number,viewportRight:number) {
+  const start=Math.max(left,viewportLeft),end=Math.min(left+width,viewportRight);
+  if(end<=start || viewportRight-viewportLeft<16)return null;
+  const labelWidth=Math.min(Math.max(44,end-start-8),viewportRight-viewportLeft-8);
+  const labelLeft=Math.max(viewportLeft+4,Math.min(start+4,viewportRight-labelWidth-4));
+  return {offset:labelLeft-left,width:labelWidth};
+}
