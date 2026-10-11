@@ -2897,6 +2897,7 @@ export const __service_basket_replacement_candidates = internalQuery({
   args: {
     ...ownedAlternativeArgs,
     target_product_id: v.optional(v.number()),
+    candidate_cursor: v.optional(v.string()),
     omit_product_ids: v.optional(v.array(v.number())),
     basket_lines: v.optional(
       v.array(
@@ -2908,12 +2909,12 @@ export const __service_basket_replacement_candidates = internalQuery({
       ),
     ),
   },
-  handler: async (ctx, { target_product_id, omit_product_ids, basket_lines, ...args }) => {
+  handler: async (ctx, { target_product_id, candidate_cursor, omit_product_ids, basket_lines, ...args }) => {
     if (target_product_id != null) {
       const booking = args.thread_id ? await getBotBooking(ctx, args.thread_id) : null;
       const stage = rentalStage(booking, londonToday()).stage;
       if ((booking?.account_slug && booking.account_slug !== args.account_slug) || ["COMPLETED", "CANCELLED", "VERIFICATION_FAILED", "IN_USE", "RETURN_OVERDUE"].includes(stage)) return { alternatives: [], reason: "This booking cannot be replaced in its current state." };
-      return listingReplacementCandidates(ctx, { ...args, target_product_id, omit_product_ids, basket_lines });
+      return listingReplacementCandidates(ctx, { ...args, target_product_id, candidate_cursor, omit_product_ids, basket_lines });
     }
     return findOwnedAlternatives(ctx, args, omit_product_ids, true, basket_lines);
   },

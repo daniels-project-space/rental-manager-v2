@@ -443,46 +443,79 @@ async function nativeBasketOptions(ctx: any, thread_id: string): Promise<any> {
   const groupReasons: string[] = [];
   let candidateSearchLimited = false;
   for (const original of originals) {
-    const result = await ctx.runQuery(
-      internal.renter_bot_tools.__service_basket_replacement_candidates,
-      {
-        account_slug: tile.account_slug,
-        ...(original.product_id != null
-          ? { target_product_id: original.product_id }
-          : {}),
-        item_name: original.name,
-        exclude_name: original.name,
-        start_date: start,
-        end_date: end,
-        quantity: original.qty,
-        thread_id,
-        booking_use: state ? "replacement" : "standalone",
-        ...(omit
-          ? {
-              omit_product_ids: omit,
-              basket_lines: state.items.map((item: any) => ({
-                name: item.name,
-                qty: 1,
-                product_id: item.product_id,
-              })),
-            }
-          : {}),
-      },
-    );
-    candidateSearchLimited ||= result.limited === true;
-    if (result.reason) groupReasons.push(`${original.name}: ${result.reason}`);
+    const queryArgs = {
+      account_slug: tile.account_slug,
+      ...(original.product_id != null
+        ? { target_product_id: original.product_id }
+        : {}),
+      item_name: original.name,
+      exclude_name: original.name,
+      start_date: start,
+      end_date: end,
+      quantity: original.qty,
+      thread_id,
+      booking_use: state ? "replacement" : "standalone",
+      ...(omit
+        ? {
+            omit_product_ids: omit,
+            basket_lines: state.items.map((item: any) => ({
+              name: item.name,
+              qty: 1,
+              product_id: item.product_id,
+            })),
+          }
+        : {}),
+    };
+    const candidates: any[] = [];
+    let cursor: string | undefined;
+    const seenCursors = new Set<string>();
+    let isDone = false;
+    let lastReason: string | null = null;
+    for (let page = 0; page < 32; page++) {
+      const result = await ctx.runQuery(
+        internal.renter_bot_tools.__service_basket_replacement_candidates,
+        { ...queryArgs, ...(cursor ? { candidate_cursor: cursor } : {}) },
+      );
+      lastReason = result.reason ?? null;
+      for (const item of result.alternatives ?? []) {
+        if (
+          item.availability?.available === true &&
+          item.product_id &&
+          item.mapping_complete &&
+          !item.storage_contents_verification_required &&
+          !candidates.some(
+            (candidate) => candidate.product_id === item.product_id,
+          )
+        )
+          candidates.push(item);
+      }
+      isDone = result.is_done !== false;
+      if (candidates.length >= 6 || isDone) break;
+      const nextCursor = result.continue_cursor;
+      if (
+        typeof nextCursor !== "string" ||
+        !nextCursor ||
+        seenCursors.has(nextCursor)
+      ) {
+        lastReason = "The catalogue search could not advance. Try again.";
+        break;
+      }
+      cursor = nextCursor;
+      seenCursors.add(nextCursor);
+    }
+    candidateSearchLimited ||= !isDone;
+    if (!candidates.length && lastReason)
+      groupReasons.push(`${original.name}: ${lastReason}`);
     groups.push(
-      (result.alternatives ?? [])
-        .filter(
-          (item: any) =>
-            item.availability?.available === true &&
-            item.product_id &&
-            item.mapping_complete &&
-            !item.storage_contents_verification_required,
+      candidates
+        .sort(
+          (a, b) =>
+            (b.score ?? 0) - (a.score ?? 0) || a.product_id - b.product_id,
         )
         .slice(0, 6),
     );
   }
+
   const retained = state
     ? state.items
         .filter((line: any) => !omit!.includes(line.product_id))

@@ -23,6 +23,7 @@ const kind = (value: string | null | undefined) =>
 type Args = {
   account_slug: string;
   target_product_id: number;
+  candidate_cursor?: string;
   quantity?: number;
   start_date?: string;
   end_date?: string;
@@ -40,7 +41,12 @@ export async function listingReplacementCandidates(ctx: QueryCtx, a: Args) {
     a.quantity ?? 1,
     sources,
   );
-  const empty = (reason: string) => ({ alternatives: [], reason });
+  const empty = (reason: string) => ({
+    alternatives: [],
+    reason,
+    is_done: true,
+    continue_cursor: null,
+  });
   if (!original.complete)
     return empty("The requested listing needs its inventory mapping reviewed.");
   const items = new Map(sources.items.map((item) => [String(item._id), item]));
@@ -58,10 +64,11 @@ export async function listingReplacementCandidates(ctx: QueryCtx, a: Args) {
   if (originalValue == null)
     return empty("The requested kit needs its replacement value reviewed.");
   const specs = inventorySpecMap(await ctx.db.query("item_specs").collect());
-  const listings = await ctx.db
+  const page = await ctx.db
     .query("online_listings")
     .withIndex("by_account", (q) => q.eq("account_slug", a.account_slug))
-    .take(128);
+    .paginate({ numItems: 64, cursor: a.candidate_cursor ?? null });
+  const listings = page.page;
   const retained = (a.basket_lines ?? []).filter(
     (line) => !(a.omit_product_ids ?? []).includes(line.product_id ?? -1),
   );
@@ -71,7 +78,8 @@ export async function listingReplacementCandidates(ctx: QueryCtx, a: Args) {
   ]);
   const alternatives: any[] = [];
   for (const listing of listings) {
-    if (excluded.has(listing.product_id)) continue;
+    if (listing.is_published === false || excluded.has(listing.product_id))
+      continue;
     const contents = await loadListingInventory(
       ctx,
       a.account_slug,
@@ -205,6 +213,7 @@ export async function listingReplacementCandidates(ctx: QueryCtx, a: Args) {
     reason: alternatives.length
       ? null
       : "No complete compatible listing with verified stock and value was found.",
-    limited: listings.length === 128,
+    is_done: page.isDone,
+    continue_cursor: page.isDone ? null : page.continueCursor,
   };
 }
