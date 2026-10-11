@@ -1,195 +1,37 @@
-.handover {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  min-width: 0;
-}
-.pickupMoment,
-.returnMoment {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  min-width: 0;
-  padding: 6px 8px;
-  border-radius: 9px;
-  border: 1px solid #ffffff0d;
-  background: #ffffff04;
-  overflow-wrap: anywhere;
-}
-.returnMoment {
-  background: #1b39494d;
-  border-color: #67d9ff33;
-}
-.momentLabel {
-  color: #9aaabd;
-  font-size: 9px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-.returnMoment .momentLabel {
-  color: #82e0ff;
-}
-.momentDate {
-  color: #c9d6e5;
-  font-size: 10px;
-  line-height: 1.25;
-}
-.momentTime {
-  color: #f4f7fb;
-  font-size: 13px;
-  line-height: 1.25;
-  white-space: normal;
-  font-variant-numeric: tabular-nums;
-}
-.evidence {
-  color: #8fa2b7;
-  font-size: 8px;
-  line-height: 1.25;
-}
-.agenda {
-  display: none;
-}
-.label {
-  min-width: 0;
-  padding-top: 8px;
-  padding-bottom: 8px;
-}
-.label [data-calendar-handover] {
-  margin-top: 3px;
-}
-.label .pickupMoment,
-.label .returnMoment {
-  padding: 4px 6px;
-  gap: 1px;
-}
-.label .momentLabel {
-  font-size: 8px;
-}
-.label .momentTime {
-  font-size: 12px;
-}
-.label .evidence {
-  font-size: 8px;
-}
-.trackLabel {
+.label { min-width: 0; }
+.barName {
   position: absolute;
-  bottom: 9px;
-  left: 8px;
-  right: 8px;
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  color: #8da2b8;
-  font-size: 10px;
+  display: block;
+  text-align: center;
+  font-weight: 600;
+  line-height: 1.12;
+  white-space: normal;
+  overflow-wrap: anywhere;
   pointer-events: none;
 }
-.trackLabel span {
-  white-space: normal;
-  line-height: 1.3;
+.barPickup, .barReturn {
+  position: absolute;
+  top: -18px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: #0c1423e8;
+  color: #b9cce5;
 }
-.trackLabel span:last-child {
-  color: #8bddf9;
-  text-align: right;
-}
-.controls {
-  min-width: 0;
-}
-.accountFilters {
-  flex-wrap: wrap;
-  min-width: 0;
-}
-.detail {
-  max-width: calc(100% - 24px);
-}
+.barPickup { left: -2px; }
+.barReturn { right: -2px; color: #86e0ff; }
+.barPickup i, .barReturn i { font-size: 8px; margin-left: 2px; color: #c7a766; }
+.controls { min-width: 0; }
+.accountFilters { flex-wrap: wrap; min-width: 0; }
+.detail { max-width: calc(100% - 24px); }
 @media (max-width: 700px) {
-  .desktop {
-    display: none;
-  }
-  .agenda {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    padding: 12px;
-    overflow: auto;
-    flex: 1;
-    min-height: 0;
-  }
-  .agendaCard {
-    flex-shrink: 0;
-    border: 1px solid #ffffff12;
-    border-left: 4px solid var(--account-accent);
-    border-radius: 13px;
-    padding: 12px;
-    background: #122032;
-    color: #e6edf5;
-    text-align: left;
-    min-width: 0;
-  }
-  .agendaHeader {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 8px;
-  }
-  .agendaHeader strong {
-    overflow-wrap: anywhere;
-    font-size: 14px;
-  }
-  .agendaHeader span {
-    flex-shrink: 0;
-    font-size: 10px;
-    color: #91c7ef;
-    max-width: 45%;
-    white-space: normal;
-    text-align: right;
-  }
-  .agendaItems {
-    display: flex;
-    gap: 5px;
-    flex-wrap: wrap;
-    margin-bottom: 10px;
-  }
-  .agendaItems img {
-    width: 38px;
-    height: 38px;
-    border-radius: 7px;
-    object-fit: cover;
-  }
-  .agendaItems span {
-    font-size: 11px;
-    color: #b4c4d6;
-    overflow-wrap: anywhere;
-  }
-  .controls {
-    gap: 6px !important;
-    padding: 10px 12px !important;
-  }
-  .controls > button {
-    padding: 6px 8px;
-    font-size: 12px;
-  }
-  .controls > div:last-child {
-    margin-left: 0;
-    width: 100%;
-  }
-  .accountFilters {
-    gap: 5px;
-  }
-  .detail {
-    left: 12px;
-    right: 12px;
-    bottom: 12px;
-    width: auto !important;
-  }
-  .momentDate {
-    font-size: 12px;
-  }
-  .momentTime {
-    font-size: 15px;
-  }
-  .evidence {
-    font-size: 10px;
-  }
+  .controls { gap: 6px !important; padding: 10px 12px !important; }
+  .controls > button { padding: 6px 8px; font-size: 12px; }
+  .controls > div:last-child { margin-left: 0; width: 100%; }
+  .accountFilters { gap: 5px; }
+  .detail { left: 12px; right: 12px; bottom: 12px; width: auto !important; }
 }

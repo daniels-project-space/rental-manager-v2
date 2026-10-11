@@ -1,10 +1,10 @@
 import {describe,it,expect} from "vitest";
-import {setTimes} from "./extract_booking_times_q";
+import {setTimes,reconcileTimeProvenance} from "./extract_booking_times_q";
 import {hashBookingTimeTranscript} from "../src/lib/booking-time-transcript";
 function fixture(){
  const messages=[{sender:"renter",body_text:"Return at 5pm",hygglo_sent_at:1},{sender:"owner",body_text:"Yes!",hygglo_sent_at:2}];
  const row:any={_id:"rental",hygglo_order_id:"123",start_date:"2026-10-09",end_date:"2026-10-09"};const writes:any[]=[];
- const ctx:any={db:{get:async()=>row,patch:async(_:string,p:any)=>{writes.push(p);Object.assign(row,p)},query:()=>{const q:any={withIndex:()=>q,order:()=>q,take:async()=>messages.slice().reverse()};return q}},scheduler:{runAfter:async()=>{}}};
+ const ctx:any={db:{get:async()=>({...row}),insert:async()=>{},patch:async(_:string,p:any)=>{writes.push(p);Object.assign(row,p)},query:()=>{const q:any={withIndex:()=>q,order:()=>q,take:async()=>messages.slice().reverse()};return q}},scheduler:{runAfter:async()=>{}}};
  return {messages,row,writes,ctx};
 }
 describe("real extraction writer schedule provenance",()=>{
@@ -13,4 +13,5 @@ describe("real extraction writer schedule provenance",()=>{
  it("invalidates old precision when a newer broad return proposal is unaccepted",async()=>{const f=fixture();f.row.return_time="17:00";f.row.return_time_provenance={source:"agreed_chat",date:"2026-10-09",time:"17:00",confirmedAt:2};f.messages.push({sender:"renter",body_text:"Can I return during the day instead?",hygglo_sent_at:3});await(setTimes as any)._handler(f.ctx,{reservation_id:"rental",transcript_hash:hashBookingTimeTranscript(f.messages),patch:{}});expect(f.row.return_time_provenance).toBeUndefined();});
  it("does not accept a high-confidence invented model clock",async()=>{const f=fixture();await(setTimes as any)._handler(f.ctx,{reservation_id:"rental",transcript_hash:hashBookingTimeTranscript(f.messages),patch:{return_time:"19:00"}});expect(f.row.return_time).toBe("17:00");expect(f.row.return_time_provenance).toMatchObject({time:"17:00",source:"agreed_chat"});});
  it("keeps an invented clock unconfirmed when no literal agreement exists",async()=>{const f=fixture();f.messages.splice(0,2,{sender:"renter",body_text:"Thanks",hygglo_sent_at:1});await(setTimes as any)._handler(f.ctx,{reservation_id:"rental",transcript_hash:hashBookingTimeTranscript(f.messages),patch:{return_time:"19:00"}});expect(f.row.return_time_provenance).toBeUndefined();});
+ it("does not mark the full extraction fresh when only literal evidence was reconciled",async()=>{const f=fixture();f.row.times_transcript_hash="prior-extraction";f.row.times_extracted_at=1;await(reconcileTimeProvenance as any)._handler(f.ctx,{reservation_ids:["rental"]});expect(f.row.return_time).toBe("17:00");expect(f.row.return_time_provenance?.source).toBe("agreed_chat");expect(f.row.times_transcript_hash).toBe("prior-extraction");expect(f.row.times_extracted_at).toBe(1);});
 });

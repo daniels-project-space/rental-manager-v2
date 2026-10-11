@@ -68,20 +68,18 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
   assert.equal(await ev('[...document.querySelectorAll(".gantt-embedded button")].find(b=>b.textContent.trim()==="Leo").getAttribute("aria-pressed")'),'true');
   // Restore All after proving account filtering, then inspect actual handover UI.
   await ev('[...document.querySelectorAll(".gantt-embedded button")].find(b=>b.textContent.trim()==="All").click()');await pause(100);
-  const calendarProof=await ev(`(()=>{const root=document.querySelector('.gantt-embedded');const moments=[...root.querySelectorAll('[data-calendar-moment]')].filter(e=>e.getBoundingClientRect().width>0);return {text:root.textContent,moments:moments.map(e=>({text:e.textContent,width:e.clientWidth,scrollWidth:e.scrollWidth,height:e.clientHeight,scrollHeight:e.scrollHeight})),agenda:getComputedStyle(root.querySelector('[data-calendar-agenda]')).display}})()`);
-  assert.ok(calendarProof.text.includes('Reported · not confirmed'));
-  assert.ok(calendarProof.text.includes('Time not recorded'));
-  assert.ok(calendarProof.text.includes('Awaiting return'));
+  const calendarProof=await ev(`(()=>{const root=document.querySelector('.gantt-embedded');const names=[...root.querySelectorAll('[data-calendar-bar-name]')];const clocks=[...root.querySelectorAll('[data-calendar-endpoint]')];return {text:root.textContent,names:names.map(e=>({text:e.textContent,width:e.clientWidth,scrollWidth:e.scrollWidth,height:e.clientHeight,scrollHeight:e.scrollHeight})),clocks:clocks.map(e=>({text:e.textContent,title:e.title,width:e.clientWidth,scrollWidth:e.scrollWidth}))}})()`);
+  assert.ok(calendarProof.names.length>=5);
+  assert.ok(calendarProof.names.every(m=>m.scrollWidth<=m.width+1 && m.scrollHeight<=26),JSON.stringify(calendarProof));
+  assert.ok(calendarProof.clocks.some(c=>c.title.includes('reported, not confirmed')));
+  assert.ok(calendarProof.clocks.some(c=>c.title.includes('time not recorded')));
+  assert.ok(calendarProof.clocks.every(c=>c.scrollWidth<=c.width+1));
   assert.ok(!calendarProof.text.includes('no return time yet'));
-  assert.ok(calendarProof.moments.length>=10);
-  assert.ok(calendarProof.moments.every(m=>m.scrollWidth<=m.width+1 && m.scrollHeight<=m.height+1),JSON.stringify(calendarProof));
-  assert.ok(await ev(`[...document.querySelectorAll('[data-calendar-booking-id="qa-extension"] [data-calendar-moment="return"]')].every(e=>e.textContent.includes('Time not recorded') && !e.textContent.includes('17:30'))`));
-  if(width<=700) {
-    await ev(`document.querySelector('[data-calendar-agenda] [data-calendar-booking-id="qa-res"]').click()`);await pause(80);
-    assert.ok(await ev(`document.querySelector('.gantt-embedded [aria-label="Close detail"]')!==null`));
-    await ev(`document.querySelector('.gantt-embedded [aria-label="Close detail"]').click()`);
-  }
-  assert.equal(calendarProof.agenda,width<=700?'flex':'none');
+  assert.ok(!calendarProof.text.includes('Reported · not confirmed'));
+  await ev(`document.querySelector('[data-calendar-bar]').click()`);await pause(80);
+  assert.ok(await ev(`document.querySelector('.gantt-embedded [aria-label="Close detail"]')!==null`));
+  await ev(`document.querySelector('.gantt-embedded [aria-label="Close detail"]').click()`);
+  assert.equal(await ev(`document.querySelector('.gantt-embedded [aria-label="Close detail"]')`),null);
   const shot=async name=>fs.writeFileSync(`${process.env.RM_QA_OUTPUT}/${name}-${width}.png`,Buffer.from((await c.cmd('Page.captureScreenshot',{captureBeyondViewport:false})).data,'base64'));
   await shot('dashboard-top');
   await ev('document.querySelector(".recharts-wrapper").scrollIntoView({block:"center"})');await pause(150);

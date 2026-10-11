@@ -1,7 +1,7 @@
 "use client";
 import styles from "./CalendarGantt.module.css";
 import { rentalCalendarTimestamp } from "../../lib/rental-calendar-time";
-import { CalendarHandoverSummary, calendarDayLabel, type CalendarClockStatus } from "./CalendarHandoverSummary";
+type CalendarClockStatus = "confirmed" | "reported" | "missing";
 import WebsiteVerificationPanel from "./WebsiteVerificationPanel";
 import { websiteVerificationLabel, type WebsiteVerification } from "../../../convex/lib/websiteVerification";
 import React, { useEffect, useState, useCallback, useRef } from "react";
@@ -465,16 +465,6 @@ function ReservationBar({ row, height, isNext, isFocused, onSelect, liveProgress
   const renterLabel = hasRenter ? block.renter_name!.trim() : orderStepLabel(block.order_step);
   const pickup = block.pickup_time ? block.pickup_time.slice(0, 5) : null;
   const ret = block.return_time ? block.return_time.slice(0, 5) : null;
-  const showTimes = row.width >= 220;
-  const compactTime = row.width >= 110 && row.width < 220
-    ? pickup && ret
-      ? `${pickup}–${ret}`
-      : pickup
-        ? `↑${pickup}`
-        : ret
-          ? `${ret}↓`
-          : null
-    : null;
   // Pickup or return happening TODAY → cyan glow, distinct from the amber
   // next-upcoming pulse and the status "ongoing" glow.
   const pickupDay = block.start_date;
@@ -513,7 +503,7 @@ function ReservationBar({ row, height, isNext, isFocused, onSelect, liveProgress
 
   return (
     <div
-      className={`absolute rounded-md cursor-pointer overflow-hidden flex items-center gap-1.5 pl-2 pr-1.5 select-none transition-all hover:brightness-125${isNext ? " gantt-next-pulse" : todayEvent ? " gantt-today-glow" : ""}`}
+      className={`absolute rounded-md cursor-pointer flex items-center select-none transition-all hover:brightness-125${isNext ? " gantt-next-pulse" : todayEvent ? " gantt-today-glow" : ""}`}
       style={{
         left: row.left,
         width: row.width,
@@ -526,71 +516,24 @@ function ReservationBar({ row, height, isNext, isFocused, onSelect, liveProgress
           ? "0 0 0 2px rgba(59,130,246,0.45), 0 0 22px rgba(59,130,246,0.85)"
           : ongoing && !isNext && !todayEvent ? `0 0 0 1.5px ${ss.border}, 0 0 10px ${ss.border}aa` : undefined,
       }}
+      data-calendar-bar
+      role="button"
+      tabIndex={0}
+      aria-label={tooltip}
       title={tooltip}
       onClick={onSelect}
+      onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onSelect();}}}
     >
-      {ongoing && (
-        <span className="flex-shrink-0 w-1.5 h-1.5 rounded-full" style={{ background: ss.text, boxShadow: `0 0 6px ${ss.text}` }} />
-      )}
-      {/* Merged-rental indicator: N bookings chained into one continuous bar */}
-      {row.memberCount > 1 && (
-        <span
-          className="flex-shrink-0 text-[9px] font-bold leading-none px-1 rounded-sm tabular-nums"
-          style={{ background: ss.text, color: ss.bg }}
-          title={`${row.memberCount} bookings merged into one rental`}
-        >
-          ⛓{row.memberCount}
-        </span>
-      )}
-      {compactTime && (
-        <span
-          className="text-[10.5px] font-mono font-semibold truncate flex-1 text-center tabular-nums"
-          style={{ color: ss.text }}
-        >
-          {compactTime}
-        </span>
-      )}
-      {/* Pickup time pinned to the START of the bar — only on the pickup day */}
-      {showTimes && pickup && pickupInWeek && (
-        <span
-          className="text-[10.5px] font-mono flex-shrink-0 leading-none tabular-nums"
-          style={{
-            color: pickupToday ? "#67e8f9" : ss.text,
-            opacity: pickupToday ? 1 : 0.8,
-            fontWeight: pickupToday ? 700 : 600,
-            textShadow: pickupToday ? "0 0 6px rgba(34,211,238,0.9)" : undefined,
-          }}
-          title={`Out ${pickup}${pickupToday ? " — today" : ""}`}
-        >
-          ↑{pickup}
-        </span>
-      )}
-      {!compactTime && <span
-        className="text-[11px] font-semibold truncate flex-1 leading-none text-center"
-        style={{
-          color: ss.text,
-          textDecoration: ss.strikethrough ? "line-through" : undefined,
-          fontStyle: hasRenter ? undefined : "italic",
-          opacity: hasRenter ? undefined : 0.8,
-        }}
-      >
-        {renterLabel}
+      {pickupInWeek && <span data-calendar-endpoint="pickup" className={styles.barPickup}
+        title={`${pickupDay} · Pickup ${pickup ?? "time not recorded"}${block.pickup_time_status === "reported" ? " · reported, not confirmed" : ""}`}>
+        ↑ {pickup ?? "—"}{block.pickup_time_status === "reported" && <i>•</i>}
       </span>}
-      {/* Drop-off time pinned to the END of the bar — only on the return day */}
-      {showTimes && ret && returnInWeek && (
-        <span
-          className="text-[10.5px] font-mono flex-shrink-0 leading-none tabular-nums"
-          style={{
-            color: returnToday ? "#67e8f9" : ss.text,
-            opacity: returnToday ? 1 : 0.8,
-            fontWeight: returnToday ? 700 : 600,
-            textShadow: returnToday ? "0 0 6px rgba(34,211,238,0.9)" : undefined,
-          }}
-          title={`Back ${ret}${returnToday ? " — today" : ""}`}
-        >
-          {ret}↓
-        </span>
-      )}
+      <CalendarBarName name={renterLabel} width={Math.max(44,row.width-8)} color={ss.text} strike={ss.strikethrough} offset={row.width<44 ? Math.max(-row.left,row.width-44) : 4} />
+      {returnInWeek && <span data-calendar-endpoint="return" className={styles.barReturn}
+        style={{top:row.width<115 ? height+3 : undefined,left:row.left+row.width<55 ? 0 : undefined,right:row.left+row.width<55 ? "auto" : undefined}}
+        title={`${returnDay} · Return ${ret ?? "time not recorded"}${block.return_time_status === "reported" ? " · reported, not confirmed" : ""}`}>
+        {ret ?? "—"} ↓{block.return_time_status === "reported" && <i>•</i>}
+      </span>}
       {showProgress && (
         <div
           className="absolute left-0 bottom-0 h-0.5 rounded-full"
@@ -599,6 +542,24 @@ function ReservationBar({ row, height, isNext, isFocused, onSelect, liveProgress
       )}
     </div>
   );
+}
+
+function CalendarBarName({name,width,color,strike,sidebar=false,offset=4}:{name:string;width:number;color:string;strike?:boolean;sidebar?:boolean;offset?:number}) {
+  const ref=useRef<HTMLSpanElement>(null);
+  useEffect(()=>{
+    const e=ref.current;if(!e)return;
+    const fit=()=>{
+      let size=11;e.style.fontSize=`${size}px`;
+      while(size>5 && (e.scrollHeight>(sidebar?22:25) || e.scrollWidth>e.clientWidth+1)) {
+        size-=.5;e.style.fontSize=`${size}px`;
+      }
+    };
+    fit();let active=true;
+    void document.fonts.ready.then(()=>{if(active)fit();});
+    return ()=>{active=false;};
+  },[name,width,sidebar]);
+  return <span ref={ref} data-calendar-bar-name className={styles.barName}
+    style={{width,position:sidebar?"relative":undefined,left:sidebar?undefined:offset,textAlign:sidebar?"left":undefined,color,textDecoration:strike?"line-through":undefined}}>{name}</span>;
 }
 
 // ---------------------------------------------------------------------------
@@ -666,7 +627,6 @@ function BlockDetail({ block, items, accent, onClose }: { block: Block; items: R
           ))}
         </div>
       )}
-      <CalendarHandoverSummary block={block} />
       {block.account_slug === "dbcinema_web" && <WebsiteVerificationPanel key={block.reservation_id} reservationId={block.reservation_id} />}
       {rows
         .filter(([, v]) => v != null && v !== "")
@@ -684,8 +644,7 @@ function BlockDetail({ block, items, accent, onClose }: { block: Block; items: R
 // Main component
 // ---------------------------------------------------------------------------
 const COL_WIDTH = 150; // px per day column (fallback before width is measured)
-const LABEL_WIDTH = 300; // px for left "renter + thumbnails" column
-const RES_ROW_HEIGHT = 148; // one reservation per row (renter + large thumbnails)
+const RES_ROW_HEIGHT = 84; // one reservation per row (renter + large thumbnails)
 const BAR_HEIGHT = 32; // fixed bar height, vertically centered in the row
 
 export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug, focusedReservationId, embedded = false }: Props): React.ReactElement | null {
@@ -699,6 +658,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
   // scroll) instead of a fixed 150px/col that overflowed a 1200px modal.
   const gridRef = useRef<HTMLDivElement>(null);
   const [gridWidth, setGridWidth] = useState(0);
+  const LABEL_WIDTH = gridWidth > 0 && gridWidth < 640 ? 140 : 300;
   const focusedRowRef = useRef<HTMLDivElement>(null);
   // W08 search — filter rentals by item name / tag and (lazily) show per-day
   // availability. The query string is debounced before hitting the backend so
@@ -1066,24 +1026,8 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
           </div>
         </div>
 
-        <div className={styles.agenda} data-calendar-agenda>
-          {searching && matchedInv.map(item => <div key={item.item_id} className={styles.agendaCard}>
-            <strong>{item.name}</strong>
-            <div className={styles.agendaItems}>{item.availability.map(cell => <span key={cell.date}>
-              {calendarDayLabel(cell.date)} · {cell.free}/{cell.total} free
-              {cell.free_from ? ` from ${cell.free_from}` : ""}
-            </span>)}</div>
-          </div>)}
-          {visibleResRows.map(row => <button key={row.reservationId} data-calendar-booking-id={row.reservationId} className={styles.agendaCard} style={{"--account-accent":row.acc} as React.CSSProperties}
-            onClick={() => setSelectedBlock({block:row.block,items:row.items,accent:row.acc})}>
-            <div className={styles.agendaHeader}><strong>{row.block.renter_name || "Booking"}</strong><span>{orderStepLabel(row.block.order_step)}</span></div>
-            <div className={styles.agendaItems}>{row.items.map((item,index) => <React.Fragment key={index}>{item.image && <img src={item.image} alt="" />}<span>{item.name}</span></React.Fragment>)}</div>
-            <CalendarHandoverSummary block={row.block} />
-          </button>)}
-          {!visibleResRows.length && <p className="text-sm text-gray-400">{data ? "No rentals in this date range" : "Loading calendar…"}</p>}
-        </div>
         {/* ---- Grid area ---- */}
-        <div ref={gridRef} className={`flex-1 overflow-auto ${styles.desktop}`}>
+        <div ref={gridRef} className={`flex-1 overflow-auto`}>
           {data === undefined ? (
             // Loading skeleton
             <div className="flex flex-col gap-2 p-6">
@@ -1274,12 +1218,9 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                             className="w-2 h-2 rounded-full flex-shrink-0"
                             style={{ background: row.acc, boxShadow: `0 0 5px ${row.acc}` }}
                           />
-                          <span className="text-[11px] text-gray-100 leading-tight font-semibold break-words" title={renter}>
-                            {renter}
-                          </span>
+                          <CalendarBarName name={renter} width={LABEL_WIDTH-36} color="#f3f4f6" sidebar />
                         </span>
-                        <ResThumbs items={row.items} ring={row.acc} size={36} />
-                        <CalendarHandoverSummary block={row.block} />
+                        <ResThumbs items={row.items} ring={row.acc} />
                       </div>
 
                       {/* Track */}
@@ -1314,7 +1255,7 @@ export default function CalendarGantt({ open, onClose, weekStartIso, accountSlug
                           </React.Fragment>
                         ))}
 
-                        <div className={styles.trackLabel} aria-hidden="true"><span>Pickup · {calendarDayLabel(row.block.start_date)}{row.block.pickup_time ? ` · ${row.block.pickup_time}` : ""}</span><span>Return · {calendarDayLabel(row.block.return_date ?? row.block.end_date)}{row.block.return_time ? ` · ${row.block.return_time}` : " · time not recorded"}</span></div>
+
                         {/* The reservation bar — time-accurate */}
                         <ReservationBar
                           row={row}
