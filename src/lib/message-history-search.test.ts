@@ -56,8 +56,8 @@ describe("message history pagination controller", () => {
       true,
     );
     expect(read.mock.calls[1][0].requests[0].thread_id).toBe("15");
-    expect(progress.mock.calls.at(-1)[0]).toHaveLength(33);
-    expect(progress.mock.calls.at(-1)[1]).toBe(false);
+    expect(progress.mock.calls.at(-1)?.[0]).toHaveLength(33);
+    expect(progress.mock.calls.at(-1)?.[1]).toBe(false);
   });
   it("ignores a cancelled response and starts no additional pages", async () => {
     let cancelled = false;
