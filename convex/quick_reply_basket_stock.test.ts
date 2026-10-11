@@ -15,17 +15,15 @@ vi.mock("./lib/renter_stock", () => ({
 vi.mock("./lib/renter_order_stock", () => ({
   checkOrderRentalStock: vi.fn(async () => fixtures.result),
   resolveOrderPhysicalItems: vi.fn(async (_ctx, _account, lines) => ({
-    items:
-      lines[0].product_id === 99
-        ? []
-        : [
-            {
-              item_id:
-                lines[0].product_id === 10
-                  ? "physical-camera"
-                  : "physical-lens",
-            },
-          ],
+    available: lines[0].product_id === 98 ? false : null,
+    items: [98, 99].includes(lines[0].product_id)
+      ? []
+      : [
+          {
+            item_id:
+              lines[0].product_id === 10 ? "physical-camera" : "physical-lens",
+          },
+        ],
   })),
 }));
 import { loadStockSources } from "./lib/renter_stock";
@@ -82,6 +80,17 @@ describe("fresh whole-basket stock line checks", () => {
       },
     );
     expect(result.line_checks).toEqual([{ item_index: 0, available: null }]);
+  });
+  it("marks a known non-rentable listing unavailable while preserving unknown mappings", async () => {
+    const result = await (check as any)._handler(
+      {},
+      {
+        ...args,
+        include_line_checks: true,
+        lines: [{ name: "Inactive", qty: 1, product_id: 98 }],
+      },
+    );
+    expect(result.line_checks).toEqual([{ item_index: 0, available: false }]);
   });
   it("keeps existing callers unchanged when line checks are not requested", async () => {
     expect(await (check as any)._handler({}, args)).toEqual(fixtures.result);

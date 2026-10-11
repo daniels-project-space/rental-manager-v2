@@ -49,9 +49,11 @@ export const check = internalQuery({
           (receipt) => String(receipt.item_id) === item.item_id,
         ),
       );
-      const available =
-        !resolved.items.length ||
-        receipts.some((receipt) => !receipt || receipt.available == null)
+      const available = !resolved.items.length
+        ? resolved.available === false
+          ? false
+          : null
+        : receipts.some((receipt) => !receipt || receipt.available == null)
           ? null
           : receipts.some((receipt) => receipt!.available === false)
             ? false

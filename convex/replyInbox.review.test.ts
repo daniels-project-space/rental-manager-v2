@@ -70,6 +70,46 @@ describe("Quick Reply qualified replacement search limit", () => {
  });
 });
 
+describe("Identity-backed complete listing replacements", () => {
+ async function fixture(){
+  const f=database();const ids:any={};
+  for(const [pid,name,units,cost,mount] of [[10,"Manfrotto 055",2,1000,"E"],[20,"Manfrotto 190",1,500,"E"],[21,"Basic Tripod",2,400,"E"],[22,"Light Tripod",2,300,"E"],[23,"Expensive Tripod",2,1200,"E"],[24,"Wrong Mount Tripod",2,200,"EF"]] as const){
+   const id=await f.ctx.db.insert("items",{name_canonical:name,kind:"tripod",lens_mount:mount,status:"active",qty:10,replacement_cost_gbp:cost});ids[pid]=id;
+   await f.ctx.db.insert("online_listings",{account_slug:"leo",product_id:pid,name:`Operator kit ${pid} - collected fully assembled`,description:`Included in this kit: • ${units}x ${name}`,daily_price:10});
+   await f.ctx.db.insert("listing_resolution_override",{account_slug:"leo",product_id:pid,components:[{item_id:id,qty:units}]});
+   await f.ctx.db.insert("hygglo_products",{accountSlug:"leo",productId:pid,masterItemId:id,name:`Operator kit ${pid}`,prices:[{days:1,pricePerDay:10}]});
+  }
+  const args={account_slug:"leo",target_product_id:10,item_name:"Operator kit - collected fully assembled",exclude_name:"Operator kit - collected fully assembled",quantity:1,start_date:"2026-10-20",end_date:"2026-10-21",booking_use:"standalone"};
+  return {...f,ids,args};
+ }
+ it("uses exact listing identity despite unmatchable titles and preserves both requested units", async()=>{
+  const f=await fixture(),before=JSON.stringify([...f.rows]);
+  const result=await invoke(__service_basket_replacement_candidates,f.ctx,f.args);
+  expect(result.alternatives.map((a:any)=>a.product_id).sort()).toEqual([21,22]);
+  expect(result.alternatives.every((a:any)=>a.mapping_complete&&a.availability.available)).toBe(true);
+  expect(JSON.stringify([...f.rows])).toBe(before);
+ });
+ it("can replace a mapped original that is no longer rentable without changing its inventory", async()=>{
+  const f=await fixture();await f.ctx.db.patch(f.ids[10],{status:"inactive",qty:0});const before=JSON.stringify([...f.rows]);
+  const result=await invoke(__service_basket_replacement_candidates,f.ctx,f.args);
+  expect(result.alternatives.map((a:any)=>a.product_id).sort()).toEqual([21,22]);
+  expect(JSON.stringify([...f.rows])).toBe(before);
+ });
+ it("keeps source value unknown rather than borrowing a fuzzy title match", async()=>{
+  const f=await fixture();await f.ctx.db.patch(f.ids[10],{replacement_cost_gbp:undefined});
+  const result=await invoke(__service_basket_replacement_candidates,f.ctx,f.args);
+  expect(result.alternatives).toEqual([]);expect(result.reason).toContain("replacement value");
+ });
+ it("does not use another account's listing identity", async()=>{
+  const f=await fixture();const result=await invoke(__service_basket_replacement_candidates,f.ctx,{...f.args,account_slug:"foreign"});
+  expect(result.alternatives).toEqual([]);expect(result.reason).toContain("mapping");
+ });
+ it("checks candidates with the retained kit and excludes existing booking listings", async()=>{
+  const f=await fixture();const result=await invoke(__service_basket_replacement_candidates,f.ctx,{...f.args,basket_lines:[{name:"Original",qty:1,product_id:10},{name:"Retained",qty:1,product_id:21}],omit_product_ids:[10]});
+  expect(result.alternatives.map((a:any)=>a.product_id)).toEqual([22]);
+ });
+});
+
 describe("Native independent hire budget qualification",()=>{
  async function fixture(){
   const f=database();const ids:any={};
@@ -86,6 +126,21 @@ describe("Native independent hire budget qualification",()=>{
   const args={account_slug:"leo",kind:"camera",item_name:"Sony FX3",lens_mount:"E",camera_requirements:{sensor_format:"full_frame",recording:{resolution:"uhd_4k",min_fps:30,full_width:true,internal:true}},start_date:"2026-10-20",end_date:"2026-10-21",quantity:1,booking_use:"standalone",max_rental_total_gbp:65};
   return {...f,ids,args};
  }
+ it("resolves a long camera-kit title through its product identity without dropping the second body", async()=>{
+  const f=await fixture();
+  for(const row of f.rows.values())if(row.table==="items")await f.ctx.db.patch(row._id,{replacement_cost_gbp:row.name_canonical==="Sony FX3"?2500:1000});
+  const original=[...f.rows.values()].find(row=>row.table==="listing_resolution_override"&&row.product_id===10);
+  await f.ctx.db.patch(original._id,{components:[{item_id:f.ids["Sony FX3"],qty:2}]});
+  for(const [pid,name] of [[21,"Sony A7 V"],[31,"Sony A7 III"]] as const){
+   await f.ctx.db.insert("online_listings",{account_slug:"leo",product_id:pid,name:`Two-body ${name} pack`,description:`Included in this kit: • 2x ${name}`,daily_price:40});
+   await f.ctx.db.insert("listing_resolution_override",{account_slug:"leo",product_id:pid,components:[{item_id:f.ids[name],qty:2}]});
+   await f.ctx.db.insert("hygglo_products",{accountSlug:"leo",productId:pid,masterItemId:f.ids[name],name:`Two-body ${name} pack`,prices:[{days:1,pricePerDay:40}]});
+  }
+  const before=JSON.stringify([...f.rows]);
+  const result=await invoke(__service_basket_replacement_candidates,f.ctx,{account_slug:"leo",target_product_id:10,item_name:"Production collection pack with batteries and accessories",start_date:"2026-10-20",end_date:"2026-10-21",quantity:1,booking_use:"standalone"});
+  expect(result.alternatives.map((a:any)=>a.product_id).sort()).toEqual([21,31]);
+  expect(JSON.stringify([...f.rows])).toBe(before);
+ });
  it("quick reply infers camera requirements without also requiring a lens",async()=>{
   const f=await fixture();
   for(const row of f.rows.values())if(row.table==="items")await f.ctx.db.patch(row._id,{replacement_cost_gbp:row.name_canonical==="Sony FX3"?2500:1000});
