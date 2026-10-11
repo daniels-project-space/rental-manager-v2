@@ -89,6 +89,12 @@ describe("Identity-backed complete listing replacements", () => {
   expect(result.alternatives.every((a:any)=>a.mapping_complete&&a.availability.available)).toBe(true);
   expect(JSON.stringify([...f.rows])).toBe(before);
  });
+ it("can replace a mapped original that is no longer rentable without changing its inventory", async()=>{
+  const f=await fixture();await f.ctx.db.patch(f.ids[10],{status:"inactive",qty:0});const before=JSON.stringify([...f.rows]);
+  const result=await invoke(__service_basket_replacement_candidates,f.ctx,f.args);
+  expect(result.alternatives.map((a:any)=>a.product_id).sort()).toEqual([21,22]);
+  expect(JSON.stringify([...f.rows])).toBe(before);
+ });
  it("keeps source value unknown rather than borrowing a fuzzy title match", async()=>{
   const f=await fixture();await f.ctx.db.patch(f.ids[10],{replacement_cost_gbp:undefined});
   const result=await invoke(__service_basket_replacement_candidates,f.ctx,f.args);

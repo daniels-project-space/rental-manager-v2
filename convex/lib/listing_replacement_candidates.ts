@@ -41,7 +41,7 @@ export async function listingReplacementCandidates(ctx: QueryCtx, a: Args) {
     sources,
   );
   const empty = (reason: string) => ({ alternatives: [], reason });
-  if (!original.complete || original.owned !== true)
+  if (!original.complete)
     return empty("The requested listing needs its inventory mapping reviewed.");
   const items = new Map(sources.items.map((item) => [String(item._id), item]));
   const value = (components: typeof original.components) => {
