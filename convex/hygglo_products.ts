@@ -164,15 +164,21 @@ export const __service_listForStorefront = internalQueryOf(list);
 
 /** One source snapshot for catalogue identity, declared kit coverage and exact
  * physical pools. A fuzzy primary match alone never certifies a complete kit. */
+const STOREFRONT_CATALOGUE_LIMITS = { products: 2000, inventory: 2000, listingMappings: 4000 } as const;
+
 export const __service_catalogueForStorefront = internalQuery({
   args: { accountSlug: v.literal("dbcinema") },
   handler: async (ctx, { accountSlug }) => {
+    // Read one extra row so oversized sources fail closed instead of returning a partial catalogue.
     const [products, inventory, overrides, listings] = await Promise.all([
-      ctx.db.query("hygglo_products").withIndex("by_account", q => q.eq("accountSlug", accountSlug)).collect(),
-      ctx.db.query("items").collect(),
-      ctx.db.query("listing_resolution_override").withIndex("by_account_product", q => q.eq("account_slug", accountSlug)).collect(),
-      ctx.db.query("online_listings").withIndex("by_account_product", q => q.eq("account_slug", accountSlug)).collect(),
+      ctx.db.query("hygglo_products").withIndex("by_account", q => q.eq("accountSlug", accountSlug)).take(STOREFRONT_CATALOGUE_LIMITS.products + 1),
+      ctx.db.query("items").withIndex("by_canonical_name").take(STOREFRONT_CATALOGUE_LIMITS.inventory + 1),
+      ctx.db.query("listing_resolution_override").withIndex("by_account_product", q => q.eq("account_slug", accountSlug)).take(STOREFRONT_CATALOGUE_LIMITS.listingMappings + 1),
+      ctx.db.query("online_listings").withIndex("by_account_product", q => q.eq("account_slug", accountSlug)).take(STOREFRONT_CATALOGUE_LIMITS.listingMappings + 1),
     ]);
+    if (products.length > STOREFRONT_CATALOGUE_LIMITS.products || inventory.length > STOREFRONT_CATALOGUE_LIMITS.inventory ||
+        overrides.length > STOREFRONT_CATALOGUE_LIMITS.listingMappings || listings.length > STOREFRONT_CATALOGUE_LIMITS.listingMappings)
+      throw Error("Storefront catalogue sources exceed their safe read limits; no partial mapping was returned.");
     // Preserve the same first indexed row selected by loadListingInventory.
     const mapping = new Map<number, typeof overrides[number]>();
     const descriptions = new Map<number, typeof listings[number]>();
