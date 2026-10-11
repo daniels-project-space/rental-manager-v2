@@ -31,7 +31,7 @@ export function ItemImage({ item }: { item: StackItem }) {
     </span>
   );
 }
-/** Expansion stays in normal document flow, so the row grows with its gear. */
+/** The compact stack keeps its footprint while cards expand outward. */
 export function RequestedItemStack({
   items,
   size = 38,
@@ -44,14 +44,23 @@ export function RequestedItemStack({
   expandedLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const positionExpansion = (element: HTMLElement) => {
+    const bounds = element.getBoundingClientRect();
+    const row = element.closest('[aria-label^="Open conversation with"]')?.getBoundingClientRect();
+    const edge = Math.min(window.innerWidth - 12, row?.right ?? window.innerWidth - 12);
+    setOffset(Math.min(0, edge - bounds.left - Math.min(380, window.innerWidth * 0.75)));
+  };
   if (!items.length) return <span className={styles.empty}>◇</span>;
   return (
     <div
       data-requested-stack
       data-expanded={open || alwaysExpanded}
       className={styles.container}
+      data-inline-expanded={alwaysExpanded}
+      style={{ "--stack-offset": `${offset}px` } as CSSProperties}
       onPointerEnter={(event) => {
-        if (event.pointerType === "mouse") setOpen(true);
+        if (event.pointerType === "mouse") { positionExpansion(event.currentTarget); setOpen(true); }
       }}
       onPointerLeave={(event) => {
         if (event.pointerType === "mouse") setOpen(false);
@@ -66,22 +75,19 @@ export function RequestedItemStack({
       {!alwaysExpanded && (
         <button
           type="button"
-          className={`${styles.stack} ${open ? styles.expandedAnchor : ""}`}
-          style={
-            open
-              ? undefined
-              : {
-                  width: size + Math.min(items.length - 1, 2) * 7,
-                  height: size + Math.min(items.length - 1, 2) * 4,
-                }
-          }
+          className={styles.stack}
+          style={{
+            width: size + Math.min(items.length - 1, 2) * 7,
+            height: size + Math.min(items.length - 1, 2) * 4,
+          }}
           aria-label={`Show all ${items.length} requested items`}
           aria-expanded={open}
           onFocus={(event) => {
-            if (event.currentTarget.matches(":focus-visible")) setOpen(true);
+            if (event.currentTarget.matches(":focus-visible")) { positionExpansion(event.currentTarget.parentElement!); setOpen(true); }
           }}
           onClick={(event) => {
             event.stopPropagation();
+            positionExpansion(event.currentTarget.parentElement!);
             const pointer = event.nativeEvent as MouseEvent & {
               pointerType?: string;
             };
@@ -90,9 +96,7 @@ export function RequestedItemStack({
             );
           }}
         >
-          {open && <span>Requested equipment · {items.length}</span>}
-          {!open &&
-            items.slice(0, 3).map((item, index) => (
+          {!open && items.slice(0, 3).map((item, index) => (
               <span
                 key={`${index}-${item.name}`}
                 className={styles.layer}

@@ -327,8 +327,7 @@ async function nativeBasketOptions(ctx: any, thread_id: string): Promise<any> {
   if (
     !tile?.account_slug ||
     !tile.start_date ||
-    !tile.end_date ||
-    tile.availability?.status !== "conflict"
+    !tile.end_date
   )
     return {
       options: [],
@@ -529,7 +528,7 @@ async function nativeBasketOptions(ctx: any, thread_id: string): Promise<any> {
           (_: any, index: number) =>
             !unavailable.some((item: any) => item.index === index),
         )
-        .map((item: any) => ({ name: item.name, qty: item.qty }));
+        .map((item: any) => ({ name: item.name, qty: item.qty, ...(item.product_id ? { product_id: item.product_id } : {}) }));
   const { sets, limited } = await replacementSets(
     groups,
     (item: any) => String(item.product_id),

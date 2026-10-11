@@ -23,6 +23,7 @@ export default defineConfig({
     environment: "node",
     globals: false,
     include: [
+      "convex/quick_reply_manual_draft.test.ts",
       "src/lib/dashboard/layout-order.test.ts",
       "convex/lib/replacement_sets.test.ts",
       "convex/quick_reply_replacements.test.ts",

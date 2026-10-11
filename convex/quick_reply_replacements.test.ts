@@ -369,3 +369,12 @@ describe("registered complete native basket replacement finder", () => {
     expect(f.ctx.runMutation).not.toHaveBeenCalled();
   });
 });
+
+describe("replacement search reads stock rather than cached queue status", () => {
+ it("finds complete sets after a cached available tile becomes conflicted", async () => {
+  const f=fixture(); f.tile.availability.status="available";
+  const result=await invoke(f.ctx);
+  expect(result.options).toHaveLength(2);
+  expect(f.ctx.runMutation).not.toHaveBeenCalled();
+ });
+});

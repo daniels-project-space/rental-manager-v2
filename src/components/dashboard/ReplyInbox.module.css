@@ -172,7 +172,7 @@
 .table {
   border: 1px solid #253440;
   border-radius: 10px;
-  overflow: hidden;
+  overflow: visible;
   background: #101820;
 }
 .tableHeader,
@@ -323,18 +323,6 @@
   font-size: 11px;
   line-height: 1.45;
   overflow-wrap: anywhere;
-}
-.gearLine:has([data-expanded="true"]) {
-  display: block;
-}
-.gearLine:has([data-expanded="true"]) > div {
-  width: 100%;
-}
-.gearLine:has([data-expanded="true"]) > span {
-  display: none;
-}
-.row:has([data-requested-stack][data-expanded="true"]) {
-  align-items: start;
 }
 .datesCell,
 .waitCell,
@@ -1989,20 +1977,6 @@
   .expandedStock {
     grid-column: 1/-1;
   }
-  .row:has([data-requested-stack][data-expanded="true"]) .gearCell {
-    grid-column: 1/3;
-    grid-row: 3;
-  }
-  .row:has([data-requested-stack][data-expanded="true"]) .waitCell {
-    grid-row: 4;
-  }
-  .row:has([data-requested-stack][data-expanded="true"]) .availCell {
-    grid-column: 1/3;
-    grid-row: 5;
-  }
-  .row:has([data-requested-stack][data-expanded="true"]) .progressCell {
-    grid-row: 5;
-  }
 }
 .queuePreview {
   border: 1px solid #253440;
@@ -2557,12 +2531,6 @@
     min-width: 54px;
     min-height: 54px;
   }
-  .row:has([data-requested-stack][data-expanded="true"]) {
-    grid-template-columns:
-      minmax(148px, 1.2fr) minmax(106px, 1fr) minmax(312px, 2.3fr)
-      68px 58px 64px 94px 106px;
-    align-items: center;
-  }
   .row [data-requested-stack] section {
     padding: 0;
     gap: 8px;
@@ -2591,3 +2559,26 @@
     grid-row: 2;
   }
 }
+
+/* A single spacious conversation owner, including notification entry points. */
+.heading { gap: 8px; margin-bottom: 8px; }
+.heading .titleRow { gap: 16px; }
+.workspaceTitle p { font-size: 11px; }
+.accountFilters { gap: 5px; }
+.accountFilters button { font-size: 11px; padding: 5px 9px; line-height: 1.3; }
+.accountFilters i { width: 7px; height: 7px; }
+.accountFilters button:first-child[aria-pressed="true"] { background: #203749; border-color: #49677e; }
+.toolbar { margin-bottom: 10px; }
+.toolbar select { margin-left: auto; }
+.expandedChat { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.chatDock { height: calc(100dvh - 200px); min-height: 540px; }
+.rows { max-height: calc(100dvh - 220px); }
+.row { min-height: 90px; padding-block: 11px; }
+.chatHeader { padding: 12px 16px; }
+@media (min-width: 760px) and (max-width: 1049px) {
+  .chatIdentity { padding-right: 48px; }
+}
+
+.dateSettings > div:first-child { flex-wrap: wrap; gap: 6px; }
+.dateSettings > div:first-child > span:nth-child(2) { min-width: 0; max-width: 100%; }
+.dateSettings > div:first-child > button { flex-shrink: 0; white-space: nowrap; }

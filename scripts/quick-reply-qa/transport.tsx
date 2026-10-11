@@ -373,7 +373,7 @@ export function useAction(ref) {
       if (name === "dbcinema_chat:thread") return { messages };
       if (name === "dbcinema_chat:renterReviews")
         return { reviews: [], lowCount: 0, fetched: true };
-      if (name === "replyInbox_actions:generateDraft") {
+      if (name === "replyInbox_actions:generateDraft" || name === "quick_reply_manual_draft:generate") {
         const draft =
           "Yes, those dates work. Pickup is available at the requested time.";
         const row = rows.find((row) => row.thread_id === args.thread_id);

@@ -14,7 +14,7 @@ import {
   sortableKeyboardCoordinates,
   rectSortingStrategy,
 } from "@dnd-kit/sortable";
-import { Suspense } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { HeaderBar } from "@/components/dashboard/HeaderBar";
 import { NotificationDeepLink } from "@/components/dashboard/NotificationDeepLink";
 import { EditModeBar } from "@/components/dashboard/EditModeBar";
@@ -77,13 +77,27 @@ const PANEL_SKELETON: Record<string, { height: string; rows: number }> = {
 
 export default function DashboardPage() {
   const { layout, reorderPanels, isPanelHidden } = useEditMode();
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  useEffect(() => {
+    const syncUrl = () => setNotificationOpen(new URL(window.location.href).searchParams.has("thread"));
+    const open = () => setNotificationOpen(true);
+    window.addEventListener("rm-open-thread", open);
+    window.addEventListener("rm-thread-closed", syncUrl);
+    window.addEventListener("popstate", syncUrl);
+    syncUrl();
+    return () => {
+      window.removeEventListener("rm-open-thread", open);
+      window.removeEventListener("rm-thread-closed", syncUrl);
+      window.removeEventListener("popstate", syncUrl);
+    };
+  }, []);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
   const visiblePanels = layout.panelOrder
-    .filter((id) => !isPanelHidden(id))
+    .filter((id) => !isPanelHidden(id) || (id === "reply-inbox" && notificationOpen))
     .map((id) => PANEL_WIDGETS.find((w) => w.id === id))
     .filter((w): w is (typeof PANEL_WIDGETS)[number] => Boolean(w));
 
@@ -126,7 +140,7 @@ export default function DashboardPage() {
                     <EditableWidget id={id} kind="panel" label={label}>
                       <WidgetErrorBoundary label={label}>
                         <DeferredMount
-                          eager={EAGER_PANELS.has(id)}
+                          eager={EAGER_PANELS.has(id) || (id === "reply-inbox" && notificationOpen)}
                           placeholderHeight={skel?.height}
                           skeletonRows={skel?.rows}
                         >

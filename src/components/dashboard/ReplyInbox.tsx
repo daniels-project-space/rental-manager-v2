@@ -3186,7 +3186,7 @@ export function ReplyModal({
     // Pull the renter's real rating + reviews (Hygglo order detail) on open.
     void resolveTrust({ thread_id: tile.thread_id });
   }, [resolveLoc, resolveTrust, tile.thread_id, tile.source]);
-  const generateDraft = useAction(api.replyInbox_actions.generateDraft);
+  const generateDraft = useAction(makeFunctionReference<"action">("quick_reply_manual_draft:generate"));
   const sendReply = useAction(api.replyInbox_actions.sendRenterReply);
   const approve = useAction(api.replyInbox_actions.approveOrder);
   const decline = useAction(api.replyInbox_actions.declineOrder);
@@ -3206,6 +3206,14 @@ export function ReplyModal({
     !sameDraftApproval(composeApproval, liveTile?.ai_draft_approval);
   // AI draft lives in its OWN preview box (not the compose box). Tap it to copy
   // it into the message box, then edit + Send yourself — never auto-sent.
+  const manualDraftContext = useRef<string | null>(null);
+  const draftRequestVersion = useRef(0);
+  const contextSignature = (value: ReplyTileData) => JSON.stringify([
+    value.thread_id, value.last_activity_at, value.preview,
+    value.start_date, value.end_date, value.items,
+  ]);
+  const currentDraftContext = useRef("");
+  currentDraftContext.current = contextSignature(liveTile ?? tile);
   const [draft, setDraft] = useState(
     tile.ai_draft_review || tile.ai_draft_stale
       ? ""
@@ -3224,6 +3232,8 @@ export function ReplyModal({
   // results and review invalidation. The owner's compose text is separate.
   useEffect(() => {
     if (!liveTile) return;
+    if (manualDraftContext.current === contextSignature(liveTile)) return;
+    manualDraftContext.current = null;
     const review = liveTile.ai_draft_review ?? null;
     const withheld = !!review || !!liveTile.ai_draft_stale;
     setDraftReview(review);
@@ -3467,6 +3477,8 @@ export function ReplyModal({
   }, [onClose]);
 
   async function onGenerate() {
+    const version = ++draftRequestVersion.current;
+    const context = currentDraftContext.current;
     setDrafting(true);
     setNote(null);
     try {
@@ -3476,16 +3488,23 @@ export function ReplyModal({
         const result = await draftDbCinemaReply({
           booking_id: tile.source_booking_id,
         });
+        if (version !== draftRequestVersion.current || context !== currentDraftContext.current) {
+          setNote("The conversation changed while drafting. Draft again for the latest message.");
+          return;
+        }
+        manualDraftContext.current = context;
         setDraft(result.draft);
         setDraftConfidence(null);
         setDraftFlags([]);
         return;
       }
-      const r = await generateDraft({
-        thread_id: tile.thread_id,
-        retry_review: true,
-      });
+      const r = await generateDraft({ thread_id: tile.thread_id });
+      if (version !== draftRequestVersion.current || context !== currentDraftContext.current) {
+        setNote("The conversation changed while drafting. Draft again for the latest message.");
+        return;
+      }
       if (r.status === "ok" && r.draft) {
+        manualDraftContext.current = context;
         setDraftReview(null);
         setDraft(r.draft);
         setDraftConfidence(r.confidence ?? null);
@@ -3508,8 +3527,8 @@ export function ReplyModal({
       } else if (r.reason === "subscription_unavailable") {
         setNote("The draft assistant is temporarily unavailable.");
       } else setNote("Draft unavailable.");
-    } catch {
-      setNote("Draft failed.");
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : "Draft failed. Try again.");
     } finally {
       setDrafting(false);
     }
@@ -3517,7 +3536,8 @@ export function ReplyModal({
   useEffect(() => {
     if (initialShowReviews || initialReplacementRequest > 0) return;
     setComposeOpen(true);
-    void onGenerate();
+    // Generation is an explicit operator action; opening a notification only
+    // reads the conversation and never starts a bot turn.
     // Deliberately tied only to an explicit open. Polls and incoming messages
     // update context without generating another reply or overwriting typed text.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3528,7 +3548,11 @@ export function ReplyModal({
       if (draft) pasteText(draft);
       return;
     }
-    copyAIDraft();
+    // Manual drafts are returned for operator review, never cached as an
+    // automated bot approval or sent on generation.
+    if (manualDraftContext.current === currentDraftContext.current) {
+      if (draft) { setComposeApproval(null); pasteText(draft); }
+    } else copyAIDraft();
   }
   // Shared send used by the compose box AND the canned quick-text buttons.
   // Returns true on success. clearBox=true also empties the textarea.
@@ -3870,34 +3894,7 @@ export function ReplyModal({
                       Find replacement
                     </button>
                   )}
-                {tile.has_reservation &&
-                  tile.account_slug &&
-                  (
-                    [
-                      ["change", "Change rental"],
-                      ["dates", "Reschedule"],
-                      ["discount", "Discount"],
-                      ["refund", "Refund"],
-                    ] as const
-                  ).map(([action, label]) => (
-                    <button
-                      type="button"
-                      key={action}
-                      onClick={() => {
-                        setBookingAction(action);
-                        setBookingActionRevision((revision) => revision + 1);
-                        setControlTab(
-                          action === "dates"
-                            ? "dates"
-                            : action === "change"
-                              ? "gear"
-                              : "pricing",
-                        );
-                      }}
-                    >
-                      {label}
-                    </button>
-                  ))}
+
               </div>
             }
           />
@@ -4641,7 +4638,8 @@ export function ReplyInbox() {
   const updateSettings = useMutation(api.settings.update);
   const includePending = settings?.availability_include_pending ?? false;
   const queue = useStableQuery(api.replyInbox.getReplyQueue, {
-    accountSlug: activeAccountSlug ?? undefined,
+    // This workspace has its own account filter. Load the shared queue once,
+    // so choosing another account never conflicts with the dashboard filter.
     // High cap: renter inquiries on cancelled/finished orders now surface too,
     // so the awaiting-me backlog is much larger — don't truncate it away.
     limit: 200,
@@ -4728,11 +4726,22 @@ export function ReplyInbox() {
   useEffect(() => {
     const element = widgetRef.current;
     if (!element) return;
-    const observer = new ResizeObserver(([entry]) =>
-      setCanDock(entry.contentRect.width >= 1050),
-    );
+    const viewport = window.visualViewport;
+    const updateDock = () => {
+      const width = element.getBoundingClientRect().width;
+      const height = viewport?.height ?? window.innerHeight;
+      setCanDock(width >= 760 && height >= 760);
+    };
+    const observer = new ResizeObserver(updateDock);
     observer.observe(element);
-    return () => observer.disconnect();
+    window.addEventListener("resize", updateDock);
+    viewport?.addEventListener("resize", updateDock);
+    updateDock();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateDock);
+      viewport?.removeEventListener("resize", updateDock);
+    };
   }, []);
   const openThread = (tile: ReplyTileData, reviews = false) => {
     setPreviewId(tile.thread_id);
@@ -4742,7 +4751,18 @@ export function ReplyInbox() {
     setOpenId(tile.thread_id);
   };
 
-  const closeModal = useCallback(() => setOpenId(null), []);
+  const closeModal = useCallback(() => {
+    // Close locally before navigation; a stale URL must never keep a second
+    // dialog mounted. Preserve unrelated dashboard parameters and hash.
+    setOpenId(null);
+    setReviewId(null);
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("thread")) {
+      url.searchParams.delete("thread");
+      window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+    }
+    window.dispatchEvent(new Event("rm-thread-closed"));
+  }, []);
   // Last-known row for the open thread, so the overlay survives the thread
   // leaving the queue after a send/approve (see `open` below).
   const openCacheRef = useRef<ReplyTileData | null>(null);
@@ -4754,7 +4774,6 @@ export function ReplyInbox() {
   // Renters with a pickup/return within ±60 min — the pinned current-rental bar. Bump
   // `_tick` each minute (via `now`) so the time-window query re-runs live.
   const handoffs = useQuery(api.replyInbox.getImminentHandoffs, {
-    accountSlug: activeAccountSlug ?? undefined,
     _tick: Math.floor(now / 60000),
   }) as
     | Array<{
@@ -4840,27 +4859,32 @@ export function ReplyInbox() {
       /* browser storage can be disabled */
     }
   }, []);
-  // Yield to a tapped notification: when the SW asks to deep-link to a thread,
-  // close this widget's own modal so the deep-link host (z-[300]) is the only
-  // chat showing — otherwise a stale widget modal would sit behind it.
   useEffect(() => {
-    const yieldModal = () => setOpenId(null);
-    const onMsg = (e: MessageEvent) => {
-      if ((e.data as { type?: string } | undefined)?.type === "deep-link")
-        yieldModal();
+    const openNotification = (thread: string | null) => {
+      if (!thread) return;
+      openCacheRef.current = null;
+      setReviewId(null);
+      setPreviewId(thread);
+      setOpenId(thread);
+      setOpenRevision((value) => value + 1);
+      requestAnimationFrame(() => widgetRef.current?.scrollIntoView({ block: "start", behavior: "instant" }));
     };
-    const sw =
-      typeof navigator !== "undefined" ? navigator.serviceWorker : undefined;
-    sw?.addEventListener("message", onMsg);
-    // Also yield when a notification is opened from the bell dropdown (a URL nav,
-    // which sends no SW message) — the bell dispatches this so the deep-link host
-    // is the ONLY chat showing, never a stale widget tile behind it.
-    if (typeof window !== "undefined")
-      window.addEventListener("rm-deeplink", yieldModal);
+    const onOpen = (event: Event) => {
+      const thread = (event as CustomEvent<unknown>).detail;
+      if (typeof thread === "string") openNotification(thread);
+    };
+    const onHistory = () => {
+      const thread = new URL(window.location.href).searchParams.get("thread");
+      if (thread) openNotification(thread);
+      else setOpenId(null);
+    };
+    window.addEventListener("rm-open-thread", onOpen);
+    window.addEventListener("popstate", onHistory);
+    // Also handles an inbox loaded lazily after the notification bridge ran.
+    openNotification(new URL(window.location.href).searchParams.get("thread"));
     return () => {
-      sw?.removeEventListener("message", onMsg);
-      if (typeof window !== "undefined")
-        window.removeEventListener("rm-deeplink", yieldModal);
+      window.removeEventListener("rm-open-thread", onOpen);
+      window.removeEventListener("popstate", onHistory);
     };
   }, []);
   useEffect(() => {
@@ -4889,7 +4913,6 @@ export function ReplyInbox() {
       const slug =
         t.source === "dbcinema_web" ? "dbcinema_web" : t.account_slug;
       if (accountFilter && slug !== accountFilter) return false;
-      if (activeAccountSlug && slug !== activeAccountSlug) return false;
       const dismissedAt = dbDismissedAt[t.thread_id];
       return (
         t.source !== "dbcinema_web" ||
@@ -5236,7 +5259,7 @@ export function ReplyInbox() {
             )}
 
             <OwnerChecksPanel
-              accountSlug={activeAccountSlug ?? undefined}
+              accountSlug={accountFilter ?? undefined}
               onOpen={setOpenId}
             />
             <div className={styles.table}>

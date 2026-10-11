@@ -111,7 +111,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
                 " " +
                 (await ev(`document.body.innerText`)),
             );
-          await tap(btn("Reschedule"));
+          // The date editor is now directly in the controls panel.
           await tap(
             `document.querySelector('[title="Change the rental dates"]')`,
           );
