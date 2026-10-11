@@ -1693,19 +1693,19 @@
 .row [data-requested-stack] section small {
   font-size: 9px;
 }
-.sourceActions section {
+.sourceActions > section {
   padding: 6px 0 20px;
   border-bottom: 1px solid #253440;
 }
-.sourceActions section:last-of-type {
+.sourceActions > section:last-of-type {
   border: 0;
 }
-.sourceActions label {
+.sourceActions > section:not(:first-child) label {
   display: block;
   margin: 12px 0;
   color: #a5becf;
 }
-.sourceActions input:not([type="checkbox"]) {
+.sourceActions > section:not(:first-child) input:not([type="checkbox"]) {
   display: block;
   width: 100%;
   margin-top: 6px;
@@ -1715,10 +1715,10 @@
   border: 1px solid #304859;
   border-radius: 9px;
 }
-.sourceActions input[type="checkbox"] {
+.sourceActions > section:not(:first-child) input[type="checkbox"] {
   margin-right: 8px;
 }
-.sourceActions button {
+.sourceActions > section:not(:first-child) button {
   border: 1px solid #304859;
   background: #1b2d3b;
   color: #e7eef5;
@@ -1726,10 +1726,10 @@
   padding: 10px 12px;
   margin: 6px 6px 6px 0;
 }
-.sourceActions button:disabled {
+.sourceActions > section:not(:first-child) button:disabled {
   opacity: 0.4;
 }
-.sourceActions [role="region"] {
+.sourceActions > section:not(:first-child) [role="region"] {
   padding: 12px;
   background: #162636;
   border: 1px solid #486f9c;

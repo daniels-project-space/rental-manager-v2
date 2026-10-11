@@ -591,3 +591,8 @@
   border-radius: 8px;
   padding: 8px 10px;
 }
+
+/* Give the reviewed equipment change the full panel while its own confirmation is active. */
+.panel:has([data-equipment-editing="true"]) > .footer {
+  display: none;
+}

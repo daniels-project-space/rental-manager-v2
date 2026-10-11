@@ -20,7 +20,19 @@ type LinkedRenterReviews = {
   unavailable: boolean;
 };
 
-type RemoteResult<T> = { status?: string; value?: T; errorMessage?: string };
+type RemoteResult<T> = {
+  status?: string;
+  value?: T;
+  errorMessage?: string;
+  errorData?: { code?: string };
+};
+class EquipmentReviewChanged extends Error {
+  constructor() {
+    super(
+      "The rental or equipment quote changed. Review the current kit again.",
+    );
+  }
+}
 
 export async function callDbCinema<T>(
   kind: "query" | "mutation" | "action",
@@ -48,6 +60,8 @@ export async function callDbCinema<T>(
     throw new Error("DB Cinema returned an unreadable chat response.");
   }
   if (!response.ok || result.status !== "success") {
+    if (result.errorData?.code === "EQUIPMENT_REVIEW_STALE")
+      throw new EquipmentReviewChanged();
     // Keep provider details out of the browser; in particular, never echo a
     // remote validation response that could include submitted message text.
     throw new Error("DB Cinema chat is temporarily unavailable.");
@@ -609,6 +623,22 @@ export const acceptReplacementBasket = action({
   },
 });
 
+function equipmentImages(values: unknown[]): string[] {
+  return [
+    ...new Set(
+      values
+        .filter(
+          (url): url is string =>
+            typeof url === "string" && /^(https:\/\/|\/(?!\/))/.test(url),
+        )
+        .map((url) =>
+          url.startsWith("/")
+            ? new URL(url, "https://dbcinemarentals.com").href
+            : url,
+        ),
+    ),
+  ];
+}
 /** Owner-only controls reuse the website's authoritative rental workflows. */
 export const rentalControls = action({
   args: { booking_id: v.string() },
@@ -629,12 +659,29 @@ export const rentalControls = action({
         !b.returnDecision &&
         !b.activeAdditionId &&
         !b.activeExtensionId,
-      lines: (b.lineItems ?? []).map((l: any) => ({
+      canAddEquipment:
+        ["pending_payment", "confirmed", "active"].includes(b.status) &&
+        !b.cancellationDecision &&
+        !b.returnDecision &&
+        !b.activeAdditionId &&
+        !b.activeExtensionId,
+      canRemoveEquipment:
+        b.status === "confirmed" &&
+        !b.cancellationDecision &&
+        !b.returnDecision &&
+        !b.activeAdditionId &&
+        !b.activeExtensionId &&
+        (b.lineItems ?? []).length > 1,
+      lines: (b.lineItems ?? []).map((l: any, index: number) => ({
+        listing_id: String(l.listingId),
+        line_index: index,
+        image_urls: equipmentImages(l.imageSources ?? [l.heroImage]),
         name: l.title,
         qty: l.qty,
         start: l.start,
         end: l.end,
-        image_url: l.heroImage ?? null,
+        image_url:
+          equipmentImages([l.heroImage, ...(l.imageSources ?? [])])[0] ?? null,
       })),
       refunds: (b.rentalRefunds ?? []).map((r: any) => ({
         status: r.status,
@@ -737,5 +784,151 @@ export const refundRental = action({
         reason,
       },
     );
+  },
+});
+
+/** These bridges only execute a change after the operator confirms the exact review. */
+export const equipmentCatalog = action({
+  args: { search: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    await requireOwner(ctx);
+    const rows = await callDbCinema<
+      Array<{
+        listingId: string;
+        title: string;
+        imageSources: string[];
+        daily: number;
+      }>
+    >("query", "rentalOperations:equipmentCatalog", args);
+    return rows.map((row) => ({
+      ...row,
+      imageSources: equipmentImages(row.imageSources),
+    }));
+  },
+});
+export const previewEquipmentAddition = action({
+  args: {
+    booking_id: v.string(),
+    listing_id: v.string(),
+    qty: v.number(),
+    reason: v.string(),
+    complimentary: v.boolean(),
+  },
+  handler: async (ctx, { booking_id, listing_id, ...args }) => {
+    await requireOwner(ctx);
+    const result = await callDbCinema<any>(
+      "query",
+      "rentalAdditionState:preview",
+      {
+        bookingId: booking_id,
+        listingId: listing_id,
+        ...args,
+      },
+    );
+    return {
+      ...result,
+      imageSources: equipmentImages(result.imageSources ?? []),
+    };
+  },
+});
+export const addEquipment = action({
+  args: {
+    booking_id: v.string(),
+    listing_id: v.string(),
+    request_id: v.string(),
+    qty: v.number(),
+    reason: v.string(),
+    complimentary: v.boolean(),
+    expected_snapshot: v.string(),
+    expected_quote: v.string(),
+    operator_confirmed: v.boolean(),
+  },
+  handler: async (
+    ctx,
+    {
+      booking_id,
+      listing_id,
+      request_id,
+      expected_snapshot,
+      expected_quote,
+      operator_confirmed,
+      ...args
+    },
+  ) => {
+    await requireOwner(ctx);
+    if (!operator_confirmed || !expected_snapshot || !expected_quote)
+      throw Error("Review and confirm the equipment addition first.");
+    try {
+      const result = await callDbCinema<{
+        url: string;
+        id: string;
+        applied?: boolean;
+      }>("action", "rentalAdditions:start", {
+        bookingId: booking_id,
+        listingId: listing_id,
+        requestId: request_id,
+        expectedSnapshot: expected_snapshot,
+        expectedQuote: expected_quote,
+        ...args,
+      });
+      return {
+        applied: !!result.applied,
+        payment_url: result.url,
+        addition_id: result.id,
+      };
+    } catch (e) {
+      if (e instanceof EquipmentReviewChanged) return { review_required: true };
+      throw e;
+    }
+  },
+});
+export const removeEquipment = action({
+  args: {
+    booking_id: v.string(),
+    listing_id: v.string(),
+    request_id: v.string(),
+    line_index: v.number(),
+    qty: v.number(),
+    start: v.number(),
+    end: v.number(),
+    reason: v.string(),
+    expected_snapshot: v.string(),
+    operator_confirmed: v.boolean(),
+  },
+  handler: async (
+    ctx,
+    {
+      booking_id,
+      listing_id,
+      request_id,
+      line_index,
+      qty,
+      start,
+      end,
+      reason,
+      expected_snapshot,
+      operator_confirmed,
+    },
+  ) => {
+    await requireOwner(ctx);
+    if (!operator_confirmed || !expected_snapshot)
+      throw Error("Review and confirm the equipment removal first.");
+    try {
+      await callDbCinema("mutation", "rentalOperations:removeItem", {
+        bookingId: booking_id,
+        listingId: listing_id,
+        requestId: request_id,
+        lineIndex: line_index,
+        expectedQty: qty,
+        expectedStart: start,
+        expectedEnd: end,
+        reason,
+        expectedSnapshot: expected_snapshot,
+      });
+      return { ok: true };
+    } catch (e) {
+      if (e instanceof EquipmentReviewChanged) return { review_required: true };
+      throw e;
+    }
   },
 });
