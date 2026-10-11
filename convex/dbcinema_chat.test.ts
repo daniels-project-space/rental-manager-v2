@@ -257,3 +257,227 @@ describe("owner website rental controls bridge", () => {
     });
   });
 });
+
+describe("inline website equipment controls", () => {
+  async function setup(value: unknown = { ok: true }) {
+    vi.stubEnv("OWNER_AUTH_REQUIRED", "false");
+    vi.stubEnv("DBCINEMA_CONVEX_URL", "https://fixture.invalid");
+    vi.stubEnv("DBCINEMA_ADMIN_TOKEN", "fixture-owner-only");
+    const requests: any[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, options: RequestInit) => {
+        requests.push({ url, ...JSON.parse(String(options.body)) });
+        return new Response(
+          JSON.stringify({
+            status: "success",
+            value:
+              typeof value === "function"
+                ? (value as (path: string) => unknown)(requests.at(-1).path)
+                : value,
+          }),
+        );
+      }),
+    );
+    return {
+      requests,
+      ctx: { runQuery: vi.fn() },
+      module: await import("./dbcinema_chat"),
+    };
+  }
+  it("keeps equipment browse and quote on readonly source queries", async () => {
+    const f = await setup((path: string) =>
+      path === "rentalOperations:equipmentCatalog"
+        ? [
+            {
+              listingId: "lens",
+              title: "Lens",
+              daily: 30,
+              imageSources: ["/lens.jpg"],
+            },
+          ]
+        : { ok: true, imageSources: ["/lens.jpg"] },
+    );
+    const catalog = await (f.module.equipmentCatalog as any)._handler(f.ctx, {
+      search: "lens",
+    });
+    await (f.module.previewEquipmentAddition as any)._handler(f.ctx, {
+      booking_id: "rental",
+      listing_id: "lens",
+      qty: 2,
+      reason: "Customer needs two lenses",
+      complimentary: false,
+    });
+    expect(catalog[0].imageSources).toEqual([
+      "https://dbcinemarentals.com/lens.jpg",
+    ]);
+    expect(f.requests.map((r) => r.path)).toEqual([
+      "rentalOperations:equipmentCatalog",
+      "rentalAdditionState:preview",
+    ]);
+    expect(f.requests.every((r) => r.url.endsWith("/api/query"))).toBe(true);
+    expect(f.requests[1].args).toMatchObject({
+      bookingId: "rental",
+      listingId: "lens",
+      qty: 2,
+      token: "fixture-owner-only",
+    });
+  });
+  it("requires confirmation and binds the exact quote and request to addition", async () => {
+    const f = await setup({
+        url: "https://fixture.invalid/pay",
+        id: "addition",
+      }),
+      args = {
+        booking_id: "rental",
+        listing_id: "lens",
+        request_id: "fixture-addition-request",
+        qty: 1,
+        reason: "Customer requested lens",
+        complimentary: false,
+        expected_snapshot: "version",
+        expected_quote: "quote",
+        operator_confirmed: false,
+      };
+    await expect(
+      (f.module.addEquipment as any)._handler(f.ctx, args),
+    ).rejects.toThrow("Review and confirm");
+    expect(f.requests).toEqual([]);
+    expect(
+      await (f.module.addEquipment as any)._handler(f.ctx, {
+        ...args,
+        operator_confirmed: true,
+      }),
+    ).toMatchObject({ addition_id: "addition", applied: false });
+    expect(f.requests[0]).toMatchObject({
+      path: "rentalAdditions:start",
+      args: {
+        expectedSnapshot: "version",
+        expectedQuote: "quote",
+        requestId: "fixture-addition-request",
+        listingId: "lens",
+      },
+    });
+  });
+  it("requires confirmation and exact line state for removal", async () => {
+    const f = await setup(),
+      args = {
+        booking_id: "rental",
+        listing_id: "lens",
+        request_id: "fixture-removal-request",
+        line_index: 2,
+        qty: 1,
+        start: 1,
+        end: 2,
+        reason: "Customer needs fewer lenses",
+        expected_snapshot: "version",
+        operator_confirmed: false,
+      };
+    await expect(
+      (f.module.removeEquipment as any)._handler(f.ctx, args),
+    ).rejects.toThrow("Review and confirm");
+    expect(f.requests).toEqual([]);
+    await (f.module.removeEquipment as any)._handler(f.ctx, {
+      ...args,
+      operator_confirmed: true,
+    });
+    expect(f.requests[0]).toMatchObject({
+      path: "rentalOperations:removeItem",
+      args: {
+        lineIndex: 2,
+        expectedQty: 1,
+        expectedStart: 1,
+        expectedEnd: 2,
+        expectedSnapshot: "version",
+        requestId: "fixture-removal-request",
+      },
+    });
+  });
+  it("rejects anonymous equipment operations before any provider call", async () => {
+    const f = await setup();
+    vi.stubEnv("OWNER_AUTH_REQUIRED", "true");
+    const ctx = {
+      auth: { getUserIdentity: async () => null },
+      runQuery: vi.fn(),
+    };
+    for (const name of [
+      "equipmentCatalog",
+      "previewEquipmentAddition",
+      "addEquipment",
+      "removeEquipment",
+    ]) {
+      await expect((f.module as any)[name]._handler(ctx, {})).rejects.toThrow(
+        "OWNER_AUTH_REQUIRED",
+      );
+    }
+    expect(f.requests).toEqual([]);
+  });
+});
+
+describe("equipment review refusal versus unknown outcome", () => {
+  it("only a structured source refusal permits a fresh review", async () => {
+    vi.stubEnv("OWNER_AUTH_REQUIRED", "false");
+    vi.stubEnv("DBCINEMA_CONVEX_URL", "https://fixture.invalid");
+    vi.stubEnv("DBCINEMA_ADMIN_TOKEN", "fixture-owner-only");
+    const module = await import("./dbcinema_chat"),
+      ctx = { runQuery: vi.fn() },
+      args = {
+        booking_id: "rental",
+        listing_id: "lens",
+        request_id: "fixture-request",
+        qty: 1,
+        reason: "Operator approved lens",
+        complimentary: false,
+        expected_snapshot: "version",
+        expected_quote: "quote",
+        operator_confirmed: true,
+      };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              status: "error",
+              errorData: { code: "EQUIPMENT_REVIEW_STALE" },
+            }),
+          ),
+      ),
+    );
+    expect(await (module.addEquipment as any)._handler(ctx, args)).toEqual({
+      review_required: true,
+    });
+    expect(
+      await (module.removeEquipment as any)._handler(ctx, {
+        ...args,
+        line_index: 0,
+        start: 1,
+        end: 2,
+      }),
+    ).toEqual({ review_required: true });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              status: "error",
+              errorMessage: "The rental changed. Review again.",
+            }),
+          ),
+      ),
+    );
+    await expect(
+      (module.addEquipment as any)._handler(ctx, args),
+    ).rejects.toThrow("temporarily unavailable");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw Error("Unknown transport result");
+      }),
+    );
+    await expect(
+      (module.addEquipment as any)._handler(ctx, args),
+    ).rejects.toThrow("Unknown transport result");
+  });
+});

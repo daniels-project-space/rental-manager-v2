@@ -768,10 +768,119 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
         "base64",
       ),
     );
+    await tap(button("Change rental"));
+    await tap(button("＋ Add equipment"));
     await ok(
-      "website equipment preserves source workspace",
-      `document.querySelector('[aria-label="Rental controls"] a').href.includes('action=change')`,
+      "website equipment browser is inline and read only",
+      `document.querySelector('[aria-label="Add DB Cinema equipment"]')&&!window.__calls.some(c=>c.name==='dbcinema_chat:addEquipment')`,
     );
+    await tap(button("Cancel"));
+    await ok(
+      "website equipment cancellation leaves rental untouched",
+      `!document.querySelector('[aria-label="Add DB Cinema equipment"]')&&!window.__calls.some(c=>c.name==='dbcinema_chat:addEquipment')`,
+    );
+    await tap(button("＋ Add equipment"));
+    await ev(
+      `{const i=document.querySelector('[aria-label="Search DB Cinema equipment"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,'Nothing matches');i.dispatchEvent(new Event('input',{bubbles:true}));}`,
+    );
+    await pause(50);
+    await tap(button("Search"));
+    await ok(
+      "website equipment empty search is clear",
+      `document.body.textContent.includes('No bookable equipment matches')`,
+    );
+    await ev(
+      `{const i=document.querySelector('[aria-label="Search DB Cinema equipment"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,'Tripod');i.dispatchEvent(new Event('input',{bubbles:true}));}`,
+    );
+    await pause(50);
+    await tap(button("Search"));
+    await tap(
+      `document.querySelector('[aria-label="Choose Manfrotto Tripod"]')`,
+    );
+    await tap(button("Change"));
+    await tap(
+      `document.querySelector('[aria-label="Choose Manfrotto Tripod"]')`,
+    );
+    await ev(
+      `{const i=document.querySelector('[aria-label="Equipment quantity"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,'2');i.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('[aria-label="Add DB Cinema equipment"] input[type="checkbox"]').click();}`,
+    );
+    await pause(50);
+    await ev(
+      `{const i=document.querySelector('[aria-label="Equipment change reason"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,'Operator approved tripod addition');i.dispatchEvent(new Event('input',{bubbles:true}));}`,
+    );
+    await pause(50);
+    await tap(button("Review addition"));
+    await ok(
+      "website full kit quote remains read only until confirmation",
+      `window.__calls.some(c=>c.name==='dbcinema_chat:previewEquipmentAddition')&&!window.__calls.some(c=>c.name==='dbcinema_chat:addEquipment')&&!!document.querySelector('[aria-label="Review equipment change"]')`,
+    );
+    await ok(
+      "website quantity and complimentary quote retain exact selection",
+      `window.__calls.some(c=>c.name==='dbcinema_chat:previewEquipmentAddition'&&c.args.qty===2&&c.args.complimentary===true)`,
+    );
+    await ok(
+      "equipment review owns the panel footer",
+      `[...document.querySelectorAll('[aria-label="Rental controls"] footer')].every(e=>getComputedStyle(e).display==='none')`,
+    );
+    fs.writeFileSync(
+      root + `/db-equipment-review-${width}.png`,
+      Buffer.from(
+        (
+          await c.cmd("Page.captureScreenshot", {
+            captureBeyondViewport: false,
+          })
+        ).data,
+        "base64",
+      ),
+    );
+    await tap(button("Edit change"));
+    await tap(button("Review addition"));
+    await ev(`window.__staleEquipmentOnce=true`);
+    await tap(button("Confirm equipment addition"));
+    await ok(
+      "confirmed source refusal returns to a fresh equipment review",
+      `!document.querySelector('[aria-label="Add DB Cinema equipment"]')&&document.body.textContent.includes('quote changed')`,
+    );
+    await tap(button("＋ Add equipment"));
+    await tap(
+      `document.querySelector('[aria-label="Choose Manfrotto Tripod"]')`,
+    );
+    await ev(
+      `{const i=document.querySelector('[aria-label="Equipment change reason"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,'Operator approved tripod addition');i.dispatchEvent(new Event('input',{bubbles:true}));}`,
+    );
+    await pause(50);
+    await tap(button("Review addition"));
+    await ev(`window.__failEquipmentOnce=true`);
+    await tap(button("Confirm equipment addition"));
+    await ok(
+      "uncertain website addition keeps a saved request",
+      `document.body.textContent.includes('Check this saved request')&&!!document.querySelector('[aria-label="Add DB Cinema equipment"]')`,
+    );
+    await tap(button("Check saved equipment change"));
+    await ok(
+      "website addition retries exact reviewed request",
+      `(()=>{const calls=window.__calls.filter(c=>c.name==='dbcinema_chat:addEquipment');return calls.length===3&&calls[0].args.request_id!==calls[1].args.request_id&&calls[1].args.request_id===calls[2].args.request_id&&calls.every(c=>c.args.expected_snapshot==='fixture-booking-version'&&c.args.expected_quote==='fixture-equipment-quote'&&c.args.operator_confirmed===true);})()`,
+    );
+    await tap(
+      `document.querySelector('[aria-label="Remove Manfrotto Tripod"]')`,
+    );
+    await ev(
+      `{const i=document.querySelector('[aria-label="Equipment change reason"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,'Operator approved tripod removal');i.dispatchEvent(new Event('input',{bubbles:true}));}`,
+    );
+    await pause(50);
+    await tap(button("Review removal"));
+    await ok(
+      "website removal review does not alter kit",
+      `!window.__calls.some(c=>c.name==='dbcinema_chat:removeEquipment')`,
+    );
+    await tap(button("Edit change"));
+    await tap(button("Review removal"));
+    await tap(button("Confirm equipment removal"));
+    await ok(
+      "website removal binds snapshot and exact line",
+      `window.__calls.some(c=>c.name==='dbcinema_chat:removeEquipment'&&c.args.listing_id==='fixture-tripod'&&c.args.expected_snapshot==='fixture-booking-version'&&c.args.operator_confirmed===true)`,
+    );
+    await tap(button("Reschedule"));
     await ev(
       `{const i=document.querySelector('[aria-label="Date change reason"]');const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;setter.call(i,'Operator approved later collection');i.dispatchEvent(new Event('input',{bubbles:true}));}`,
     );

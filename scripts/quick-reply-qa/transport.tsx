@@ -229,6 +229,28 @@ export function useQuery(ref, args) {
   if (name === "renter_bot_lab_order:get") return null;
   return null;
 }
+const equipmentLines = [
+  {
+    listing_id: "fixture-camera",
+    line_index: 0,
+    name: "Sony FX6",
+    qty: 1,
+    start: Date.UTC(2026, 9, 14),
+    end: Date.UTC(2026, 9, 17),
+    image_url: "/gear0.png",
+    image_urls: ["/gear0.png"],
+  },
+  {
+    listing_id: "fixture-lens",
+    line_index: 1,
+    name: "Sigma 24–70",
+    qty: 1,
+    start: Date.UTC(2026, 9, 14),
+    end: Date.UTC(2026, 9, 17),
+    image_url: "/gear1.png",
+    image_urls: ["/gear1.png"],
+  },
+];
 export function useAction(ref) {
   const name = getFunctionName(ref);
   return useCallback(
@@ -243,7 +265,10 @@ export function useAction(ref) {
           depositHoldAmount: 100,
           snapshot: "fixture-booking-version",
           canChangeDates: true,
-          lines: [
+          canAddEquipment: true,
+          canRemoveEquipment: equipmentLines.length > 1,
+          lines: equipmentLines.map((l, i) => ({ ...l, line_index: i })),
+          unusedLines: [
             {
               name: "Sony FX6",
               qty: 1,
@@ -254,6 +279,59 @@ export function useAction(ref) {
           ],
           refunds: [],
         };
+      if (name === "dbcinema_chat:equipmentCatalog")
+        return [
+          {
+            listingId: "fixture-tripod",
+            title: "Manfrotto Tripod",
+            daily: 15,
+            imageSources: ["/gear2.png"],
+          },
+        ].filter((l) =>
+          l.title.toLowerCase().includes((args.search ?? "").toLowerCase()),
+        );
+      if (name === "dbcinema_chat:previewEquipmentAddition")
+        return {
+          ok: true,
+          snapshot: "fixture-booking-version",
+          quoteSnapshot: "fixture-equipment-quote",
+          title: "Manfrotto Tripod",
+          qty: args.qty,
+          start: Date.UTC(2026, 9, 14),
+          end: Date.UTC(2026, 9, 17),
+          lineTotal: args.complimentary ? 0 : 60 * args.qty,
+          securityCharge: 0,
+          holdTotal: 100,
+          imageSources: ["/gear2.png"],
+        };
+      if (name === "dbcinema_chat:addEquipment") {
+        if (window.__staleEquipmentOnce) {
+          window.__staleEquipmentOnce = false;
+          return { review_required: true };
+        }
+        if (window.__failEquipmentOnce) {
+          window.__failEquipmentOnce = false;
+          throw Error("Fixture uncertain response");
+        }
+        if (!equipmentLines.some((l) => l.listing_id === args.listing_id))
+          equipmentLines.push({
+            ...equipmentLines[0],
+            listing_id: args.listing_id,
+            name: "Manfrotto Tripod",
+            qty: args.qty,
+            image_url: "/gear2.png",
+            image_urls: ["/gear2.png"],
+          });
+        return {
+          applied: true,
+          payment_url: "",
+          addition_id: "fixture-addition",
+        };
+      }
+      if (name === "dbcinema_chat:removeEquipment") {
+        equipmentLines.splice(args.line_index, 1);
+        return { ok: true };
+      }
       if (name === "dbcinema_chat:previewRentalDates")
         return {
           ok: true,

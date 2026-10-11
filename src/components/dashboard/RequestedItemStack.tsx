@@ -9,7 +9,7 @@ export type StackItem = {
   image_urls?: string[];
   origin?: "basket" | "chat";
 };
-function ItemImage({ item }: { item: StackItem }) {
+export function ItemImage({ item }: { item: StackItem }) {
   const sources = [
     ...new Set([item.image_url, ...(item.image_urls ?? [])].filter(Boolean)),
   ] as string[];

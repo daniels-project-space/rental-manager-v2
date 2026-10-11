@@ -8,7 +8,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { RequestedItemStack } from "./RequestedItemStack";
+import {
+  DbCinemaEquipmentEditor,
+  type EquipmentLine,
+} from "./DbCinemaEquipmentEditor";
 import styles from "./ReplyInbox.module.css";
 const detailsRef = makeFunctionReference<"action">(
   "dbcinema_chat:rentalControls",
@@ -26,13 +29,9 @@ type Details = {
   depositHoldAmount: number;
   snapshot: string;
   canChangeDates: boolean;
-  lines: Array<{
-    name: string;
-    qty: number;
-    start: number;
-    end: number;
-    image_url: string | null;
-  }>;
+  canAddEquipment: boolean;
+  canRemoveEquipment: boolean;
+  lines: EquipmentLine[];
   refunds: Array<{ status: string; amountPence: number }>;
 };
 type Proposal = {
@@ -203,14 +202,14 @@ export function DbCinemaOrderEditor({
     <div className={styles.sourceActions}>
       <section ref={equipmentSection}>
         <h4>1. Equipment</h4>
-        <RequestedItemStack items={details.lines} size={54} alwaysExpanded />
-        <a
-          href={`https://dbcinemarentals.com/admin?rental=${encodeURIComponent(bookingId)}&action=change`}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Add or remove equipment ↗
-        </a>
+        <DbCinemaEquipmentEditor
+          bookingId={bookingId}
+          details={details}
+          busy={busy}
+          setBusy={setBusy}
+          onNote={setNote}
+          onRefresh={refresh}
+        />
       </section>
       <section ref={datesSection}>
         <h4>2. Rental dates</h4>
