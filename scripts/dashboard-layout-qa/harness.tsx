@@ -10,6 +10,6 @@ import { DEFAULT_PANEL_ORDER, DEFAULT_HIDDEN_PANELS, STAT_WIDGETS } from "../../
 declare global { interface Window { __layout: unknown } }
 window.__layout = { DEFAULT_PANEL_ORDER, DEFAULT_HIDDEN_PANELS, stats: STAT_WIDGETS.map(w=>w.id) };
 createRoot(document.getElementById("root")!).render(<main>
-  <StatPackingGrid><div><ChannelResponseRateCard /></div><div><ConversationFunnel compact /></div></StatPackingGrid>
+  <StatPackingGrid><div><ChannelResponseRateCard /></div><div><ConversationFunnel compact /></div>{Array.from({length:8},(_,i)=><div key={i} className={i===2 ? "col-span-2" : ""}>{i%2 ? <ChannelResponseRateCard /> : <ConversationFunnel compact />}</div>)}</StatPackingGrid>
   <LifetimeRevenue /><div className="my-3"><ReplyInbox /></div><LiveCalendar /><div className="mt-3"><ReturnHub /></div>
 </main>);

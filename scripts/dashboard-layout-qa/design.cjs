@@ -3,7 +3,7 @@ const fs=require('node:fs'),assert=require('node:assert/strict');
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 (async()=>{
  const receipts=[];
- for(const width of [1440,390]) {
+ for(const width of [1440,1024,768,390]) {
   const c=await connect('about:blank');
   c.on(m=>{if(m.method==='Runtime.exceptionThrown') console.error(JSON.stringify(m.params));});await c.cmd('Runtime.enable');
   await c.cmd('Emulation.setDeviceMetricsOverride',{width,height:1000,deviceScaleFactor:1,mobile:width===390});
@@ -13,7 +13,19 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
   assert.ok(await ev('window.__layout.DEFAULT_HIDDEN_PANELS.includes("calendar-strip") && window.__layout.stats.includes("conversation_funnel")'));
   assert.equal(await ev('document.querySelector("section[aria-label]").textContent.includes("DB Cinema Web")'),false);
   assert.equal(await ev('document.body.style.overflow'), '');
-  assert.ok(await ev('document.querySelector("section[aria-label]").parentElement.style.gridRowEnd.startsWith("span ")'));
+  const assertNoOverlap = async () => {
+    const bounds = await ev('[...document.querySelector("main > div").children].map(e=>{const r=e.getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom}})');
+    for (let i=0;i<bounds.length;i++) for(let j=i+1;j<bounds.length;j++) {
+      const a=bounds[i],b=bounds[j];
+      assert.ok(!(Math.min(a.right,b.right)-Math.max(a.x,b.x)>1 && Math.min(a.bottom,b.bottom)-Math.max(a.y,b.y)>1), `Widgets ${i}/${j} overlap at ${width}px`);
+    }
+    assert.ok(await ev('document.querySelector("main > div").getBoundingClientRect().bottom >= Math.max(...[...document.querySelector("main > div").children].map(e=>e.getBoundingClientRect().bottom))'));
+  };
+  await assertNoOverlap();
+  await ev('document.querySelector("details summary").click()');await pause(100);await assertNoOverlap();
+  await ev('document.querySelector("details summary").click()');await pause(100);await assertNoOverlap();
+
+  assert.ok(await ev('getComputedStyle(document.querySelector("section[aria-label]").parentElement.parentElement).gridAutoRows === "auto"'));
   await ev('document.querySelector("select").value="7"');
 
   assert.equal(await ev('document.querySelector(".gantt-embedded [aria-label=Close]")'),null);
@@ -28,6 +40,7 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
   assert.equal(await ev('[...document.querySelectorAll(".gantt-embedded button")].find(b=>b.textContent.trim()==="Leo").getAttribute("aria-pressed")'),'true');
   const shot=async name=>fs.writeFileSync(`${process.env.RM_QA_OUTPUT}/${name}-${width}.png`,Buffer.from((await c.cmd('Page.captureScreenshot',{captureBeyondViewport:false})).data,'base64'));
   await shot('dashboard-top');
+  await ev('document.querySelector(".recharts-wrapper").scrollIntoView({block:"center"})');await pause(150);
   const bar=await ev('(()=>{const e=document.querySelector(".recharts-bar-rectangle path"); if(!e) return null;const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()');
   assert.ok(bar,'revenue bars render');
   await c.cmd('Input.dispatchMouseEvent',{type:'mouseMoved',...bar});await pause(300);
