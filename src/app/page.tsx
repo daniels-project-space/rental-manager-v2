@@ -91,12 +91,17 @@ export default function DashboardPage() {
       window.removeEventListener("popstate", syncUrl);
     };
   }, []);
+  // Pin this owner tool into older saved layouts too, so it never gets lost in
+  // the add-widget drawer after a deployment introduces the new control.
+  const panelOrder = layout.panelOrder.includes("marketing-only-listings")
+    ? layout.panelOrder
+    : [...layout.panelOrder, "marketing-only-listings"];
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  const visiblePanels = layout.panelOrder
+  const visiblePanels = panelOrder
     .filter((id) => !isPanelHidden(id) || (id === "reply-inbox" && notificationOpen))
     .map((id) => PANEL_WIDGETS.find((w) => w.id === id))
     .filter((w): w is (typeof PANEL_WIDGETS)[number] => Boolean(w));
@@ -104,10 +109,10 @@ export default function DashboardPage() {
   const handleDragEnd = (e: DragEndEvent) => {
     const { active, over } = e;
     if (!over || active.id === over.id) return;
-    const oldIndex = layout.panelOrder.indexOf(String(active.id));
-    const newIndex = layout.panelOrder.indexOf(String(over.id));
+    const oldIndex = panelOrder.indexOf(String(active.id));
+    const newIndex = panelOrder.indexOf(String(over.id));
     if (oldIndex < 0 || newIndex < 0) return;
-    reorderPanels(arrayMove(layout.panelOrder, oldIndex, newIndex));
+    reorderPanels(arrayMove(panelOrder, oldIndex, newIndex));
   };
 
   return (

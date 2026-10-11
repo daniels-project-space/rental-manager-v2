@@ -2094,13 +2094,18 @@ const operationalSchema = defineSchema({
     // Resolved master-inventory link (fuzzy match). Absent ⇒ marketing-only.
     masterItemId: v.optional(v.id("items")),
     isMarketingOnly: v.boolean(),
+    // Owner-controlled per-listing override. Provider catalogue sync must not
+    // overwrite this choice; absent means use the automatic provider match.
+    isMarketingOnlyOverride: v.optional(v.boolean()),
+    marketingOnlyUpdatedAt: v.optional(v.number()),
     // Best fuzzy-match score recorded for audit/tuning (coverage ratio).
     matchScore: v.optional(v.number()),
     lastSyncedAt: v.number(),
   })
     .index("by_account_product", ["accountSlug", "productId"])
     .index("by_master_item", ["masterItemId"])
-    .index("by_account", ["accountSlug"]),
+    .index("by_account", ["accountSlug"])
+    .searchIndex("search_name", { searchField: "name", filterFields: ["accountSlug"] }),
 
   // ===========================================================================
   // Ported Listings (Phase 2, Wave 0 — ADDITIVE).
