@@ -250,6 +250,46 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         "equipment expansion uses card layout",
       );
       await capture("equipment-stack");
+      const expandedSize = await ev(
+        `(()=>{const stack=${stack};const row=stack.closest('[aria-label^="Open conversation with"]');const r=row.getBoundingClientRect();return {height:r.height,photos:[...stack.querySelectorAll('section img')].map(img=>{const p=img.getBoundingClientRect();return {width:p.width,height:p.height,inside:p.left>=r.left&&p.right<=r.right};})};})()`,
+      );
+      assert(
+        expandedSize.height <= 245 &&
+          expandedSize.photos.every(
+            (p) => p.width >= 88 && p.height === 88 && p.inside,
+          ),
+        "expanded images are reference-sized inside a compact card: " +
+          JSON.stringify(expandedSize),
+      );
+      fs.writeFileSync(
+        `${process.env.RM_QA_OUTPUT}/equipment-scale-geometry.json`,
+        JSON.stringify(expandedSize, null, 2),
+      );
+      await ev(
+        `document.querySelector('[class*="inbox"]').style.width='1070px'`,
+      );
+      await pause(100);
+      assert(
+        await ev(
+          `(()=>{const rows=document.querySelector('[class*="rows"]');return rows.scrollWidth<=rows.clientWidth;})()`,
+        ),
+        "expanded equipment fits the smallest wide table without horizontal scrolling",
+      );
+      await ev(`document.querySelector('[class*="inbox"]').style.width=''`);
+      await ev(
+        `{window.__threeRequestedItems=window.__fixture.rows[0].requested_items;window.__fixture.rows[0].requested_items=[...window.__threeRequestedItems,...['Battery kit','Focus monitor','Light kit'].map((name,i)=>({name,qty:1,origin:'chat',image_url:'/gear'+i+'.png'}))];window.__fixture.changed();}`,
+      );
+      await pause(100);
+      assert(
+        await ev(
+          `${stack}.querySelectorAll('section img').length===6&&[...${stack}.querySelectorAll('section img')].every(img=>img.complete&&img.naturalWidth>0)`,
+        ),
+        "all six requested photos load across the card's rows",
+      );
+      await capture("equipment-six-items");
+      await ev(
+        `{window.__fixture.rows[0].requested_items=window.__threeRequestedItems;window.__fixture.changed();}`,
+      );
       await c.cmd("Input.dispatchMouseEvent", {
         type: "mouseMoved",
         x: width - 5,
@@ -259,6 +299,31 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       assert(
         await ev(`!${stack}.querySelector('section')`),
         "equipment stack retracts after hover leaves",
+      );
+      await c.cmd("Input.dispatchKeyEvent", {
+        type: "keyDown",
+        key: "Tab",
+        code: "Tab",
+        windowsVirtualKeyCode: 9,
+      });
+      await ev(`${stack}.querySelector('button').focus()`);
+      await pause(100);
+      assert(
+        await ev(
+          `${stack}.dataset.expanded==='true'&&document.activeElement===${stack}.querySelector('button')`,
+        ),
+        "keyboard expansion retains focus on its trigger",
+      );
+      await c.cmd("Input.dispatchKeyEvent", {
+        type: "keyDown",
+        key: "Escape",
+        code: "Escape",
+        windowsVirtualKeyCode: 27,
+      });
+      await pause(100);
+      assert(
+        await ev(`!${stack}.querySelector('section')`),
+        "Escape retracts requested equipment with focus preserved",
       );
     }
     await ev(
