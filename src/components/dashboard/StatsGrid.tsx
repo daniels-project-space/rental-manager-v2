@@ -52,6 +52,7 @@ import { BelowMinimumCounter } from "./insights/BelowMinimumCounter";
 import { WeeklyRevenueSparkline } from "./insights/WeeklyRevenueSparkline";
 import { ConversationFunnel } from "./ConversationFunnel";
 import { ChannelResponseRateCard } from "./ChannelResponseRateCard";
+import { UtilityBar } from "./UtilityBar";
 import { StatPackingGrid } from "./StatPackingGrid";
 import WallE from "./WallE/WallE";
 
@@ -720,8 +721,13 @@ export function StatsGrid() {
         onDragEnd={handleDragEnd}
       >
         <SortableContext items={visibleIds} strategy={rectSortingStrategy}>
+          <UtilityBar items={[
+            { id: "vacation", label: "Vacation Mode", mobileLabel: "Vacation", summary: (rawData as any)?.vacation?.active_blocks?.length ? "On" : "Off", content: <VacationDrawer data={(rawData as any).vacation} /> },
+            { id: "todos", label: "To-Do", content: cards.todos },
+            { id: "insurance", label: "Insurance Claims", mobileLabel: "Claims", summary: (rawData as any)?.insurance?.open_count ?? 0, content: cards.insurance },
+          ].filter((item) => visibleIds.includes(item.id))} renderButton={(id, button) => <EditableWidget id={id} kind="stat" label={STAT_WIDGETS.find((widget) => widget.id === id)?.label ?? id}>{button}</EditableWidget>} />
           <StatPackingGrid>
-          {visibleIds.map((id) => {
+          {visibleIds.filter((id) => !["vacation", "todos", "insurance"].includes(id)).map((id) => {
             const label = STAT_WIDGETS.find((w) => w.id === id)?.label ?? id;
             const span = HERO_SPANS[id];
             let spanClass = "";
