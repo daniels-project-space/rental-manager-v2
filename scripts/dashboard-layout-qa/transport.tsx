@@ -6,10 +6,24 @@ const funnel = { inquiries: 120, requests: 60, booked: 30, booked_net_gbp: 4200,
 export function useQuery(ref,args) {
  const name=getFunctionName(ref);
  if(args==='skip') return undefined;
+ (window.__qaReads??=new Map()).set(name+JSON.stringify(args??{}),{name,args:args??{}});
+ if(name==='dashboardLayout:getLayout') return null;
+ const replay=globalThis.__RM_QA_READ_VALUES;
+ if(replay?.[name]!==undefined) return replay[name];
+ if(name==='dashboardLayout:getLayout') return null;
+ if(name==='accounts:list') return [{slug:'dbcinema',display_name:'DB Cinema',profile_image_url:'/face0.png'},{slug:'leo',display_name:'Leo Adams',profile_image_url:'/face1.png'},{slug:'diogo',display_name:'Diogo',profile_image_url:'/face2.png'},{slug:'dbcinema_web',display_name:'DB Cinema Web',profile_image_url:'/face3.png'}];
+ if(name==='dashboard:getScannerFreshness') return {last_scan_at:Date.now(),last_poll_at:Date.now(),last_ai_scan_at:Date.now()};
+
  if(name==='channel_response_rates:get') return {generatedAt:Date.now(),channels:[{slug:'dbcinema',rate:.99},{slug:'leo',rate:.95},{slug:'diogo',rate:.89},{slug:'dbcinema_web',rate:null}]};
  if(name==='reservations:getConversionFunnel') return funnel;
  if(name==='revenue:getLifetimeByMonth') return {currentMonth:'2026-10',months:['2026-07','2026-08','2026-09','2026-10'].map(month=>({month,dbcinemaOrganic:1000,leoOrganic:500,diogoOrganic:250,damageClaims:50})),forecast:[]};
  if(name==='dashboard:getStatsDrawerData') return {monthly:{target_gbp:2200}};
+ if(name==='mv/top_earners:getRanking') return Array.from({length:12},(_,i)=>({itemName:i?'Fixture lens '+i:'Sony FX6',net30dGbp:240-i*10,rentalCount:3,utilizationPct:42}));
+ if(name==='items:getEquipmentValue') return {total:{resell_gbp:4200,acquisition_gbp:6000,depreciation_gbp:1800,units:12,sku_count:8},retained_pct:70,monthly_depreciation_pct:2,months_elapsed:12,by_category:[{kind:'camera',units:4,acquisition_gbp:6000,resell_gbp:4200}],items:[{name:'Sony FX6',units:1,acquisition_total:6000,resell_total:4200}]};
+ if(name==='items:getItemCycles') return [{itemId:'fixture-camera',name:'Sony FX6',utilizationPct:.42,rentalDays:13},{itemId:'fixture-lens',name:'Sigma 24–70 cinema lens',utilizationPct:.25,rentalDays:8}];
+ if(name==='revenue:getInvestmentScorecard') return {roiPct:24,totalInvested:6000,totalRevenue:7440,netProfit:1440,monthlyRate:620,paybackMonths:9.7,itemsMissingCostCount:0};
+ if(name==='ai_insights:getInsights') return [{kind:'growth',headline:'Sony FX6 leads rental earnings',body:'Fixture insight with actual card content and a longer sentence to exercise responsive wrapping.'},{kind:'warning',headline:'Review underused lenses',body:'Fixture insight for the compact second column.'}];
+ if(name==='health:getHealthReport') return {issues:[{severity:'warning',type:'missing_price',description:'Fixture lens needs a purchase cost recorded.'}],readOnlyMode:true,syncStatus:'live',pollAgeMinutes:1};
  if(name==='calendar:getGanttWeek') {
    const day=n=>new Date(Date.parse(args.weekStartIso+'T12:00Z')+n*86400000).toISOString().slice(0,10);
    const block=(id,n,extra={})=>({reservation_id:id,start_date:day(n),end_date:day(n),return_date:day(n),renter_name:'Fixture only',order_step:'RETURNED',account_slug:'dbcinema',...extra});
@@ -25,6 +39,7 @@ export function useQuery(ref,args) {
  }
  if(name==='calendar:searchCalendarInventory') return {items:[],reservations:[]};
  if(name.includes('return')||name.includes('Return')) return [];
+ if(globalThis.__RM_QA_FULL_PAGE&&!name.startsWith("quick_reply_thread_state:")) { (window.__qaMissing??=new Set()).add(name);return undefined; }
  return quickQuery(ref,args);
 }
 const blockedMutation=async()=>{throw Error('Dashboard QA: real writes prohibited')};

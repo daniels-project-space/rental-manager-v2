@@ -50,6 +50,18 @@ async function read(items: unknown[], proof = {}) {
   return rows[0];
 }
 describe("website Quick Reply full-basket stock and lifecycle", () => {
+  it("keeps owner activity separate from the genuine renter clock", async () => {
+    expect(await read([], { lastSender: "owner", updatedAt: 300, lastRenterAt: 200 }))
+      .toMatchObject({ last_renter_msg_at: 200, last_activity_at: 300 });
+    expect(await read([], { lastSender: "system", updatedAt: 400, lastRenterAt: 200 }))
+      .toMatchObject({ last_renter_msg_at: 200, last_activity_at: 400 });
+  });
+  it("never treats legacy owner activity as a new renter message", async () => {
+    expect(await read([], { lastSender: "owner", updatedAt: 300 }))
+      .toMatchObject({ last_renter_msg_at: 1 });
+    expect(await read([], { lastSender: "renter", updatedAt: 300 }))
+      .toMatchObject({ last_renter_msg_at: 300 });
+  });
   it("requires every item to be checked before displaying available", async () => {
     const row = await read([
       { name: "Camera", stockAvailability: stock },

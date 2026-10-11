@@ -1,3 +1,4 @@
+import { renterMessageWatermark } from "./lib/renter_message_watermark";
 import {requestedImageItems} from "./lib/quick_reply_requested_items";
 import {currentQuickReplyCache} from "./lib/quick_reply_cache";
 import {canonicalListingAllocation,reservedListingKeys} from "./lib/canonical_listing_allocation";
@@ -570,28 +571,13 @@ async function assembleTile(
   // accept/deny trigger. Fall back to the active order step for rows not yet
   // re-polled with the actions signal.
   const isRequest = reservation?.awaiting_owner_action ?? step === "REQUEST";
-  // "Waiting since" timestamp driving the urgency timer. Prefer the ACTUAL latest
-  // renter message so a follow-up RESETS the clock instead of still reading "3d
-  // unreplied" off the first message (Daniel, 2026-06-28). When the renter spoke
-  // last, latestMsg IS that message — read it straight from the thread rather
-  // than trusting the cached conv field, which can lag. A booking REQUEST often
-  // has NO chat messages (renter just submitted dates), so fall back to the
-  // cached fields then the order-created time — without that this is 0 (epoch)
-  // and the card shows a nonsense ~20,000-day age that reads as "over 10 days
-  // old" (Daniel, 2026-06-27).
-  const renterSpokeLast = !!latestMsg && latestMsg.sender !== "owner";
-  const renterLatestTs = renterSpokeLast
-    ? latestMsg!.hygglo_sent_at ?? latestMsg!.fetched_at
-    : 0;
-  const lastRenterAt =
-    renterLatestTs ||
-    conv?.last_renter_msg_at ||
-    conv?.last_msg_at ||
-    latestMsg?.hygglo_sent_at ||
-    latestMsg?.fetched_at ||
-    reservation?.created_at ||
-    reservation?._creationTime ||
-    Date.now();
+  // Owner activity must never resurrect an operator-hidden conversation.
+  // Reuse the bounded transcript already read for previews and equipment.
+  const lastRenterAt = renterMessageWatermark(
+    mentionMessages,
+    conv?.last_renter_msg_at,
+    reservation?.created_at ?? reservation?._creationTime ?? conv?._creationTime ?? 0,
+  );
 
   // Owner-dismissed ("× close") threads stay hidden until the renter speaks
   // again: dismissed when a dismissed_at stamp exists AND no renter message has

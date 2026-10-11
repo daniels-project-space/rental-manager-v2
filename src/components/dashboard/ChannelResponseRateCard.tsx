@@ -150,7 +150,7 @@ export function ChannelResponseRateCard() {
 
       <div className="mt-2 flex flex-wrap items-center justify-between gap-1 text-[10px] text-slate-500">
 
-        <span className="shrink-0">Updated {formatUpdatedAt(snapshot.generatedAt)}</span>
+        <span className="min-w-0 max-w-full">Updated {formatUpdatedAt(snapshot.generatedAt)}</span>
       </div>
     </section>
   );

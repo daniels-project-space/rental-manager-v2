@@ -90,3 +90,20 @@ describe("independent Quick Reply sorting", () => {
     ).toBeLessThan(0);
   });
 });
+
+describe("priority reply lifecycle",()=>{
+ it("always places an answered high-value rental below an unanswered low-value request",()=>{
+  const replied=row("high-value",{last_sender:"owner",estimate_earnings_gbp:100000,availability:{status:"available"}});
+  const waiting=row("waiting",{estimate_earnings_gbp:1,availability:{status:"conflict"}});
+  expect(compareQuickReplies(replied,waiting,"priority",1000)).toBeGreaterThan(0);
+  expect(compareQuickReplies(waiting,replied,"priority",1000)).toBeLessThan(0);
+ });
+ it("moves a thread back into outstanding priority when its renter writes again",()=>{
+  const a=row("a",{last_sender:"owner",estimate_earnings_gbp:100000});const b=row("b",{estimate_earnings_gbp:1});
+  expect([a,b].sort((x,y)=>compareQuickReplies(x,y,"priority",1000)).map(x=>x.thread_id)).toEqual(["b","a"]);
+  a.last_sender="renter";a.last_renter_msg_at=500;
+  expect([a,b].sort((x,y)=>compareQuickReplies(x,y,"priority",1000)).map(x=>x.thread_id)).toEqual(["a","b"]);
+ });
+});
+
+it("also keeps a new request without any messages above already answered threads",()=>expect(compareQuickReplies(row("new",{last_sender:null,last_renter_msg_at:0,estimate_earnings_gbp:1}),row("answered",{last_sender:"owner",estimate_earnings_gbp:100000}),"priority",1000)).toBeLessThan(0));
