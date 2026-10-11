@@ -67,7 +67,7 @@ function hours(n: number | null): string {
   return `${(n / 24).toFixed(1)}d`;
 }
 
-export function ConversationFunnel() {
+export function ConversationFunnel({ compact = false }: { compact?: boolean }) {
   const { activeAccountSlug } = useAccount();
   const [days, setDays] = useState<Days>(30);
 
@@ -77,6 +77,24 @@ export function ConversationFunnel() {
   }) as FunnelData | null | undefined;
 
   const dayOpts: Days[] = [7, 30, 90];
+
+  if (compact) return (
+    <Card className="!p-3">
+      <div className="flex flex-wrap items-center justify-between gap-1 mb-2">
+        <h2 className="text-xs text-slate-400">Conversation Funnel</h2>
+        <select aria-label="Funnel period" value={days} onChange={(e) => setDays(Number(e.target.value) as Days)} className="text-[11px] bg-slate-900 text-slate-300 rounded px-1 py-0.5">
+          {dayOpts.map((d) => <option key={d} value={d}>{d}d</option>)}
+        </select>
+      </div>
+      {data === undefined ? <SkeletonBlock className="h-16" /> : !data ? <p className="text-xs text-slate-500">Figures refreshing</p> : <>
+        <div className="grid grid-cols-3 gap-1 text-center">
+          {[['Enquiries', data.inquiries], ['Requests', data.requests], ['Booked', data.booked]].map(([label, value]) => <div key={label}><p className="text-xl font-semibold text-slate-100">{value}</p><p className="text-[10px] text-slate-400">{label}</p></div>)}
+        </div>
+        <div className="mt-2 text-[11px] text-emerald-400">{pct(data.book_rate_of_inquiries)} booked · {gbp(data.booked_net_gbp)} net</div>
+        <details className="mt-2 text-xs text-slate-400"><summary className="cursor-pointer">Outcomes & reply details</summary><FunnelBody data={data} days={days} /></details>
+      </>}
+    </Card>
+  );
 
   return (
     <Card>

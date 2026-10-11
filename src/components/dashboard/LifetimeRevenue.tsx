@@ -603,6 +603,8 @@ export function LifetimeRevenue() {
                   if (!active || !payload || payload.length === 0) return null;
                   // Filter zero/null entries; sort biggest first; collapse the predicted &
                   // cumulative-area duplicates the same series renders to keep tooltip tight.
+                  const barData = payload[0]?.payload as Record<string, unknown> | undefined;
+                  const barTotal = SERIES.reduce((sum, series) => sum + (typeof barData?.[series.key] === "number" ? Number(barData[series.key]) : 0), 0);
                   const seen = new Set<string>();
                   const numValue = (p: { value?: ValueType }): number => {
                     const x = p.value;
@@ -623,7 +625,7 @@ export function LifetimeRevenue() {
                       return true;
                     })
                     .sort((a, b) => numValue(b) - numValue(a));
-                  if (rows.length === 0) return null;
+                  if (rows.length === 0 && chartMode !== "bars") return null;
                   return (
                     <div
                       style={{
@@ -637,6 +639,7 @@ export function LifetimeRevenue() {
                       }}
                     >
                       <div style={{ color: "#e4e6eb", marginBottom: 6, fontWeight: 600 }}>{label}</div>
+                      {chartMode === "bars" && <div data-revenue-bar-total style={{ display: "flex", justifyContent: "space-between", gap: 16, paddingBottom: 6, marginBottom: 6, borderBottom: "1px solid rgba(255,255,255,0.12)", color: "#fff", fontWeight: 700 }}><span>Bar total</span><span>{fmtGbp(barTotal)}</span></div>}
                       {rows.map((p, i) => {
                         const series = SERIES.find((s) => s.key === p.name);
                         const niceLabel =

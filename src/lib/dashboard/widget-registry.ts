@@ -1,5 +1,6 @@
 import { BusinessPayoutCalculator } from "@/components/dashboard/finance/BusinessPayoutCalculator";
 import type { ComponentType } from "react";
+import { LiveCalendar } from "@/components/dashboard/LiveCalendar";
 import { StatsGrid } from "@/components/dashboard/StatsGrid";
 import { LifetimeRevenue } from "@/components/dashboard/LifetimeRevenue";
 import { EarningsChart } from "@/components/dashboard/EarningsChart";
@@ -54,13 +55,13 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
   { id: "tax-summary",         label: "Taxes & Invoice Archive", component: TaxSummary },
   { id: "business-payout-calculator", label: "Business Payout Calculator", component: BusinessPayoutCalculator },
   { id: "live-activity",       label: "Live Activity",          component: LiveActivity },
+  { id: "live-calendar", label: "Live Calendar", component: LiveCalendar },
   { id: "calendar-strip",      label: "Calendar Strip",         component: CalendarStrip },
   { id: "item-availability",   label: "Item Availability",      component: ItemAvailabilityCalendar },
   { id: "next-rentals",        label: "Next Rentals",           component: NextRentals },
   { id: "return-hub",          label: "Return Hub",             component: ReturnHub },
-  // weekly-calendar lives only as an overlay (CalendarGantt). It is launched
-  // from CalendarStrip's 'Weekly View' button AND from the compact
-  // `weekly_calendar` stat card (see STAT_WIDGETS) — neither is a full panel.
+  // The live-calendar panel reuses CalendarGantt; the weekly_calendar stat
+  // and optional calendar-strip still launch its fullscreen view.
   { id: "conversation-funnel", label: "Conversation Funnel",    component: ConversationFunnel },
   { id: "item-revenue",        label: "Item Revenue",           component: ItemRevenuePanel },
   { id: "top-bundles",         label: "Top Bundles",            component: TopBundles },
@@ -83,6 +84,7 @@ export const PANEL_WIDGETS: readonly PanelWidget[] = [
 ];
 
 export const STAT_WIDGETS: readonly StatWidget[] = [
+  { id: "conversation_funnel", label: "Conversation Funnel" },
   { id: "channel_response_rates", label: "Channel Response Rate" },
   { id: "todos",           label: "To-Do" },
   { id: "walle",           label: "WallE" },
@@ -125,7 +127,7 @@ export const HERO_SPANS: Record<string, { col: number; row: number }> = {
 // the single source of truth for the historical "hero" treatment so StatsGrid
 // can fall back to it when an id is not in HERO_SPANS.
 export const HERO_IDS: ReadonlySet<string> = new Set([
-  "channel_response_rates",
+
   "active",
   "weekly_calendar",
   "ongoing",
@@ -135,5 +137,12 @@ export const HERO_IDS: ReadonlySet<string> = new Set([
   "revenue_sparkline",
 ]);
 
-export const DEFAULT_PANEL_ORDER = PANEL_WIDGETS.map((w) => w.id);
+export const DEFAULT_HIDDEN_PANELS = ["calendar-strip", "conversation-funnel"];
+export const COMPACT_PANELS: ReadonlySet<string> = new Set([
+  "earnings-chart", "live-activity", "top-bundles", "missed-revenue",
+  "out-of-stock", "sell-recommender", "price-recos", "conversation-funnel",
+  "verification-funnel", "item-roi", "lost-revenue-buy",
+]);
+const PRIMARY_PANELS = ["stats-grid", "lifetime", "reply-inbox", "live-calendar", "return-hub"];
+export const DEFAULT_PANEL_ORDER = [...PRIMARY_PANELS, ...PANEL_WIDGETS.map((w) => w.id).filter((id) => !PRIMARY_PANELS.includes(id))];
 export const DEFAULT_STAT_ORDER  = STAT_WIDGETS.map((w) => w.id);

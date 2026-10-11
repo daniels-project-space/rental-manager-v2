@@ -4,8 +4,11 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import {
   DEFAULT_PANEL_ORDER,
+  DEFAULT_HIDDEN_PANELS,
   DEFAULT_STAT_ORDER,
 } from "@/lib/dashboard/widget-registry";
+
+import { mergeOrder, upgradePanelOrder } from "./layout-order";
 
 const USER_ID = "default";
 const DEBOUNCE_MS = 500;
@@ -34,32 +37,6 @@ type EditModeContextValue = {
 
 const EditModeContext = createContext<EditModeContextValue | null>(null);
 
-function mergeOrder(saved: string[] | undefined, defaults: readonly string[]): string[] {
-  // Insert new (unsaved) ids at their declared default position, while preserving
-  // the user's relative order between ids they have already saved. Without this,
-  // a newly-added DEFAULT_*_ORDER entry (e.g. WallE at index 0) gets appended to
-  // the end of a pre-existing saved layout instead of landing at its default slot.
-  if (!saved || saved.length === 0) return [...defaults];
-  const knownDefaults = new Set(defaults);
-  const savedKnown = saved.filter((id) => knownDefaults.has(id));
-  const savedSet = new Set(savedKnown);
-  const result: string[] = [];
-  let savedIdx = 0;
-  for (const defId of defaults) {
-    if (!savedSet.has(defId)) {
-      // new widget — insert at default position
-      result.push(defId);
-    } else {
-      // emit saved ids up to and including this one (preserves user reorders between known ids)
-      while (savedIdx < savedKnown.length && savedKnown[savedIdx] !== defId) {
-        result.push(savedKnown[savedIdx++]);
-      }
-      if (savedIdx < savedKnown.length) result.push(savedKnown[savedIdx++]);
-    }
-  }
-  while (savedIdx < savedKnown.length) result.push(savedKnown[savedIdx++]);
-  return result;
-}
 
 export function EditModeProvider({ children }: { children: React.ReactNode }) {
   const remote = useQuery(api.dashboardLayout.getLayout, { userId: USER_ID });
@@ -96,8 +73,8 @@ export function EditModeProvider({ children }: { children: React.ReactNode }) {
     setLocal((prev) => {
       if (prev && debounceRef.current) return prev; // don't clobber unflushed edits
       return {
-        panelOrder: mergeOrder(remote?.panelOrder, DEFAULT_PANEL_ORDER),
-        hiddenPanels: remote?.hiddenPanels ?? [],
+        panelOrder: upgradePanelOrder(remote?.panelOrder, DEFAULT_PANEL_ORDER),
+        hiddenPanels: remote?.panelOrder.includes("live-calendar") ? remote.hiddenPanels : [...new Set([...(remote?.hiddenPanels ?? []).filter((id) => !["stats-grid", "lifetime", "reply-inbox", "live-calendar", "return-hub"].includes(id)), ...DEFAULT_HIDDEN_PANELS])],
         statOrder: mergeOrder(remote?.statOrder, DEFAULT_STAT_ORDER),
         hiddenStats: remote?.hiddenStats ?? [],
       };
@@ -108,7 +85,7 @@ export function EditModeProvider({ children }: { children: React.ReactNode }) {
     () =>
       local ?? {
         panelOrder: [...DEFAULT_PANEL_ORDER],
-        hiddenPanels: [],
+        hiddenPanels: [...DEFAULT_HIDDEN_PANELS],
         statOrder: [...DEFAULT_STAT_ORDER],
         hiddenStats: [],
       },
@@ -155,7 +132,7 @@ export function EditModeProvider({ children }: { children: React.ReactNode }) {
         const base =
           prev ?? {
             panelOrder: [...DEFAULT_PANEL_ORDER],
-            hiddenPanels: [],
+            hiddenPanels: [...DEFAULT_HIDDEN_PANELS],
             statOrder: [...DEFAULT_STAT_ORDER],
             hiddenStats: [],
           };
@@ -206,7 +183,7 @@ export function EditModeProvider({ children }: { children: React.ReactNode }) {
     }
     setLocal({
       panelOrder: [...DEFAULT_PANEL_ORDER],
-      hiddenPanels: [],
+      hiddenPanels: [...DEFAULT_HIDDEN_PANELS],
       statOrder: [...DEFAULT_STAT_ORDER],
       hiddenStats: [],
     });
