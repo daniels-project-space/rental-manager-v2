@@ -996,8 +996,6 @@ export const getReplyQueue = query({
         )
         .collect(),
     ]);
-    await extendAvailabilityMappings(ctx,availCtx,[...byStep,...byAction,...[...convByThread.keys()].flatMap(thread=>{const row=availCtx.byOrderId.get(thread);return row?[row]:[];})].filter(r=>
-      !!r.hygglo_order_id && (convByThread.has(r.hygglo_order_id)||(r.created_at??r._creationTime)>=cutoff)));
     // Reservation-by-order-id cache: loadAvailCtx's confirmed/pending rows plus
     // the request rows above — every reservation already read this execution.
     // See AvailCtx.byOrderId for why a hit is exactly `.first()`'s answer.
@@ -1008,11 +1006,25 @@ export const getReplyQueue = query({
       if (!prev || r._creationTime < prev._creationTime)
         resByOrderId.set(r.hygglo_order_id, r);
     }
+    // Load historical conversations once, then qualify their listings in one
+    // batch. Rebuilding canonical allocation separately for every old chat can
+    // exhaust the query execution budget and leave the materialized view stale.
+    const missingThreads = [...convByThread.keys()].filter(thread => !resByOrderId.has(thread));
+    const historical = await Promise.all(missingThreads.map(thread => ctx.db
+      .query("reservations")
+      .withIndex("by_hygglo_order_id", q => q.eq("hygglo_order_id", thread))
+      .first()));
+    historical.forEach((reservation, index) => {
+      if (reservation) resByOrderId.set(missingThreads[index], reservation);
+    });
+    await extendAvailabilityMappings(ctx, availCtx, [...resByOrderId.values()].filter(r =>
+      !!r.hygglo_order_id && (convByThread.has(r.hygglo_order_id) || (r.created_at ?? r._creationTime) >= cutoff)));
     const resFor = async (
       threadId: string,
     ): Promise<Doc<"reservations"> | null> => {
       const cached = resByOrderId.get(threadId);
       if (cached) return cached;
+      if (convByThread.has(threadId)) return null; // The batched lookup already found no booking.
       // Not in any collected status (e.g. completed/cancelled/declined orders
       // that live inquiries land on) — one indexed read, only for these.
       const reservation = await ctx.db
