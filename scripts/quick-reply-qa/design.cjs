@@ -192,6 +192,21 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       handoffSummary.cardCount,
       "every time-sensitive rental displays the renter name",
     );
+    const headerLayout = await ev(
+      `(()=>{const title=document.querySelector('[class*="titleRow"]').getBoundingClientRect();const accounts=document.querySelector('[aria-label="Filter conversations by account"]').getBoundingClientRect();const quick=[...document.querySelectorAll('button')].filter(b=>b.textContent.trim().startsWith('Quick texts'));const r=quick[0].getBoundingClientRect();return {accountsBelowTitle:accounts.top>=title.bottom,quickCount:quick.length,quickVisible:r.left>=0&&r.right<=innerWidth,railHeight:document.querySelector('[class*="handoffRail"]').getBoundingClientRect().height};})()`,
+    );
+    assert(
+      headerLayout.accountsBelowTitle &&
+        headerLayout.quickCount === 1 &&
+        headerLayout.quickVisible,
+      "reference header has separate account row and one reachable quick-texts button: " +
+        JSON.stringify(headerLayout),
+    );
+    if (width === 1505)
+      assert(
+        headerLayout.railHeight <= 110,
+        "wide queue handoff row stays compact",
+      );
     await capture("queue");
     if (width === 1505) {
       await ev(
@@ -343,6 +358,12 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         calendarSpace.lastDayBottom < calendarSpace.footerTop,
         "whole month is visible above the booking navigation: " +
           JSON.stringify(calendarSpace),
+      );
+      assert(
+        await ev(
+          `(()=>{const panel=document.querySelector('[aria-label="Rental controls"]');const pricing=[...panel.querySelectorAll('h4')].find(e=>e.textContent==='3. Pricing');const price=pricing.nextElementSibling;return pricing.getBoundingClientRect().bottom<panel.querySelector('footer').getBoundingClientRect().top&&price.firstElementChild.getBoundingClientRect().bottom<panel.querySelector('footer').getBoundingClientRect().top;})()`,
+        ),
+        "equipment, full calendar and pricing are visible in the vertical controls panel",
       );
     }
 

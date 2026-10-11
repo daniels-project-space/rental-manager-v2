@@ -1996,7 +1996,16 @@ function DateCalendar({
         ? 1
         : 0;
   const tooShort = rangeDays > 0 && rangeDays < minDays;
-  const canApply = !!start && rangeDays >= minDays && !busy && !applyDisabled;
+  const datesChanged =
+    start !== initialStart || (end ?? start) !== (initialEnd ?? initialStart);
+  const showDateActions =
+    !inline || applyLabel !== "Apply dates" || datesChanged;
+  const canApply =
+    !!start &&
+    rangeDays >= minDays &&
+    !busy &&
+    !applyDisabled &&
+    showDateActions;
 
   // Confined to ReplyModal's own body panel — see ReviewsOverlay for why.
   // Single caller (OrderEditor, itself only rendered inside ReplyModal).
@@ -2026,8 +2035,10 @@ function DateCalendar({
             </button>
           </div>
         )}
-        <div className="p-3">
-          <div className="flex items-center justify-between mb-2">
+        <div className={`${styles.calendarContent} p-3`}>
+          <div
+            className={`${styles.calendarHeader} flex items-center justify-between mb-2`}
+          >
             <button
               onClick={() => setCursor(new Date(y, m - 1, 1))}
               className="w-8 h-8 rounded-lg hover:bg-white/[0.08] text-[#cbd5e1]"
@@ -2047,7 +2058,9 @@ function DateCalendar({
               ›
             </button>
           </div>
-          <div className="grid grid-cols-7 gap-1 text-center">
+          <div
+            className={`${styles.calendarGrid} grid grid-cols-7 gap-1 text-center`}
+          >
             {["M", "T", "W", "T", "F", "S", "S"].map((d, i) => (
               <div key={i} className="text-[10px] text-[#6b7280] py-1">
                 {d}
@@ -2081,36 +2094,47 @@ function DateCalendar({
               );
             })}
           </div>
-          <div className="mt-3 text-[12px] text-[#9aa0ad]">
-            {start ? (
-              <>
-                {prettyDay(start)}
-                {end && end !== start ? ` → ${prettyDay(end)}` : ""} ·{" "}
-                {rangeDays} day{rangeDays === 1 ? "" : "s"}
-                {tooShort && (
-                  <span className="text-amber-400"> · min {minDays} days</span>
-                )}
-              </>
-            ) : (
-              "Pick a start date, then an end date."
-            )}
-          </div>
-          <div className="mt-3 flex items-center gap-2">
-            <button
-              onClick={onClose}
-              className="text-xs px-3 py-2 rounded-lg bg-white/[0.06] text-[#8b8fa3]"
+          {showDateActions && (
+            <div
+              className={`${styles.calendarRange} mt-3 text-[12px] text-[#9aa0ad]`}
             >
-              Cancel
-            </button>
-            <button
-              disabled={!canApply}
-              onClick={() => start && onApply(start, end ?? start)}
-              className="ml-auto text-[13px] font-semibold px-5 py-2 rounded-lg text-white disabled:opacity-40"
-              style={{ background: accent }}
+              {start ? (
+                <>
+                  {prettyDay(start)}
+                  {end && end !== start ? ` → ${prettyDay(end)}` : ""} ·{" "}
+                  {rangeDays} day{rangeDays === 1 ? "" : "s"}
+                  {tooShort && (
+                    <span className="text-amber-400">
+                      {" "}
+                      · min {minDays} days
+                    </span>
+                  )}
+                </>
+              ) : (
+                "Pick a start date, then an end date."
+              )}
+            </div>
+          )}
+          {showDateActions && (
+            <div
+              className={`${styles.calendarFooter} mt-3 flex items-center gap-2`}
             >
-              {busy ? "Working…" : applyLabel}
-            </button>
-          </div>
+              <button
+                onClick={onClose}
+                className="text-xs px-3 py-2 rounded-lg bg-white/[0.06] text-[#8b8fa3]"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={!canApply}
+                onClick={() => start && onApply(start, end ?? start)}
+                className="ml-auto text-[13px] font-semibold px-5 py-2 rounded-lg text-white disabled:opacity-40"
+                style={{ background: accent }}
+              >
+                {busy ? "Working…" : applyLabel}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -3880,21 +3904,21 @@ export function ReplyModal({
               />
               <div className="min-w-0">
                 <h3>{tile.renter_name}</h3>
-                <button
-                  type="button"
-                  onClick={() => setShowReviews((value) => !value)}
-                  className={styles.rating}
-                  title="View all renter reviews"
-                >
-                  {tile.renter_rating?.toFixed(1) ?? "Unrated"} <span>★</span>
-                  {tile.renter_review_count != null && (
-                    <small className={styles.reviewCount}>
-                      {" "}
-                      · {tile.renter_review_count} reviews
-                    </small>
-                  )}
-                </button>
-                <div className="mt-1.5">
+                <div className={styles.chatReputation}>
+                  <button
+                    type="button"
+                    onClick={() => setShowReviews((value) => !value)}
+                    className={styles.rating}
+                    title="View all renter reviews"
+                  >
+                    {tile.renter_rating?.toFixed(1) ?? "Unrated"} <span>★</span>
+                    {tile.renter_review_count != null && (
+                      <small className={styles.reviewCount}>
+                        {" "}
+                        · {tile.renter_review_count} reviews
+                      </small>
+                    )}
+                  </button>
                   <AccountTag slug={tile.account_slug} source={tile.source} />
                 </div>
                 <div className={styles.identityDates}>
@@ -4928,7 +4952,13 @@ export function ReplyInbox() {
       `}</style>
         <div className={styles.heading}>
           <div className={styles.titleRow}>
-            <h2>Quick Reply</h2>
+            <div className={styles.workspaceTitle}>
+              <span>Rental workspace</span>
+              <h2>Quick Reply</h2>
+              <p>
+                Respond to enquiries, manage bookings and keep your gear moving.
+              </p>
+            </div>
             <label className={styles.searchBar}>
               <svg
                 aria-hidden="true"
@@ -4950,6 +4980,25 @@ export function ReplyInbox() {
                 onChange={(event) => setSearch(event.target.value)}
               />
             </label>
+            <button
+              type="button"
+              className={styles.quickTextsButton}
+              onClick={() => setShowManager(true)}
+            >
+              <svg
+                aria-hidden="true"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+              >
+                <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2v-9.5a8.5 8.5 0 1 1 19-1Z" />
+              </svg>
+              Quick texts
+              <span aria-hidden="true">⌄</span>
+            </button>
             {dbCinemaLoadFailed && (
               <span className="text-amber-300">DB Cinema offline</span>
             )}
@@ -5019,9 +5068,6 @@ export function ReplyInbox() {
             <option value="newest">Newest activity</option>
             <option value="oldest">Oldest request</option>
           </select>
-          <button type="button" onClick={() => setShowManager(true)}>
-            ▤ Quick texts
-          </button>
           <button
             type="button"
             onClick={() =>

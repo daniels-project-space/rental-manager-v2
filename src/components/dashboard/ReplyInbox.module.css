@@ -5,10 +5,10 @@
   font-display: swap;
 }
 .widget {
-  padding: 24px !important;
-  border-radius: 10px !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
   background: #101820 !important;
-  border: 1px solid #253440 !important;
+  border: 0 !important;
   box-shadow: none !important;
   color: #eaf1f8;
   font-family: "Quick Reply Inter", Arial, sans-serif;
@@ -640,7 +640,7 @@
   color: #aad3ff;
 }
 .chatDock {
-  height: calc(100dvh - 180px);
+  height: calc(100dvh - 222px);
   min-height: 540px;
   min-width: 0;
   position: relative;
@@ -1191,6 +1191,9 @@
   color: #a4cdff;
 }
 @media (min-width: 1050px) {
+  .toolbar select {
+    margin-left: auto;
+  }
   .chatGear section article {
     display: grid;
     grid-template-columns: 56px minmax(0, 1fr);
@@ -1322,7 +1325,7 @@
 }
 @media (max-width: 767px) {
   .widget {
-    padding: 14px !important;
+    padding: 0 !important;
   }
   .titleRow {
     gap: 12px;
@@ -1647,27 +1650,80 @@
 
 .heading {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 16px;
-  margin-bottom: 16px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 .heading .titleRow {
-  flex: 1;
-  min-width: 420px;
+  display: grid;
+  grid-template-columns: minmax(310px, 0.85fr) minmax(260px, 1.25fr) auto;
+  align-items: center;
   margin: 0;
-  gap: 18px;
+  gap: 24px;
+}
+.workspaceTitle > span {
+  display: block;
+  color: #a5bfd4;
+  font-size: 10px;
+  line-height: 1.4;
+  letter-spacing: 1.3px;
+  text-transform: uppercase;
+}
+.workspaceTitle h2 {
+  margin: 3px 0;
+}
+.workspaceTitle p {
+  margin: 0;
+  color: #bfd0df;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.quickTextsButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 0 16px;
+  background: #142c46;
+  border: 1px solid #2c75c6;
+  border-radius: 8px;
+  color: #eaf3fc;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.quickTextsButton > span {
+  color: #a6bfd8;
 }
 .heading .accountFilters {
   margin: 0;
 }
 .heading .searchBar {
   max-width: none;
+  min-width: 0;
+}
+@media (max-width: 1049px) {
+  .heading .titleRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+  }
+  .heading .searchBar {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
 }
 @media (max-width: 767px) {
-  .heading .titleRow {
-    min-width: 0;
-    flex-basis: 100%;
+  .workspaceTitle p {
+    display: none;
+  }
+  .workspaceTitle > span {
+    font-size: 9px;
+  }
+  .quickTextsButton {
+    padding: 0 12px;
+    min-height: 38px;
   }
 }
 
@@ -2316,5 +2372,151 @@
   }
 }
 
-.searchFeedback { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 11px; color: #9db4c7; }
-.toolbar .searchFeedback button { min-height: 28px; height: 28px; font-size: 10px; padding: 0 9px; }
+.searchFeedback {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  color: #9db4c7;
+}
+.toolbar .searchFeedback button {
+  min-height: 28px;
+  height: 28px;
+  font-size: 10px;
+  padding: 0 9px;
+}
+
+/* Preserve message space while matching the reference's separate header rows. */
+.chatReputation {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+@media (min-width: 1050px) {
+  .chatHeader {
+    padding: 10px 20px;
+  }
+  .chatGear {
+    padding: 10px;
+  }
+  .chatGear section article {
+    gap: 4px;
+  }
+  .verificationStrip {
+    padding: 8px 20px;
+  }
+  .compose {
+    padding-block: 8px;
+    gap: 5px;
+  }
+  .composeHeading {
+    margin-bottom: 4px;
+  }
+  .aiButton {
+    padding-block: 6px;
+  }
+  .composeInput {
+    min-height: 52px;
+  }
+  .verticalEditor {
+    gap: 8px;
+  }
+  .verticalEditor h4 {
+    margin-top: 6px;
+  }
+  .editorHeading {
+    margin: 4px 0;
+  }
+  .dateSettings {
+    padding-block: 8px;
+  }
+  .inlineCalendar {
+    margin-top: 6px;
+  }
+  .calendarContent {
+    padding: 8px;
+  }
+  .calendarHeader {
+    margin-bottom: 4px;
+  }
+  .calendarHeader button {
+    height: 28px;
+  }
+  .calendarGrid {
+    gap: 2px;
+  }
+  .calendarGrid button {
+    height: 28px;
+  }
+  .calendarRange {
+    margin-top: 6px;
+    font-size: 11px;
+  }
+  .calendarFooter {
+    margin-top: 8px;
+  }
+}
+
+@container (min-width: 1001px) {
+  .handoffRail {
+    padding: 10px 12px;
+    min-height: 88px;
+  }
+  .handoffs {
+    flex: 1;
+  }
+  .handoffCard {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr) 92px 12px;
+    grid-template-rows: auto auto;
+    gap: 4px 8px;
+    min-width: 300px;
+    flex: 1;
+  }
+  .handoffCard > :first-child {
+    grid-column: 1;
+    grid-row: 1 / 3;
+  }
+  .handoffCard > div:nth-child(2) {
+    display: contents;
+  }
+  .handoffRenter {
+    grid-column: 2;
+    grid-row: 1;
+    margin: 0;
+  }
+  .handoffCard .pickup,
+  .handoffCard .return {
+    grid-column: 3;
+    grid-row: 1 / 3;
+    justify-self: end;
+    align-self: center;
+  }
+  .handoffIdentity {
+    grid-column: 2;
+    grid-row: 2;
+    margin: 0;
+    gap: 6px;
+  }
+  .handoffIdentity > img {
+    width: 24px;
+    height: 24px;
+  }
+  .handoffIdentity > div {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .handoffIdentity small {
+    margin: 0;
+    font-size: 10px;
+  }
+  .handoffArrow {
+    grid-column: 4;
+    grid-row: 1 / 3;
+    margin: 0;
+  }
+}
