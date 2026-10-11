@@ -27,6 +27,32 @@ describe("independent exact schedule agreement", () => {
         ["owner", "Yes!"],
       ])?.time,
     ).toBe("17:00"));
+  it("accepts an explicitly spoken hour with a clear daypart", () =>
+    expect(
+      proof([
+        ["renter", "I will bring it back at five in the afternoon"],
+        ["owner", "Yes!"],
+      ])?.time,
+    ).toBe("17:00"));
+  it("accepts explicit numeric 24-hour and AM/PM clocks", () => {
+    expect(proof([["renter", "Return at 17:00"], ["owner", "Yes!"]], "return", "17:00")?.time).toBe("17:00");
+    expect(proof([["renter", "Return at 5:00pm"], ["owner", "Yes!"]], "return", "17:00")?.time).toBe("17:00");
+  });
+  it("recovers a spoken minute phrase only when the daypart is explicit", () => {
+    const m = messages([
+      ["renter", "I will bring it back at half past five in the afternoon"],
+      ["owner", "That works"],
+    ]);
+    expect(recoverConfirmedChatClock(m, "return", "2026-10-09", "hash")).toMatchObject({ time: "17:30", date: "2026-10-09" });
+  });
+  it("does not guess morning or evening from an unqualified spoken hour", () =>
+    expect(proof([["renter", "I will bring it back at five"], ["owner", "Yes!"]], "return", "17:00")).toBeUndefined());
+  it("does not interpret a one-digit numeric clock without AM or PM", () =>
+    expect(proof([["renter", "Return at 5:00"], ["owner", "Yes!"]], "return", "05:00")).toBeUndefined());
+  it("invalidates an old clock when a later spoken-time change is ambiguous", () =>
+    expect(proof([["renter", "Return at 5pm"], ["owner", "Yes!"], ["renter", "Could I return at five instead?"]])).toBeUndefined());
+  it("clears same-message precision when a later spoken return time is ambiguous", () =>
+    expect(proof([["renter", "Return at 5pm. Can I bring it back at five instead?"], ["owner", "Yes!"]])).toBeUndefined());
   it("does not invent morning/evening clocks", () =>
     expect(
       proof(

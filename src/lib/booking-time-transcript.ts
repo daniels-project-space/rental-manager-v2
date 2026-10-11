@@ -21,12 +21,37 @@ export function hashBookingTimeTranscript(messages: BookingTimeMessage[]): strin
   return `v2:${messages.length}:${hash.toString(16).padStart(8, "0")}`;
 }
 
+/** True when a later message changes or reopens a specific pickup/return schedule. */
+export function hasScheduleTimingLanguage(text: string): boolean {
+  const contexts = [...text.matchAll(/\b(pick\s*up|collect(?:ion)?|return|drop\s*(?:off|of)|back)\b/gi)];
+  return contexts.some((context, index) => {
+    const start = Math.max(0, (context.index ?? 0) - 32);
+    const end = contexts[index + 1]?.index ?? text.length;
+    const clause = text.slice(start, end);
+    return transcriptHasTimeLanguage([{ sender: "owner", body_text: clause }]) ||
+      /\b(?:today|tomorrow|tonight|yesterday|later|earlier|during the day|end of day|next (?:day|week)|this week|first thing|close of play|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}(?:st|nd|rd|th))\b/i.test(clause);
+  });
+}
+
 export function transcriptHasTimeLanguage(messages: BookingTimeMessage[]): boolean {
   const joined = messages.map((message) => message.body_text).join("\n");
   const numeric = /\d{1,2}\s*(?:am|pm|[.:]\d{2}|o['’]?clock)/i.test(joined);
   const natural = /\b(?:morning|evening|afternoon|noon|midday|midnight|half past|quarter past|quarter to|half seven|seven thirty)\b/i.test(joined);
-  // Catch common shorthand such as "pickup around 7" without treating rental
-  // durations, quantities or dates as time language and spending an LLM call.
+  const spokenHour = "(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)";
+  const spokenPhrase = "(?:(?:quarter\\s+(?:past|to)|half(?:\\s+past)?)\\s+)?" + spokenHour + "(?:\\s+(?:fifteen|thirty|forty[- ]five))?";
+  const contextualSpoken = new RegExp(
+    "\\b(?:at|around|about|by|before|after|from|pickup|collect(?:ion)?|return|drop[- ]?off|back)\\s+(?:at\\s+)?" + spokenPhrase + "\\b",
+    "i",
+  ).test(joined);
+  const naturalSpoken = new RegExp(
+    "\\b(?:(?:quarter\\s+(?:past|to)|half(?:\\s+past)?)\\s+" + spokenHour + "|" + spokenHour + "\\s+(?:fifteen|thirty|forty[- ]five))\\b",
+    "i",
+  ).test(joined);
+  const spelledMeridiem = new RegExp(
+    "\\b" + spokenHour + "(?:\\s+o['’]?clock)?\\s*[ap]\\.?m\\.?\\b",
+    "i",
+  ).test(joined);
+  // Keep prose and equipment quantities out of the model lane while catching spoken clocks.
   const contextualHour = /\b(?:at|around|about|by|before|after|from|pickup|collect(?:ion)?|return|drop[- ]?off)\s+(?:at\s+)?(?:[0-2]?\d)(?:\s*(?:ish))?\b/i.test(joined);
-  return numeric || natural || contextualHour;
+  return numeric || natural || contextualHour || contextualSpoken || naturalSpoken || spelledMeridiem;
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   hashBookingTimeTranscript,
+  hasScheduleTimingLanguage,
   transcriptHasTimeLanguage,
 } from "./booking-time-transcript";
 
@@ -25,5 +26,10 @@ describe("booking time transcript fingerprint", () => {
     expect(transcriptHasTimeLanguage([{ sender: "owner", body_text: "Return by 6 please" }])).toBe(true);
     expect(transcriptHasTimeLanguage([{ sender: "renter", body_text: "I need 7 batteries for 2 days" }])).toBe(false);
     expect(transcriptHasTimeLanguage([{ sender: "renter", body_text: "The booking starts on 7 August" }])).toBe(false);
+    expect(transcriptHasTimeLanguage([{ sender: "renter", body_text: "I will bring it back at five" }])).toBe(true);
+    expect(transcriptHasTimeLanguage([{ sender: "renter", body_text: "Return at half past five in the afternoon" }])).toBe(true);
+    expect(transcriptHasTimeLanguage([{ sender: "renter", body_text: "I need five batteries for two days" }])).toBe(false);
+    expect(hasScheduleTimingLanguage("Can I bring it back at five instead?")).toBe(true);
+    expect(hasScheduleTimingLanguage("We can meet tomorrow, thanks")).toBe(false);
   });
 });

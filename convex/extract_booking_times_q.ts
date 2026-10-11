@@ -7,7 +7,7 @@ import { v } from "convex/values";
 import { internalQuery, internalMutation, query, mutation } from "./owner_functions";
 import { internal } from "./_generated/api";
 import { confirmedChatClock, recoverConfirmedChatClock } from "../src/lib/booking-schedule-evidence";
-import { hashBookingTimeTranscript } from "../src/lib/booking-time-transcript";
+import { hasScheduleTimingLanguage, hashBookingTimeTranscript } from "../src/lib/booking-time-transcript";
 import type { MutationCtx } from "./_generated/server";
 import type { Id, Doc } from "./_generated/dataModel";
 import type { BookingTimeMessage } from "../src/lib/booking-time-transcript";
@@ -18,13 +18,13 @@ function timeProofs(row:Doc<"reservations">,patch:Partial<Doc<"reservations">>,m
  const next={...row,...patch};
  let pickup=confirmedChatClock(messages,"pickup",next.pickup_time,next.pickup_date??next.start_date,next.start_date,hash);
  let returned=confirmedChatClock(messages,"return",next.return_time,next.return_date??next.end_date,next.end_date,hash);
- // Keep independently established history when the bounded latest window
- // has simply moved past it. New schedule language after that agreement
- // invalidates precision until it is accepted again.
  const keep=(proof:typeof pickup,endpoint:"pickup"|"return")=>{
-  if(!proof)return undefined;const time=endpoint==="pickup"?next.pickup_time:next.return_time;const date=endpoint==="pickup"?(next.pickup_date??next.start_date):(next.return_date??next.end_date);
+  if(!proof)return undefined;
+  const time=endpoint==="pickup"?next.pickup_time:next.return_time;
+  const date=endpoint==="pickup"?(next.pickup_date??next.start_date):(next.return_date??next.end_date);
   const context=endpoint==="pickup"?/\b(?:pickup|pick up|collect)/i:/\b(?:return|drop.?off|back)/i;
-  return proof.time===time&&proof.date===date&&!messages.some(m=>(m.hygglo_sent_at??0)>proof.confirmedAt&&context.test(m.body_text)&&/\d|morning|evening|afternoon|noon|midday|midnight|day|tonight|tomorrow/i.test(m.body_text))?proof:undefined;
+  const newerSchedule=messages.some(m=>(m.hygglo_sent_at??0)>proof.confirmedAt&&context.test(m.body_text)&&hasScheduleTimingLanguage(m.body_text));
+  return proof.time===time&&proof.date===date&&!newerSchedule?proof:undefined;
  };
  const keptPickup=keep(row.pickup_time_provenance,"pickup"),keptReturn=keep(row.return_time_provenance,"return");
  if(!pickup||keptPickup&&keptPickup.confirmedAt>pickup.confirmedAt)pickup=keptPickup;

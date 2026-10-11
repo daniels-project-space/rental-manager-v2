@@ -4,6 +4,7 @@ import { reconcileReservationTimeProvenance } from "./extract_booking_times_q";
 import { propagateGroupedTimesCron } from "./reservations";
 import { confirmedClock } from "./lib/confirmed_schedule";
 import { stockOccupancyForItem } from "./lib/renter_stock";
+import type { Id } from "./_generated/dataModel";
 
 function fixture(rows:any[]){
  const docs=new Map(rows.map(r=>[r._id,structuredClone(r)])),threads=new Map<string,any[]>(),audits:any[]=[],jobs:any[]=[],reads:any[]=[];
@@ -31,6 +32,21 @@ describe('actual handover evidence backstop',()=>{
   await reconcileReservationTimeProvenance(f.ctx,'uncertain' as any);const rental=f.docs.get('uncertain');expect(confirmedClock(rental,'return','2026-10-09')).toBeUndefined();
   const item:any={_id:'camera'};const source:any={reservations:[rental],reservationUnits:new Map([['uncertain',new Map([['camera',1]])]])};
   const occupied=stockOccupancyForItem(source,item,{item_name:'Camera',start_date:'2026-10-09',end_date:'2026-10-10'});expect(occupied[0].end).toBe('2026-10-10T01:00');
+ });
+ it('recovers an explicit spoken return time and gives stock the exact buffered window',async()=>{
+  const f=fixture([row('spoken-clock',{return_time:'17:30'})]);
+  f.threads.set('spoken-clock',[{sender:'renter',body_text:'I will bring it back at half past five in the afternoon',hygglo_sent_at:100},{sender:'owner',body_text:'Yes!',hygglo_sent_at:200}]);
+  expect(await reconcileReservationTimeProvenance(f.ctx,'spoken-clock' as Id<"reservations">)).toMatchObject({changed:true,returnConfirmed:true});
+  const rental=f.docs.get('spoken-clock');expect(confirmedClock(rental,'return','2026-10-09')).toBe('17:30');
+  const item={_id:'camera'} as Parameters<typeof stockOccupancyForItem>[1];const source={reservations:[rental],reservationUnits:new Map([['spoken-clock',new Map([['camera',1]])]])} as Parameters<typeof stockOccupancyForItem>[0];
+  expect(stockOccupancyForItem(source,item,{item_name:'Camera',start_date:'2026-10-09',end_date:'2026-10-10'})[0].end).toBe('2026-10-09T18:30');
+ });
+ it('clears stale precision after an ambiguous spoken return change and blocks the day',async()=>{
+  const f=fixture([row('uncertain-spoken',{return_time:'17:00',return_time_provenance:{source:'agreed_chat',date:'2026-10-09',time:'17:00',confirmedAt:200}})]);
+  f.threads.set('uncertain-spoken',[...agreed('5pm'),{sender:'renter',body_text:'Could I return at five instead?',hygglo_sent_at:300}]);
+  await reconcileReservationTimeProvenance(f.ctx,'uncertain-spoken' as Id<"reservations">);const rental=f.docs.get('uncertain-spoken');expect(confirmedClock(rental,'return','2026-10-09')).toBeUndefined();
+  const item={_id:'camera'} as Parameters<typeof stockOccupancyForItem>[1];const source={reservations:[rental],reservationUnits:new Map([['uncertain-spoken',new Map([['camera',1]])]])} as Parameters<typeof stockOccupancyForItem>[0];
+  expect(stockOccupancyForItem(source,item,{item_name:'Camera',start_date:'2026-10-09',end_date:'2026-10-10'})[0].end).toBe('2026-10-10T01:00');
  });
  it('leaves signed website periods and obsolete bookings untouched',async()=>{
   const web=row('website',{account_slug:'dbcinema_web',pickup_time:'09:00',return_time:'21:00',site_item_windows:[]}),old=row('old',{is_obsolete:true});const f=fixture([web,old]);f.threads.set('website',agreed('5pm'));
