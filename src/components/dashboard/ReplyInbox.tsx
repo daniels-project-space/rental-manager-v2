@@ -2011,19 +2011,19 @@ function DateCalendar({
         className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#101216] shadow-2xl overflow-hidden my-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="p-3 border-b border-white/10 flex items-center gap-2">
-          <span className="text-sm font-semibold text-[#f1f3f5]">
-            Change rental dates
-          </span>
-          {!inline && (
+        {!inline && (
+          <div className="p-3 border-b border-white/10 flex items-center gap-2">
+            <span className="text-sm font-semibold text-[#f1f3f5]">
+              Change rental dates
+            </span>
             <button
               onClick={onClose}
               className="ml-auto text-[#8b8fa3] hover:text-white text-2xl leading-none"
             >
               ×
             </button>
-          )}
-        </div>
+          </div>
+        )}
         <div className="p-3">
           <div className="flex items-center justify-between mb-2">
             <button
@@ -4910,7 +4910,18 @@ export function ReplyInbox() {
           <div className={styles.titleRow}>
             <h2>Quick Reply</h2>
             <label className={styles.searchBar}>
-              <span aria-hidden="true">⌕</span>
+              <svg
+                aria-hidden="true"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+              >
+                <circle cx="10.5" cy="10.5" r="6.5" />
+                <path d="m16 16 5 5" />
+              </svg>
               <input
                 aria-label="Search conversations"
                 type="search"
@@ -4967,7 +4978,10 @@ export function ReplyInbox() {
                 setFilter(item.k);
                 if (item.k === "all") setSortBy("priority");
               }}
-              className={filter === item.k ? styles.activeFilter : ""}
+              className={`${styles.filterTab} ${filter === item.k ? styles.activeFilter : ""}`}
+              data-count={item.n}
+              aria-pressed={filter === item.k}
+              aria-label={`${item.label} (${item.n})`}
             >
               {filter === item.k && <i />}
               {item.label}

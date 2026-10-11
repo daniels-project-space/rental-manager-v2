@@ -596,3 +596,13 @@
 .panel:has([data-equipment-editing="true"]) > .footer {
   display: none;
 }
+/* Keep the controls surface in the same blue-black palette as the reference chat. */
+.panel {
+  background: linear-gradient(145deg, #12232f, #0e1a24);
+}
+@media (min-width: 1050px) {
+  /* The accurate booking progress stays visible in the adjacent conversation. */
+  .scroll > .progress {
+    display: none;
+  }
+}
