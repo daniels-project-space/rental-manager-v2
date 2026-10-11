@@ -32,7 +32,7 @@ type ListingReviewRow = {
   mappingConflict: boolean;
 };
 
-type ClassifiedListingReviewRow = ListingReviewRow & { mappingStatus: ListingMappingReviewStatus };
+type ClassifiedListingReviewRow = ListingReviewRow & { mappingStatus: ListingMappingReviewStatus; resolution: ReturnType<typeof resolveListingComponents> | null };
 const EMPTY_RESOLVER_ITEMS: ListingResolverItem[] = [];
 
 const filterOptions = [
@@ -154,6 +154,31 @@ function ListingMappingCard({
                 ? "Source item is missing from the current inventory."
                 : "No primary Rental Manager item is linked."}
           </p>
+          {listing.mappingStatus === "needs_review" && listing.resolution && !listing.isMarketingOnly && (
+            <section className="mt-3 rounded-xl border border-sky-400/15 bg-sky-400/[0.035] p-3" aria-label="Resolver evidence">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-sky-100/75">Resolver evidence · not saved</div>
+              {listing.resolution.components.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {listing.resolution.components.map((component) => (
+                    <span key={component.item_id} className="rounded-lg border border-white/[0.08] bg-black/15 px-2 py-1 text-[10px] text-[#c6ced9]">
+                      {component.name ?? "Unresolved inventory item"} × {component.units_per_listing}
+                      {component.owned === false ? " · not rentable" : component.owned === null ? " · unverified" : " · owned"}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {((listing.resolution.coverage?.missing.length ?? 0) > 0 ||
+                (listing.resolution.coverage?.unresolved.length ?? 0) > 0 ||
+                listing.resolution.unresolved_default_adapters.length > 0) && (
+                <ul className="mt-2 space-y-1 text-[10px] text-amber-100/80">
+                  {listing.resolution.coverage?.missing.map((item) => <li key={`missing-${item.item_id}`}>Missing stock: {item.name} × {item.qty}</li>)}
+                  {listing.resolution.coverage?.unresolved.map((line, index) => <li key={`contents-${index}`}>Unmatched contents: {line}</li>)}
+                  {listing.resolution.unresolved_default_adapters.map((line, index) => <li key={`adapter-${index}`}>Unresolved supplied part: {line}</li>)}
+                </ul>
+              )}
+              <p className="mt-2 text-[10px] text-[#8d95a3]">These are resolver findings, not a saved stock map. Review the description and choose only the physical items and counts you can verify.</p>
+            </section>
+          )}
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap sm:justify-end">
           {listing.mappingStatus === "verified" ? (
@@ -346,6 +371,7 @@ export function ListingMappingReview() {
     );
     return {
       ...listing,
+      resolution,
       mappingStatus: listingMappingReviewStatus({
         isMarketingOnly: listing.isMarketingOnly,
         mappingConflict: listing.mappingConflict,

@@ -108,6 +108,9 @@ describe("ListingMappingReview", () => {
       writeFileSync(previewPath, `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${styles}<style>body{margin:0;background:#07090e;color:#eef0f5;font-family:Arial,sans-serif}</style></head><body><main style="max-width:1180px;margin:0 auto;padding:32px">${html}</main></body></html>`);
     }
     expect(html).toContain("Resolver needs mapping review");
+    expect(html).toContain("Resolver evidence · not saved");
+    expect(html).toContain("Unresolved inventory item");
+    expect(html).toContain("These are resolver findings, not a saved stock map.");
     expect(html).toContain("Saved owner map");
     expect(html).toContain("Edit stock map");
     expect(html).toContain("Mapped");
