@@ -408,6 +408,7 @@ export function useAction(ref) {
         name === "quick_reply_replacements:basketOptions" ||
         name === "dbcinema_chat:replacementBasketOptions"
       ) {
+        if(window.__fixture.replacementCase)return window.__fixture.replacementCase;
         const row =
           rows.find(
             (row) =>

@@ -1,6 +1,6 @@
 import {tokenize} from "./item_name_match";
 export type CountedMaster={unit_kind?:string;name_canonical:string;aliases?:string[];status?:string;is_marketing_only?:boolean;qty?:number;compatibility?:{included_with_rental?:string[]}|null};
-const words=(s:string)=>tokenize(s.replace(/\breciever\b/gi,"receiver").replace(/\blaveliers?\b/gi,"lavalier"));
+const words=(s:string)=>tokenize(s.replace(/ø/gi,"o").replace(/\bmicrophones?\b/gi,"mic").replace(/\breciever\b/gi,"receiver").replace(/\blaveliers?\b/gi,"lavalier"));
 /** Identity is already resolved. Recorded kit contents determine its counting
  * basis; neither a primary ID nor a generic role may select an inventory pool. */
 export function countedPieceBasis(name:string,item:CountedMaster):{key:string;pieces:number}|null|"invalid" {

@@ -516,6 +516,7 @@ function awaitingMe(t: ReplyTileData): boolean {
   // If I sent the last message, it's the renter's turn — never "waiting on me",
   // even for a still-open request (I've already replied / approved it).
   if (t.last_sender === "owner") return false;
+  if (t.last_sender === "renter") return true;
   // Cancelled / declined → I already closed it; don't keep nagging me.
   if (isResolvedClosed(t)) return false;
   return t.last_sender === "renter" || t.is_request;
@@ -1470,8 +1471,8 @@ function ReplyCard({
           </>
         ) : (
           <>
-            <span>Replied</span>
-            <strong className="text-emerald-300">✓</strong>
+            <span>{tile.last_sender === "owner" ? "Replied" : isResolvedClosed(tile) ? "Closed" : "No message yet"}</span>
+            {tile.last_sender === "owner" && <strong className="text-emerald-300">✓</strong>}
           </>
         )}
       </div>

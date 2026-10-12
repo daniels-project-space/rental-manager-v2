@@ -1106,6 +1106,7 @@ const operationalSchema = defineSchema({
     // reply to this inquiry?" with one bounded index read per recent thread.
     .index("by_thread_sender", ["thread_id", "sender"])
     .index("by_thread_and_message", ["thread_id", "message_id"])
+    .index("by_thread_and_sent_at", ["thread_id", "hygglo_sent_at"])
     .index("by_fetched", ["fetched_at"]),
 
   // ── Insurance Claims (W03 chart series + W22 Claims widget) ─

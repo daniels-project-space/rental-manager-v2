@@ -1,0 +1,2277 @@
+{
+  "items": [
+    {
+      "_id": "item-0",
+      "aliases": [
+        "NP-F570 battery",
+        "Blackmagic NP-F570 batteries"
+      ],
+      "is_marketing_only": false,
+      "kind": "power",
+      "name_canonical": "NP-F570 batteries",
+      "qty": 12,
+      "status": "active",
+      "track_independent_stock": true,
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-1",
+      "aliases": [
+        "EF-L adapter",
+        "Canon EF to L mount adapter",
+        "EF to L adapter",
+        "EF-to-L mount",
+        "EF \u2192 L adapter"
+      ],
+      "is_marketing_only": false,
+      "kind": "accessory",
+      "name_canonical": "EF to L mount",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-2",
+      "aliases": [
+        "fluid video head",
+        "fluid head",
+        "video head"
+      ],
+      "is_marketing_only": false,
+      "kind": "support",
+      "name_canonical": "SmallRig Fluid Head",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-3",
+      "aliases": [
+        "zoom recorder",
+        "zoom h5n",
+        "zoom recorder h5"
+      ],
+      "compatibility": {
+        "included_with_rental": [
+          "1x 32GB SD card",
+          "2x battery",
+          "1x XLR cable (optional)"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "audio",
+      "name_canonical": "Zoom H5",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-4",
+      "aliases": [],
+      "compatibility": {
+        "included_with_rental": [
+          "1x carrying pouch",
+          "1x puff attachment",
+          "1x wind shield",
+          "1x XLR to 3.5mm converter (optional)",
+          "1x carrying case"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "audio",
+      "name_canonical": "Sennheiser MKE 600",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-5",
+      "aliases": [],
+      "is_marketing_only": false,
+      "kind": "storage_card",
+      "name_canonical": "Atomos 1TB SSD",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-6",
+      "aliases": [
+        "Mackie Thump GO"
+      ],
+      "compatibility": {
+        "included_with_rental": [
+          "1x built-in rechargeable battery",
+          "1x carrying bag"
+        ]
+      },
+      "is_marketing_only": true,
+      "kind": "dj_audio",
+      "name_canonical": "MACKIE Thump Go speaker",
+      "qty": 0,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-7",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "video",
+      "name_canonical": "ViewSonic 4K Projector",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-8",
+      "aliases": [],
+      "is_marketing_only": false,
+      "kind": "support",
+      "name_canonical": "Manfrotto 190X Tripod",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-9",
+      "aliases": [],
+      "compatibility": {
+        "included_with_rental": [
+          "25mm T2.1 lens",
+          "50mm T2.1 lens",
+          "75mm T2.1 lens",
+          "front & rear caps for each lens",
+          "hard protective case"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "PL",
+      "name_canonical": "DZOFilm Vespid 3-Lens Set",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "set"
+    },
+    {
+      "_id": "item-10",
+      "aliases": [],
+      "is_marketing_only": false,
+      "kind": "accessory",
+      "name_canonical": "DJI Fly More Kit",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "kit"
+    },
+    {
+      "_id": "item-11",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "dj_audio",
+      "name_canonical": "Pioneer XDJ-RX2",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-12",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "monitoring",
+      "name_canonical": "SmallHD Cine 7 Monitor",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-13",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "support",
+      "name_canonical": "Tilta Float Gimbal Support",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-14",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "lens",
+      "name_canonical": "Sony FE 14mm f1.8 GM",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-15",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "lens",
+      "name_canonical": "Sony FE 50mm f1.2 GM",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-16",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "lens",
+      "name_canonical": "Sony FE 135mm f1.8 GM",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-17",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "lens",
+      "name_canonical": "Sigma 24-70mm f2.8 Art",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-18",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "audio",
+      "name_canonical": "Sennheiser EW 500 Wireless",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-19",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "support",
+      "name_canonical": "DJI RS4 Pro",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-20",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "lighting",
+      "name_canonical": "Aputure 300x",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-21",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "lighting",
+      "name_canonical": "Aputure 600d Pro",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-22",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "camera_body",
+      "name_canonical": "DJI Inspire 3",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-23",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "camera_body",
+      "name_canonical": "DJI Air 3",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-24",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "camera_body",
+      "name_canonical": "Panasonic S5 II",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-25",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "camera_body",
+      "name_canonical": "Sony A1",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-26",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "camera_body",
+      "name_canonical": "DJI Ronin 4D",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-27",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "camera_body",
+      "name_canonical": "RED Komodo",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-28",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "camera_body",
+      "name_canonical": "Canon C70",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-29",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "camera_body",
+      "name_canonical": "Canon R5",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-30",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "camera_body",
+      "name_canonical": "Sony A7S III",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-31",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "camera_body",
+      "name_canonical": "Sony FX6",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-32",
+      "aliases": [],
+      "is_marketing_only": false,
+      "kind": "media",
+      "name_canonical": "128GB V30 SD card",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-33",
+      "aliases": [],
+      "is_marketing_only": false,
+      "kind": "power",
+      "name_canonical": "BMPCC battery pack",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-34",
+      "aliases": [],
+      "is_marketing_only": false,
+      "kind": "power",
+      "name_canonical": "NP-W126S batteries",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-35",
+      "aliases": [],
+      "is_marketing_only": false,
+      "kind": "power",
+      "name_canonical": "NP-FW50 batteries",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-36",
+      "aliases": [],
+      "compatibility": {
+        "included_with_rental": []
+      },
+      "is_marketing_only": false,
+      "kind": "camera",
+      "name_canonical": "Fujifilm X100 VI",
+      "qty": 0,
+      "status": "inactive",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-37",
+      "aliases": [
+        "Great Joy 85mm"
+      ],
+      "is_marketing_only": true,
+      "kind": "lens",
+      "name_canonical": "Anamorphic Great Joy lens 85mm",
+      "qty": 0,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-38",
+      "aliases": [
+        "Great Joy 50mm"
+      ],
+      "is_marketing_only": true,
+      "kind": "lens",
+      "name_canonical": "Anamorphic Great Joy lens 50mm",
+      "qty": 0,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-39",
+      "aliases": [
+        "Great Joy 35mm"
+      ],
+      "is_marketing_only": true,
+      "kind": "lens",
+      "name_canonical": "Anamorphic Great Joy lens 35mm",
+      "qty": 0,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-40",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "C-stand"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "1x 5-in-1 reflector panel (42in, folds to 1/3 size)"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lighting",
+      "lens_mount": "N/A",
+      "name_canonical": "5-in-1 reflector panel",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-41",
+      "aliases": [
+        "PL \u2192 L adapter"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": [
+          "Anamorphic Blazar Remus 33mm",
+          "Anamorphic Blazar Remus 45mm",
+          "Anamorphic Blazar Remus 65mm",
+          "Anamorphic Blazar Remus 100mm"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "accessory",
+      "lens_mount": "PL to L-mount adapter",
+      "name_canonical": "PL to L mount",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-42",
+      "aliases": [
+        "PL \u2192 RF adapter"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": [
+          "Anamorphic Blazar Remus 33mm",
+          "Anamorphic Blazar Remus 45mm",
+          "Anamorphic Blazar Remus 65mm",
+          "Anamorphic Blazar Remus 100mm"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "accessory",
+      "lens_mount": "PL to Canon RF-mount adapter",
+      "name_canonical": "PL to RF mount",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-43",
+      "aliases": [
+        "PL \u2192 EF adapter"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": [
+          "Anamorphic Blazar Remus 33mm",
+          "Anamorphic Blazar Remus 45mm",
+          "Anamorphic Blazar Remus 65mm",
+          "Anamorphic Blazar Remus 100mm"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "accessory",
+      "lens_mount": "PL to Canon EF-mount adapter",
+      "name_canonical": "PL to EF mount",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-44",
+      "aliases": [
+        "PL \u2192 E adapter"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": [
+          "Anamorphic Blazar Remus 33mm",
+          "Anamorphic Blazar Remus 45mm",
+          "Anamorphic Blazar Remus 65mm",
+          "Anamorphic Blazar Remus 100mm"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "accessory",
+      "lens_mount": "PL to Sony E-mount adapter",
+      "name_canonical": "PL to Sony E mount",
+      "qty": 2,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-45",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "C-stand"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "2x Ambitful RGB LED tube light",
+          "2x mounting bracket",
+          "2x power adapter/cable",
+          "1x carry case"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lighting",
+      "lens_mount": "N/A",
+      "name_canonical": "Ambitful RGB light tubes 2x set",
+      "qty": 2,
+      "status": "active",
+      "unit_kind": "set"
+    },
+    {
+      "_id": "item-46",
+      "aliases": [
+        "CFexpress Type A card"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "storage_card",
+      "lens_mount": "N/A",
+      "name_canonical": "CF Express Type A card",
+      "qty": 3,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-47",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "accessory",
+      "lens_mount": "N/A",
+      "name_canonical": "Cinebloom filter mist",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-48",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "storage_card",
+      "lens_mount": "N/A",
+      "name_canonical": "256GB card",
+      "qty": 3,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-49",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "accessory",
+      "lens_mount": "N/A",
+      "name_canonical": "ND filter",
+      "qty": 3,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-50",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "DJ RX3 Pioneer controller",
+          "JBL wireless microphones"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "1x JBL PartyBox Club 120 speaker",
+          "1x speaker stand",
+          "1x power cable/charger",
+          "1x AUX cable",
+          "1x carrying bag"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "dj_audio",
+      "lens_mount": "N/A",
+      "name_canonical": "JBL Club 120 speaker",
+      "qty": 2,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-51",
+      "aliases": [
+        "Pioneer XDJ-RX3"
+      ],
+      "compatibility": {
+        "accessories": [
+          "JBL Club 120 speaker"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "1x Pioneer XDJ-RX3 controller",
+          "1x power cable",
+          "1x data transfer cable",
+          "1x protective transport case"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "dj_audio",
+      "lens_mount": "N/A",
+      "name_canonical": "DJ RX3 Pioneer controller",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-52",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "smoke_fx",
+      "lens_mount": "N/A",
+      "name_canonical": "Smoke Ninja",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-53",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "smoke_fx",
+      "lens_mount": "N/A",
+      "name_canonical": "Smoke Ninja Pro hazer",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-54",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "smoke_fx",
+      "lens_mount": "N/A",
+      "name_canonical": "Smoke machine fogger",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-55",
+      "aliases": [
+        "dji mic 2",
+        "dji mic2",
+        "dji wireless mic 2"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "2x transmitter",
+          "1x receiver",
+          "1x charging case"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "audio",
+      "lens_mount": "N/A",
+      "name_canonical": "DJI Mic 2 wireless",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "set"
+    },
+    {
+      "_id": "item-56",
+      "aliases": [
+        "jbl wireless mics",
+        "jbl wireless microphone"
+      ],
+      "compatibility": {
+        "accessories": [
+          "JBL Club 120 speaker"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "1x wireless mic",
+          "1x dongle/receiver"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "audio",
+      "lens_mount": "N/A",
+      "name_canonical": "JBL wireless microphones",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "set"
+    },
+    {
+      "_id": "item-57",
+      "aliases": [
+        "R\u00d8DE VideoMic Pro+"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "1x Rode Video Mic Pro Plus",
+          "built-in Rycote Lyre shock mount",
+          "built-in LB-1 rechargeable battery"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "audio",
+      "lens_mount": "N/A",
+      "name_canonical": "Rode Video Mic Pro Plus",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-58",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Softbox 85cm"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "1x Yongnuo YN560 IV speedlight",
+          "batteries included (no full-charge guarantee)"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lighting",
+      "lens_mount": "N/A",
+      "name_canonical": "Camera flash",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-59",
+      "aliases": [
+        "dji wireless mics",
+        "dji wireless microphones"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "2x transmitter",
+          "1x receiver",
+          "1x charging case"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "audio",
+      "lens_mount": "N/A",
+      "name_canonical": "DJI Wireless Mics",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "set"
+    },
+    {
+      "_id": "item-60",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Monopod arm support"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "1x Sennheiser MKE 600 mic",
+          "1x Zoom H1 XLR recorder",
+          "1x shock mount",
+          "1x windshield",
+          "1x boom pole (3 sections)",
+          "1x XLR cable",
+          "1x 32GB SD card",
+          "1x carry pouch"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "audio",
+      "lens_mount": "N/A",
+      "name_canonical": "Audio boom mic Sennheiser",
+      "qty": 2,
+      "status": "active",
+      "unit_kind": "kit"
+    },
+    {
+      "_id": "item-61",
+      "aliases": [
+        "R\u00d8DE Wireless PRO"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "2x transmitter",
+          "1x receiver",
+          "2x lavalier mic",
+          "1x smart charge case"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "audio",
+      "lens_mount": "N/A",
+      "name_canonical": "Rode Wireless Mic Pro set",
+      "qty": 2,
+      "status": "active",
+      "unit_kind": "set"
+    },
+    {
+      "_id": "item-62",
+      "aliases": [
+        "R\u00d8DE VideoMic GO"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "no battery needed \u2014 plugs directly into camera mic input"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "audio",
+      "lens_mount": "N/A",
+      "name_canonical": "Rode Video Mic Go",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-63",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [
+          "Sony NP-F (NPF 970 compatible)"
+        ],
+        "cards": [],
+        "included_with_rental": [
+          "1x monitor (receiver unit)",
+          "1x HDMI cable",
+          "2x battery",
+          "1x battery charger",
+          "1x carry bag"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "monitor",
+      "lens_mount": "N/A",
+      "name_canonical": "Hollyland 7-inch monitor",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-64",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Hollyland 7-inch monitor"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "transmission",
+      "lens_mount": "N/A",
+      "name_canonical": "Hollyland Pyro S transmitter",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-65",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Hollyland 7-inch monitor"
+        ],
+        "batteries": [
+          "Built-in rechargeable + Sony NP-F compatible"
+        ],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "transmission",
+      "lens_mount": "N/A",
+      "name_canonical": "Hollyland Mars 4K transmitter",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-66",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "V-mount 95Wh",
+          "V-mount 150Wh"
+        ],
+        "batteries": [
+          "Sony NP-F (NPF 970 compatible)"
+        ],
+        "cards": [],
+        "included_with_rental": [
+          "1x AtomX SSD caddy",
+          "1x sun hood",
+          "1x mounting bracket"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "monitor",
+      "lens_mount": "N/A",
+      "name_canonical": "Atomos Ninja V",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-67",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "GoPro 12 Hero",
+          "DJI Osmo Action Pro 5"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "accessory",
+      "lens_mount": "N/A",
+      "name_canonical": "Suction cups",
+      "qty": 6,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-68",
+      "aliases": [
+        "GoPro HERO12 Black"
+      ],
+      "compatibility": {
+        "accessories": [
+          "Suction cups"
+        ],
+        "batteries": [],
+        "cards": [
+          "256GB card"
+        ],
+        "included_with_rental": [
+          "2x GoPro Enduro battery",
+          "1x 128GB microSD card",
+          "1x suction mount",
+          "1x carry bag"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "camera",
+      "lens_mount": "Fixed wide-angle lens",
+      "name_canonical": "GoPro 12 Hero",
+      "qty": 3,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-69",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [
+          "256GB card"
+        ],
+        "included_with_rental": [
+          "5x battery",
+          "1x charger",
+          "1x 256GB SD card",
+          "1x ND filter set",
+          "1x controller"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "drone",
+      "lens_mount": "Fixed camera",
+      "name_canonical": "DJI Mini 4 Pro",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-70",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [
+          "256GB card"
+        ],
+        "included_with_rental": [
+          "3x Intelligent Flight Battery",
+          "1x charging hub",
+          "1x carrying case"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "drone",
+      "lens_mount": "Fixed triple-camera system",
+      "name_canonical": "DJI Mavic 3 Pro",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-71",
+      "aliases": [
+        "DJI Osmo Action 5 Pro"
+      ],
+      "compatibility": {
+        "accessories": [
+          "Suction cups"
+        ],
+        "batteries": [],
+        "cards": [
+          "256GB card"
+        ],
+        "included_with_rental": [
+          "2x DJI Osmo Action battery",
+          "1x 128GB microSD card",
+          "1x suction mount",
+          "battery charging solution"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "camera",
+      "lens_mount": "Fixed wide-angle lens",
+      "name_canonical": "DJI Osmo Action Pro 5",
+      "qty": 3,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-72",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Audio boom mic Sennheiser"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "support",
+      "lens_mount": "N/A",
+      "name_canonical": "Monopod arm support",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-73",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Tilta Nucleus Nano 2 follow focus",
+          "Atomos Ninja V",
+          "V-mount 95Wh",
+          "V-mount 150Wh"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "support",
+      "lens_mount": "N/A",
+      "name_canonical": "Tilta shoulder rig",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-74",
+      "aliases": [
+        "Tilta Nucleus Nano II"
+      ],
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal",
+          "Tilta shoulder rig"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "stabilizer",
+      "lens_mount": "N/A",
+      "name_canonical": "Tilta Nucleus Nano 2 follow focus",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-75",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Sirui tripod",
+          "Small rig tripod"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "motion",
+      "lens_mount": "N/A",
+      "name_canonical": "Motorized slider",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-76",
+      "aliases": [
+        "DJI RS3 Pro"
+      ],
+      "compatibility": {
+        "accessories": [
+          "Tilta Nucleus Nano 2 follow focus",
+          "Small rig tripod"
+        ],
+        "batteries": [
+          "DJI gimbal battery"
+        ],
+        "cards": [],
+        "included_with_rental": [
+          "1x DJI RS3 Pro gimbal",
+          "1x battery grip",
+          "1x extended tripod grip",
+          "1x camera mounting plate",
+          "1x cable set",
+          "1x carry case"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "gimbal",
+      "lens_mount": "Quick-release plate (universal)",
+      "name_canonical": "DJI RS3 Pro gimbal",
+      "qty": 2,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-77",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "support",
+      "lens_mount": "N/A",
+      "name_canonical": "Sirui tripod",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-78",
+      "aliases": [
+        "SmallRig tripod"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "support",
+      "lens_mount": "N/A",
+      "name_canonical": "Small rig tripod",
+      "qty": 3,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-79",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Nanlite Forza 300",
+          "Nanlite 500B",
+          "Softbox 85cm",
+          "5-in-1 reflector panel"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "grip",
+      "lens_mount": "N/A",
+      "name_canonical": "C-stand",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-80",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Atomos Ninja V",
+          "Hollyland 7-inch monitor",
+          "Hollyland Mars 4K transmitter"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "2x NP-F970 batteries",
+          "Dual charger"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "power",
+      "lens_mount": "N/A",
+      "name_canonical": "Sony NPF 970 batteries 2x sets",
+      "qty": 4,
+      "status": "active",
+      "unit_kind": "kit"
+    },
+    {
+      "_id": "item-81",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "power",
+      "lens_mount": "N/A",
+      "name_canonical": "Anker Power Station F2000",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-82",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "power",
+      "lens_mount": "N/A",
+      "name_canonical": "DJI gimbal battery",
+      "qty": 3,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-83",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Nanlite Forza 300",
+          "Nanlite 500B",
+          "Tilta shoulder rig"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "power",
+      "lens_mount": "N/A",
+      "name_canonical": "V-mount 150Wh",
+      "qty": 4,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-84",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Nanlite Forza 300",
+          "Nanlite 500B",
+          "Tilta shoulder rig"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "power",
+      "lens_mount": "N/A",
+      "name_canonical": "V-mount 95Wh",
+      "qty": 2,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-85",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "C-stand",
+          "Softbox 85cm"
+        ],
+        "batteries": [
+          "V-mount 95Wh",
+          "V-mount 150Wh"
+        ],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lighting",
+      "lens_mount": "N/A",
+      "name_canonical": "Nanlite 500B",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-86",
+      "aliases": [],
+      "is_marketing_only": false,
+      "kind": "lighting",
+      "name_canonical": "Nanlite Pavotube 30x II",
+      "qty": 4,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-87",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "C-stand",
+          "Softbox 85cm"
+        ],
+        "batteries": [
+          "V-mount 95Wh",
+          "V-mount 150Wh"
+        ],
+        "cards": [],
+        "included_with_rental": [
+          "1x Nanlite Forza 300 light",
+          "1x power ballast & cable",
+          "1x reflector",
+          "1x light stand",
+          "1x carry case"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lighting",
+      "lens_mount": "N/A",
+      "name_canonical": "Nanlite Forza 300",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-88",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "C-stand",
+          "Small rig tripod"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "1x GVM RGB LED panel",
+          "1x stand",
+          "1x power adapter/cable",
+          "1x barn doors"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lighting",
+      "lens_mount": "N/A",
+      "name_canonical": "LED light panels RGB",
+      "qty": 3,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-89",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Nanlite Forza 300",
+          "Nanlite 500B",
+          "C-stand"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "1x Bowens-mount adapter ring"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lighting",
+      "lens_mount": "N/A",
+      "name_canonical": "Softbox 85cm",
+      "qty": 2,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-90",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal",
+          "ND filter",
+          "Cinebloom filter mist",
+          "Tilta shoulder rig",
+          "Small rig tripod",
+          "Sirui tripod",
+          "PL to Sony E mount"
+        ],
+        "batteries": [
+          "Sony NP-FZ100"
+        ],
+        "cards": [
+          "256GB card"
+        ],
+        "included_with_rental": [
+          "Sony NP-FZ100 batteries 2x sets",
+          "CF Express Type A card"
+        ],
+        "lenses": [
+          "Sony GM 24-70mm f2.8",
+          "Sony GM 16-35mm f2.8",
+          "Sony GM 70-200mm f2.8",
+          "Sony FE 90mm f2.8 Macro G OSS",
+          "Sony 28-70mm",
+          "TTArtisan 11mm f2.8 Fisheye (Sony E)",
+          "Anamorphic Blazar Remus 33mm",
+          "Anamorphic Blazar Remus 45mm",
+          "Anamorphic Blazar Remus 65mm",
+          "Anamorphic Blazar Remus 100mm"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "camera",
+      "lens_mount": "Sony E-mount (full frame)",
+      "name_canonical": "Sony A7 V",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-91",
+      "aliases": [
+        "blackmagic 6k full frame",
+        "blackmagic cinema camera 6k full frame",
+        "blackmagic cinema camera 6k"
+      ],
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal",
+          "Atomos Ninja V",
+          "Hollyland Mars 4K transmitter",
+          "V-mount 95Wh",
+          "V-mount 150Wh",
+          "Tilta shoulder rig",
+          "Tilta Nucleus Nano 2 follow focus",
+          "Small rig tripod",
+          "Sirui tripod",
+          "ND filter",
+          "PL to L mount"
+        ],
+        "batteries": [
+          "NP-F570"
+        ],
+        "cards": [
+          "1TB CFexpress Type B card"
+        ],
+        "included_with_rental": [
+          "Canon EF-to-L mount adapter",
+          "NP-F570 batteries 5x",
+          "1x 1TB CFexpress Type B card"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "camera",
+      "lens_mount": "Leica L-mount (native)",
+      "name_canonical": "BMPCC 6K Full Frame",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-92",
+      "aliases": [
+        "blackmagic 6k pro",
+        "blackmagic pocket cinema camera 6k pro",
+        "blackmagic pocket 6k pro"
+      ],
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal",
+          "Atomos Ninja V",
+          "Hollyland Mars 4K transmitter",
+          "Hollyland Pyro S transmitter",
+          "Hollyland 7-inch monitor",
+          "V-mount 95Wh",
+          "V-mount 150Wh",
+          "Tilta shoulder rig",
+          "Tilta Nucleus Nano 2 follow focus",
+          "Small rig tripod",
+          "Sirui tripod",
+          "ND filter",
+          "PL to EF mount"
+        ],
+        "batteries": [
+          "NP-F570"
+        ],
+        "cards": [
+          "256GB card"
+        ],
+        "included_with_rental": [
+          "5x NP-F570 battery",
+          "1x 1TB SSD",
+          "1x camera cage",
+          "1x hard carrying case"
+        ],
+        "lenses": [
+          "Canon EF 24-105mm f4",
+          "Canon EF 16-35mm f2.8"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "camera",
+      "lens_mount": "Canon EF mount",
+      "name_canonical": "BMPCC 6K Pro",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-93",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal",
+          "ND filter",
+          "Cinebloom filter mist",
+          "Small rig tripod",
+          "Sirui tripod",
+          "PL to Sony E mount"
+        ],
+        "batteries": [],
+        "cards": [
+          "256GB card"
+        ],
+        "included_with_rental": [
+          "Sony NP-FW50 batteries 2x sets",
+          "256GB card"
+        ],
+        "lenses": [
+          "Sony GM 24-70mm f2.8",
+          "Sony GM 16-35mm f2.8",
+          "Sony GM 70-200mm f2.8",
+          "Sony FE 90mm f2.8 Macro G OSS",
+          "Sony 28-70mm",
+          "TTArtisan 11mm f2.8 Fisheye (Sony E)",
+          "Anamorphic Blazar Remus 33mm",
+          "Anamorphic Blazar Remus 45mm",
+          "Anamorphic Blazar Remus 65mm",
+          "Anamorphic Blazar Remus 100mm"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "camera",
+      "lens_mount": "Sony E-mount (full frame)",
+      "name_canonical": "Sony A7 II",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-94",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal",
+          "ND filter",
+          "Cinebloom filter mist",
+          "Tilta shoulder rig",
+          "Small rig tripod",
+          "Sirui tripod",
+          "PL to Sony E mount"
+        ],
+        "batteries": [
+          "Sony NP-FZ100"
+        ],
+        "cards": [
+          "256GB card"
+        ],
+        "included_with_rental": [
+          "Sony NP-FZ100 batteries 2x sets",
+          "256GB card"
+        ],
+        "lenses": [
+          "Sony GM 24-70mm f2.8",
+          "Sony GM 16-35mm f2.8",
+          "Sony GM 70-200mm f2.8",
+          "Sony FE 90mm f2.8 Macro G OSS",
+          "Sony 28-70mm",
+          "TTArtisan 11mm f2.8 Fisheye (Sony E)",
+          "Anamorphic Blazar Remus 33mm",
+          "Anamorphic Blazar Remus 45mm",
+          "Anamorphic Blazar Remus 65mm",
+          "Anamorphic Blazar Remus 100mm"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "camera",
+      "lens_mount": "Sony E-mount (full frame)",
+      "name_canonical": "Sony A7 III",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-95",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal",
+          "Atomos Ninja V",
+          "Hollyland Mars 4K transmitter",
+          "Hollyland Pyro S transmitter",
+          "Hollyland 7-inch monitor",
+          "ND filter",
+          "Cinebloom filter mist",
+          "Tilta shoulder rig",
+          "Tilta Nucleus Nano 2 follow focus",
+          "V-mount 95Wh",
+          "V-mount 150Wh",
+          "Small rig tripod",
+          "Sirui tripod",
+          "Motorized slider",
+          "PL to Sony E mount"
+        ],
+        "batteries": [
+          "Sony NP-FZ100"
+        ],
+        "cards": [
+          "CF Express Type A card",
+          "256GB card"
+        ],
+        "included_with_rental": [
+          "Sony NP-FZ100 batteries 2x sets",
+          "CF Express Type A card"
+        ],
+        "lenses": [
+          "Sony GM 24-70mm f2.8",
+          "Sony GM 16-35mm f2.8",
+          "Sony GM 70-200mm f2.8",
+          "Sony FE 90mm f2.8 Macro G OSS",
+          "Sony 28-70mm",
+          "TTArtisan 11mm f2.8 Fisheye (Sony E)",
+          "Anamorphic Blazar Remus 33mm",
+          "Anamorphic Blazar Remus 45mm",
+          "Anamorphic Blazar Remus 65mm",
+          "Anamorphic Blazar Remus 100mm"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "camera",
+      "lens_mount": "Sony E-mount (full frame)",
+      "name_canonical": "Sony FX3",
+      "qty": 4,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-96",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "ND filter",
+          "Cinebloom filter mist",
+          "Tilta Nucleus Nano 2 follow focus",
+          "DJI RS3 Pro gimbal"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "Canon EF mount",
+      "name_canonical": "Canon EF 16-35mm f2.8",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-97",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "ND filter",
+          "Cinebloom filter mist",
+          "Tilta Nucleus Nano 2 follow focus",
+          "DJI RS3 Pro gimbal"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "Canon EF mount",
+      "name_canonical": "Canon EF 24-105mm f4",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-98",
+      "aliases": [
+        "Sony 11mm f2.8 fisheye",
+        "Sony 11mm f2.8 fisheye lens",
+        "TTArtisan 11mm f/2.8 fisheye (E)"
+      ],
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "Sony E-mount (full frame)",
+      "name_canonical": "TTArtisan 11mm f2.8 Fisheye (Sony E)",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-99",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "Sony E-mount (full frame)",
+      "name_canonical": "Sony 28-70mm",
+      "qty": 2,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-100",
+      "aliases": [
+        "Sony GM 90mm f2.8",
+        "Sony 90mm f/2.8 Macro G OSS"
+      ],
+      "compatibility": {
+        "accessories": [
+          "Tilta Nucleus Nano 2 follow focus",
+          "DJI RS3 Pro gimbal"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "Sony E-mount (full frame)",
+      "name_canonical": "Sony FE 90mm f2.8 Macro G OSS",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-101",
+      "aliases": [
+        "Sony 70-200mm f2.8 GM"
+      ],
+      "compatibility": {
+        "accessories": [
+          "ND filter",
+          "Cinebloom filter mist",
+          "Tilta Nucleus Nano 2 follow focus",
+          "Sirui tripod",
+          "Small rig tripod"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "Sony E-mount (full frame)",
+      "name_canonical": "Sony GM 70-200mm f2.8",
+      "qty": 2,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-102",
+      "aliases": [
+        "Sony 16-35mm f2.8 GM"
+      ],
+      "compatibility": {
+        "accessories": [
+          "ND filter",
+          "Cinebloom filter mist",
+          "Tilta Nucleus Nano 2 follow focus",
+          "DJI RS3 Pro gimbal"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "Sony E-mount (full frame)",
+      "name_canonical": "Sony GM 16-35mm f2.8",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-103",
+      "aliases": [
+        "Sony 24-70mm f2.8 GM"
+      ],
+      "compatibility": {
+        "accessories": [
+          "ND filter",
+          "Cinebloom filter mist",
+          "Tilta Nucleus Nano 2 follow focus",
+          "DJI RS3 Pro gimbal"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "Sony E-mount (full frame)",
+      "name_canonical": "Sony GM 24-70mm f2.8",
+      "qty": 4,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-104",
+      "aliases": [
+        "Blazar Remus 100mm"
+      ],
+      "compatibility": {
+        "accessories": [
+          "PL to Sony E mount",
+          "PL to EF mount",
+          "PL to L mount",
+          "PL to RF mount",
+          "Tilta Nucleus Nano 2 follow focus",
+          "Sirui tripod",
+          "ND filter",
+          "Cinebloom filter mist"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "PL mount (requires adapter for all our cameras)",
+      "name_canonical": "Anamorphic Blazar Remus 100mm",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-105",
+      "aliases": [
+        "Blazar Remus 65mm"
+      ],
+      "compatibility": {
+        "accessories": [
+          "PL to Sony E mount",
+          "PL to EF mount",
+          "PL to L mount",
+          "PL to RF mount",
+          "Tilta Nucleus Nano 2 follow focus",
+          "ND filter",
+          "Cinebloom filter mist"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "PL mount (requires adapter for all our cameras)",
+      "name_canonical": "Anamorphic Blazar Remus 65mm",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-106",
+      "aliases": [
+        "Blazar Remus 45mm"
+      ],
+      "compatibility": {
+        "accessories": [
+          "PL to Sony E mount",
+          "PL to EF mount",
+          "PL to L mount",
+          "PL to RF mount",
+          "Tilta Nucleus Nano 2 follow focus",
+          "ND filter",
+          "Cinebloom filter mist"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "PL mount (requires adapter for all our cameras)",
+      "name_canonical": "Anamorphic Blazar Remus 45mm",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "item-107",
+      "aliases": [
+        "Blazar Remus 33mm"
+      ],
+      "compatibility": {
+        "accessories": [
+          "PL to Sony E mount",
+          "PL to EF mount",
+          "PL to L mount",
+          "PL to RF mount",
+          "Tilta Nucleus Nano 2 follow focus",
+          "ND filter",
+          "Cinebloom filter mist"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "PL mount (requires adapter for all our cameras)",
+      "name_canonical": "Anamorphic Blazar Remus 33mm",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    }
+  ],
+  "products": [
+    {
+      "accountSlug": "diogo",
+      "description": "My SmallRig heavy-duty tripod is built for stability and smooth motion, perfect for capturing cinematic shots. It's designed to be both light and strong, capable of supporting up to 8.5 kg without issue. The integrated fluid head ensures super smooth pans and tilts, and it can be extended up to 2 meters high for versatile shooting.\n\nIn this kit:\n*   SmallRig heavy-duty tripod with fluid head\n*   Fluid head handle\n*   DJI adapter plate\n*   Carrying case\n\nI also offer a 100cm carbon fibre slider as a direct add-on for \u00a310/day. Looking for a camera? I can add a Sony a7III 4K camera for \u00a325/day, a Sony a7S III 4K camera for \u00a340/day, or a Blackmagic Pocket Cinema Camera 6K Pro for \u00a340/day.\n\nBeyond this kit, I have a wide range of other gear available, including Sony and Blackmagic cameras, drones, gimbals, lights, LEDs, wireless mics, image transmitters, follow focus systems, monitors, motorized sliders, mobile power generators, a variety of lenses (including anamorphic), other tripods and stands, smoke machines, and filters (VND, mist, UV).\n\nA quick note on power: chargers are included with the kit. I only supply proprietary charging cables \u2014 anything that charges over a standard USB-C or USB 2.0 lead isn't included, so please bring your own. I do my best to have everything charged for pickup, but with tight turnarounds between rentals I can't always promise a full battery; if it's a time-sensitive shoot, collect the day before or leave an hour or two to top up.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+      "isMarketingOnly": false,
+      "masterItemId": "item-2",
+      "name": "SmallRig Tripod | Heavy Duty / Fluid Head / Stand",
+      "productId": 10,
+      "_id": "product-0"
+    },
+    {
+      "accountSlug": "diogo",
+      "description": "My Blackmagic Pocket Cinema Camera 6K Pro V-mount rig is a powerful setup ready for your next production. This is a comprehensive kit designed for extended shooting, offering excellent power and storage.\n\nIn this kit, you'll find:\n*   Blackmagic Pocket Cinema Camera 6K Pro (BMPCC 6K Pro) with built-in ND filters\n*   Full camera cage with top handle and side handle\n*   Rod rig system\n*   Manual follow focus wheel\n*   2x 150Wh V-mount batteries\n*   V-mount battery plate\n*   2TB SSD for extensive 12-bit BRAW recording\n*   Camera bag\n\nThis large rig provides the BMPCC 6K Pro fully kitted out with a robust rod rig, essential handles, and ample power and storage for long shoots.\n\nA quick note on power: chargers are included with the kit. I only supply proprietary charging cables \u2014 anything that charges over a standard USB-C or USB 2.0 lead isn't included, so please bring your own. I do my best to have everything charged for pickup, but with tight turnarounds between rentals I can't always promise a full battery; if it's a time-sensitive shoot, collect the day before or leave an hour or two to top up.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+      "isMarketingOnly": false,
+      "masterItemId": "item-92",
+      "name": "Blackmagic Pocket Cinema Camera 6K Pro | V-Mount / Rig / BMPCC 6K Pro",
+      "productId": 11,
+      "_id": "product-1"
+    },
+    {
+      "accountSlug": "diogo",
+      "description": "My versatile set of Canon L-Series EF mount lenses is ready for your next photo or cinema project.\n\nIn this kit:\n*   Canon EF 16-35mm f/2.8 L USM lens\n*   Canon EF 24-105mm f/4 L IS USM lens\n*   Lens caps for both lenses\n*   Canon EW-83M lens hood\n*   A protective carry bag\n\nThese L-Series lenses offer a full range of sharp focal lengths, ideal for both cinema and photography work.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+      "isMarketingOnly": false,
+      "masterItemId": "item-96",
+      "name": "2x Cannon L-Series EF Mount Lenses | 16-35mm f/2.8 USM | 24-105mm f/4 USM",
+      "productId": 12,
+      "_id": "product-2"
+    },
+    {
+      "accountSlug": "diogo",
+      "description": "I'm offering my Nanlite FC 500B, a robust bi-color LED light that delivers impressive output in a compact design. This powerful key light is a recent addition to my lighting inventory, offering a small form factor without compromising on output compared to Aputure alternatives.\n\nIn this kit:\n- 1x Nanlite FC 500B Bi-Color LED Light\n- 1x Light stand\n- 1x Sandbag\n- 1x Gel kit\n- 1x Carrying case\n- Various power cables\n\nUpgrade Option:\nYou can upgrade to a multi-light setup: 2x Nanlite FC 500B Bi-Color lights + 1x Nanlite 300 setup for an additional \u00a370 per day.\n\nAbout My Service:\nI've been providing commercial and equipment rentals since 2019.\n\nOther Equipment I Offer:\nI also have a wide range of other gear available, including:\n- Cameras: Sony, Canon, Arri, Blackmagic\n- Drones\n- Party and event equipment\n- Speakers\n- Gimbals\n- Lights\n- LEDs\n- Wireless microphones\n- Image transmitters\n- Follow focus systems\n- Monitors\n- Sliders (both manual and motorized)\n- Mobile power generators\n- Lenses (including anamorphic options)\n- Tripods and stands\n- Smoke machines\n- Filters (VND, mist, UV)\n\nImportant Notes:\nDelivery is a separate charge from the rental fee listed here and will be processed independently.\n\nA quick note on power: chargers are included with the kit. I only supply proprietary charging cables \u2014 anything that charges over a standard USB-C or USB 2.0 lead isn't included, so please bring your own. I do my best to have everything charged for pickup, but with tight turnarounds between rentals I can't always promise a full battery; if it's a time-sensitive shoot, collect the day before or leave an hour or two to top up.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+      "isMarketingOnly": true,
+      "name": "Nanlite FC 500B Bi-Color LED Light 550W | Aputure 600x / 300d / 600d Alternative",
+      "productId": 13,
+      "_id": "product-3"
+    },
+    {
+      "accountSlug": "diogo",
+      "description": "My Rode Wireless Pro kit provides a comprehensive solution for multi-person audio recording.\n\nIn this kit:\n* 4x Rode Wireless Pro transmitters\n* 2x Rode Wireless Pro receivers\n* 4x lavalier microphones\n* A protective kit bag\n\nThis setup is perfect for capturing audio from up to four individuals, making it ideal for group interviews, panel discussions, or multi-speaker events.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+      "isMarketingOnly": false,
+      "masterItemId": "item-61",
+      "name": "Rode Wireless Pro (4x) | Lavalier Microphones / Audio Recorder / Sound Recorder",
+      "productId": 14,
+      "_id": "product-4"
+    },
+    {
+      "accountSlug": "diogo",
+      "description": "Achieve smooth, professional handheld shots with my Tilta shoulder rig.\n\nIn this kit:\n- 1x Tilta shoulder rig (with integrated shoulder pad and dual handles)\n- 1x Carrying bag\n\nI've been providing gear rentals since 2019, serving the London area.\n\nI also have a wide range of other equipment available for rent, including:\n- Sony, Canon, Arri, and Blackmagic cameras\n- Drones\n- Party and event equipment\n- Speakers\n- Gimbals\n- Lights\n- LEDs\n- Wireless microphones\n- Image transmitters\n- Follow focus systems\n- Monitors\n- Sliders (including motorized options)\n- Mobile power generators\n- Lenses\n- Anamorphic lenses\n- Tripods and stands\n- Smoke machines\n- Filters (VND, mist, UV)\n\nPlease note:\n- Delivery is a separate charge from the rental fee listed here and will be handled independently.\n\nA quick note on power: chargers are included with the kit. I only supply proprietary charging cables \u2014 anything that charges over a standard USB-C or USB 2.0 lead isn't included, so please bring your own. I do my best to have everything charged for pickup, but with tight turnarounds between rentals I can't always promise a full battery; if it's a time-sensitive shoot, collect the day before or leave an hour or two to top up.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+      "isMarketingOnly": false,
+      "masterItemId": "item-73",
+      "name": "Tilta Shoulder Rig | Camera Stabilizer / Support System",
+      "productId": 15,
+      "_id": "product-5"
+    }
+  ],
+  "overrides": [
+    {
+      "account_slug": "diogo",
+      "components": [
+        {
+          "item_id": "item-85",
+          "qty": 1
+        }
+      ],
+      "product_id": 13,
+      "_id": "override-0"
+    },
+    {
+      "account_slug": "diogo",
+      "components": [
+        {
+          "item_id": "item-92",
+          "qty": 1
+        },
+        {
+          "item_id": "item-83",
+          "qty": 2
+        }
+      ],
+      "product_id": 11,
+      "_id": "override-1"
+    }
+  ]
+}

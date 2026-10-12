@@ -5,7 +5,7 @@ import { resolveListingComponents } from "./listing_components";
 import type { OverrideMap, ResolvableRes } from "./reservations/itemUnits";
 
 type Override = Pick<Doc<"listing_resolution_override">,"account_slug"|"product_id"|"components">;
-type Product = Pick<Doc<"hygglo_products">,"accountSlug"|"productId"|"masterItemId"|"description">;
+type Product = Pick<Doc<"hygglo_products">,"accountSlug"|"productId"|"masterItemId"|"description"> & {name?:string};
 type Listing = Pick<Doc<"online_listings">,"account_slug"|"product_id"|"description">;
 
 /** The same physical requirements for offered kits and occupied rentals.
@@ -32,7 +32,7 @@ export function canonicalListingAllocation(items: Doc<"items">[], overrides: Ove
     const original=result.get(key);
     if (original?.length===0)continue;
     const resolved=resolveListingComponents(items,original,product.masterItemId?String(product.masterItemId):undefined,1,
-      product.description??descriptions.get(key),context);
+      product.description??descriptions.get(key),context,product.name);
     // Only proved whole contents may replace legacy reservation fallbacks.
     // Partial unknown kits retain their existing audited held units.
     if (!resolved.complete || resolved.owned!==true)continue;

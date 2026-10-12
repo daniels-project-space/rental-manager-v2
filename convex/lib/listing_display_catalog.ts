@@ -17,7 +17,7 @@ export function displayImageMappings<
     m.components?.length === 1 && m.components[0].qty === 1;
   return mappings
     .filter((m) =>
-      m.components?.some(
+      m.account_slug === slug && primary(m) && m.components?.some(
         (c) => c.item_id === itemId && Number.isFinite(c.qty) && c.qty > 0,
       ),
     )
@@ -123,7 +123,7 @@ export async function listingDisplayCatalog(ctx: QueryCtx, account?: string) {
           exact.map((m) => readImages(m.account_slug, m.product_id)),
         ).then((groups) => [
           ...new Set(
-            [...groups.flat(), item.image_url].filter(
+            groups.flat().filter(
               (url): url is string => typeof url === "string" && !!url,
             ),
           ),

@@ -223,3 +223,7 @@
   .heading { margin: 10px 0 8px; padding: 0 9px; }
   .toolbar { padding: 0 9px; }
 }
+
+/* Make space visually for the same photo nodes; keep all row geometry fixed. */
+.row:has([data-requested-stack][data-expanded="true"]) :is(.datesCell,.waitCell,.earnCell) { opacity: 0; pointer-events: none; }
+.row:has([data-requested-stack][data-expanded="true"][data-fan-wide="true"]) :is(.availCell,.verificationCell) { opacity: 0; pointer-events: none; }

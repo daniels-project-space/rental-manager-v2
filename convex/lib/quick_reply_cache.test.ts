@@ -24,7 +24,7 @@ describe("Quick Reply cache compatibility", () => {
           requested_items: [],
           items: [{}],
           availability: {
-            stock_rules_version:3,
+            stock_rules_version:4,
             items: [{ available: null, reason: "Dates needed" }],
           },
         },
@@ -37,3 +37,5 @@ describe("Quick Reply cache compatibility", () => {
     expect(currentQuickReplyCache(null)).toBe(false);
   });
 });
+
+it("rejects previous account-photo and message-order snapshots",()=>expect(currentQuickReplyCache([{request_created_at:1,requested_items:[],items:[],availability:{stock_rules_version:3,items:[]}}])).toBe(false));

@@ -1,6 +1,7 @@
 export type RequestedImageItem = {
   name: string;
   display_name?: string;
+  canonical_name?: string;
   qty: number;
   image_url: string | null;
   image_urls?: string[];
@@ -50,10 +51,10 @@ export function requestedImageItems(
     [item.name_canonical, ...(item.aliases ?? [])].map(key).filter(Boolean);
   const resolve = (name: string) => requestedDisplayMatch(name, catalogue);
   const add = (item: RequestedImageItem, origin: "basket" | "chat") => {
-    const known = resolve(item.name),
+    const known = resolve(item.canonical_name ?? item.name) ?? resolve(item.display_name ?? ""),
       identity = key(known?.name_canonical ?? item.name);
     const previous = result.find(
-      (row) => key(resolve(row.name)?.name_canonical ?? row.name) === identity,
+      (row) => key(resolve(row.canonical_name ?? row.name)?.name_canonical ?? resolve(row.display_name ?? "")?.name_canonical ?? row.name) === identity,
     );
     if (previous) {
       if (origin === "basket" && previous.origin === "basket")

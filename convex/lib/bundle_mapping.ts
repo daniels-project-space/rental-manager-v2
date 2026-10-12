@@ -6,11 +6,11 @@ import { declaredLensIdentity } from "./declared_lens_identity";
 
 type Inventory = CountedMaster & { _id: unknown; name_canonical: string; kind?: string; qty?: number; aliases?: string[]; lens_mount?: string | null; status?: string; is_marketing_only?: boolean; track_independent_stock?: boolean };
 const mountTokens = new Set(["ef", "l", "rf", "e", "pl", "mount"]);
-const tokens = (text: string) => (text.toLowerCase().replace(/\bg\s*-?\s*master\b/g, "gm").replace(/\bfx\s+(\d+)\b/g, "fx$1").replace(/\ba7\s*(s|r)?\s*(iii|iv|ii|v)\b/g, "a7$1$2").match(/[a-z0-9]+/g) ?? [])
+const tokens = (text: string) => (text.toLowerCase().replace(/ø/g,"o").replace(/\bg\s*-?\s*master\b/g, "gm").replace(/\bfx\s+(\d+)\b/g, "fx$1").replace(/\ba7\s*(s|r)?\s*(iii|iv|ii|v)\b/g, "a7$1$2").match(/[a-z0-9]+/g) ?? [])
   .map(token => token.length > 3 && token.endsWith("s") ? token.slice(0, -1) : token);
 // Whole generic supplied hardware lines do not describe independent rentals.
 // Named or explicitly tracked matching pools still participate in coverage.
-const bundledHardware = /^(?:(?:mounting\s+)?(?:clamps?|clips?|brackets?)|antennas?|side\s+handles?|barn\s+doors?|soft\s+diffusion(?:\s+sheets?)?|power\s+adapters?|charging\s+cases?)$/i;
+const bundledHardware = /^(?:(?:mounting\s+)?(?:clamps?|clips?|brackets?)|antennas?|side\s+handles?|barn\s+doors?|soft\s+diffusion(?:\s+sheets?)?|power\s+adapters?|charging\s+cases?|fluid\s+head\s+handles?|(?:DJI\s+)?(?:adapter|quick[- ]release|mounting)\s+plates?|sandbags?|gel\s+(?:kits?|sets?|sheets?))$/i;
 const incidental = /\b(?:batter(?:y|ies)|chargers?|cables?|carrying (?:bag|case)|uv\s+filters?|(?:camera )?cage|(?:sd|memory) cards?|(?:cfexpress|sdxc|sdhc)\b[^.;]{0,50}\bcard|ssds?|\d+\s*(?:tb|gb)\s+(?:card|media))\b/i;
 
 export type BundleMappingContext = {
@@ -30,7 +30,10 @@ function componentIdentity(name:string,items:Inventory[],genericHardware:boolean
     if (!result) { result = tokens(text); context?.tokens.set(text, result); }
     return result;
   };
-  const lineTokens = new Set(tokens(name));
+  // An integrated tripod head is part of that tripod, not an extra standalone head.
+  const identityName = /\btripod\b.*\bwith\s+(?:an?\s+)?(?:integrated\s+)?fluid\s+head\b/i.test(name)
+    ? name.split(/\bwith\b/i)[0].replace(/\bheavy[- ]duty\b/ig,"") : name;
+  const lineTokens = new Set(tokens(identityName));
   const explicitMount = name.match(/\bCanon\s+(EF|RF)\b|\b(EF|RF|PL|E|L)[ -]?mount\b/i);
   const mount = (explicitMount?.[1] ?? explicitMount?.[2])?.toLowerCase();
   const candidates = items.filter(item => {
@@ -57,6 +60,7 @@ function componentIdentity(name:string,items:Inventory[],genericHardware:boolean
     const required = stripped.length >= 2 ? stripped : all;
     const exactTrackedHardware = genericHardware && item.track_independent_stock === true &&
       all.join(" ") === tokens(name).join(" ");
+    if (genericHardware && !exactTrackedHardware) continue;
     if ((!exactTrackedHardware && required.length < 2) || !required.every(token => lineTokens.has(token))) continue;
     if (required.length > specificity) { picked = item; specificity = required.length; ambiguous = false; }
     else if (required.length === specificity && picked?._id !== item._id) ambiguous = true;

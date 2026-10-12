@@ -3,7 +3,9 @@ import { tokenize } from "./item_name_match";
 type Lens = { _id: unknown; name_canonical: string; aliases?: string[]; kind?: string; lens_mount?: string | null };
 const labels = tokenize("lens lenses zoom telephoto full frame mount");
 const normalize = (text:string) => text.replace(/\bg\s*-?\s*master\b/gi,"GM").replace(/\bL[ -]series\b/gi,"")
-  .replace(/\bSony\s+FE\b/gi,"Sony E");
+  .replace(/\bSony\s+FE\b/gi,"Sony E")
+  // Canon motor/stabilization labels do not change focal range, aperture or generation.
+  .replace(/\bCanon\b([^;]*)/gi, (_,rest)=>"Canon"+rest.replace(/\b(?:USM|IS)\b/gi,"").replace(/\bL\b(?![ -]mount)/gi,""));
 function focalLengths(text: string) {
   const matches = [...text.replace(/[–—−]/g, "-").matchAll(/(?<![\w.])(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*(?:mm)?\b|(?<![\w.])(\d+(?:\.\d+)?)\s*mm\b/gi)];
   return matches.map(m => m[3] ? [Number(m[3]), Number(m[3])] : [Number(m[1]), Number(m[2])]);
