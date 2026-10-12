@@ -2729,7 +2729,18 @@ export function ReplyModal({
   } | null>(null);
   useEffect(() => {
     const visible = window.visualViewport;
+    // A notification can mount this portal before the dashboard finishes its
+    // layout. Keep its opening anchor until the operator starts interacting.
+    const focusUntil=Date.now()+10000;
+    let interacted=false,frame=0;
+    const stopFocus=()=>{interacted=true;};
     const update = () => {
+      if(window.innerWidth>=900 && !interacted && Date.now()<focusUntil) {
+        const widget=dockTarget.closest('[data-widget-id="reply-inbox"]')??dockTarget.closest('[data-quick-reply-split]')?.parentElement;
+        const offset=Math.max(16,(document.querySelector('[data-manager-header]')?.getBoundingClientRect().bottom??0)+16);
+        const top=widget?.getBoundingClientRect().top;
+        if(top!=null&&Math.abs(top-offset)>2)window.scrollBy({top:top-offset,behavior:"instant"});
+      }
       dockTarget.style.setProperty("--quick-reply-viewport-height",`${visible?.height ?? window.innerHeight}px`);
       if(window.innerWidth<900 && visible) {
         const top=dockTarget.getBoundingClientRect().top;
@@ -2747,18 +2758,29 @@ export function ReplyModal({
       };
       setViewport(previous=>previous&&Object.keys(next).every(key=>previous[key as keyof typeof next]===next[key as keyof typeof next])?previous:next);
     };
+    const schedule=()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(update);};
+    const observer=new ResizeObserver(schedule);
+    observer.observe(document.body);
+    observer.observe(dockTarget);
+    const openingChecks=[50,250,1000,3000,6000].map(delay=>window.setTimeout(schedule,delay));
+    window.addEventListener("wheel",stopFocus,{passive:true});
+    window.addEventListener("pointerdown",stopFocus,{passive:true});
+    window.addEventListener("keydown",stopFocus);
     update();
     visible?.addEventListener("resize", update);
     visible?.addEventListener("scroll", update);
     window.addEventListener("resize", update);
     window.addEventListener("scroll", update, {passive:true});
     return () => {
+      observer.disconnect();cancelAnimationFrame(frame);openingChecks.forEach(clearTimeout);
+      window.removeEventListener("wheel",stopFocus);window.removeEventListener("pointerdown",stopFocus);
+      window.removeEventListener("keydown",stopFocus);
       visible?.removeEventListener("resize", update);
       visible?.removeEventListener("scroll", update);
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update);
     };
-  }, [dockTarget]);
+  }, [dockTarget,openRevision]);
   const [bookingAction, setBookingAction] = useState<
     "change" | "dates" | "discount" | "refund" | null
   >(null);
@@ -4364,7 +4386,7 @@ export function ReplyInbox() {
   const settings = useQuery(api.settings.get, {});
   const updateSettings = useMutation(api.settings.update);
   const includePending = settings?.availability_include_pending ?? false;
-  const queue = useStableQuery(api.replyInbox.getReplyQueue, {
+  const queue = useStableQuery(api.replyInbox.getReplyQueue, settings === undefined ? "skip" : {
     // This workspace has its own account filter. Load the shared queue once,
     // so choosing another account never conflicts with the dashboard filter.
     // High cap: renter inquiries on cancelled/finished orders now surface too,
