@@ -1,0 +1,44 @@
+const {connect}=require('./browser.cjs'),assert=require('node:assert/strict'),fs=require('node:fs');
+const pause=ms=>new Promise(r=>setTimeout(r,ms));
+(async()=>{const proofs=[];
+ for(const width of [1505,390]){
+ const c=await connect('about:blank');await c.cmd('Emulation.setDeviceMetricsOverride',{width,height:1045,deviceScaleFactor:1,mobile:width<500});await c.cmd('Page.navigate',{url:process.env.RM_QA_ORIGIN});await pause(700);const ev=x=>c.evaluate(x);
+ await ev(`(async()=>{const source=await fetch('/source-case.json').then(r=>r.json());Object.assign(window.__fixture.rows[0],source);const originals=source.items.filter((_,index)=>source.availability.items[index].available===false);
+      window.__fixture.replacementCase={originals,options:['Nanlite Forza 300','Aputure 600d Pro'].map((name,i)=>({id:'synthetic-light-'+i,name,available:true,can_apply:true,original:{items:source.items,lines:originals},items:originals.map(item=>({id:'synthetic-'+i,name,qty:item.qty,replaces:item.name,image_url:'/gear'+(i+6)+'.png'})),price_note:'Controlled available fixture; no provider calls.'}))};window.__fixture.changed();})()`);await pause(200);
+ await ev(`[...document.querySelectorAll('button')].find(b=>b.getAttribute('aria-label')?.startsWith('All (')).click()`);await pause(180);
+ const row=`document.querySelector('[data-thread-id="fixture-0"]')`;
+ assert.equal(await ev(`[...document.querySelectorAll('[data-thread-id]')].at(-1).dataset.threadId`),'fixture-0','answered highest-value source row must go last');
+ assert(await ev(`${row}.textContent.includes('Replied')`));
+ await ev(`${row}.scrollIntoView({block:'center'})`);await pause(150);
+ const stack=`${row}.querySelector('[data-requested-stack]')`;
+ await ev(`void(window.__caseNodes=[...${stack}.querySelectorAll('img')])`);
+ const snap=()=>ev(`(()=>{const r=${row}.getBoundingClientRect();return{height:r.height,width:r.width,pageWidth:document.documentElement.scrollWidth,pageHeight:document.documentElement.scrollHeight}})()`);
+ const before=await snap(),p=await ev(`(()=>{const r=${stack}.getBoundingClientRect();return{x:r.x+10,y:r.y+10}})()`);
+ await c.cmd('Input.dispatchMouseEvent',{type:'mouseMoved',...p});await pause(450);assert.equal(await ev(`${stack}.dataset.expanded`),'true');assert.deepEqual(await snap(),before);
+ const photoRects=await ev(`[...${stack}.querySelectorAll('img')].map(e=>{const r=e.getBoundingClientRect();return{left:r.left,right:r.right,width:r.width}})`);assert(photoRects.every((r,i)=>!i||r.left>=photoRects[i-1].right-2),'expanded photos remain separately visible');
+ assert(await ev(`window.__caseNodes.length===6&&window.__caseNodes.every((n,i)=>n===${stack}.querySelectorAll('img')[i]&&n.complete&&n.naturalWidth>0&&n.getAttribute('src')==='/gear'+i+'.png')`));
+ fs.writeFileSync(`${process.env.RM_QA_OUTPUT}/source-account-fan-${width}.png`,Buffer.from((await c.cmd('Page.captureScreenshot',{captureBeyondViewport:false})).data,'base64'));
+ await c.cmd('Input.dispatchMouseEvent',{type:'mouseMoved',x:width-2,y:4});await pause(300);assert.equal(await ev(`${stack}.dataset.expanded`),'false');
+ await ev(`Object.assign(window.__fixture.rows[0],{last_sender:'renter',status:'cancelled'});window.__fixture.changed()`);await pause(180);
+ assert(await ev(`${row}.textContent.includes('Waiting')&&!${row}.textContent.includes('Replied')`),'closed rental metadata must not falsely label a new renter message replied');
+ assert.equal(await ev(`document.querySelector('[data-thread-id]').dataset.threadId`),'fixture-0');
+ await ev(`Object.assign(window.__fixture.rows[0],{status:'confirmed'});window.__fixture.changed()`);await pause(120);
+ const unavailable=await ev(`(()=>{const r=${row};const b=[...r.querySelectorAll('button')].find(b=>b.textContent.includes('Find replacement'));return !!b&&r.textContent.includes('Unavailable')})()`);assert(unavailable);
+ await ev(`[...${row}.querySelectorAll('button')].find(b=>b.textContent.includes('Find replacement')).click()`);await pause(350);
+ assert(await ev(`!!document.querySelector('[role=dialog]')`));
+ assert(!await ev(`document.querySelector('[role=dialog]').textContent.includes('stock identity review')`));
+ const choices=await ev(`[...document.querySelector('[role=dialog]').querySelectorAll('button')].filter(b=>b.getAttribute('aria-pressed')!==null).length`);
+ assert.equal(choices,2,'both available choices must be selectable');
+ await ev(`[...document.querySelector('[role=dialog]').querySelectorAll('button')].filter(b=>b.getAttribute('aria-pressed')!==null)[1].click()`);await pause(150);assert(await ev(`[...document.querySelector('[role=dialog]').querySelectorAll('button')].filter(b=>b.getAttribute('aria-pressed')!==null)[1].getAttribute('aria-pressed')==='true'`));
+ fs.writeFileSync(`${process.env.RM_QA_OUTPUT}/source-replacements-${width}.png`,Buffer.from((await c.cmd('Page.captureScreenshot',{captureBeyondViewport:false})).data,'base64'));
+ await ev(`document.querySelector('[aria-label="Close conversation"]').click()`);await pause(120);
+ // A confirmed fixture send exercises the actual client callback, never a provider.
+ await ev(`window.__acknowledgeFixture=true;${row}.click()`);await pause(150);
+ await ev(`(()=>{const e=document.querySelector('textarea[placeholder="Write a reply…"]');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,'Fixture-only reply; no renter contacted.');e.dispatchEvent(new Event('input',{bubbles:true}))})()`);await pause(100);
+ await ev(`[...document.querySelector('[role=dialog]').querySelectorAll('button')].find(b=>b.textContent.trim()==='Send').click()`);await pause(250);
+ await ev(`document.querySelector('[aria-label="Close conversation"]').click()`);await pause(150);
+ assert.equal(await ev(`[...document.querySelectorAll('[data-thread-id]')].at(-1).dataset.threadId`),'fixture-0');
+ proofs.push({width,sourcePhotos:6,sameAccount:true,sameNodes:true,fixedGeometry:true,closedRenterLabelCorrect:true,preparedReplacementView:true,choiceButtons:choices,confirmedReplyDemoted:true});await c.closePage();
+ }
+ fs.writeFileSync(`${process.env.RM_QA_OUTPUT}/source-case-proof.json`,JSON.stringify({proofs,realSends:0,realRentalChanges:0,externalDNSBlocked:true},null,2));
+})().catch(e=>{console.error(e);process.exitCode=1});

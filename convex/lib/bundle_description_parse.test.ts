@@ -326,7 +326,9 @@ describe("reviewed master sets and recorded supplied-parts counts", () => {
     expect(r.complete).toBe(true);expect(r.owned).toBe(true);
     expect(r.coverage?.unresolved).toEqual([]);
     expect(r.components.find(c=>c.item_id===rode._id)?.units_per_listing).toBe(1);
-    expect(r.supplied_part_bindings.map(b=>b.requiredCountedUnits)).toEqual([1,1,1]);
+    // The accented manufacturer alias now resolves the named part directly;
+    // the remaining two supplied parts use their recorded kit counts.
+    expect(r.supplied_part_bindings.map(b=>b.requiredCountedUnits)).toEqual([1,1]);
   });
   it("retains unrecorded external lavalier equipment in the actual DJI listing", () => {
     const r=resolve(countedKitParts.descriptions["852812"],[dji]);

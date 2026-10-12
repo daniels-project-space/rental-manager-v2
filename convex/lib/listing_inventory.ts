@@ -15,8 +15,16 @@ export async function loadListingInventory(ctx: QueryCtx, account: string, produ
     ctx.db.query("online_listings").withIndex("by_account_product", (q) => q.eq("account_slug", account).eq("product_id", productId)).first(),
   ]);
   const inventory = sources?.items ?? await ctx.db.query("items").collect();
-  return { ...resolveListingComponents(inventory, override?.components.map((c) => ({ item_id: String(c.item_id), qty: c.qty })), product?.masterItemId ? String(product.masterItemId) : undefined, quantity, product?.description ?? listing?.description),
-    ...((product?.isMarketingOnlyOverride ?? product?.isMarketingOnly)===true?{owned:false,complete:true,components:[]}:{}),
+  const resolved=resolveListingComponents(inventory, override?.components.map((c) => ({ item_id: String(c.item_id), qty: c.qty })), product?.masterItemId ? String(product.masterItemId) : undefined, quantity, product?.description ?? listing?.description, undefined, product?.name ?? listing?.name);
+  const marketingOnly=(product?.isMarketingOnlyOverride ?? product?.isMarketingOnly)===true;
+  // Unowned stock cannot be allocated, but its requested model still defines
+  // what a substitute must replace. Do not turn its target value/type into zero.
+  const requestedComplete=resolved.complete || (resolved.valid_quantity && resolved.components.length>0 && !resolved.unresolved_default_adapters.length && !(resolved.coverage?.missing.length) &&
+    (resolved.coverage?.unresolved??[]).every(line=>/^\d+x (?:sturdy )?(?:light stands?|sandbags?|gel (?:kits?|sets?))$/i.test(line)));
+  return { ...resolved,
+    requested_components:resolved.components,
+    requested_mapping_complete:requestedComplete,
+    ...(marketingOnly?{owned:false,complete:true,components:[]}:{}),
     product_id: productId, listing_name: product?.name ?? null,
     // Already read for physical resolution: reuse this exact offering's price
     // instead of another tool call or repeating catalogue reads per component.
@@ -27,7 +35,7 @@ export async function loadListingInventory(ctx: QueryCtx, account: string, produ
       pricing_basis:"listing" as const} : null };
 }
 
-export function listingStock(sources: Awaited<ReturnType<typeof loadStockSources>>, listing: Omit<Awaited<ReturnType<typeof loadListingInventory>>,"offering">, request: StockRequest) {
+export function listingStock(sources: Awaited<ReturnType<typeof loadStockSources>>, listing: Omit<Awaited<ReturnType<typeof loadListingInventory>>,"offering" | "requested_components" | "requested_mapping_complete">, request: StockRequest) {
   const components = listing.components.filter((c) => c.stock_required).map((c) => {
     const item = sources.items.find((i) => String(i._id) === c.item_id);
     if (!item) return { item_name: c.name ?? "Unmapped component", available: null, free_units: null, total_units: null,

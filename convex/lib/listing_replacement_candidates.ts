@@ -42,7 +42,7 @@ export async function listingReplacementCandidates(ctx: QueryCtx, a: Args) {
     is_done: true,
     continue_cursor: null,
   });
-  if (!original.complete)
+  if (!original.requested_mapping_complete)
     return empty("The requested listing needs its inventory mapping reviewed.");
   const items = new Map(sources.items.map((item) => [String(item._id), item]));
   const value = (components: typeof original.components) => {
@@ -55,7 +55,7 @@ export async function listingReplacementCandidates(ctx: QueryCtx, a: Args) {
     }
     return total;
   };
-  const originalValue = value(original.components);
+  const originalValue = value(original.requested_components);
   if (originalValue == null)
     return empty("The requested kit needs its replacement value reviewed.");
   const specs = inventorySpecMap(await ctx.db.query("item_specs").collect());
@@ -92,7 +92,7 @@ export async function listingReplacementCandidates(ctx: QueryCtx, a: Args) {
       component,
       remaining: component.requested_units,
     }));
-    for (const source of original.components) {
+    for (const source of original.requested_components) {
       const sourceItem = items.get(source.item_id);
       if (!sourceItem || !kind(source.kind)) {
         compatible = false;

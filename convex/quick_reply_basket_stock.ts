@@ -36,16 +36,17 @@ export const check = internalQuery({
     );
     if (!a.include_line_checks) return result;
     if (a.lines.length > 40) return { ...result, line_checks: [] };
+    const resolvedLines = await Promise.all(a.lines.map(line=>resolveOrderPhysicalItems(ctx,a.account_slug,[line],sources.items)));
+    // A non-rentable/unknown line makes the whole resolver return no receipts.
+    // Still qualify the jointly requested known items from the same snapshot.
+    const knownLines=a.lines.filter((_,index)=>resolvedLines[index].items.length>0);
+    const knownResult=knownLines.length && knownLines.length!==a.lines.length
+      ? await checkOrderRentalStock(ctx,a.account_slug,knownLines,a.start,a.end,a.thread_id,sources) : result;
     const line_checks = [];
-    for (const [item_index, line] of a.lines.entries()) {
-      const resolved = await resolveOrderPhysicalItems(
-        ctx,
-        a.account_slug,
-        [line],
-        sources.items,
-      );
+    for (const [item_index] of a.lines.entries()) {
+      const resolved=resolvedLines[item_index];
       const receipts = resolved.items.map((item) =>
-        result.receipts.find(
+        knownResult.receipts.find(
           (receipt) => String(receipt.item_id) === item.item_id,
         ),
       );

@@ -65,7 +65,7 @@ export function RequestedItemStack({
   const [focused,setFocused]=useState<number|null>(null);
   const ref=useRef<HTMLDivElement>(null);
   useEffect(()=>{
-    const parent=boundarySelector?ref.current?.closest(boundarySelector):ref.current?.parentElement;if(!parent)return;
+    const parent=boundarySelector?ref.current?.closest(boundarySelector):ref.current?.closest("[data-thread-id]")??ref.current?.parentElement;if(!parent)return;
     const measure=()=>{
       if(!ref.current)return;
       const bounds=parent.getBoundingClientRect(),slot=ref.current.getBoundingClientRect();
@@ -88,9 +88,10 @@ export function RequestedItemStack({
       <ItemImage item={item}/><strong>{item.display_name??item.name}</strong><small>{item.qty}× · {item.origin==="chat"?"Mentioned in chat":"In basket"}</small>
     </article>)}</section>
   </div>;
-  const spacing=items.length>1?Math.max(0,Math.min(size+10,(availableWidth-size-6)/(items.length-1))):0;
+  const expandedSize=Math.min(size,Math.max(24,(availableWidth-6)/Math.max(items.length,1)-4));
+  const spacing=items.length>1?Math.max(0,Math.min(expandedSize+8,(availableWidth-expandedSize-6)/(items.length-1))):0;
   const baseWidth=size+Math.min(items.length-1,2)*7;
-  return <div ref={ref} data-requested-stack data-expanded={open} data-inline-expanded="false" className={styles.container}
+  return <div ref={ref} data-requested-stack data-expanded={open} data-inline-expanded="false" data-fan-wide={items.length>6} className={styles.container}
     style={{width:baseWidth,height:size+8,"--stack-size":`${size}px`} as CSSProperties}
     onPointerEnter={event=>{if(event.pointerType==="mouse")setOpen(true);}}
     onPointerLeave={event=>{if(event.pointerType==="mouse"){setOpen(false);setFocused(null);}}}
@@ -110,7 +111,7 @@ export function RequestedItemStack({
           title={`${item.display_name??item.name} · ${item.qty}× · ${item.origin==="chat"?"Mentioned in chat":"In basket"}`}
           onPointerEnter={()=>setFocused(index)} onPointerLeave={()=>setFocused(null)}
           style={{width:size,height:size,opacity:visible?1:0,pointerEvents:visible?"auto":"none",zIndex:focused===index?items.length+1:items.length-index,
-            transform:`translate(${open?direction*index*spacing:Math.min(index,2)*7}px, ${open?0:Math.min(index,2)*4}px) rotate(${rotation}deg)`}}>
+            transform:`translate(${open?direction*index*spacing:Math.min(index,2)*7}px, ${open?0:Math.min(index,2)*4}px) rotate(${rotation}deg) scale(${open?expandedSize/size:1})`,transformOrigin:"top left"}}>
           <ItemImage item={item}/>{open&&item.qty>1&&<small className={styles.quantity}>{item.qty}×</small>}
         </span>;
       })}

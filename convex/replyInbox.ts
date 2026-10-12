@@ -1,3 +1,4 @@
+import {orderedReplyMessages} from "./lib/reply_message_order";
 import { renterMessageWatermark } from "./lib/renter_message_watermark";
 import {requestedImageItems} from "./lib/quick_reply_requested_items";
 import {currentQuickReplyCache} from "./lib/quick_reply_cache";
@@ -353,7 +354,7 @@ type ItemAvail = {
 type TileAvailability = {
   status: "available" | "conflict" | "unknown";
   include_pending: boolean;
-  stock_rules_version: 3;
+  stock_rules_version: 4;
   reason?: string;
   checked_at?: number;
   items: ItemAvail[];
@@ -449,7 +450,7 @@ export async function extendAvailabilityMappings(ctx:QueryCtx,av:AvailCtx,rental
   const qualification=av.listingQualification??new Map<string,{complete:boolean;owned:boolean|null;marketingOnly?:boolean}>(),context=createBundleMappingContext(av.itemRows);
   keys.forEach((key,index)=>{
     const id=`${key.account}#${key.productId}`,product=products[index],listing=listings[index];
-    const resolved=resolveListingComponents(av.itemRows,av.overrideMap.get(id),product?.masterItemId?String(product.masterItemId):undefined,1,product?.description??listing?.description,context);
+    const resolved=resolveListingComponents(av.itemRows,av.overrideMap.get(id),product?.masterItemId?String(product.masterItemId):undefined,1,product?.description??listing?.description,context,product?.name??listing?.name);
     const marketingOnly=(product?.isMarketingOnlyOverride ?? product?.isMarketingOnly)===true;
     qualification.set(id,{complete:resolved.complete,owned:marketingOnly?false:resolved.owned,marketingOnly});
   });
@@ -506,7 +507,7 @@ export function computeAvailability(reservation:BotBooking|null,av?:AvailCtx,req
   });
   const conflict=items.some(item=>item.available===false);
   const complete=items.length>0&&items.every(item=>item.available===true);
-  return {status:conflict?"conflict":complete?"available":"unknown",stock_rules_version:3,include_pending,checked_at,items,...(!conflict&&!complete?{reason:items.find(item=>item.available===null)?.reason??"No requested gear to check"}:{})};
+  return {status:conflict?"conflict":complete?"available":"unknown",stock_rules_version:4,include_pending,checked_at,items,...(!conflict&&!complete?{reason:items.find(item=>item.available===null)?.reason??"No requested gear to check"}:{})};
 }
 
 
@@ -522,7 +523,7 @@ export function computeAvailability(reservation:BotBooking|null,av?:AvailCtx,req
  * the renter-last pass and the always-include REQUEST pass so both emit an
  * identical shape (item thumbnails, booking/request context, urgency driver).
  */
-async function assembleTile(
+export async function assembleTile(
   ctx: QueryCtx,
   conv: Doc<"conversations"> | null,
   reservation: BotBooking | null,
@@ -542,18 +543,25 @@ async function assembleTile(
   const renter = renterId ? await ctx.db.get(renterId) : null;
 
   // One bounded indexed read supplies the existing preview and gear mentions.
-  const mentionMessages=await ctx.db.query("hygglo_messages").withIndex("by_thread",q=>q.eq("thread_id",threadId)).order("desc").take(40);
+  const messagePages=await Promise.all([
+    ctx.db.query("hygglo_messages").withIndex("by_thread_and_sent_at",q=>q.eq("thread_id",threadId)).order("desc").take(40),
+    // Include recently ingested messages missing a provider timestamp.
+    ctx.db.query("hygglo_messages").withIndex("by_thread",q=>q.eq("thread_id",threadId)).order("desc").take(40),
+  ]);
+  const mentionMessages=orderedReplyMessages([...new Map(messagePages.flat().map(message=>[message.message_id,message])).values()]).slice(0,40);
   const latestMsg=mentionMessages[0]??null;
 
   const sourceItems: RichItem[] = simOrder ? simOrder.items.map(i => ({ name: i.name, qty: i.qty, product_id: i.product_id, image_url: null })) : buildRichItems(reservation, conv);
   const imageBank=slug&&display?await display.imageChoicesFor(slug,sourceItems.flatMap(item=>item.product_id!=null?[item.product_id]:[])):new Map<number,string[]>();
   const richItems = await Promise.all(sourceItems.map(async i => {
-    const images=[...new Set([i.image_url,...(i.product_id!=null?imageBank.get(i.product_id)??[]:[]),...(slug&&display?await display.imageChoicesForName(slug,i.name):[])].filter((url):url is string=>typeof url==="string"&&!!url))];
-    return {...i,image_url:images[0]??null,image_urls:images,display_name:i.product_id!=null&&slug&&display?display.name(slug,i.product_id,i.name):shortItemName(shortListingTitle(i.name))};
+    const images=[...new Set([...(i.product_id!=null?imageBank.get(i.product_id)??[]:[]),...(reservation?[i.image_url]:[]),...(slug&&display?await display.imageChoicesForName(slug,i.name):[])].filter((url):url is string=>typeof url==="string"&&!!url))];
+    const mapped=i.product_id!=null&&slug&&display?display.mappingMap.get(`${slug}#${i.product_id}`)?.components[0]?.item_id:null;
+    const canonical_name=mapped&&display?display.itemMap.get(String(mapped))?.name_canonical:undefined;
+    return {...i,...(canonical_name?{canonical_name}:{}),image_url:images[0]??null,image_urls:images,display_name:i.product_id!=null&&slug&&display?display.name(slug,i.product_id,i.name):shortItemName(shortListingTitle(i.name))};
   }));
 
   // Only renter text supplements display context.
-  const requestedItemsRaw=requestedImageItems(richItems,(conv?.inquiry_items??[]).map(i=>({...i,qty:i.qty??1,image_url:i.image_url??null})),mentionMessages.filter(m=>m.sender==="renter").map(m=>m.body_text??""),display?.items??[]);
+  const requestedItemsRaw=requestedImageItems(richItems,(conv?.inquiry_items??[]).map(i=>({...i,qty:i.qty??1,image_url:null})),mentionMessages.filter(m=>m.sender==="renter").map(m=>m.body_text??""),(display?.items??[]).map(({image_url,...item})=>item));
   const requestedItems=await Promise.all(requestedItemsRaw.map(async item=>{
     const candidates=[...new Set([item.image_url,...(item.image_urls??[]),...(slug&&display?await display.imageChoicesForName(slug,item.name):[])].filter((url):url is string=>typeof url==="string"&&!!url))];
     return {...item,image_url:candidates[0]??null,...(candidates.length>1?{image_urls:candidates}:{})};
@@ -675,7 +683,7 @@ async function assembleTile(
     // "request" = pending approve/decline; "message" = a normal chat thread.
     // Drives the Quick Reply filter (All / Requests / Messages).
     kind: (isRequest ? "request" : "message") as "request" | "message",
-    last_sender: conv?.last_sender ?? null,
+    last_sender: latestMsg && ["owner","renter"].includes(latestMsg.sender) ? latestMsg.sender as "owner"|"renter" : conv?.last_sender ?? null,
     // Granular owner actions (undefined → UI derives from is_request). Lets the
     // widget show only Decline once I've approved (accept gone, deny remains).
     can_accept: (reservation as { can_accept?: boolean } | null)?.can_accept ?? null,

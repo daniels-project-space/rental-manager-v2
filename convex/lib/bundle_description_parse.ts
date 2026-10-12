@@ -28,6 +28,8 @@ function isProtectivePackaging(name:string):boolean {
   // Match the whole remaining line: mixed equipment must remain unresolved.
   const packaging = name.replace(/\s+for (?:safe transport|safe handling|sensor protection)$/i, "");
   return PROTECTIVE_PACKAGING_RE.test(packaging) ||
+    /^(?:protective\s+)?kit\s+bags?$/i.test(packaging) ||
+    /^lens caps? for (?:both|the) lenses$|^(?:Canon\s+)?[a-z]+-?\d+[a-z]*\s+lens hood$/i.test(packaging) ||
     /^(?:original\s+)?(?:[a-z0-9-]+\s+)?camera straps?$|^protective transport cover$/i.test(packaging) ||
     /^(?:(?:protective|hard)\s+)?(?:lens\s+)?(?:pouch(?:es)?(?:\/cases?)?|cases?(?:\/pouch(?:es)?)?)$/i.test(packaging) ||
     /\bcarry(?:ing)?\s+(?:case|bag)\s*$/i.test(name) && !/\b(?:with|and|plus)\b|[+]/i.test(name);
@@ -41,7 +43,17 @@ export function extractComponents(desc: string): {
 } {
   // Preserve structural Unicode before the ASCII cleanup. Removing bullets
   // here made every real “• 1× …” kit look unstructured to callers.
-  const clean = desc.replace(/\r?\n+/g, " * ").replace(/[•‣●]/g, " * ").replace(/×/g, "x")
+  // Keep a real bullet list separate from the prose paragraph that follows it.
+  const lines = desc.split(/\r?\n/);
+  let contents = false, bullets = false, end = lines.length;
+  for (const [index, line] of lines.entries()) {
+    const text = line.trim();
+    if (/^(?:in (?:this|the) (?:kit|rental|bundle|package)|(?:what'?s|whats) included|contents)\s*:/i.test(text)) { contents = true; continue; }
+    if (!contents || !text) continue;
+    if (/^(?:[-*•]\s+|\d{1,2}\s*[x×]\s+)/.test(text)) { bullets = true; continue; }
+    if (bullets && !/^(?:camera|lenses?|media|audio|support|accessories|lighting|power)(?:\s*\([^)]*\))?\s*:$/i.test(text)) { end = index; break; }
+  }
+  const clean = lines.slice(0,end).join("\n").replace(/\r?\n+/g, " * ").replace(/[•‣●]/g, " * ").replace(/×/g, "x")
     .replace(/(\d)\s*[–—−]\s*(?=\d)/g, "$1-")
     .replace(/[^\x20-\x7E]/g, " ").replace(/\s+/g, " ");
   // Where does the component list actually start? Owners phrase this several
@@ -70,7 +82,7 @@ export function extractComponents(desc: string): {
   // listing -- gear shown as rented while it sits on the shelf, which is the
   // false-unavailability failure this work exists to eliminate.
   body = body.split(
-    /\bDirect Add-?on\b|\bAdd-?on direct\b|\bAdd-?ons?\s*:|\bADD-?ONS\b|\bOptional (?:extras?|add-?ons?|upgrades?)\b|\bUpgrades?\s*:|\bI also have\b/i,
+    /\bDirect Add-?on\b|\bAdd-?on direct\b|\bAdd-?ons?\s*:|\bADD-?ONS\b|\bOptional (?:extras?|add-?ons?|upgrades?)\b|\bUpgrades?\s*:|\bI also have\b|\bI also offer\b|\bBeyond this kit\b|\bAbout My Service\b|\bI\'ve been providing\b/i,
   )[0];
   // Section labels ("Camera:", "Lenses (Anamorphic):", "Media:") are headings.
   body = body.replace(/(?:\b\d{1,2}\s*x?\s+)?\b(cameras?|lens(?:es)?|media|audio|support|accessories|lighting|power)\s*\([^)]*\)\s*:/gi, " ");

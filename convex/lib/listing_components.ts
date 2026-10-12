@@ -5,9 +5,31 @@ import { resolveBundleMapping, declaredRentalBlockers, type BundleMappingContext
 import { withDefaultAdapters } from "./default_adapter_units";
 
 type Component = { item_id: string; qty: number };
-export function resolveListingComponents(items: Doc<"items">[], override: Component[] | undefined, primaryId?: string, quantity = 1, description?: string, context?: BundleMappingContext) {
+export function resolveListingComponents(items: Doc<"items">[], override: Component[] | undefined, primaryId?: string, quantity = 1, description?: string, context?: BundleMappingContext, listingName?: string) {
   const validQuantity = Number.isInteger(quantity) && quantity >= 1 && quantity <= 20;
-  const rawDeclared = description ? resolveBundleMapping(description, items, context) : null;
+  const parsed = description ? resolveBundleMapping(description, items, context) : null;
+  const suppliedDeclaration = override===undefined && parsed?.explicit && parsed.structured && primaryId && parsed.components.some(c=>c.item_id===primaryId)
+    ? coverReviewedSuppliedParts(parsed,items,new Map(parsed.components.map(c=>[c.item_id,c.qty]))) : null;
+  let rawDeclared = suppliedDeclaration?.declared ?? parsed;
+  // A lighting unit may record its own bundled stand/reflector without a
+  // separate stock pool. Only exact generic parts explicitly recorded on the
+  // named, owned master qualify; named or unrecorded equipment stays unknown.
+  const primary=items.find(i=>String(i._id)===primaryId);
+  if (rawDeclared?.explicit && rawDeclared.structured && primary?.kind==="lighting" && primary.status==="active" && primary.is_marketing_only===false && primary.qty>0 && rawDeclared.components.some(c=>c.item_id===primaryId)) {
+    const partKey=(s:string)=>s.toLowerCase().replace(/^sturdy\s+/i,"").replace(/[^a-z0-9]+/g," ").trim();
+    const knownParts=(primary.compatibility?.included_with_rental??[]).flatMap(line=>{
+      const m=line.match(/^(\d+)\s*[x×]\s+(.+)$/i);
+      return m&&/^(?:light stand|sandbag|gel kit|reflector)$/i.test(m[2].trim())?[{key:partKey(m[2]),qty:Number(m[1])}]:[];
+    });
+    const components=rawDeclared.components.map(c=>({...c}));
+    const unmatched=rawDeclared.unmatched.filter(line=>{
+      const m=line.match(/^(\d+)x (.+)$/i);if(!m)return true;
+      const matches=knownParts.filter(p=>p.key===partKey(m[2]));if(matches.length!==1||matches[0].qty<1)return true;
+      const parent=components.find(c=>c.item_id===primaryId)!;
+      parent.qty=Math.max(parent.qty,Math.ceil(Number(m[1])/matches[0].qty));return false;
+    });
+    rawDeclared={...rawDeclared,components,unmatched};
+  }
   // Exact structured contents may complete a partial mapping, using only
   // explicit active owned master records. An empty owner override still wins.
   // Without an override, the declared kit must also include its primary model:
@@ -20,8 +42,12 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
       return item?.status==="active" && item.is_marketing_only===false &&
         Number.isSafeInteger(item.qty) && item.qty>0 && Number.isSafeInteger(c.qty) && c.qty>0;
     });
-  const derive = override === undefined && verifiedContents && !!primaryId &&
-    rawDeclared!.components.some(c=>c.item_id===primaryId);
+  const titleKey=(text:string)=>text.toLowerCase().replace(/ø/g,"o").replace(/[^a-z0-9]/g,"");
+  const title=listingName?.split("|")[0].trim();
+  const exactTitle=title?items.filter(i=>[i.name_canonical,...(i.aliases??[])].some(alias=>titleKey(alias)===titleKey(title))):[];
+  const declaredPrimary=exactTitle.length===1?String(exactTitle[0]._id):primaryId;
+  const derive = override === undefined && verifiedContents && !!declaredPrimary &&
+    rawDeclared!.components.some(c=>c.item_id===declaredPrimary);
   const quantities = new Map<string, number>();
   for (const c of override ?? (derive ? rawDeclared!.components.map(c=>({item_id:c.item_id,qty:c.qty})) : primaryId ? [{ item_id: primaryId, qty: 1 }] : []))
     quantities.set(c.item_id, (quantities.get(c.item_id) ?? 0) + c.qty);
@@ -56,6 +82,6 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
   const complete = !supplied.unresolved.length && coverageComplete && (override !== undefined || derive) && validQuantity && components.every((c) => c.owned !== null);
   const owned = !validQuantity ? null : override?.length === 0 || ownership_blockers.length > 0 || components.some((c) => c.owned === false) ? false
     : !complete || !components.length ? null : true;
-  return { components, complete, owned, primary_camera, ownership_blockers, valid_quantity: validQuantity, supplied_part_bindings:suppliedParts?.bindings??[], declared_components_added, source:derive?"declared_contents":override === undefined ? "primary_item_only" : "listing_override", coverage, unresolved_default_adapters:supplied.unresolved };
+  return { components, complete, owned, primary_camera, ownership_blockers, valid_quantity: validQuantity, supplied_part_bindings:[...(suppliedDeclaration?.bindings??[]),...(suppliedParts?.bindings??[])], declared_components_added, source:derive?"declared_contents":override === undefined ? "primary_item_only" : "listing_override", coverage, unresolved_default_adapters:supplied.unresolved };
 }
 

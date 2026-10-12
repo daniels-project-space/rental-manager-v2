@@ -52,6 +52,7 @@ let browser, server;
   );
   server = http.createServer((request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
+    if(url.pathname==="/source-case.json" && process.env.RM_QA_SOURCE_CASE){response.setHeader("Content-Type","application/json");response.end(fs.readFileSync(process.env.RM_QA_SOURCE_CASE));return;}
     if (
       /^\/(face|gear)\d+\.png$/.test(url.pathname) &&
       process.env.RM_QA_IMAGE_FILES
@@ -140,7 +141,9 @@ let browser, server;
   console.log(
     "Testing Quick Reply with fixture-only transport and external DNS disabled.",
   );
-  if(process.env.RM_QA_VIEW_ONLY) {
+  if(process.env.RM_QA_CASE_ONLY) {
+    await child(process.execPath,[__dirname+"/account-stock-priority.cjs"],{env});
+  } else if(process.env.RM_QA_VIEW_ONLY) {
     await child(process.execPath,[__dirname+"/reference.cjs"],{env});
   } else if(process.env.RM_QA_PHONE_ONLY) {
     await child(process.execPath,[__dirname+"/phone-close.cjs"],{env});

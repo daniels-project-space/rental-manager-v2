@@ -167,3 +167,17 @@ describe("exact mapped model image fallback", () => {
     ).toEqual([2, 3]);
   });
 });
+
+describe('account-bound stack regressions',()=>{
+ it('never borrows another account primary photo even when its mapping is smaller',()=>{
+  const mappings=[{account_slug:'other',product_id:1,components:[{item_id:'rig',qty:1}]},{account_slug:'diogo',product_id:2,components:[{item_id:'rig',qty:1},{item_id:'part',qty:1}]}];
+  expect(displayImageMappings('rig','diogo',mappings).map(m=>m.product_id)).toEqual([2]);
+ });
+ it('does not show a camera kit picture for an accessory inside that kit',()=>{
+  expect(displayImageMappings('rig','diogo',[{account_slug:'diogo',product_id:1,components:[{item_id:'camera',qty:1},{item_id:'rig',qty:1}]}])).toEqual([]);
+ });
+ it('merges a long basket title and its mentioned model without replacing the account photo',()=>{
+  const result=requestedImageItems([{name:'Blackmagic camera full listing | Rig',canonical_name:'BMPCC 6K Pro',qty:1,image_url:'/diogo-camera'}],[],['BMPCC 6K Pro please'],[{name_canonical:'BMPCC 6K Pro'}]);
+  expect(result).toHaveLength(1);expect(result[0]).toMatchObject({image_url:'/diogo-camera',qty:1,origin:'basket'});
+ });
+});
