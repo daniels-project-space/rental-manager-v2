@@ -342,7 +342,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     if (width === 1192)
       await ok(
         "chat expands to a larger reading area",
-        `(()=>{const dock=document.querySelector('[role=dialog]').parentElement,r=dock.getBoundingClientRect(),split=dock.parentElement.getBoundingClientRect();return r.width >= (split.width-10)*0.49 && r.width <= (split.width-10)*0.51 && r.height>=700})()`,
+        `(()=>{const dock=document.querySelector('[role=dialog]').parentElement,r=dock.getBoundingClientRect(),split=dock.parentElement.getBoundingClientRect();return r.width >= (split.width-10)*0.73 && r.width <= (split.width-10)*0.78 && r.height>=700})()`,
       );
     await ok(
       "composer visible without opening drawer",
@@ -420,7 +420,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       `document.querySelector('textarea[placeholder="Write a reply…"]').offsetParent!==null`,
     );
     await c.cmd("Page.setInterceptFileChooserDialog", { enabled: true });
-    await tap(button("Insert text file"));
+    await tap(`document.querySelector('[aria-label="Write reply or insert text file"]')`);
     const filePath = root + "/fixture-reply.txt";
     fs.writeFileSync(filePath, "Fixture text-file reply.");
     const doc = await c.cmd("DOM.getDocument");
@@ -495,6 +495,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     );
     await tap(close);
 
+    await ev(`window.__adminCapabilityHints=false`);
     await tap(marcus);
     async function openBooking(action) {
       if (
@@ -509,8 +510,8 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     }
     await tap(`document.querySelector('[aria-label="Open rental controls"]')`);
     await ok(
-      "all settings visible in one vertical list",
-      `[...document.querySelector('[aria-label="Rental controls"]').querySelectorAll('h4')].map(e=>e.textContent).join('|').includes('1. Equipment|2. Rental dates|3. Pricing')&&!document.querySelector('[role=tab]')`,
+      "rental sections open without changing the booking",
+      `[...document.querySelector('[aria-label="Rental control sections"]').querySelectorAll('button')].map(e=>e.textContent).join('|')==='Equipment|Dates|Price|Refund'`,
     );
     await tap(`document.querySelector('[aria-label="Back to chat"]')`);
     await ok(
@@ -538,34 +539,30 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       "add item dry run",
       `window.__calls.some(c=>c.name==='order_edit:addItem'&&c.args.dryRun===false)`,
     );
-    await tap(
-      `document.querySelector('[title="Change the price (discount or increase)"]')`,
-    );
-    for (const delta of ["-10", "-5", "+5"]) {
-      await tap(button(delta));
-      checks.push("price delta " + delta);
+    await tap(button("Price"));
+    for (const delta of ["− £25.00", "− £10.00", "+ £10.00", "+ £25.00"]) {
+      await tap(button(delta)); checks.push("price delta "+delta);
     }
-    await tap(button("Apply price"));
+    await ev(`{const e=document.querySelector('input[aria-label="New rental price"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'600');e.dispatchEvent(new Event('input',{bubbles:true}));}`);
+    await pause(50);
+    await tap(button("Review price"));
     await ok("setPrice waits for confirmation",`!window.__calls.some(c=>c.name==='order_edit:setPrice')`);
     await tap(button("Confirm change"));
-    await ok(
-      "discount apply dry run",
-      `window.__calls.some(c=>c.name==='order_edit:setPrice'&&c.args.dryRun===false)`,
-    );
-    await tap(button("Refund…"));
-    await ev(
-      `{const e=document.querySelector('input[placeholder="0.00"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'10');e.dispatchEvent(new Event('input',{bubbles:true}));}`,
-    );
+    await ok("price increase confirmed through fixture transport",`window.__calls.some(c=>c.name==='order_edit:setPrice'&&c.args.order_price===600&&c.args.dryRun===false)`);
+    await tap(button("Refund"));
+    await tap(button("£25.00"));
+    await tap(button("£50.00"));
+    await tap(button("25%"));
+    await tap(button("Full"));
+    await ev(`{const e=document.querySelector('input[aria-label="Rental refund amount"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'10');e.dispatchEvent(new Event('input',{bubbles:true}));}`);
     await pause(30);
-    await tap(contains("Refund £"));
+    await tap(button("Review rental refund"));
     await ok("refund waits for confirmation",`!window.__calls.some(c=>c.name==='order_edit:refund')`);
     await tap(button("Cancel change"));
-    await tap(contains("Refund £"));
+    await tap(button("Review rental refund"));
     await tap(button("Confirm change"));
-    await ok(
-      "refund dry run",
-      `window.__calls.some(c=>c.name==='order_edit:refund'&&c.args.dryRun===false)`,
-    );
+    await ok("refund confirmed through fixture transport",`window.__calls.some(c=>c.name==='order_edit:refund'&&c.args.amount===10&&c.args.dryRun===false)`);
+    await tap(button("Dates"));
     await tap(`document.querySelector('[title="Change the rental dates"]')`);
     await tap(button("›"));
     await tap(button("‹"));
@@ -915,18 +912,15 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       "website removal binds snapshot and exact line",
       `window.__calls.some(c=>c.name==='dbcinema_chat:removeEquipment'&&c.args.listing_id==='fixture-tripod'&&c.args.expected_snapshot==='fixture-booking-version'&&c.args.operator_confirmed===true)`,
     );
-    await ev(`document.querySelector('[aria-label="Rental controls"]')?.querySelectorAll('h4')[1]?.scrollIntoView({block:"nearest"})`);
-    await ev(
-      `{const i=document.querySelector('[aria-label="Date change reason"]');const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;setter.call(i,'Operator approved later collection');i.dispatchEvent(new Event('input',{bubbles:true}));}`,
-    );
+    await tap(button("Dates"));
     await pause(50);
     await ev(`(()=>{const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;for(const [label,value] of [['Pickup time','10:45'],['Return time','17:20']]){const input=document.querySelector('[aria-label="'+label+'"]');setter.call(input,value);input.dispatchEvent(new Event('input',{bubbles:true}));}})()`);
     await pause(50);
     await tap(button("Review dates"));
     await ok("calendar reviews the selected handover times",`(()=>{const call=window.__calls.find(c=>c.name==='dbcinema_chat:previewRentalDates');const time=t=>new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(t);return time(call.args.start)==='10:45'&&time(call.args.end)==='17:20';})()`);
     await ok(
-      "website dates preview is read only",
-      `window.__calls.some(c=>c.name==='dbcinema_chat:previewRentalDates')&&!window.__calls.some(c=>c.name==='dbcinema_chat:applyRentalDates')`,
+      "website dates preview needs no reason and is read only",
+      `window.__calls.some(c=>c.name==='dbcinema_chat:previewRentalDates'&&c.args.reason==='Admin date adjustment')&&!window.__calls.some(c=>c.name==='dbcinema_chat:applyRentalDates')`,
     );
     await tap(button("Cancel date change"));
     await tap(button("Review dates"));
@@ -935,9 +929,8 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       "website date apply binds reviewed snapshot",
       `window.__calls.some(c=>c.name==='dbcinema_chat:applyRentalDates'&&c.args.expected_snapshot==='fixture-booking-version'&&c.args.operator_confirmed===true)`,
     );
-    await ev(
-      `{const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;for(const [label,value]of [['Rental refund amount','12.50'],['Rental refund reason','Operator approved rental discount']]){const i=document.querySelector('[aria-label="'+label+'"]');setter.call(i,value);i.dispatchEvent(new Event('input',{bubbles:true}));}}`,
-    );
+    await tap(button("Refund"));
+    await ev(`{const i=document.querySelector('[aria-label="Rental refund amount"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,'12.50');i.dispatchEvent(new Event('input',{bubbles:true}));}`);
     await pause(50);
     await tap(button("Review rental refund"));
     await ok(

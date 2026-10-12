@@ -342,7 +342,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     if (width === 1505) {
       const gear = await ev(`(()=>{const root=document.querySelector('[aria-label="Conversation with Marcus Lee"]');return [...root.querySelectorAll('[class*="chatGear"] img')].map(img=>({width:img.getBoundingClientRect().width,height:img.getBoundingClientRect().height,loaded:img.complete&&img.naturalWidth>0}));})()`);
       assert.equal(gear.length,3,"all requested equipment remains in the expandable chat stack");
-      assert(gear.every(img=>img.height>=70&&img.width>=70&&img.loaded),"compact chat stack keeps readable loaded photos");
+      assert(gear.every(img=>img.height>=50&&img.width>=50&&img.loaded),"compact chat stack keeps readable loaded photos");
       assert(
         await ev(
           `(()=>{const btn=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='All');return btn.dataset.count===String(window.__fixture.rows.length)&&btn.getAttribute('aria-pressed')==='true';})()`,
@@ -379,6 +379,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     }
     await capture("controls");
     if (width === 1505) {
+      await ev(`[...document.querySelector('[aria-label="Rental control sections"]').querySelectorAll('button')].find(b=>b.textContent==='Dates').click()`);await pause(150);
       const calendarSpace = await ev(
         `(()=>{const panel=document.querySelector('[aria-label="Rental controls"]');const cal=panel.querySelector('[class*="inlineCalendar"]');const last=[...cal.querySelectorAll('button')].find(b=>b.textContent.trim()==='31');return {lastDayBottom:last.getBoundingClientRect().bottom,footerTop:panel.getBoundingClientRect().bottom-16};})()`,
       );
@@ -387,12 +388,9 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         "whole month is visible in the controls panel: " +
           JSON.stringify(calendarSpace),
       );
-      assert(
-        await ev(
-          `(()=>{const panel=document.querySelector('[aria-label="Rental controls"]');const pricing=[...panel.querySelectorAll('h4')].find(e=>e.textContent==='3. Pricing');const price=pricing.nextElementSibling;return pricing.getBoundingClientRect().bottom<panel.getBoundingClientRect().bottom-16&&price.firstElementChild.getBoundingClientRect().bottom<panel.getBoundingClientRect().bottom-16;})()`,
-        ),
-        "equipment, full calendar and pricing are visible in the vertical controls panel",
-      );
+      await ev(`[...document.querySelector('[aria-label="Rental control sections"]').querySelectorAll('button')].find(b=>b.textContent==='Refund').click()`);await pause(100);
+      assert(await ev(`!!document.querySelector('[aria-label="Refund calculator"]')&&!!document.querySelector('[aria-label="Price adjustment"]')`),"visual refund and price cards are available without editing equipment");
+
     }
 
     if (width === 1505)

@@ -134,7 +134,7 @@ export function DbCinemaEquipmentEditor({
         booking_id: bookingId,
         listing_id: selected.listingId,
         qty,
-        reason,
+        reason:reason.trim()?`Admin: ${reason.trim()}`:"Admin equipment adjustment",
         complimentary,
       })) as Quote;
       if (!r.ok || !r.snapshot || !r.quoteSnapshot)
@@ -159,7 +159,7 @@ export function DbCinemaEquipmentEditor({
           listing_id: selected.listingId,
           request_id: requestId.current,
           qty,
-          reason,
+          reason:reason.trim()?`Admin: ${reason.trim()}`:"Admin equipment adjustment",
           complimentary,
           expected_snapshot: quote.snapshot,
           expected_quote: quote.quoteSnapshot,
@@ -187,7 +187,7 @@ export function DbCinemaEquipmentEditor({
           qty: line.qty,
           start: line.start,
           end: line.end,
-          reason,
+          reason:reason.trim()?`Admin: ${reason.trim()}`:"Admin equipment adjustment",
           expected_snapshot: removalSnapshot,
           operator_confirmed: true,
         })) as { review_required?: boolean };
@@ -375,7 +375,7 @@ export function DbCinemaEquipmentEditor({
                     </div>
                   )}
                   <label className={styles.reason}>
-                    Reason
+                    Note (optional)
                     <input
                       aria-label="Equipment change reason"
                       maxLength={400}
@@ -390,7 +390,6 @@ export function DbCinemaEquipmentEditor({
                     className={styles.primary}
                     disabled={
                       busy ||
-                      reason.trim().length < 5 ||
                       (mode === "add" &&
                         (!Number.isInteger(qty) || qty < 1 || qty > 20))
                     }

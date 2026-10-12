@@ -228,7 +228,7 @@ export function RentalControls({
           </section>
         ) : (
           <>
-            <div className={styles.identity}>
+            {!editor&&<div className={styles.identity}>
               <ProfilePortrait
                 src={portrait}
                 name={name}
@@ -238,8 +238,8 @@ export function RentalControls({
                 <strong>{name}</strong>
                 {identity}
               </div>
-            </div>
-            <div className={styles.progress}>{progress}</div>
+            </div>}
+            {!editor&&<div className={styles.progress}>{progress}</div>}
             {!editor && (
               <>
                 <h4>1. Equipment</h4>

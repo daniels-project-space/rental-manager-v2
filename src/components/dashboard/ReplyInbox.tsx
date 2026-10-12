@@ -1,6 +1,7 @@
 "use client";
 import { useMessageHistorySearch } from "./useMessageHistorySearch";
 import { DbCinemaOrderEditor } from "./DbCinemaOrderEditor";
+import { RentalMoneyControl } from "./RentalMoneyControl";
 import { ChangeReview } from "./ChangeReview";
 import { ItemImage, RequestedItemStack } from "./RequestedItemStack";
 import type { CSSProperties } from "react";
@@ -1246,8 +1247,8 @@ function ConversationHeader({tile,onReviews,onClose,headerRef,extras}: {
         <h3>{tile.renter_name}</h3>
         <div className={styles.chatReputation}>
           <button type="button" className={styles.rating} title="View all renter reviews" onClick={onReviews}>
-            {tile.renter_rating?.toFixed(1)??"Unrated"} <span>★</span>
-            {tile.renter_review_count!=null&&<small className={styles.reviewCount}> · {tile.renter_review_count} reviews</small>}
+            {tile.renter_rating!=null?<><StarRating rating={tile.renter_rating} size={12}/><span>{tile.renter_rating.toFixed(1)}</span></>:"Unrated"}
+            {tile.renter_review_count!=null&&<small className={styles.reviewCount}> ({tile.renter_review_count})</small>}
           </button>
           <AccountTag slug={tile.account_slug} source={tile.source}/>
         </div>
@@ -1256,14 +1257,13 @@ function ConversationHeader({tile,onReviews,onClose,headerRef,extras}: {
     </div>
     {onClose&&<button type="button" onClick={onClose} aria-label="Close conversation" data-testid="quick-reply-close" className={styles.chatClose}><span>×</span><small>Close</small></button>}
     <div className={styles.chatGear}>
-      <RequestedItemStack items={tile.requested_items??tile.items} size={100} boundarySelector="[data-conversation-header]"/>
+      <RequestedItemStack items={tile.requested_items??tile.items} size={52} boundarySelector="[data-conversation-header]"/>
       <div className={styles.chatGearDetails}>
-        <strong>{itemLineShort(tile)||"General inquiry"}</strong>
+        <strong title={itemLineShort(tile)||"General inquiry"}>{tile.items.length>1?`${shortListing(tile.items[0].name)} + ${tile.items.length-1} items`:itemLineShort(tile)||"General inquiry"}</strong>
         <div className={styles.chatDates}>{tile.start_date?`${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date??tile.start_date)}`:"Dates pending"}</div>
-        <div className={styles.chatGearMeta}><span>{tile.net_to_owner_gbp!=null?"Owner earns":"Est. earn"} <b>{fmtMoney(tile.net_to_owner_gbp??tile.estimate_earnings_gbp)??"—"}</b></span></div>
+        <div className={styles.chatGearMeta}><span>{tile.net_to_owner_gbp!=null?"Owner earns":"Est. earn"} <b>{fmtMoney(tile.net_to_owner_gbp??tile.estimate_earnings_gbp)??"—"}</b></span><div className={styles.headerAvailability}><QueueAvailability tile={tile}/></div></div>
       </div>
     </div>
-    <div className={styles.headerAvailability}><QueueAvailability tile={tile}/></div>
     {extras&&<div className={styles.headerExtras}>{extras}</div>}
   </div>;
 }
@@ -2225,6 +2225,7 @@ function OrderEditor({
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
+  const [editorTab,setEditorTab] = useState<"gear"|"dates"|"price"|"refund">(initialAction==="discount"?"price":initialAction==="refund"?"refund":initialAction==="dates"?"dates":"gear");
   const [changeReview, setChangeReview] = useState<{title:string;before:string;after:string;run:()=>Promise<void>} | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<number | null>(null);
   const [editingPrice, setEditingPrice] = useState(false);
@@ -2419,6 +2420,7 @@ function OrderEditor({
     )
       return;
     initialActionApplied.current = actionRevision;
+    setEditorTab(initialAction==="discount"?"price":initialAction==="refund"?"refund":initialAction==="dates"?"dates":"gear");
     if (initialAction === "discount") {
       setEditingPrice(true);
       setPriceInput(String(st.price.order_price));
@@ -2526,8 +2528,10 @@ function OrderEditor({
 
       {expanded && (
         <>
+          <nav className={styles.editorTabs} aria-label="Rental control sections">{(["gear","dates","price","refund"] as const).map(tab=><button key={tab} type="button" aria-selected={editorTab===tab} onClick={()=>{setEditorTab(tab);if(tab==="dates")void openCalendar();}}>{tab==="gear"?"Equipment":tab==="dates"?"Dates":tab==="price"?"Price":"Refund"}</button>)}</nav>
+          {editorTab==="gear"&&<>
           <div className={styles.editorHeading}>
-            <h4>1. Equipment</h4>
+            <h4>Equipment</h4>
             <button
               onClick={() => void refresh()}
               title="Refresh from Hygglo"
@@ -2576,7 +2580,7 @@ function OrderEditor({
                       ✗
                     </button>
                   </div>
-                ) : it.can_remove ? (
+                ) : it.item_id!=null ? (
                   <button
                     disabled={!!busy}
                     onClick={() =>
@@ -2590,7 +2594,7 @@ function OrderEditor({
                 ) : null}
               </div>
             ))}
-            {a.add_product ? (
+            {(
               <button
                 disabled={!!busy}
                 onClick={() => setShowPicker(true)}
@@ -2599,15 +2603,12 @@ function OrderEditor({
               >
                 {busy === "add" ? "Adding…" : "＋ Add item"}
               </button>
-            ) : (
-              <div className="text-[10.5px] text-[#6b7280] px-1">
-                Items are locked — this booking can’t be changed anymore.
-              </div>
             )}
           </div>
 
-          <h4>2. Rental dates</h4>
-          <small className="text-slate-400">Hygglo controls booking dates; handover times are agreed in the chat.</small>
+          </>}
+          {editorTab==="dates"&&<>
+          <h4>Rental dates</h4>
           <div className={styles.dateSettings}>
             {" "}
             <div className="flex items-center gap-2 text-[12.5px]">
@@ -2619,7 +2620,7 @@ function OrderEditor({
                   ? ` → ${prettyDay(st.dates.end)}`
                   : ""}
               </span>
-              {(a.change_dates || a.select_dates) && (
+              {(
                 <button
                   disabled={busy === "cal-load"}
                   onClick={() => void openCalendar()}
@@ -2641,170 +2642,15 @@ function OrderEditor({
                 accent={accent}
                 busy={busy === "dates"}
                 onApply={reviewDates}
-                applyDisabled={!unavail.verified || !(a.change_dates || a.select_dates)}
+                applyDisabled={!unavail.verified}
                 onClose={() => setShowCal(false)}
               />
             )}
           </div>
-          <h4>3. Pricing</h4>
-          {/* Price + dates */}
-          <div className="px-4 pb-3 flex flex-col gap-1.5">
-            <div className="flex items-center gap-2 text-[12.5px]">
-              <div className={styles.moneyOverview}><div><small>Rental price</small><strong>{money(st.price.order_price,st.currency)}</strong></div><div><small>Renter pays</small><strong>{money(st.price.total,st.currency)}</strong></div><div><small>Owner earns</small><strong>{money(st.price.earnings,st.currency)}</strong></div></div>
-              {canDiscount && (
-                <button
-                  onClick={() => {
-                    setEditingPrice((s) => !s);
-                    setPricePreview(null);
-                    setPriceInput(
-                      st.price.order_price != null
-                        ? String(st.price.order_price)
-                        : "",
-                    );
-                  }}
-                  title="Change the price (discount or increase)"
-                  className="ml-auto text-[12px] text-sky-300 hover:text-sky-200"
-                >
-                  ✎ edit
-                </button>
-              )}
-            </div>
-            {editingPrice && a.change_price && (
-              <div className="rounded-xl border border-white/10 bg-black/30 p-2.5 flex flex-col gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-[12px] text-[#8b8fa3]">
-                    New rental price
-                  </span>
-                  <div className="flex items-center gap-1 rounded-lg bg-black/40 border border-white/10 px-2">
-                    <span className="text-[13px] text-[#9aa0ad]">£</span>
-                    <input
-                      type="number"
-                      value={priceInput}
-                      onChange={(e) => void onPreview(e.target.value)}
-                      className="w-20 bg-transparent py-1.5 text-[15px] text-[#eef1f5] focus:outline-none"
-                    />
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {[-10, -5, 5].map((delta) => (
-                      <button
-                        key={delta}
-                        onClick={() =>
-                          void onPreview(
-                            String(
-                              Math.max(
-                                0,
-                                Number(
-                                  priceInput || st.price.order_price || 0,
-                                ) + delta,
-                              ),
-                            ),
-                          )
-                        }
-                        className="text-[11px] px-1.5 py-1 rounded-md bg-white/[0.06] text-[#cbd5e1] hover:bg-white/[0.12]"
-                      >
-                        {delta > 0 ? `+${delta}` : delta}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                {pricePreview && (
-                  <div className="text-[11px] text-sky-300/90">
-                    {pricePreview}
-                  </div>
-                )}
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setEditingPrice(false)}
-                    className="text-[11px] px-2.5 py-1.5 rounded-lg bg-white/[0.06] text-[#8b8fa3]"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    disabled={!!busy || !priceInput || !Number.isFinite(Number(priceInput)) || Number(priceInput)<0}
-                    onClick={() => setChangeReview({title:"Change rental price",before:money(st.price.order_price,st.currency),after:money(Number(priceInput),st.currency),run:onApplyPrice})}
-                    className="ml-auto text-[12px] font-semibold px-4 py-1.5 rounded-lg text-white disabled:opacity-50"
-                    style={{ background: accent }}
-                  >
-                    {busy === "price" ? "Saving…" : "Apply price"}
-                  </button>
-                </div>
-              </div>
-            )}
-            {a.partial_refund && (
-              <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-2.5">
-                {!editingRefund ? (
-                  <div className="flex items-center gap-2">
-                    <span className="min-w-0 flex-1 text-[11px] text-[#8b93a3]">
-                      Refund part of the payment through Hygglo.
-                    </span>
-                    <button
-                      disabled={!!busy}
-                      onClick={() => {
-                        setEditingRefund(true);
-                        setRefundInput("");
-                        setNote(null);
-                      }}
-                      className="shrink-0 rounded-lg border border-white/10 bg-white/[0.05] px-3 py-1.5 text-[11px] font-semibold text-[#d7dce5] hover:bg-white/[0.09] disabled:opacity-40"
-                    >
-                      Refund…
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    <div className="flex items-center gap-2">
-                      <label
-                        htmlFor={`refund-${orderId}`}
-                        className="min-w-0 flex-1 text-[11px] text-[#aeb5c2]"
-                      >
-                        Refund amount
-                      </label>
-                      <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-black/40 px-2">
-                        <span className="text-[12px] text-[#9aa0ad]">
-                          {st.currency === "GBP" ? "£" : st.currency}
-                        </span>
-                        <input
-                          id={`refund-${orderId}`}
-                          type="number"
-                          min="0.01"
-                          step="0.01"
-                          inputMode="decimal"
-                          value={refundInput}
-                          onChange={(e) => setRefundInput(e.target.value)}
-                          placeholder="0.00"
-                          className="w-24 bg-transparent py-1.5 text-[15px] text-[#eef1f5] focus:outline-none"
-                        />
-                      </div>
-                    </div>
+          </>}
+          {editorTab==="price"&&<RentalMoneyControl mode="price" total={st.price.order_price??0} value={priceInput} currency={st.currency} onChange={v=>void onPreview(v)} busy={!!busy} canReview={true} onReview={()=>setChangeReview({title:"Change rental price",before:money(st.price.order_price,st.currency),after:money(Number(priceInput),st.currency),run:onApplyPrice})}/>}
+          {editorTab==="refund"&&<><RentalMoneyControl mode="refund" total={st.price.total??st.price.order_price??0} limit={st.price.order_price??st.price.total??0} value={refundInput} currency={st.currency} onChange={setRefundInput} busy={!!busy} canReview={true} onReview={()=>setChangeReview({title:"Refund rental payment",before:money(st.price.total,st.currency),after:money(Number(refundInput),st.currency)+" refund",run:onApplyRefund})}/><div className={styles.secondaryMoney}><h4>Price</h4><RentalMoneyControl compact mode="price" total={st.price.order_price??0} value={priceInput} currency={st.currency} onChange={v=>void onPreview(v)} busy={!!busy} canReview={true} onReview={()=>setChangeReview({title:"Change rental price",before:money(st.price.order_price,st.currency),after:money(Number(priceInput),st.currency),run:onApplyPrice})}/></div></>}
 
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => {
-                          setEditingRefund(false);
-                          setRefundInput("");
-                        }}
-                        className="rounded-lg bg-white/[0.06] px-2.5 py-1.5 text-[11px] text-[#a0a6b2]"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        disabled={
-                          busy === "refund" ||
-                          !refundInput ||
-                          Number(refundInput) <= 0
-                        }
-                        onClick={() => setChangeReview({title:"Refund rental payment",before:money(st.price.total,st.currency),after:money(Number(refundInput),st.currency)+" refund",run:onApplyRefund})}
-                        className="ml-auto rounded-lg bg-rose-600 px-3.5 py-1.5 text-[11px] font-semibold text-white hover:bg-rose-500 disabled:opacity-40"
-                      >
-                        {busy === "refund"
-                          ? "Processing…"
-                          : `Refund ${refundInput ? money(Number(refundInput), st.currency) : "payment"}`}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
         </>
       )}
 
@@ -2869,6 +2715,12 @@ export function ReplyModal({
 }) {
   const accent = tileAccent(tile);
   const ds = decideState(tile);
+  useLayoutEffect(()=>{
+    if(window.innerWidth>=900 && dockTarget.getBoundingClientRect().top>180){
+      dockTarget.closest('[data-widget-id="reply-inbox"]')?.scrollIntoView({block:"start",behavior:"instant"});
+      window.scrollBy({top:-64,behavior:"instant"});
+    }
+  },[dockTarget,openRevision]);
   const [viewport, setViewport] = useState<{
     height: number;
     width: number;
@@ -4410,7 +4262,7 @@ export function ReplyModal({
               <div className={styles.composeInput}>
                 <button
                   type="button"
-                  onClick={() => setComposeOpen(true)}
+                  onClick={() => { setComposeOpen(true); fileRef.current?.click(); }}
                   className={styles.attachButton}
                   aria-label="Write reply or insert text file"
                   title="Write a reply or insert a text file"
@@ -4603,7 +4455,7 @@ export function ReplyInbox() {
     const frame=requestAnimationFrame(()=>{
       const split=widgetRef.current?.querySelector('[data-quick-reply-split]');
       const pane=widgetRef.current?.querySelector('[data-conversation-pane]');
-      const target=window.innerWidth<900 ? pane : split;
+      const target=window.innerWidth<900 ? pane : widgetRef.current;
       const header=document.querySelector('[data-manager-header]');
       const offset=Math.max(16,(header?.getBoundingClientRect().bottom??0)+16);
       if(target){const top=target.getBoundingClientRect().top;if(Math.abs(top-offset)>2)window.scrollBy({top:top-offset,behavior:"instant"});}
