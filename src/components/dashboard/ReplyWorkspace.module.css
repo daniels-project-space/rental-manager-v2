@@ -113,7 +113,7 @@
 .chatGearMeta b { color:#f1f5fb; font-size:13px; white-space:nowrap; }
 .headerAvailability { display:inline-flex; margin:0; }
 
-.headerExtras { grid-column:1; grid-row:2; display:flex; flex-wrap:wrap; align-items:center; gap:8px; min-width:0; }
+.headerExtras { grid-column:1/-1; grid-row:2; display:flex; flex-wrap:wrap; align-items:center; gap:8px; min-width:0; }
 .headerExtras:empty { display:none; }
 .chatClose { position: absolute; top: 8px; right: 8px; width: 32px; height: 32px; min-height: 32px; display: grid; place-items: center; z-index: 60; border: 1px solid #405061; border-radius: 50%; background: #232d38; color: #ecf3ff; font-size: 25px; line-height: 1; cursor: pointer; touch-action: manipulation; }
 .chatClose small { display: none; }
@@ -284,9 +284,9 @@
  .expandedChat .gearCell > span { display:none; }
  .expandedChat .gearLine > span { -webkit-line-clamp:1; }
  .expandedChat .datesCell { flex-direction:row; gap:4px; text-align:left; font-size:10px; }
- .expandedChat .availCell { display:flex; position:absolute; right:12px; bottom:10px; max-width:105px; }
+ .expandedChat .availCell { display:flex; position:absolute; grid-column:auto; grid-row:auto; right:12px; bottom:10px; max-width:105px; }
  .expandedChat .availCell .itemStockDetails { font-size:8px; }
- .expandedChat .progressCell { display:block; position:absolute; top:36px; right:12px; max-width:82px; }
+ .expandedChat .progressCell { display:block; position:absolute; grid-column:auto; grid-row:auto; top:36px; right:12px; max-width:82px; }
  .expandedChat .progressCell .steps { display:none; }
  .expandedChat .progressCell .stageCaption { border:1px solid #3a6384; border-radius:12px; padding:3px 6px; background:#1c3550; color:#bfdbff; }
  .expandedChat .progressCell .rowActions { display:flex; position:absolute; right:0; top:44px; width:120px; justify-content:flex-end; gap:4px; }
