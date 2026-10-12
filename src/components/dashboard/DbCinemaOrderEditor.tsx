@@ -1,4 +1,5 @@
 "use client";
+import { RentalMoneyControl } from "./RentalMoneyControl";
 import {
   rentalCalendarParts,
   rentalCalendarTimestamp,
@@ -16,7 +17,9 @@ import {
   DbCinemaEquipmentEditor,
   type EquipmentLine,
 } from "./DbCinemaEquipmentEditor";
-import styles from "./ReplyInbox.module.css";
+import panelStyles from "./ReplyInbox.module.css";
+import workspaceStyles from "./ReplyWorkspace.module.css";
+const styles={...panelStyles,...workspaceStyles};
 const detailsRef = makeFunctionReference<"action">(
   "dbcinema_chat:rentalControls",
 );
@@ -88,12 +91,14 @@ export function DbCinemaOrderEditor({
   const [amount, setAmount] = useState(""),
     [refundReason, setRefundReason] = useState(""),
     [refundReview, setRefundReview] = useState(false);
+  const [editorTab,setEditorTab]=useState<"gear"|"dates"|"refund">(initialAction==="dates"?"dates":initialAction==="refund"||initialAction==="discount"?"refund":"gear");
   const [calendarRevision, setCalendarRevision] = useState(0);
   const equipmentSection = useRef<HTMLElement | null>(null),
     datesSection = useRef<HTMLElement | null>(null),
     pricingSection = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (!details || !initialAction) return;
+    setEditorTab(initialAction==="dates"?"dates":initialAction==="refund"||initialAction==="discount"?"refund":"gear");
     const target =
       initialAction === "change"
         ? equipmentSection
@@ -143,7 +148,7 @@ export function DbCinemaOrderEditor({
         end: endTime
           ? rentalCalendarTimestamp(end, endTime)
           : Date.parse(end + "T00:00:00Z"),
-        reason,
+        reason: reason.trim()?`Admin: ${reason.trim()}`:"Admin date adjustment",
         keep_agreed_price: keep,
       };
       const result = await preview({ booking_id: bookingId, ...args });
@@ -192,7 +197,7 @@ export function DbCinemaOrderEditor({
         booking_id: bookingId,
         request_id: requestId.current,
         amount_pence: Math.round(Number(amount) * 100),
-        reason: refundReason,
+        reason: refundReason.trim()?`Admin: ${refundReason.trim()}`:"Admin rental refund",
         operator_confirmed: true,
       });
       setNote(`${money(result.amount)} rental refund: ${result.status}.`);
@@ -223,9 +228,10 @@ export function DbCinemaOrderEditor({
   const start = pickup.date,
     end = returned.date;
   return (
-    <div className={styles.sourceActions}>
-      <section ref={equipmentSection}>
-        <h4>1. Equipment</h4>
+    <div className={styles.sourceEditor}>
+      <nav className={styles.editorTabs} aria-label="Rental control sections">{(["gear","dates","refund"] as const).map(tab=><button type="button" key={tab} aria-selected={tab===editorTab} onClick={()=>setEditorTab(tab)}>{tab==="gear"?"Equipment":tab==="dates"?"Dates":"Refund"}</button>)}</nav>
+      {editorTab==="gear"&&<section ref={equipmentSection}>
+        <h4>Equipment</h4>
         <DbCinemaEquipmentEditor
           bookingId={bookingId}
           details={details}
@@ -234,12 +240,13 @@ export function DbCinemaOrderEditor({
           onNote={setNote}
           onRefresh={refresh}
         />
-      </section>
-      <section ref={datesSection}>
-        <h4>2. Rental dates</h4>
+      </section>}
+      {editorTab==="dates"&&<section ref={datesSection}>
+        <h4>Rental dates</h4>
         <p>Select dates and handover times.</p>
+        <details><summary>Add a note (optional)</summary>
         <label>
-          Reason
+          Note (optional)
           <input
             aria-label="Date change reason"
             value={reason}
@@ -250,6 +257,7 @@ export function DbCinemaOrderEditor({
             disabled={busy}
           />
         </label>
+        </details>
         <label>
           <input
             type="checkbox"
@@ -271,7 +279,7 @@ export function DbCinemaOrderEditor({
             startTime: pickup.time,
             endTime: returned.time,
             busy,
-            canReview: reason.trim().length >= 5,
+            canReview: !busy,
             onReview: review,
             onCancel: () => {
               setProposal(null);
@@ -301,40 +309,13 @@ export function DbCinemaOrderEditor({
             </button>
           </div>
         )}
-      </section>
-      <section ref={pricingSection}>
-        <h4>3. Pricing</h4>
-        <div className={styles.moneyOverview}>
-          <div>
-            <small>Rental payment</small>
-            <strong>{money(details.total)}</strong>
-          </div>
-          <div>
-            <small>Refund</small>
-            <strong>{money(Number(amount) || 0)}</strong>
-          </div>
-          <div>
-            <small>Payment change</small>
-            <strong>{money(-(Number(amount) || 0))}</strong>
-          </div>
-        </div>
+      </section>}
+      {editorTab==="refund"&&<section ref={pricingSection}>
+        <h4>Refund</h4>
+        <RentalMoneyControl mode="refund" total={details.total} limit={Math.max(0,details.total-details.refunds.filter(r=>["succeeded","completed"].includes(r.status)).reduce((sum,r)=>sum+r.amountPence/100,0))} value={amount} onChange={v=>{setAmount(v);setRefundReview(false);}} busy={busy||pendingRefund.current} canReview={!locked} onReview={()=>setRefundReview(true)}/>
+        <details><summary>Add a note (optional)</summary>
         <label>
-          Rental refund (£)
-          <input
-            aria-label="Rental refund amount"
-            type="number"
-            min="0.01"
-            step="0.01"
-            value={amount}
-            disabled={busy || pendingRefund.current}
-            onChange={(e) => {
-              setAmount(e.target.value);
-              setRefundReview(false);
-            }}
-          />
-        </label>
-        <label>
-          Reason
+          Note (optional)
           <input
             aria-label="Rental refund reason"
             value={refundReason}
@@ -345,20 +326,8 @@ export function DbCinemaOrderEditor({
             }}
           />
         </label>
-        {!refundReview ? (
-          <button
-            disabled={
-              busy ||
-              locked ||
-              !Number.isFinite(Number(amount)) ||
-              Number(amount) <= 0 ||
-              refundReason.trim().length < 5
-            }
-            onClick={() => setRefundReview(true)}
-          >
-            Review rental refund
-          </button>
-        ) : (
+        </details>
+        {refundReview && (
           <div role="region" aria-label="Review rental refund">
             <p>
               Refund {money(Number(amount))} from the rental payment.{" "}
@@ -376,7 +345,7 @@ export function DbCinemaOrderEditor({
             )}
           </div>
         )}
-      </section>
+      </section>}
       {note && <p role="status">{note}</p>}
     </div>
   );

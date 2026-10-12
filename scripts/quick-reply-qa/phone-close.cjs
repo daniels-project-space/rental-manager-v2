@@ -111,7 +111,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
                 " " +
                 (await ev(`document.body.innerText`)),
             );
-          // The date editor is now directly in the controls panel.
+          await tap(`[...document.querySelector('[aria-label="Rental control sections"]').querySelectorAll('button')].find(b=>b.textContent==='Dates')`);
           await tap(
             `document.querySelector('[title="Change the rental dates"]')`,
           );
