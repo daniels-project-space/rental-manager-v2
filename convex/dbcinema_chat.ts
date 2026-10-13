@@ -896,6 +896,7 @@ export const addEquipment = action({
         url: string;
         id: string;
         applied?: boolean;
+        awaitingAcceptance?:boolean;
       }>("action", "rentalAdditions:start", {
         bookingId: booking_id,
         listingId: listing_id,
@@ -906,6 +907,7 @@ export const addEquipment = action({
       });
       return {
         applied: !!result.applied,
+        ...(result.awaitingAcceptance?{awaiting_acceptance:true}:{}),
         payment_url: result.url,
         addition_id: result.id,
       };
