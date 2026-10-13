@@ -318,3 +318,27 @@
 .composeDrawer[hidden] { display:none; }
 .chatHeader { padding-block:12px; }
 .chatGearMeta { display:flex; align-items:center; flex-wrap:wrap; gap:5px; }
+.refundRecovery {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  margin-bottom: 16px;
+  border: 1px solid #304555;
+  border-radius: 12px;
+  background: #172735;
+  color: #edf5ff;
+  overflow-wrap: anywhere;
+}
+.refundRecovery a { color: #72beff; text-decoration: none; }
+.refundRecovery button {
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid #3376ae;
+  border-radius: 9px;
+  background: #174b78;
+  color: #edf5ff;
+  font: inherit;
+  cursor: pointer;
+}
+.refundRecovery button:disabled { opacity: .5; cursor: wait; }
+.refundRecovery :is(a,button):focus-visible { outline: 2px solid #72beff; outline-offset: 3px; }
