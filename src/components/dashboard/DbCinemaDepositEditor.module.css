@@ -1,0 +1,11 @@
+.panel { display:flex; flex-direction:column; gap:16px; min-width:0; }
+.panel p { margin:0; font-size:12px; line-height:1.5; color:#a9bfd3; }
+.inspectionHeader { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.inspectionHeader h4 { margin:0; font-size:14px; }
+.inspectionHeader button { border:0; background:none; color:#63b5ff; font-size:12px; cursor:pointer; }
+.item { display:grid; gap:10px; padding:12px; border:1px solid #293e52; border-radius:12px; background:#101d29; min-width:0; }
+.textField { display:grid; gap:7px; color:#bfd0df; font-size:12px; min-width:0; }
+.textField textarea, .textField input { box-sizing:border-box; width:100%; min-width:0; border:1px solid #3a5268; border-radius:9px; background:#122331; padding:10px; color:#eef5fc; font:inherit; }
+.textField textarea { min-height:86px; resize:vertical; line-height:1.5; }
+.checkField { display:flex; align-items:flex-start; gap:8px; color:#bfd0df; font-size:12px; line-height:1.5; }
+.checkField input { flex:0 0 16px; width:16px; height:16px; margin:1px 0 0; accent-color:#078aff; }

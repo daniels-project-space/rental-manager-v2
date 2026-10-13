@@ -1,0 +1,59 @@
+"use client";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useAction } from "convex/react";
+import { makeFunctionReference } from "convex/server";
+import styles from "./RentalControls.module.css";
+import depositStyles from "./DbCinemaDepositEditor.module.css";
+
+const contextRef=makeFunctionReference<"action">("dbcinema_chat:returnInspectionContext");
+const previewRef=makeFunctionReference<"action">("dbcinema_chat:previewReturn");
+const completeRef=makeFunctionReference<"action">("dbcinema_chat:completeReturn");
+const cashPolicy="2026-10-refundable-deposit-v1";
+type Inspection={key:string;condition:"good"|"issue";details:string;openCase:boolean};
+type Context={status:string;depositAmount:number;depositHoldAmount:number;depositRefunded:boolean;depositKept:number;depositRefundAmount:number;securityPolicyVersion:string|null;savedCardLimit:number;replacementValue:number;items:Array<{key:string;title:string;imageSources?:string[]}>;returnDecision?:{actualReturnedAt:number;damageKept:number;depositKept?:number;damageNote?:string;chargeLate:boolean;lateWaiverReason?:string;inspection?:Inspection[]}|null;returnStatement?:unknown;lateQuote?:{amount:number}};
+type Review={snapshot:string;financial:{depositRefund:number;damageFromDeposit:number;holdRelease:number};alreadySettled:boolean;statement:{damageNote?:string;damageAssessed?:number};email:{subject:string;html:string}};
+const currencyFormat=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP"});
+const gbp=(value:number)=>currencyFormat.format(value);
+
+export function DbCinemaDepositEditor({bookingId,onComplete}:{bookingId:string;onComplete:()=>Promise<void>}) {
+  return <ScopedDepositEditor key={bookingId} bookingId={bookingId} onComplete={onComplete}/>;
+}
+function ScopedDepositEditor({bookingId,onComplete}:{bookingId:string;onComplete:()=>Promise<void>}) {
+  const get=useAction(contextRef),preview=useAction(previewRef),complete=useAction(completeRef);
+  const alive=useRef(true),flight=useRef(false);
+  const [context,setContext]=useState<Context|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState("");
+  const [inspection,setInspection]=useState<Record<string,Inspection>>({}),[damage,setDamage]=useState("0"),[kept,setKept]=useState(0),[reason,setReason]=useState("");
+  const [returnedAt,setReturnedAt]=useState(Date.now),[chargeLate,setChargeLate]=useState(true),[lateReason,setLateReason]=useState("");
+  const [review,setReview]=useState<{key:string;value:Review}|null>(null),[confirmed,setConfirmed]=useState(false);
+  const load=useCallback(async()=>{
+    const next=await get({booking_id:bookingId}) as Context;
+    if(!alive.current)return;
+    setContext(next);
+    if(next.returnDecision){const decision=next.returnDecision;setReturnedAt(decision.actualReturnedAt);setDamage(String(decision.damageKept));setKept(decision.depositKept??0);setReason(decision.damageNote??"");setChargeLate(decision.chargeLate);setLateReason(decision.lateWaiverReason??"");setInspection(Object.fromEntries((decision.inspection??[]).map(row=>[row.key,row])));}
+  },[get,bookingId]);
+  useEffect(()=>{alive.current=true;setBusy(true);void load().catch(()=>{if(alive.current)setError("Could not load this rental’s return controls.")}).finally(()=>{if(alive.current)setBusy(false)});return()=>{alive.current=false}},[load]);
+  const isCash=context?.securityPolicyVersion===cashPolicy,assessed=Number(damage),frozen=!!context?.returnDecision;
+  const selection={booking_id:bookingId,actual_returned_at:returnedAt,damage_assessed:assessed,...(isCash?{deposit_kept:kept}:{}),reason:reason.trim()||undefined,charge_late:chargeLate,late_waiver_reason:lateReason.trim()||undefined,inspection:Object.values(inspection)};
+  const selectionKey=JSON.stringify(selection);
+  const reviewed=review?.key===selectionKey?review.value:null;
+  const valid=!!context&&["active","confirmed","returned"].includes(context.status)&&!context.returnStatement&&Number.isFinite(assessed)&&assessed>=0&&assessed<=(context.replacementValue||context.depositAmount+context.depositHoldAmount)&&context.items.length>0&&context.items.every(item=>inspection[item.key]&&(inspection[item.key].condition==="good"||inspection[item.key].details.trim().length>=10))&&(assessed===0||reason.trim().length>=10&&Object.values(inspection).some(row=>row.condition==="issue"))&&(!isCash||kept>=0&&kept<=Math.min(context.depositAmount,assessed))&&(chargeLate||!(context.lateQuote?.amount)||lateReason.trim().length>=5);
+  async function prepare(){if(!valid||flight.current)return;flight.current=true;setBusy(true);setError("");setConfirmed(false);try{const value=await preview(selection) as Review;if(alive.current)setReview({key:selectionKey,value})}catch{if(alive.current)setError("The return could not be reviewed. Check the inspection and recorded amounts.")}finally{flight.current=false;if(alive.current)setBusy(false)}}
+  async function finish(){if(!valid||!reviewed||!confirmed||flight.current)return;flight.current=true;setBusy(true);setError("");try{await complete({...selection,reviewed_snapshot:reviewed.snapshot,confirmed:true});if(alive.current){setReview(null);setConfirmed(false);await load();await onComplete()}}catch(e:any){if(alive.current){setError(e?.data?.message??"Completion did not finish. Resume the saved decision; check the refund status before retrying.");setReview(null);setConfirmed(false);await load().catch(()=>{})}}finally{flight.current=false;if(alive.current)setBusy(false)}}
+  function condition(item:Context["items"][number],value:"good"|"issue"){setInspection(previous=>({...previous,[item.key]:{key:item.key,condition:value,details:value==="good"?"":previous[item.key]?.details??"",openCase:false}}));setConfirmed(false)}
+  if(!context)return <div role="status">{error||"Loading return controls…"}<button type="button" disabled={busy} onClick={()=>void load().catch(()=>setError("Could not load return controls."))}>Retry</button></div>;
+  if(context.returnStatement)return <section className={styles.moneyControl}><h4>Return completed</h4><div className={styles.moneyResult}><div><span>Deposit retained</span><strong>{gbp(context.depositKept)}</strong></div><div><span>Refund issued</span><strong>{gbp(context.depositRefundAmount)}</strong></div></div><p>The itemised completion statement records the retained amount and reason.</p></section>;
+  return <section className={`${styles.moneyControl} ${depositStyles.panel}`} aria-label="DB Cinema web deposit and return">
+    <div className={styles.moneyReceipt}><span>DB Cinema web · deposit paid</span><strong>{gbp(context.depositAmount)}</strong></div>
+    <p>Return recorded {new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/London",dateStyle:"medium",timeStyle:"short"}).format(returnedAt)} · London</p>
+    {!frozen&&<button type="button" disabled={busy} onClick={()=>setReturnedAt(Date.now())}>Use current return time</button>}
+    {isCash&&<><label className={styles.amountField}><span>Keep from deposit</span><div><span>£</span><input aria-label="Deposit to retain" type="number" min="0" max={context.depositAmount} step="0.01" value={kept} disabled={busy||frozen} onChange={e=>{const value=Number(e.target.value);setKept(value);if(value>assessed)setDamage(String(value));setConfirmed(false)}}/></div></label><input aria-label="Deposit retention slider" type="range" min="0" max={context.depositAmount} step="0.01" value={kept} disabled={busy||frozen} onChange={e=>{const value=Number(e.target.value);setKept(value);if(value>assessed)setDamage(String(value));setConfirmed(false)}}/><div className={styles.moneyPresets}>{[[0,"Refund all"],[context.depositAmount/2,"Keep half"],[context.depositAmount,"Keep all"]].map(([value,label])=><button key={String(label)} type="button" disabled={busy||frozen} onClick={()=>{setKept(Number(value));if(Number(value)>assessed)setDamage(String(value));setConfirmed(false)}}>{label}</button>)}</div><div className={styles.moneyResult}><div><span>Renter receives</span><strong>{gbp(context.depositAmount-kept)}</strong></div><div><span>Combined card allowance</span><b>{gbp(Math.max(0,context.savedCardLimit-kept))}</b></div></div></>}
+    <div className={depositStyles.inspectionHeader}><h4>Inspect the equipment</h4><button type="button" disabled={busy||frozen} onClick={()=>{setInspection(Object.fromEntries(context.items.map(item=>[item.key,{key:item.key,condition:"good",details:"",openCase:false}])));setDamage("0");setKept(0);setReason("");setConfirmed(false)}}>Mark all good</button></div>
+    {context.items.map(item=><div key={item.key} className={depositStyles.item}><div style={{display:"flex",gap:10,alignItems:"center"}}>{item.imageSources?.find(url=>/^https:\/\//.test(url))&&<img src={item.imageSources.find(url=>/^https:\/\//.test(url))} alt={item.title} width={48} height={48} style={{objectFit:"contain",flexShrink:0}} onError={e=>{e.currentTarget.style.visibility="hidden"}}/>}<strong>{item.title}</strong></div><div className={styles.moneyPresets}>{(["good","issue"] as const).map(value=><button key={value} type="button" aria-pressed={inspection[item.key]?.condition===value} disabled={busy||frozen} onClick={()=>condition(item,value)}>{value==="good"?"Good condition":"Issue found"}</button>)}</div>{inspection[item.key]?.condition==="issue"&&<><label className={depositStyles.textField}>Issue details<textarea disabled={busy||frozen} value={inspection[item.key].details} onChange={e=>setInspection(previous=>({...previous,[item.key]:{...previous[item.key],details:e.target.value}}))}/></label><label className={depositStyles.checkField}><input type="checkbox" checked={inspection[item.key].openCase} disabled={busy||frozen} onChange={e=>setInspection(previous=>({...previous,[item.key]:{...previous[item.key],openCase:e.target.checked}}))}/>Open a damage case for this item</label></>}</div>)}
+    <label className={styles.amountField}><span>Damage or loss assessed</span><div><span>£</span><input aria-label="Damage assessment" type="number" min="0" step="0.01" value={damage} disabled={busy||frozen} onChange={e=>{setDamage(e.target.value);setKept(previous=>Math.min(previous,Math.max(0,Number(e.target.value))));setConfirmed(false)}}/></div></label>
+    {assessed>0&&<label className={depositStyles.textField}>Retained amount and evidence<textarea aria-label="Deposit retention reason" disabled={busy||frozen} value={reason} onChange={e=>{setReason(e.target.value);setConfirmed(false)}} placeholder="Which item, what happened, and why this amount is retained"/></label>}
+    {(context.lateQuote?.amount??0)>0&&<><label className={depositStyles.checkField}><input type="checkbox" checked={chargeLate} disabled={busy||frozen} onChange={e=>setChargeLate(e.target.checked)}/>Record the assessed late fee · {gbp(context.lateQuote!.amount)}</label>{!chargeLate&&<label className={depositStyles.textField}>Why waive the late fee?<input value={lateReason} disabled={busy||frozen} onChange={e=>setLateReason(e.target.value)}/></label>}</>}
+    <button type="button" className={styles.send} disabled={busy||!valid} onClick={()=>void prepare()}>{busy?"Preparing…":"Review completion"}</button>
+    {reviewed&&<div className={styles.moneyResult}><div><span>Refund to original card</span><strong>{gbp(reviewed.financial.depositRefund)}</strong></div><div><span>Deposit retained</span><strong>{gbp(reviewed.financial.damageFromDeposit)}</strong></div><p>{reason||"No deposit deduction"}</p><label className={depositStyles.checkField}><input type="checkbox" checked={confirmed} disabled={busy} onChange={e=>setConfirmed(e.target.checked)}/>I confirm this inspection, refund and itemised completion statement.</label><button type="button" className={styles.send} disabled={busy||!valid||!confirmed||reviewed.alreadySettled} onClick={()=>void finish()}>{busy?"Completing…":"Complete rental & refund deposit"}</button></div>}
+    {error&&<p role="alert">{error}</p>}
+  </section>;
+}

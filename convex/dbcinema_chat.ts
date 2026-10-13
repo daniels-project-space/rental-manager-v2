@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import {
   basketSwapSnapshot,
   websiteSwapSnapshot,
@@ -51,7 +51,7 @@ export async function callDbCinema<T>(
       args: { ...(args as object), token },
       format: "json",
     }),
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(path === "checkout:previewReturned" ? 45_000 : 15_000),
   });
   let result: RemoteResult<T>;
   try {
@@ -60,6 +60,8 @@ export async function callDbCinema<T>(
     throw new Error("DB Cinema returned an unreadable chat response.");
   }
   if (!response.ok || result.status !== "success") {
+    if (result.errorData?.code === "DEPOSIT_REFUND_REVIEW") throw new ConvexError({code:"DEPOSIT_REFUND_REVIEW",message:"The original deposit refund requires provider review. Resume the saved decision after review; no second refund was issued."});
+    if (result.errorData?.code === "RETURN_REVIEW_STALE") throw new ConvexError({code:"RETURN_REVIEW_STALE",message:"The rental changed after review. Refresh and review the completion again."});
     if (result.errorData?.code === "EQUIPMENT_REVIEW_STALE")
       throw new EquipmentReviewChanged();
     // Keep provider details out of the browser; in particular, never echo a
@@ -667,7 +669,13 @@ export const rentalControls = action({
     if (!b) throw Error("Rental details are unavailable.");
     return {
       status: b.status,
-      total: b.total,
+      total: Math.max(0,Math.round((b.total-(b.depositAmount??0))*100)/100),
+      depositAmount: b.depositAmount ?? 0,
+      depositKept: b.depositKept ?? 0,
+      depositRefunded: b.depositRefunded ?? false,
+      depositRefundAmount: b.depositRefundAmount ?? 0,
+      securityPolicyVersion: b.securityPolicyVersion ?? null,
+      savedCardLimit: b.savedCardLimit ?? 0,
       depositHoldAmount: b.depositHoldAmount ?? 0,
       snapshot: b.controlsSnapshot,
       canChangeDates:
@@ -949,3 +957,15 @@ export const removeEquipment = action({
     }
   },
 });
+
+const returnInspectionInput=v.object({key:v.string(),condition:v.union(v.literal("good"),v.literal("issue")),details:v.string(),openCase:v.boolean()});
+const returnSelectionArgs={booking_id:v.string(),actual_returned_at:v.number(),damage_assessed:v.number(),deposit_kept:v.optional(v.number()),reason:v.optional(v.string()),charge_late:v.boolean(),late_waiver_reason:v.optional(v.string()),inspection:v.array(returnInspectionInput)};
+function returnSelection(a:{booking_id:string;actual_returned_at:number;damage_assessed:number;deposit_kept?:number;reason?:string;charge_late:boolean;late_waiver_reason?:string;inspection:unknown[]}){
+ return {bookingId:a.booking_id,actualReturnedAt:a.actual_returned_at,damageKept:a.damage_assessed,...(a.deposit_kept!==undefined?{depositKept:a.deposit_kept}:{}),damageNote:a.reason?.trim()||undefined,chargeLate:a.charge_late,lateWaiverReason:a.late_waiver_reason?.trim()||undefined,inspection:a.inspection};
+}
+export const returnInspectionContext=action({args:{booking_id:v.string()},handler:async(ctx,a)=>{await requireOwner(ctx);return callDbCinema<any>("query","returnInspections:context",{bookingId:a.booking_id});}});
+export const previewReturn=action({args:returnSelectionArgs,handler:async(ctx,a)=>{await requireOwner(ctx);return callDbCinema<any>("action","checkout:previewReturned",returnSelection(a));}});
+export const completeReturn=action({args:{...returnSelectionArgs,reviewed_snapshot:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{
+ await requireOwner(ctx);if(!a.confirmed||!a.reviewed_snapshot)throw Error("Review and confirm the return decision before completion.");
+ return callDbCinema<any>("action","checkout:markReturned",{...returnSelection(a),expectedSnapshot:a.reviewed_snapshot});
+}});
