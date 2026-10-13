@@ -210,3 +210,17 @@ describe("counted supplied battery pool", () => {
     expect(resolveListingComponents([badCamera,pool] as unknown as Doc<"items">[],[{item_id:"Pro",qty:1}]).complete).toBe(false);
   });
 });
+
+describe("owner-confirmed Chantal Pro rig and shared battery pools",()=>{
+ const kitItems=[{_id:"pro",name_canonical:"BMPCC 6K Pro",kind:"camera",status:"active",qty:1,is_marketing_only:false,listing_stock_rules:[{title_pattern:"v[ -]?mount",components:[{item_id:"small",qty:2}],excludes:["large"],source:"Owner confirmed Chantal kit"}]},{_id:"small",name_canonical:"V-mount 95Wh",kind:"power",status:"active",qty:2,is_marketing_only:false,track_independent_stock:true},{_id:"large",name_canonical:"V-mount 150Wh",kind:"power",status:"active",qty:4,is_marketing_only:false,track_independent_stock:true}] as unknown as Doc<"items">[];
+ it.each(["Blackmagic Pocket Cinema Camera 6K Pro | V-Mount / Rig / BMPCC 6K Pro","Blackmagic 6k pro V mount rig"])("resolves %s with two 95Wh, without double counting the erroneous 150Wh",name=>{
+  const result=resolveListingComponents(kitItems,[{item_id:"pro",qty:1},{item_id:"large",qty:2}],"pro",1,"Included in this rental: • 1x BMPCC 6K Pro • 2x V-mount 150Wh",undefined,name);
+  expect(result.complete).toBe(true);expect(result.components.find(c=>c.item_id==="small")).toMatchObject({units_per_listing:2,stock_required:true});expect(result.components.some(c=>c.item_id==="large")).toBe(false);
+  const rental={_id:"rental",status:"confirmed",start_date:request.start_date,end_date:request.end_date,expanded_items:[{item_id:"pro",qty:1},{item_id:"small",qty:2}]} as unknown as Doc<"reservations">;
+  const stock=sources({items:kitItems,reservations:[rental]});expect(stockForRentalItem(stock,kitItems[1],{...request,item_name:"V-mount 95Wh",quantity:1}).available).toBe(false);expect(stockForRentalItem(stock,kitItems[2],{...request,item_name:"V-mount 150Wh",quantity:2}).available).toBe(true);
+ });
+ it("finds owned 150Wh packs when their master identity was absent",()=>{
+  const result=resolveListingComponents(kitItems,undefined,undefined,1,undefined,undefined,"Flexion Mini V-Mount Batteries 4x 150Wh | Dual Charger");
+  expect(result).toMatchObject({complete:true,owned:true,components:[{item_id:"large",units_per_listing:4}]});
+ });
+});

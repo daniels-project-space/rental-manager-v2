@@ -103,9 +103,9 @@ export function evaluateStockWindow(args: {
 
 type StockSources = { items:Doc<"items">[]; reservations:Doc<"reservations">[]; productIndex:Map<string,string>;overrides:OverrideMap;
   claims:Doc<"insurance_claims">[];blackouts:Doc<"owner_unavailability">[];vacations:Doc<"vacation_periods">[];
-  reservationUnits?:Map<string,Map<string,number>> };
+  checkoutHolds?:Doc<"storefront_checkout_stock">["rows"];reservationUnits?:Map<string,Map<string,number>> };
 export async function loadStockSources(ctx: QueryCtx):Promise<StockSources> {
-  const [items, confirmed, ongoing, websitePending, index, overrides, claims, blackouts, vacations] = await Promise.all([
+  const [items, confirmed, ongoing, websitePending, index, overrides, claims, blackouts, vacations, checkoutStock] = await Promise.all([
     ctx.db.query("items").collect(),
     ctx.db.query("reservations").withIndex("by_status", (q) => q.eq("status", "confirmed")).collect(),
     ctx.db.query("reservations").withIndex("by_status", (q) => q.eq("status", "ongoing")).collect(),
@@ -115,13 +115,17 @@ export async function loadStockSources(ctx: QueryCtx):Promise<StockSources> {
     ctx.db.query("insurance_claims").collect(),
     ctx.db.query("owner_unavailability").collect(),
     ctx.db.query("vacation_periods").withIndex("by_active_start", (q) => q.eq("is_active", true)).collect(),
+    ctx.db.query("storefront_checkout_stock").withIndex("by_key",q=>q.eq("key","website")).first(),
   ]);
+  if(process.env.REQUIRE_WEBSITE_STOCK_HOLDS_SYNC==="true" && (!checkoutStock || Date.now()-checkoutStock.receivedAt>180000))throw Error("Website checkout stock snapshot needs refresh; availability cannot be confirmed.");
   const reservations=dedupByLogicalRental([...confirmed,...ongoing,...websitePending.filter(r=>r.order_step==="VERIFIED")].filter(r=>!r.is_obsolete&&!r.hygglo_order_id?.startsWith("__probe__")));
   const productIndex=buildProductIndexMap(index),allocation=await loadCanonicalListingAllocation(ctx,items,overrides,reservations);
   const reservationUnits=new Map<string,Map<string,number>>();
   for(const r of reservations)if(r.start_date && r.end_date && r.order_step!=="REVIEWED" && r.status!=="completed" && !(r.account_slug==="dbcinema_web"&&r.site_item_windows!==undefined))
     reservationUnits.set(String(r._id),reservationItemUnits(r,productIndex,allocation,items));
-  return {items,reservations,productIndex,overrides:allocation,claims,blackouts,vacations,reservationUnits};
+  const paidWebsite=new Set(reservations.filter(r=>r.account_slug==="dbcinema_web").map(r=>r.hygglo_order_id?.replace(/^dbcinema[_:-]/,"")));
+  const checkoutHolds=(checkoutStock?.rows??[]).filter(h=>h.expiresAt>Date.now()&&!paidWebsite.has(h.bookingId));
+  return {checkoutHolds,items,reservations,productIndex,overrides:allocation,claims,blackouts,vacations,reservationUnits};
 }
 
 export function resolveStockItem(name: string, items: Doc<"items">[]) {
@@ -194,6 +198,13 @@ export function stockOccupancyForItem(sources: Awaited<ReturnType<typeof loadSto
     // two different kits one rental. Quantity is part of the complete basket.
     const extension_key = renter && r.account_slug ? JSON.stringify([r.account_slug, renter, [...units].sort(([a], [b]) => a.localeCompare(b))]) : undefined;
     occupancy.push({ start, startInstant:londonStockInstant(start,"start"), ...bufferedStockEnd(end), qty, renter_name: r.renter_name, order_id: r.hygglo_order_id, extension_key });
+  }
+  for(const h of sources.checkoutHolds??[]) {
+    if(h.item_id!==item._id||h.expiresAt<=Date.now()||request.thread_id===h.bookingId)continue;
+    const endInstant=h.endExclusive?h.end+(TURNAROUND_BUFFER_MINUTES-h.bufferMinutes)*60000:h.end+86400000+TURNAROUND_BUFFER_MINUTES*60000;
+    let start=londonStockLabel(h.start),end=londonStockLabel(endInstant);
+    if(end<=start){start=start.slice(0,10)+"T00:00";end=shiftStockDate(end.slice(0,10),1)+"T00:00";}
+    occupancy.push({start,end,startInstant:h.start,endInstant,qty:h.qty,order_id:"checkout:"+h.bookingId});
   }
   return occupancy;
 }

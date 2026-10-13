@@ -23,6 +23,7 @@ export default defineConfig({
     environment: "node",
     globals: false,
     include: [
+      "convex/storefront_checkout_stock.test.ts",
       "convex/quick_reply_manual_draft.test.ts",
       "convex/quick_reply_thread_state.test.ts",
       "convex/lib/renter_message_watermark.test.ts",

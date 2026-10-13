@@ -316,3 +316,12 @@ http.route({
 });
 
 export default http;
+
+http.route({path:"/dbcinema/stock-holds",method:"POST",handler:httpAction(async(ctx,request)=>{
+ const secret=process.env.DBCINEMA_WEBHOOK_SECRET;
+ if(!secret)return new Response("Bridge unavailable",{status:503});
+ if(request.headers.get("x-dbcinema-sync-token")!==secret)return new Response("Unauthorized",{status:401});
+ const raw=await request.text();if(raw.length>150000)return new Response("Too large",{status:413});
+ try{return Response.json(await ctx.runMutation(internal.storefront_checkout_stock.receive,JSON.parse(raw)));}
+ catch{return new Response("Invalid stock snapshot",{status:422});}
+})});

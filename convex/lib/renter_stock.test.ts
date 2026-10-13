@@ -181,3 +181,15 @@ describe("marked website occupied endpoints",()=>{
  const quote=(pickup_time:string)=>stockForItem({items:[item],productIndex:new Map(),overrides:new Map(),claims:[],blackouts:[],vacations:[],reservations:[{account_slug:"dbcinema_web",hygglo_order_id:"web",status:"confirmed",start_date:"2026-10-09",end_date:"2026-10-09",site_item_windows:[{item_id:"camera",qty:1,start:Date.UTC(2026,9,9,8),end:Date.UTC(2026,9,9,12),endExclusive:true,stockWindowVersion:2,turnaroundBufferMinutes:60,pickupTime:"09:00",returnTime:"12:00"}]}]} as any,item as any,{item_name:"FX3",start_date:"2026-10-09",end_date:"2026-10-09",pickup_time});
  it("blocks until13:00 for a12:00 return without adding a second hour",()=>{expect(quote("12:59").available).toBe(false);expect(quote("13:00").available).toBe(true);});
 });
+
+describe("website temporary holds in the same physical stock pool",()=>{
+ it("counts two held batteries, releases on expiry, and excludes those holds from the website export",async()=>{
+  const {sharedStockSnapshot}=await import("./storefront_stock");
+  const item={_id:"battery",name_canonical:"V-mount 95Wh",kind:"power",status:"active",qty:2,is_marketing_only:false} as any;
+  const start=Date.parse("2026-10-02T10:00:00Z"),end=Date.parse("2026-10-04T17:00:00Z");
+  const sources:any={items:[item],reservations:[],productIndex:new Map(),overrides:new Map(),claims:[],blackouts:[],vacations:[],checkoutHolds:[{bookingId:"pending",item_id:"battery",start,end,endExclusive:true,bufferMinutes:60,qty:2,expiresAt:Date.now()+60000}]};
+  expect(stockForItem(sources,item,{...request,item_name:item.name_canonical}).available).toBe(false);
+  expect(sharedStockSnapshot(sources,Date.now()).units[0].windows).toHaveLength(0);
+  sources.checkoutHolds[0].expiresAt=Date.now()-1;expect(stockForItem(sources,item,{...request,item_name:item.name_canonical}).available).toBe(true);
+ });
+});

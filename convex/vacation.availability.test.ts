@@ -13,7 +13,7 @@ function database(extra: Record<string, any[]> = {}) {
     reads.push(table);
     const filters: Array<(r: any) => boolean> = [];
     const range: any = { eq: (field: string, value: unknown) => { filters.push(r => r[field] === value); return range; } };
-    const q: any = { withIndex: (_name: string, apply: any) => { apply(range); return q; }, collect: async () => (data[table] ?? []).filter(r => filters.every(f => f(r))) };
+    const q: any = { withIndex: (_name: string, apply: any) => { apply(range); return q; }, collect: async () => (data[table] ?? []).filter(r => filters.every(f => f(r))), first:async()=> (await q.collect())[0]??null };
     return q;
   } } };
   return { ctx, reads };

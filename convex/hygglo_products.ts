@@ -1,3 +1,4 @@
+import { resolvedMarketingOnly } from "./lib/power_listing_identity";
 import { createBundleMappingContext } from "./lib/bundle_mapping";
 /**
  * convex/hygglo_products — the marketing-listings layer (Phase 3, ADDITIVE).
@@ -189,7 +190,7 @@ export const __service_catalogueForStorefront = internalQuery({
       const resolved = resolveListingComponents(inventory,
         mapping.get(product.productId)?.components.map(c => ({item_id:String(c.item_id),qty:c.qty})),
         product.masterItemId ? String(product.masterItemId) : undefined, 1,
-        product.description ?? descriptions.get(product.productId)?.description,context);
+        product.description ?? descriptions.get(product.productId)?.description,context,product.name);
       const components = resolved.components.filter(c => c.stock_required && byId.has(c.item_id)).map(c => {
         const item = byId.get(c.item_id)!;
         const active = item.status === "active" && item.is_marketing_only === false;
@@ -198,16 +199,17 @@ export const __service_catalogueForStorefront = internalQuery({
         return { masterItemId:c.item_id, name:item.name_canonical, qty:c.units_per_listing,
           quantityOwned, active, replacementCost:typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0 };
       });
+      const classifiedMarketing=resolvedMarketingOnly(product,resolved,inventory);
       const complete = resolved.complete && components.length > 0 && components.every(c => Number.isSafeInteger(c.qty) && c.qty > 0);
       // Match the public bridge projection here, before serializing rich private descriptions.
       const {productId,name,isPublished,isMarketingOnly,valuation,minimumRentalDays,prices,images,unavailableDates,listings,masterItemId}=product;
       return {
         productId,name,isPublished,
-        isMarketingOnly:product.isMarketingOnlyOverride ?? isMarketingOnly,
+        isMarketingOnly:classifiedMarketing,
         marketingOnlyMode:product.isMarketingOnlyOverride === undefined ? "automatic" as const : "manual" as const,
         marketingOnlyUpdatedAt:product.marketingOnlyUpdatedAt ?? 0,
         valuation,minimumRentalDays,prices,images,unavailableDates,listings,masterItemId,
-        stockMapping:{version:1,complete,owned:(product.isMarketingOnlyOverride ?? isMarketingOnly)?false:resolved.owned,components} };
+        stockMapping:{version:1,complete,owned:classifiedMarketing?false:resolved.owned,components} };
     });
   },
 });

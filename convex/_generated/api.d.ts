@@ -8,7 +8,6 @@
  * @module
  */
 
-import type * as dbcinema_notifications from "../dbcinema_notifications.js";
 import type * as account_state from "../account_state.js";
 import type * as accounts from "../accounts.js";
 import type * as admin_backfill_weekly_metrics from "../admin_backfill_weekly_metrics.js";
@@ -66,6 +65,7 @@ import type * as dashboard_chat from "../dashboard_chat.js";
 import type * as dashboard_insights from "../dashboard_insights.js";
 import type * as dashboard_invariants from "../dashboard_invariants.js";
 import type * as dbcinema_chat from "../dbcinema_chat.js";
+import type * as dbcinema_notifications from "../dbcinema_notifications.js";
 import type * as demand from "../demand.js";
 import type * as demand_loss from "../demand_loss.js";
 import type * as denial_canonicalizer_queries from "../denial_canonicalizer_queries.js";
@@ -218,6 +218,7 @@ import type * as lib_owner_recovery from "../lib/owner_recovery.js";
 import type * as lib_owner_setup from "../lib/owner_setup.js";
 import type * as lib_platform_fallout from "../lib/platform_fallout.js";
 import type * as lib_poller_window from "../lib/poller_window.js";
+import type * as lib_power_listing_identity from "../lib/power_listing_identity.js";
 import type * as lib_price_claims from "../lib/price_claims.js";
 import type * as lib_profile_image from "../lib/profile_image.js";
 import type * as lib_push_registration from "../lib/push_registration.js";
@@ -261,6 +262,7 @@ import type * as lib_renter_history from "../lib/renter_history.js";
 import type * as lib_renter_identity from "../lib/renter_identity.js";
 import type * as lib_renter_item_names from "../lib/renter_item_names.js";
 import type * as lib_renter_kit_evidence from "../lib/renter_kit_evidence.js";
+import type * as lib_renter_message_watermark from "../lib/renter_message_watermark.js";
 import type * as lib_renter_order_quote from "../lib/renter_order_quote.js";
 import type * as lib_renter_order_stock from "../lib/renter_order_stock.js";
 import type * as lib_renter_removal_acceptance from "../lib/renter_removal_acceptance.js";
@@ -272,6 +274,7 @@ import type * as lib_renter_stock from "../lib/renter_stock.js";
 import type * as lib_renters from "../lib/renters.js";
 import type * as lib_replacement_sets from "../lib/replacement_sets.js";
 import type * as lib_replacement_value_comparison from "../lib/replacement_value_comparison.js";
+import type * as lib_reply_message_order from "../lib/reply_message_order.js";
 import type * as lib_required_mount_adapter from "../lib/required_mount_adapter.js";
 import type * as lib_reservations_accounts from "../lib/reservations/accounts.js";
 import type * as lib_reservations_hyggloTiles from "../lib/reservations/hyggloTiles.js";
@@ -365,9 +368,11 @@ import type * as pricing_catalog from "../pricing_catalog.js";
 import type * as propose_bmpcc_mapping from "../propose_bmpcc_mapping.js";
 import type * as propose_bundle_mapping from "../propose_bundle_mapping.js";
 import type * as quick_reply_basket_stock from "../quick_reply_basket_stock.js";
+import type * as quick_reply_manual_draft from "../quick_reply_manual_draft.js";
 import type * as quick_reply_replacements from "../quick_reply_replacements.js";
 import type * as quick_reply_search from "../quick_reply_search.js";
 import type * as quick_reply_swap_ledger from "../quick_reply_swap_ledger.js";
+import type * as quick_reply_thread_state from "../quick_reply_thread_state.js";
 import type * as rate_limit_config from "../rate_limit_config.js";
 import type * as reconciliation from "../reconciliation.js";
 import type * as renter_bot_batch from "../renter_bot_batch.js";
@@ -406,7 +411,9 @@ import type * as seed_kit_source_repair from "../seed/kit_source_repair.js";
 import type * as seed_renter_bot_memories from "../seed/renter_bot_memories.js";
 import type * as seed_renter_bot_rules from "../seed/renter_bot_rules.js";
 import type * as seed_settings from "../seed/settings.js";
+import type * as seed_vmount_stock_repair from "../seed/vmount_stock_repair.js";
 import type * as settings from "../settings.js";
+import type * as storefront_checkout_stock from "../storefront_checkout_stock.js";
 import type * as sync_account_profiles from "../sync_account_profiles.js";
 import type * as sync_dbcinema_web from "../sync_dbcinema_web.js";
 import type * as sync_state from "../sync_state.js";
@@ -427,7 +434,6 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  dbcinema_notifications: typeof dbcinema_notifications;
   account_state: typeof account_state;
   accounts: typeof accounts;
   admin_backfill_weekly_metrics: typeof admin_backfill_weekly_metrics;
@@ -485,6 +491,7 @@ declare const fullApi: ApiFromModules<{
   dashboard_insights: typeof dashboard_insights;
   dashboard_invariants: typeof dashboard_invariants;
   dbcinema_chat: typeof dbcinema_chat;
+  dbcinema_notifications: typeof dbcinema_notifications;
   demand: typeof demand;
   demand_loss: typeof demand_loss;
   denial_canonicalizer_queries: typeof denial_canonicalizer_queries;
@@ -637,6 +644,7 @@ declare const fullApi: ApiFromModules<{
   "lib/owner_setup": typeof lib_owner_setup;
   "lib/platform_fallout": typeof lib_platform_fallout;
   "lib/poller_window": typeof lib_poller_window;
+  "lib/power_listing_identity": typeof lib_power_listing_identity;
   "lib/price_claims": typeof lib_price_claims;
   "lib/profile_image": typeof lib_profile_image;
   "lib/push_registration": typeof lib_push_registration;
@@ -680,6 +688,7 @@ declare const fullApi: ApiFromModules<{
   "lib/renter_identity": typeof lib_renter_identity;
   "lib/renter_item_names": typeof lib_renter_item_names;
   "lib/renter_kit_evidence": typeof lib_renter_kit_evidence;
+  "lib/renter_message_watermark": typeof lib_renter_message_watermark;
   "lib/renter_order_quote": typeof lib_renter_order_quote;
   "lib/renter_order_stock": typeof lib_renter_order_stock;
   "lib/renter_removal_acceptance": typeof lib_renter_removal_acceptance;
@@ -691,6 +700,7 @@ declare const fullApi: ApiFromModules<{
   "lib/renters": typeof lib_renters;
   "lib/replacement_sets": typeof lib_replacement_sets;
   "lib/replacement_value_comparison": typeof lib_replacement_value_comparison;
+  "lib/reply_message_order": typeof lib_reply_message_order;
   "lib/required_mount_adapter": typeof lib_required_mount_adapter;
   "lib/reservations/accounts": typeof lib_reservations_accounts;
   "lib/reservations/hyggloTiles": typeof lib_reservations_hyggloTiles;
@@ -784,9 +794,11 @@ declare const fullApi: ApiFromModules<{
   propose_bmpcc_mapping: typeof propose_bmpcc_mapping;
   propose_bundle_mapping: typeof propose_bundle_mapping;
   quick_reply_basket_stock: typeof quick_reply_basket_stock;
+  quick_reply_manual_draft: typeof quick_reply_manual_draft;
   quick_reply_replacements: typeof quick_reply_replacements;
   quick_reply_search: typeof quick_reply_search;
   quick_reply_swap_ledger: typeof quick_reply_swap_ledger;
+  quick_reply_thread_state: typeof quick_reply_thread_state;
   rate_limit_config: typeof rate_limit_config;
   reconciliation: typeof reconciliation;
   renter_bot_batch: typeof renter_bot_batch;
@@ -825,7 +837,9 @@ declare const fullApi: ApiFromModules<{
   "seed/renter_bot_memories": typeof seed_renter_bot_memories;
   "seed/renter_bot_rules": typeof seed_renter_bot_rules;
   "seed/settings": typeof seed_settings;
+  "seed/vmount_stock_repair": typeof seed_vmount_stock_repair;
   settings: typeof settings;
+  storefront_checkout_stock: typeof storefront_checkout_stock;
   sync_account_profiles: typeof sync_account_profiles;
   sync_dbcinema_web: typeof sync_dbcinema_web;
   sync_state: typeof sync_state;

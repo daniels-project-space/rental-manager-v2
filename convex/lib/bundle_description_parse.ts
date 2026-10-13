@@ -29,7 +29,7 @@ function isProtectivePackaging(name:string):boolean {
   const packaging = name.replace(/\s+for (?:safe transport|safe handling|sensor protection)$/i, "");
   return PROTECTIVE_PACKAGING_RE.test(packaging) ||
     /^(?:protective\s+)?kit\s+bags?$/i.test(packaging) ||
-    /^lens caps? for (?:both|the) lenses$|^(?:Canon\s+)?[a-z]+-?\d+[a-z]*\s+lens hood$/i.test(packaging) ||
+    /^(?:camera|kit) bags?$|^lens caps? for (?:both|the) lenses$|^(?:Canon\s+)?[a-z]+-?\d+[a-z]*\s+lens hood$/i.test(packaging) ||
     /^(?:original\s+)?(?:[a-z0-9-]+\s+)?camera straps?$|^protective transport cover$/i.test(packaging) ||
     /^(?:(?:protective|hard)\s+)?(?:lens\s+)?(?:pouch(?:es)?(?:\/cases?)?|cases?(?:\/pouch(?:es)?)?)$/i.test(packaging) ||
     /\bcarry(?:ing)?\s+(?:case|bag)\s*$/i.test(name) && !/\b(?:with|and|plus)\b|[+]/i.test(name);
@@ -48,7 +48,7 @@ export function extractComponents(desc: string): {
   let contents = false, bullets = false, end = lines.length;
   for (const [index, line] of lines.entries()) {
     const text = line.trim();
-    if (/^(?:in (?:this|the) (?:kit|rental|bundle|package)|(?:what'?s|whats) included|contents)\s*:/i.test(text)) { contents = true; continue; }
+    if (/^(?:in (?:this|the) (?:kit|rental|bundle|package)(?:,\s*you['’]ll find[^:]*)?|(?:what'?s|whats) included|contents)\s*:/i.test(text)) { contents = true; continue; }
     if (!contents || !text) continue;
     if (/^(?:[-*•]\s+|\d{1,2}\s*[x×]\s+)/.test(text)) { bullets = true; continue; }
     if (bullets && !/^(?:camera|lenses?|media|audio|support|accessories|lighting|power)(?:\s*\([^)]*\))?\s*:$/i.test(text)) { end = index; break; }
@@ -61,7 +61,7 @@ export function extractComponents(desc: string): {
   // intro sentence parsed as a component is how "I'm offering a
   // comprehensive, ready-to-shoot cinema kit" became a PL-to-EF mount.
   const START_RE =
-    /(?:included in th(?:is|e)(?:(?!\b\d{1,2}\s*x\b)[^:*])*|in th(?:is|e) (?:kit|rental|bundle|package)\s*:|(?:what(?:'|)s|whats) included|(?:this |the )?(?:kit|package|bundle|rental) includes|you (?:get|receive)|contents)\s*:?(.*)$/i;
+    /(?:included in th(?:is|e)(?:(?!\b\d{1,2}\s*x\b)[^:*])*|in th(?:is|e) (?:kit|rental|bundle|package)(?:,\s*you['’]ll find[^:]*)?\s*:|(?:what(?:'|)s|whats) included|(?:this |the )?(?:kit|package|bundle|rental) includes|you (?:get|receive)|contents)\s*:?(.*)$/i;
   // A formal contents heading later in the description is more authoritative
   // than an introductory "this rental includes" followed by feature prose.
   const m = clean.match(/(?:included in th(?:is|e)(?:(?!\b\d{1,2}\s*x\b)[^:*])*|(?:what(?:'|)s|whats) included|contents)\s*:?(.*)$/i) ?? clean.match(START_RE);

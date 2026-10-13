@@ -1,3 +1,4 @@
+import { resolvedMarketingOnly } from "./power_listing_identity";
 import type { Doc } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { loadStockSources, stockForItem, type StockRequest } from "./renter_stock";
@@ -16,7 +17,7 @@ export async function loadListingInventory(ctx: QueryCtx, account: string, produ
   ]);
   const inventory = sources?.items ?? await ctx.db.query("items").collect();
   const resolved=resolveListingComponents(inventory, override?.components.map((c) => ({ item_id: String(c.item_id), qty: c.qty })), product?.masterItemId ? String(product.masterItemId) : undefined, quantity, product?.description ?? listing?.description, undefined, product?.name ?? listing?.name);
-  const marketingOnly=(product?.isMarketingOnlyOverride ?? product?.isMarketingOnly)===true;
+  const marketingOnly=resolvedMarketingOnly(product??{},resolved,inventory);
   // Unowned stock cannot be allocated, but its requested model still defines
   // what a substitute must replace. Do not turn its target value/type into zero.
   const requestedComplete=resolved.complete || (resolved.valid_quantity && resolved.components.length>0 && !resolved.unresolved_default_adapters.length && !(resolved.coverage?.missing.length) &&
