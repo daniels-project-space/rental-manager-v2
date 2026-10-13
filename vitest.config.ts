@@ -115,6 +115,7 @@ export default defineConfig({
       "convex/lib/camera_sensor_comparisons.test.ts",
       "convex/lib/push_registration.test.ts",
       "convex/notifications.push.test.ts",
+      "convex/dbcinema_notifications.test.ts",
       "convex/sync_dbcinema_web.test.ts",
       "convex/dbcinema_webhook.test.ts",
       "convex/reservations.storefront.test.ts",

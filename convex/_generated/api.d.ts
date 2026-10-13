@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as dbcinema_notifications from "../dbcinema_notifications.js";
 import type * as account_state from "../account_state.js";
 import type * as accounts from "../accounts.js";
 import type * as admin_backfill_weekly_metrics from "../admin_backfill_weekly_metrics.js";
@@ -426,6 +427,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  dbcinema_notifications: typeof dbcinema_notifications;
   account_state: typeof account_state;
   accounts: typeof accounts;
   admin_backfill_weekly_metrics: typeof admin_backfill_weekly_metrics;

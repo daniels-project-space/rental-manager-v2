@@ -181,6 +181,27 @@ http.route({ path: "/dbcinema/storefront-read", method: "POST", handler: storefr
  * one-booking payload would otherwise wipe out every other live booking.
  */
 http.route({
+  path: "/dbcinema/notifications",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const secret = process.env.DBCINEMA_WEBHOOK_SECRET;
+    if (!secret) return new Response("Bridge unavailable", { status: 503 });
+    if (request.headers.get("x-dbcinema-sync-token") !== secret) return new Response("Unauthorized", { status: 401 });
+    const text = await request.text();
+    if (text.length > 65536) return new Response("Event too large", { status: 413 });
+    let event: any;
+    try { event = JSON.parse(text); } catch { return new Response("Invalid JSON", { status: 400 }); }
+    try {
+      const receipt = await ctx.runMutation(internal.dbcinema_notifications.receive, { event });
+      return Response.json(receipt);
+    } catch (error) {
+      const invalid = /ArgumentValidation|Invalid website|income receipt/.test(String(error));
+      return new Response("Event not accepted", { status: invalid ? 422 : 500 });
+    }
+  }),
+});
+
+http.route({
   path: "/dbcinema/booking-sync",
   method: "POST",
   handler: httpAction(async (ctx, request) => {

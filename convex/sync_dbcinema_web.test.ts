@@ -29,7 +29,7 @@ describe('real website reservation sync handlers',()=>{
   const {ctx,rows}=database();const b=booking();
   await invoke(upsertSiteBookingsBatch,ctx,{bookings:[b],reconcile:false});
   expect(queueNotificationEvents).toHaveBeenCalledTimes(1);
-  expect(vi.mocked(queueNotificationEvents).mock.calls[0][1][0]).toMatchObject({thread_id:b.id,account_slug:'dbcinema_web',url:'https://dbcinemarentals.com/admin?rental=web-rental-1#messages'});
+  expect(vi.mocked(queueNotificationEvents).mock.calls[0][1][0]).toMatchObject({thread_id:`dbcinema:${b.id}`,event_key:`dbcinema:paid:${b.id}`,account_slug:'dbcinema_web',url:'/?thread=dbcinema%3Aweb-rental-1&account=dbcinema_web'});
   const row=()=>[...rows.values()].find(r=>r.table==='reservations');expect(row()).toMatchObject({pickup_time:'10:30',return_time:'17:00',status:'confirmed'});
   expect(await invoke(upsertSiteBookingsBatch,ctx,{bookings:[b],reconcile:false})).toMatchObject({upserted:0,skipped:1});
   await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({revision:2,status:'returned',pickupTime:null,returnTime:null})],reconcile:false});

@@ -18,6 +18,7 @@ import { internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import {
   subscriptionReceivesNotification,
+  notificationHasIncome,
   telegramNotificationMode,
   buildConfirmedBookingNotificationCopy,
   type PushNotificationMode,
@@ -149,7 +150,7 @@ export const dispatchPending = internalAction({
         const absUrl = `${BASE_URL}${e.url}`;
         let eventPushed = 0;
         const eligibleSubs = subs.filter((s) =>
-          subscriptionReceivesNotification(s.mode, e.type),
+          subscriptionReceivesNotification(s.mode, e.type, notificationHasIncome(e)),
         );
         const pushSuppressed = subs.length - eligibleSubs.length;
         // 1) Web push to subscriptions whose per-device mode accepts this event.
@@ -195,6 +196,7 @@ export const dispatchPending = internalAction({
         const telegramEligible = telegramEnabled && subscriptionReceivesNotification(
           telegramNotificationMode(process.env.NOTIF_TELEGRAM_MODE),
           e.type,
+          notificationHasIncome(e),
         );
         const telegramSuppressed = telegramEnabled && !telegramEligible;
         if (telegramEligible) {

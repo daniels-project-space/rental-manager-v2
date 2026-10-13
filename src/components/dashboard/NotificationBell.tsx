@@ -289,7 +289,7 @@ export function NotificationBell() {
   function toggleOpen() {
     const next = !open;
     setOpen(next);
-    if (next && (recent?.unread ?? 0) > 0) markAllRead({}).catch(() => {});
+    if (next && (recent?.unread ?? 0) > 0) markAllRead({ mode: pushMode }).catch(() => {});
   }
 
   function openThread(url: string) {
@@ -464,6 +464,7 @@ export function NotificationBell() {
                     {e.type === "booking_confirmed" ? "🎉" : e.type === "low_response_rate" ? "🚨" : "🔔"}
                   </span>
                   <span className="flex-1 min-w-0">
+                    {e.account_slug === "dbcinema_web" && <span className="block text-[10px] text-emerald-300">DB Cinema Web{e.source_channel === "email" ? " · Email" : ""}{e.type === "human_request" ? " · Human requested" : e.type === "booking_cancelled" ? " · Cancellation" : ""}</span>}
                     <span className="flex items-center gap-1.5">
                       <span className="text-[12px] font-semibold text-[#e4e6eb] truncate">
                         {e.title.replace(/^[^\w]+\s*/, "")}

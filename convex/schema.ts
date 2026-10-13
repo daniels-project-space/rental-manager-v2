@@ -2492,8 +2492,15 @@ const operationalSchema = defineSchema({
       v.literal("new_request"),
       v.literal("renter_message"),
       v.literal("low_response_rate"),
+      v.literal("human_request"),
+      v.literal("booking_cancelled"),
+      v.literal("email_notification"),
+      v.literal("booking_update"),
     ),
     thread_id: v.string(),                   // hygglo_order_id → deep-link target
+    event_key: v.optional(v.string()),
+    source_kind: v.optional(v.string()),
+    source_channel: v.optional(v.string()),
     account_slug: v.optional(v.string()),
     title: v.string(),
     body: v.string(),
@@ -2537,7 +2544,9 @@ const operationalSchema = defineSchema({
     .index("by_delivered", ["delivered_at"])
     // De-dupe guard: at most one event per (thread, type) so a re-poll that
     // re-sees the same transition can't double-fire.
-    .index("by_thread_type", ["thread_id", "type"]),
+    .index("by_thread_type", ["thread_id", "type"])
+    .index("by_event_key", ["event_key"])
+    .index("by_type_created", ["type", "created_at"]),
 
   // ── Canned responses (Quick Reply, 2026-06-26) ───────────────────────
   // Per-account saved quick-texts (delivery text, location, bank details, …).

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("./auth", () => ({ authComponent: { safeGetAuthUser: vi.fn() } }));
-import { inbox, replacementBasketOptions } from "./dbcinema_chat";
+import { inbox, replacementBasketOptions, thread, sendOwnerReply } from "./dbcinema_chat";
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -544,4 +544,17 @@ describe("replacement image sources", () => {
     expect(result.options[0].original).toEqual(original);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+});
+
+describe("general website support conversations",()=>{
+ it("reads and replies using account scope, never a fabricated booking ID",async()=>{
+  vi.stubEnv("OWNER_AUTH_REQUIRED","false");vi.stubEnv("DBCINEMA_CONVEX_URL","https://fixture.invalid");vi.stubEnv("DBCINEMA_ADMIN_TOKEN","fixture-only");
+  const sent:any[]=[];vi.stubGlobal("fetch",vi.fn(async(_url:any,options:any)=>{
+    const body=JSON.parse(options.body);sent.push(body);expect(body.args.accountId).toBe("fixture-account");expect(body.args.bookingId).toBeUndefined();
+    return new Response(JSON.stringify({status:"success",value:body.path==="rentalChat:messages"?{page:[],escalated:true}:{ok:true}}));
+  }));
+  expect(await (thread as any)._handler({}, {booking_id:"support:fixture-account"})).toMatchObject({escalated:true});
+  await (sendOwnerReply as any)._handler({}, {booking_id:"support:fixture-account",text:"Controlled unsent transport fixture"});
+  expect(sent.map(s=>s.path)).toEqual(["rentalChat:messages","rentalChat:sendOwner"]);
+ });
 });
