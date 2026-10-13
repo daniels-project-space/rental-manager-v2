@@ -19,6 +19,7 @@ import { invoiceStatsValidator } from "./lib/invoice_stats_fields";
 // (renters, reservations, conversations, rules, denial_records).
 // MASTER SAFETY RAIL: settings.ALLOW_HYGGLO_SEND must remain false.
 const operationalSchema = defineSchema({
+  storefront_checkout_stock: defineTable({key:v.string(),revision:v.number(),rows:v.array(v.object({bookingId:v.string(),item_id:v.id("items"),start:v.number(),end:v.number(),qty:v.number(),expiresAt:v.number(),endExclusive:v.boolean(),bufferMinutes:v.number()})),receivedAt:v.number()}).index("by_key",["key"]),
   // Operator queue preferences only; never changes a booking or conversation.
   quick_reply_thread_state: defineTable({
     thread_id: v.string(), through_renter_msg_at: v.number(),
@@ -160,6 +161,7 @@ const operationalSchema = defineSchema({
       basis: v.union(v.literal("owner_lower_bound"), v.literal("owner_exact")),
       source: v.string(), note: v.string(), recorded_at: v.number(),
     })),
+    listing_stock_rules: v.optional(v.array(v.object({ title_pattern:v.string(), components:v.array(v.object({item_id:v.id("items"),qty:v.number()})), excludes:v.array(v.id("items")), source:v.string() }))),
     supplied_stock: v.optional(v.array(v.object({
       item_id: v.id("items"), qty: v.number(), source: v.string(),
     }))),

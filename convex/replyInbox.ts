@@ -354,7 +354,7 @@ type ItemAvail = {
 type TileAvailability = {
   status: "available" | "conflict" | "unknown";
   include_pending: boolean;
-  stock_rules_version: 4;
+  stock_rules_version: 5;
   reason?: string;
   checked_at?: number;
   items: ItemAvail[];
@@ -507,7 +507,7 @@ export function computeAvailability(reservation:BotBooking|null,av?:AvailCtx,req
   });
   const conflict=items.some(item=>item.available===false);
   const complete=items.length>0&&items.every(item=>item.available===true);
-  return {status:conflict?"conflict":complete?"available":"unknown",stock_rules_version:4,include_pending,checked_at,items,...(!conflict&&!complete?{reason:items.find(item=>item.available===null)?.reason??"No requested gear to check"}:{})};
+  return {status:conflict?"conflict":complete?"available":"unknown",stock_rules_version:5,include_pending,checked_at,items,...(!conflict&&!complete?{reason:items.find(item=>item.available===null)?.reason??"No requested gear to check"}:{})};
 }
 
 

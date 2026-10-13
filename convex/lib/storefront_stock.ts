@@ -37,7 +37,7 @@ export function stockWindows(occupancy:Occupancy[]) {
 export function sharedStockSnapshot(sources:Awaited<ReturnType<typeof loadStockSources>>,checkedAt:number) {
   // Website bookings already occupy the website ledger. Importing their
   // manager copies would count the same physical allocation twice.
-  const upstream={...sources,reservations:sources.reservations.filter(r=>r.account_slug!=="dbcinema_web")};
+  const upstream={...sources,checkoutHolds:[],reservations:sources.reservations.filter(r=>r.account_slug!=="dbcinema_web")};
   return {version:2,turnaroundBufferMinutes:TURNAROUND_BUFFER_MINUTES,checkedAt,units:sources.items.map(item=> {
     const active=item.status==="active"&&item.is_marketing_only===false;
     const quantityOwned=active&&Number.isSafeInteger(item.qty)&&item.qty>=0?item.qty:0;

@@ -1,3 +1,4 @@
+import { powerListingPrimary } from "./power_listing_identity";
 import type { Doc } from "../_generated/dataModel";
 import { isStandardAccessory } from "./reservations/itemUnits";
 import { coverReviewedSuppliedParts } from "./supplied_parts_coverage";
@@ -7,7 +8,13 @@ import { withDefaultAdapters } from "./default_adapter_units";
 type Component = { item_id: string; qty: number };
 export function resolveListingComponents(items: Doc<"items">[], override: Component[] | undefined, primaryId?: string, quantity = 1, description?: string, context?: BundleMappingContext, listingName?: string) {
   const validQuantity = Number.isInteger(quantity) && quantity >= 1 && quantity <= 20;
-  const parsed = description ? resolveBundleMapping(description, items, context) : null;
+  let parsed = description ? resolveBundleMapping(description, items, context) : null;
+  const rules=(items.find(i=>String(i._id)===primaryId)?.listing_stock_rules??[]).filter(rule=>{
+    if(!listingName || !rule.source.trim() || rule.title_pattern.length>200)return false;
+    try{return new RegExp(rule.title_pattern,"i").test(listingName);}catch{return false;}
+  });
+  const excluded=new Set(rules.flatMap(rule=>rule.excludes.map(String)));
+  if(parsed && excluded.size)parsed={...parsed,components:parsed.components.filter(c=>!excluded.has(c.item_id))};
   const suppliedDeclaration = override===undefined && parsed?.explicit && parsed.structured && primaryId && parsed.components.some(c=>c.item_id===primaryId)
     ? coverReviewedSuppliedParts(parsed,items,new Map(parsed.components.map(c=>[c.item_id,c.qty]))) : null;
   let rawDeclared = suppliedDeclaration?.declared ?? parsed;
@@ -45,16 +52,24 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
   const titleKey=(text:string)=>text.toLowerCase().replace(/ø/g,"o").replace(/[^a-z0-9]/g,"");
   const title=listingName?.split("|")[0].trim();
   const exactTitle=title?items.filter(i=>[i.name_canonical,...(i.aliases??[])].some(alias=>titleKey(alias)===titleKey(title))):[];
-  const declaredPrimary=exactTitle.length===1?String(exactTitle[0]._id):primaryId;
+  const powerPrimary = rawDeclared?.explicit && rawDeclared.structured && rawDeclared.components.length===1 && rawDeclared.components[0].kind==="power" && /v[ -]?mount/i.test(listingName??"") && /\d+\s*(?:wh|wah)\b/i.test(listingName??"") ? rawDeclared.components[0].item_id : undefined;
+  const declaredPrimary=exactTitle.length===1?String(exactTitle[0]._id):primaryId??powerPrimary??powerListingPrimary(listingName??"",items);
   const derive = override === undefined && verifiedContents && !!declaredPrimary &&
     rawDeclared!.components.some(c=>c.item_id===declaredPrimary);
+  const powerTitlePrimary=powerListingPrimary(listingName??"",items);
+  const powerTitleQty=(listingName??"").match(/(?:^|\b)(\d{1,2})\s*[x×](?:\b|\s)|\(\s*(\d{1,2})\s*[x×]\s*\)/i);
+  const titlePack = powerTitlePrimary && powerTitleQty ? {item_id:powerTitlePrimary,qty:Number(powerTitleQty[1]??powerTitleQty[2])} : null;
   const quantities = new Map<string, number>();
-  for (const c of override ?? (derive ? rawDeclared!.components.map(c=>({item_id:c.item_id,qty:c.qty})) : primaryId ? [{ item_id: primaryId, qty: 1 }] : []))
+  for (const c of override ?? (derive ? rawDeclared!.components.map(c=>({item_id:c.item_id,qty:c.qty})) : titlePack ? [titlePack] : primaryId ? [{ item_id: primaryId, qty: 1 }] : []))
     quantities.set(c.item_id, (quantities.get(c.item_id) ?? 0) + c.qty);
   const declared_components_added: Component[]=[];
   if (verifiedContents && (derive || !!override?.length)) for (const c of rawDeclared!.components) {
     if ((quantities.get(c.item_id)??0)>=c.qty)continue;
     quantities.set(c.item_id,c.qty);declared_components_added.push({item_id:c.item_id,qty:c.qty});
+  }
+  for(const id of excluded)quantities.delete(id);
+  for(const rule of rules)for(const c of rule.components){
+    const id=String(c.item_id);if(Number.isSafeInteger(c.qty)&&c.qty>0)quantities.set(id,Math.max(quantities.get(id)??0,c.qty));
   }
   const supplied = withDefaultAdapters([...quantities].map(([item_id,qty]) => ({item_id,qty})), items);
   for (const c of supplied.components) quantities.set(c.item_id,c.qty);
@@ -79,7 +94,7 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
     structured: declared.structured || (declared.components.length === 1 && declared.components[0].qty === 1),
   } : null;
   const coverageComplete = !coverage || (coverage.structured && !coverage.missing.length && !coverage.unresolved.length);
-  const complete = !supplied.unresolved.length && coverageComplete && (override !== undefined || derive) && validQuantity && components.every((c) => c.owned !== null);
+  const complete = !supplied.unresolved.length && coverageComplete && (override !== undefined || derive || !!titlePack) && validQuantity && components.every((c) => c.owned !== null);
   const owned = !validQuantity ? null : override?.length === 0 || ownership_blockers.length > 0 || components.some((c) => c.owned === false) ? false
     : !complete || !components.length ? null : true;
   return { components, complete, owned, primary_camera, ownership_blockers, valid_quantity: validQuantity, supplied_part_bindings:[...(suppliedDeclaration?.bindings??[]),...(suppliedParts?.bindings??[])], declared_components_added, source:derive?"declared_contents":override === undefined ? "primary_item_only" : "listing_override", coverage, unresolved_default_adapters:supplied.unresolved };
