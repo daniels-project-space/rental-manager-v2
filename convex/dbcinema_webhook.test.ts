@@ -72,3 +72,20 @@ describe('actual website producer -> authenticated receiver -> native stock inqu
   expect(await(await invoke(ctx,request(pipeline.paid))).json()).toMatchObject({outcome:'stale',appliedRevision:2});expect((await lookup()).free_units).toBe(1);
  });
 });
+
+describe('website notification HTTP boundary',()=>{
+ const endpoint=http.lookup('/dbcinema/notifications','POST')![0] as any;
+ const req=(body:string,token='receipt-fixture')=>new Request('https://manager.example.invalid/dbcinema/notifications',{method:'POST',headers:{'content-type':'application/json','x-dbcinema-sync-token':token},body});
+ it('rejects wrong credentials, malformed JSON and oversize events before writes',async()=>{
+  vi.stubEnv('DBCINEMA_WEBHOOK_SECRET','receipt-fixture');const ctx={runMutation:vi.fn()};
+  expect((await endpoint._handler(ctx,req('{}','foreign'))).status).toBe(401);
+  expect((await endpoint._handler(ctx,req('{'))).status).toBe(400);
+  expect((await endpoint._handler(ctx,req('x'.repeat(65537)))).status).toBe(413);
+  expect(ctx.runMutation).not.toHaveBeenCalled();
+ });
+ it('returns the deduplicated receipt from the notification mutation',async()=>{
+  vi.stubEnv('DBCINEMA_WEBHOOK_SECRET','receipt-fixture');const event={version:1,eventKey:'fixture-key'};
+  const ctx={runMutation:vi.fn(async(ref,args)=>{expect(getFunctionName(ref)).toBe('dbcinema_notifications:receive');expect(args).toEqual({event});return {ok:true,version:1,eventKey:event.eventKey,inserted:false};})};
+  expect(await (await endpoint._handler(ctx,req(JSON.stringify(event)))).json()).toEqual({ok:true,version:1,eventKey:'fixture-key',inserted:false});
+ });
+});

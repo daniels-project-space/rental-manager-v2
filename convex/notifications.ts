@@ -42,11 +42,12 @@ import {
   notificationRetryDelayMs,
   buildConfirmedBookingNotificationCopy,
   isMoneyOnlyMode,
+  notificationHasIncome,
   resolvePushSubscriptionMode,
   shouldReplayPreferenceSuppressedLowResponseRateAlert,
 } from "./lib/notification_events";
 
-export const NOTIF_TYPES = ["booking_confirmed", "new_request", "renter_message", "low_response_rate"] as const;
+export const NOTIF_TYPES = ["booking_confirmed", "new_request", "renter_message", "low_response_rate", "human_request", "booking_cancelled", "email_notification", "booking_update"] as const;
 export type NotifType = (typeof NOTIF_TYPES)[number];
 export const PUSH_NOTIFICATION_MODES = ["all", "money_only", "my_share"] as const;
 export type PushNotificationMode = (typeof PUSH_NOTIFICATION_MODES)[number];
@@ -62,6 +63,10 @@ const replayPreferenceSuppressedRateAlertsRef = internal.notifications.replayRec
 
 export interface NotifEventInput {
   type: NotifType;
+  event_key?: string;
+  source_kind?: string;
+  source_channel?: string;
+  created_at?: number;
   thread_id: string;
   account_slug?: string;
   title: string;
@@ -115,6 +120,10 @@ export async function queueNotificationEventsDetailed(
     // re-poll double-firing the SAME message. Transition-based types
     // (new_request / booking_confirmed) keep the 24h window so a re-poll that
     // re-sees the same state can't double-send.
+    if (e.event_key) {
+      const saved = await ctx.db.query("notification_events").withIndex("by_event_key", q => q.eq("event_key", e.event_key)).first();
+      if (saved) continue;
+    }
     const dedupeMs = e.type === "renter_message" ? 30 * 1000 : 24 * 60 * 60 * 1000;
     const recent = await ctx.db
       .query("notification_events")
@@ -123,16 +132,17 @@ export async function queueNotificationEventsDetailed(
       )
       .order("desc")
       .first();
-    if (recent && now - recent.created_at < dedupeMs) continue;
+    if (!e.event_key && recent && now - recent.created_at < dedupeMs) continue;
     await ctx.db.insert("notification_events", {
       type: e.type,
+      event_key: e.event_key, source_kind: e.source_kind, source_channel: e.source_channel,
       thread_id: e.thread_id,
       account_slug: e.account_slug,
       title: e.title,
       body: e.body,
       url: e.url,
       copy_data: e.copy_data,
-      created_at: now,
+      created_at: e.created_at ?? now,
     });
     insertedThreadIds.push(e.thread_id);
   }
@@ -309,11 +319,10 @@ export const removePushSubscription = mutation({
 export const listRecent = query({
   args: { limit: v.optional(v.number()), mode: v.optional(pushModeValidator) },
   handler: async (ctx, { limit = 20, mode }) => {
-    const rows = await ctx.db
-      .query("notification_events")
-      .withIndex("by_created")
-      .order("desc")
-      .take(limit);
+    const count = Math.max(1, Math.min(50, Math.floor(limit)));
+    const rows = isMoneyOnlyMode(mode)
+      ? (await ctx.db.query("notification_events").withIndex("by_type_created", q => q.eq("type", "booking_confirmed")).order("desc").take(100)).filter(notificationHasIncome).slice(0,count)
+      : await ctx.db.query("notification_events").withIndex("by_created").order("desc").take(count);
     // Re-render money copy for the mode this device is on, so the bell list
     // never disagrees with the push it just received (notably "my_share",
     // which shows 50%). Rows without copy_data (pre-2026-08-16, and the
@@ -331,6 +340,7 @@ export const listRecent = query({
               currency: e.copy_data.currency,
               mode,
             }),
+            ...(mode === "my_share" ? { copy_data: undefined } : {}),
           }
         : e,
     );
@@ -340,14 +350,12 @@ export const listRecent = query({
 });
 
 export const markAllRead = mutation({
-  args: {},
-  handler: async (ctx) => {
+  args: { mode: v.optional(pushModeValidator) },
+  handler: async (ctx, { mode }) => {
     const now = Date.now();
-    const unread = await ctx.db
-      .query("notification_events")
-      .withIndex("by_created")
-      .order("desc")
-      .take(100);
+    const unread = isMoneyOnlyMode(mode)
+      ? (await ctx.db.query("notification_events").withIndex("by_type_created", q => q.eq("type", "booking_confirmed")).order("desc").take(100)).filter(notificationHasIncome)
+      : await ctx.db.query("notification_events").withIndex("by_created").order("desc").take(100);
     let n = 0;
     for (const e of unread) {
       if (e.read_at === undefined) {

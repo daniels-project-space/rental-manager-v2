@@ -71,6 +71,15 @@ export async function callDbCinema<T>(
   return result.value as T;
 }
 
+function conversationScope(id: string) {
+  if(id.startsWith("support:")) {
+    const accountId=id.slice(8);
+    if(!accountId || accountId.includes(":")) throw Error("Invalid support conversation.");
+    return {accountId};
+  }
+  return {bookingId:id};
+}
+
 /** Owner-authenticated, bounded read of DB Cinema rental conversations. */
 export const inbox = action({
   args: {},
@@ -333,8 +342,9 @@ export const inbox = action({
           booking.status === "pending_payment"
             ? ("request" as const)
             : ("message" as const),
-        is_request: false,
-        has_reservation: true,
+        human_requested: !!booking.escalated,
+        is_request: booking.status === "pending_payment",
+        has_reservation: booking.status !== "support",
         can_decide: false,
         can_accept: false,
         can_deny: false,
@@ -418,7 +428,7 @@ export const thread = action({
       page?: Array<{ _id: string; sender: string; text: string; at: number }>;
       escalated?: boolean;
     }>("query", "rentalChat:messages", {
-      bookingId: booking_id,
+      ...conversationScope(booking_id),
       admin: true,
       paginationOpts: { numItems: 40, cursor: null },
     });
@@ -454,7 +464,7 @@ export const sendOwnerReply = action({
       "mutation",
       "rentalChat:sendOwner",
       {
-        bookingId: booking_id,
+        ...conversationScope(booking_id),
         text: body,
       },
     );
@@ -476,7 +486,7 @@ export const draftReply = action({
       callDbCinema<{
         page?: Array<{ sender: string; text: string; at: number }>;
       }>("query", "rentalChat:messages", {
-        bookingId: booking_id,
+        ...conversationScope(booking_id),
         admin: true,
         paginationOpts: { numItems: 40, cursor: null },
       }),

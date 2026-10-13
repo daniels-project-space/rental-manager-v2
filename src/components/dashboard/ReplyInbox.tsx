@@ -257,6 +257,7 @@ export interface ReplyTileData {
   status: string | null;
   booking_status: string | null;
   order_step: string | null;
+  human_requested?: boolean;
   is_request: boolean;
   can_decide: boolean;
   kind: "request" | "message";
@@ -514,6 +515,7 @@ function isResolvedClosed(t: ReplyTileData): boolean {
 }
 /** True when the ball is in MY court (renter spoke last, or a pending request). */
 function awaitingMe(t: ReplyTileData): boolean {
+  if (t.human_requested && !isResolvedClosed(t)) return true;
   // If I sent the last message, it's the renter's turn — never "waiting on me",
   // even for a still-open request (I've already replied / approved it).
   if (t.last_sender === "owner") return false;
@@ -523,6 +525,7 @@ function awaitingMe(t: ReplyTileData): boolean {
   return t.last_sender === "renter" || t.is_request;
 }
 function statusText(t: ReplyTileData): string {
+  if (t.human_requested) return "Human requested";
   if (!t.has_reservation) {
     return t.last_sender === "owner"
       ? "Inquiry · you replied"
@@ -1431,6 +1434,7 @@ function ReplyCard({
               {tile.renter_blacklisted ? "Blacklisted" : "Flagged"}
             </span>
           )}
+          {tile.human_requested && <span className="block text-[10px] font-semibold text-amber-300">Human requested</span>}
           {duplicate && (
             <span className={styles.duplicateLabel}>
               Duplicate · lower value
@@ -4674,7 +4678,7 @@ export function ReplyInbox() {
     t.is_request && !isResolvedClosed(t);
   const requests = all.filter(pendingRequest).length;
   const needsReply = (t: ReplyTileData) =>
-    t.last_sender === "renter" && !!t.preview.trim();
+    (t.human_requested && !isResolvedClosed(t)) || (t.last_sender === "renter" && !!t.preview.trim());
   const todo = all.filter(needsReply).length;
   const visible = all.filter((t) =>
     filter === "all"
@@ -4689,7 +4693,7 @@ export function ReplyInbox() {
   const duplicateIds = quickReplyDuplicateIds(sorted.filter(pendingRequest));
   const duplicateLast=(rows:ReplyTileData[])=>[...rows.filter(row=>!duplicateIds.has(row.thread_id)),...rows.filter(row=>duplicateIds.has(row.thread_id))];
   const displayRows = sortBy==="priority"
-    ? [...duplicateLast(sorted.filter(row=>row.last_sender!=="owner")),...duplicateLast(sorted.filter(row=>row.last_sender==="owner"))]
+    ? [...duplicateLast(sorted.filter(row=>row.human_requested||row.last_sender!=="owner")),...duplicateLast(sorted.filter(row=>!row.human_requested&&row.last_sender==="owner"))]
     : duplicateLast(sorted);
   const previewTile =
     displayRows.find((tile) => tile.thread_id === previewId) ??

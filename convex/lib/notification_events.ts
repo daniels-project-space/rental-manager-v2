@@ -12,7 +12,8 @@ export type PushNotificationType =
   | "booking_confirmed"
   | "new_request"
   | "renter_message"
-  | "low_response_rate";
+  | "low_response_rate"
+  | "human_request" | "booking_cancelled" | "email_notification" | "booking_update";
 
 /**
  * A device moving from a money-only mode to "all" may have just missed a
@@ -149,7 +150,7 @@ export function buildConfirmedBookingNotificationCopy(args: {
   const itemName = clippedItem || "Rental";
   // Owner earnings (net) is the headline; gross is only a fallback when the
   // poller has not resolved the payout split yet.
-  const base = validMoney(args.net)
+  const base = typeof args.net === "number" && Number.isFinite(args.net) && args.net >= 0
     ? args.net
     : validMoney(args.gross)
       ? args.gross
@@ -164,7 +165,7 @@ export function buildConfirmedBookingNotificationCopy(args: {
   const where = acct ? `${itemName} on ${acct}` : itemName;
   return {
     title: made ? `🎉 Wohoo, you made ${made}!` : "🎉 Wohoo, booking made!",
-    body: `${where} · ${firstName}`,
+    body: args.mode === "my_share" ? `${acct || "Rental income"} · Your 50% share` : `${where} · ${firstName}`,
   };
 }
 
@@ -197,8 +198,15 @@ export function resolvePushSubscriptionMode(args: {
 export function subscriptionReceivesNotification(
   mode: PushNotificationMode | undefined,
   type: PushNotificationType,
+  incomeEligible = true,
 ): boolean {
-  return !isMoneyOnlyMode(mode) || type === "booking_confirmed";
+  return !isMoneyOnlyMode(mode) || type === "booking_confirmed" && incomeEligible;
+}
+
+export function notificationHasIncome(e: { type: string; copy_data?: { net?: number; gross?: number } }) {
+  if (e.type !== "booking_confirmed" || !e.copy_data) return false;
+  const amount = e.copy_data.net ?? e.copy_data.gross;
+  return typeof amount === "number" && Number.isFinite(amount) && amount > 0;
 }
 
 /** Daniel's Telegram fallback is money-only unless operations opt it back in. */

@@ -445,7 +445,8 @@ export const upsertSiteBookingsBatch = internalMutation({
       if (status === "confirmed" && startISO >= today && (!mine || mine.status !== "confirmed")) {
         const copy_data = { renter_name: b.customerName ?? undefined, item_name: itemsDisplay[0]?.item_name, gross, net, currency: b.currency ?? "GBP" };
         const copy = buildConfirmedBookingNotificationCopy({ renterName: copy_data.renter_name, itemName: copy_data.item_name, gross, net, currency: copy_data.currency, accountSlug: WEB_SLUG });
-        await queueNotificationEvents(ctx, [{ type: "booking_confirmed", thread_id: b.id, account_slug: WEB_SLUG, title: copy.title, body: `Website · ${copy.body}`, copy_data, url: `https://dbcinemarentals.com/admin?rental=${encodeURIComponent(b.id)}#messages` }]);
+        const thread_id = `dbcinema:${b.id}`;
+        await queueNotificationEvents(ctx, [{ type: "booking_confirmed", event_key: `dbcinema:paid:${b.id}`, thread_id, account_slug: WEB_SLUG, title: copy.title, body: `Website · ${copy.body}`, copy_data, url: `/?thread=${encodeURIComponent(thread_id)}&account=dbcinema_web` }]);
       }
       receipts.push({ bookingId: b.id, receivedRevision: b.revision ?? 0, appliedRevision: b.revision ?? 0, outcome: "applied" });
       upserted++;
