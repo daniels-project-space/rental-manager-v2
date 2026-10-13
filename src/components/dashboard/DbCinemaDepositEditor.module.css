@@ -1,0 +1,23 @@
+.panel { display:flex; flex-direction:column; gap:16px; min-width:0; }
+.panel p { margin:0; font-size:12px; line-height:1.5; color:#a9bfd3; }
+.inspectionHeader { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.inspectionHeader h4 { margin:0; font-size:14px; }
+.inspectionHeader button { border:0; background:none; color:#63b5ff; font-size:12px; cursor:pointer; }
+.item { display:grid; gap:10px; padding:12px; border:1px solid #293e52; border-radius:12px; background:#101d29; min-width:0; }
+.textField { display:grid; gap:7px; color:#bfd0df; font-size:12px; min-width:0; }
+.textField textarea, .textField input { box-sizing:border-box; width:100%; min-width:0; border:1px solid #3a5268; border-radius:9px; background:#122331; padding:10px; color:#eef5fc; font:inherit; }
+.textField textarea { min-height:86px; resize:vertical; line-height:1.5; }
+.checkField { display:flex; align-items:flex-start; gap:8px; color:#bfd0df; font-size:12px; line-height:1.5; }
+.checkField input { flex:0 0 16px; width:16px; height:16px; margin:1px 0 0; accent-color:#078aff; }
+
+.refundStatus { min-width:0; border:1px solid #315269; background:#122331; border-radius:12px; padding:14px; display:grid; gap:12px; }
+.refundStatus header,.refundRow { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.refundStatus header { font-size:14px; }
+.refundStatus p { margin:0; color:#a9bfce; font-size:12px; line-height:1.5; }
+.refundStatus button,.refundStatus a { border:1px solid #385b74; background:#193447; color:#d8edf9; border-radius:999px; padding:9px 12px; font-size:12px; cursor:pointer; }
+.refundStatus button:disabled { opacity:.5; cursor:wait; }
+.refundStatus[data-state="failed"] { border-color:#8c4448; }
+.refundStatus[data-state="failed"] header { color:#ffb4b6; }
+.refundRow { font-size:12px; }
+.refundReview { border-top:1px solid #365169; padding-top:12px; display:grid; gap:12px; }
+.refundReview > div { display:flex; gap:10px; flex-wrap:wrap; }

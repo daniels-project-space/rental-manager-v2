@@ -38,6 +38,7 @@ export default defineConfig({
       "convex/quick_reply_search.test.ts",
       "src/lib/message-history-search.test.ts",
       "convex/dbcinema_chat.test.ts",
+      "convex/dbcinema_deposit_controls.test.ts",
       "convex/replyInbox.availability.test.ts",
       "convex/replyInbox.account-order.test.ts",
       "convex/renter_trust.cache.test.ts",

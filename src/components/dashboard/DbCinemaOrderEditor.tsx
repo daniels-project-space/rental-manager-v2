@@ -1,4 +1,6 @@
 "use client";
+import {DbCinemaPriceEditor} from "./DbCinemaPriceEditor";
+import { DbCinemaDepositEditor } from "./DbCinemaDepositEditor";
 import { RentalMoneyControl } from "./RentalMoneyControl";
 import {
   rentalCalendarParts,
@@ -29,6 +31,7 @@ const previewRef = makeFunctionReference<"action">(
 const datesRef = makeFunctionReference<"action">(
   "dbcinema_chat:applyRentalDates",
 );
+const resumeRefundRef=makeFunctionReference<"action">("dbcinema_chat:resumeRentalRefund");
 const refundRef = makeFunctionReference<"action">("dbcinema_chat:refundRental");
 type Details = {
   status: string;
@@ -39,7 +42,7 @@ type Details = {
   canAddEquipment: boolean;
   canRemoveEquipment: boolean;
   lines: EquipmentLine[];
-  refunds: Array<{ status: string; amountPence: number }>;
+  refunds: Array<{status:string;amountPence:number;id?:string;approvalUrls?:string[]}>;
 };
 type Proposal = {
   start: number;
@@ -81,7 +84,7 @@ export function DbCinemaOrderEditor({
   const get = useAction(detailsRef),
     preview = useAction(previewRef),
     apply = useAction(datesRef),
-    refund = useAction(refundRef);
+    refund = useAction(refundRef),resumeRefund=useAction(resumeRefundRef);
   const [details, setDetails] = useState<Details | null>(null),
     [busy, setBusy] = useState(false),
     [note, setNote] = useState("");
@@ -91,7 +94,7 @@ export function DbCinemaOrderEditor({
   const [amount, setAmount] = useState(""),
     [refundReason, setRefundReason] = useState(""),
     [refundReview, setRefundReview] = useState(false);
-  const [editorTab,setEditorTab]=useState<"gear"|"dates"|"refund">(initialAction==="dates"?"dates":initialAction==="refund"||initialAction==="discount"?"refund":"gear");
+  const [editorTab,setEditorTab]=useState<"gear"|"dates"|"price"|"refund"|"return">(initialAction==="dates"?"dates":initialAction==="refund"||initialAction==="discount"?"refund":"gear");
   const [calendarRevision, setCalendarRevision] = useState(0);
   const equipmentSection = useRef<HTMLElement | null>(null),
     datesSection = useRef<HTMLElement | null>(null),
@@ -229,7 +232,8 @@ export function DbCinemaOrderEditor({
     end = returned.date;
   return (
     <div className={styles.sourceEditor}>
-      <nav className={styles.editorTabs} aria-label="Rental control sections">{(["gear","dates","refund"] as const).map(tab=><button type="button" key={tab} aria-selected={tab===editorTab} onClick={()=>setEditorTab(tab)}>{tab==="gear"?"Equipment":tab==="dates"?"Dates":"Refund"}</button>)}</nav>
+      <nav className={styles.editorTabs} aria-label="Rental control sections">{(["gear","dates","price","refund",...(["confirmed","active","returned"].includes(details.status)?["return" as const]:[])] as const).map(tab=><button type="button" key={tab} aria-selected={tab===editorTab} onClick={()=>setEditorTab(tab)}>{tab==="gear"?"Equipment":tab==="dates"?"Dates":tab==="return"?"Deposit / return":tab==="price"?"Price":"Refund"}</button>)}</nav>
+      {editorTab==="return"&&<DbCinemaDepositEditor bookingId={bookingId} onComplete={refresh}/>}
       {editorTab==="gear"&&<section ref={equipmentSection}>
         <h4>Equipment</h4>
         <DbCinemaEquipmentEditor
@@ -310,7 +314,9 @@ export function DbCinemaOrderEditor({
           </div>
         )}
       </section>}
+      {editorTab==="price"&&<DbCinemaPriceEditor bookingId={bookingId} onUpdated={refresh} currentTotal={Math.max(0,details.total-details.refunds.filter(r=>r.status==="succeeded").reduce((sum,r)=>sum+r.amountPence/100,0))}/>}
       {editorTab==="refund"&&<section ref={pricingSection}>
+        {details.refunds.filter(r=>["prepared","pending"].includes(r.status)).map((r,index)=><div key={r.id??index} className={styles.refundRecovery}><span>Original refund · {money(r.amountPence/100)} · {r.status}</span>{r.approvalUrls?.map(url=><a key={url} href={url} target="_blank" rel="noopener noreferrer">Open Stripe approval ↗</a>)}{r.id&&<button type="button" disabled={busy} onClick={()=>{setBusy(true);void resumeRefund({refund_id:r.id,confirmed:true}).then((result:any)=>{setNote(`Original refund: ${result.status}.`);return refresh()}).catch(()=>setNote("The original refund needs provider review. No new refund was issued.")).finally(()=>setBusy(false))}}>Resume original refund</button>}</div>)}
         <h4>Refund</h4>
         <RentalMoneyControl mode="refund" total={details.total} limit={Math.max(0,details.total-details.refunds.filter(r=>["succeeded","completed"].includes(r.status)).reduce((sum,r)=>sum+r.amountPence/100,0))} value={amount} onChange={v=>{setAmount(v);setRefundReview(false);}} busy={busy||pendingRefund.current} canReview={!locked} onReview={()=>setRefundReview(true)}/>
         <details><summary>Add a note (optional)</summary>

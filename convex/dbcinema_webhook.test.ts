@@ -1,7 +1,10 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
+import {getFunctionName} from 'convex/server';
 vi.mock('./auth',()=>({authComponent:{registerRoutes:vi.fn()},createAuth:vi.fn()}));
 vi.mock('./hygglo',()=>({computePollHash:(s:string)=>s}));
 vi.mock('./notifications',()=>({queueNotificationEvents:vi.fn(async()=>1)}));
+import pipeline from './fixtures/dbcinema_paid_stock.json';
+import {loadStockSources,stockForItem} from './lib/renter_stock';
 import http from './http';
 import { upsertSiteBookingsBatch } from './sync_dbcinema_web';
 const route=http.lookup('/dbcinema/booking-sync','POST')![0] as any;
@@ -52,4 +55,20 @@ it('accepts verification only through the secret bridge and applies a new revisi
  expect([...rows.values()].find(r=>r.table==='reservations')).toMatchObject({status:'confirmed',site_verification:{approved:true,sessionId:'source-session'}});
  expect((await invoke(ctx,request(booking({revision:5,verification})))).status).toBe(500);
  expect([...rows.values()].find(r=>r.table==='reservations').site_verification.approved).toBe(true);
+});
+
+describe('actual website producer -> authenticated receiver -> native stock inquiry',()=>{
+ it('uses exact paid physical allocation before verification, excludes cash from income, ignores repeats/stale events and releases returned gear',async()=>{
+  vi.stubEnv('DBCINEMA_WEBHOOK_SECRET','receipt-fixture');const{ctx,rows}=fixture();
+  const itemId=await ctx.db.insert('items',{name_canonical:'Sony FX3',qty:1,status:'active',is_marketing_only:false});expect(itemId).toBe('items:1');
+  const lookup=async()=>stockForItem(await loadStockSources(ctx),rows.get(itemId),{item_name:'Sony FX3',start_date:'2035-01-01',end_date:'2035-01-01',pickup_time:'10:00',return_time:'11:00'} as any);
+  expect((await lookup()).free_units).toBe(1);
+  expect(await(await invoke(ctx,request(pipeline.unpaid))).json()).toMatchObject({outcome:'ignored',reason:'unpaid'});expect((await lookup()).free_units).toBe(1);
+  expect((await invoke(ctx,request(pipeline.paid,'wrong-token'))).status).toBe(401);expect((await lookup()).free_units).toBe(1);
+  expect(await(await invoke(ctx,request(pipeline.paid))).json()).toMatchObject({outcome:'applied',appliedRevision:1});
+  const row=()=>[...rows.values()].find(r=>r.table==='reservations');expect(row()).toMatchObject({status:'pending_review',net_to_owner_gbp:20,gross_paid_gbp:20});expect(row().site_item_windows[0]).toMatchObject({item_id:itemId,start:Date.UTC(2035,0,1,10),end:Date.UTC(2035,0,2,18),qty:1});expect((await lookup()).free_units).toBe(0);expect(ctx.scheduler.runAfter.mock.calls.some((call:any[])=>call[2]?.force===true&&getFunctionName(call[1])==='mv/reply_queue:refresh' )).toBe(true);
+  expect(await(await invoke(ctx,request(pipeline.paid))).json()).toMatchObject({outcome:'unchanged'});expect((await lookup()).free_units).toBe(0);
+  expect(await(await invoke(ctx,request(pipeline.returned))).json()).toMatchObject({outcome:'applied',appliedRevision:2});expect((await lookup()).free_units).toBe(1);
+  expect(await(await invoke(ctx,request(pipeline.paid))).json()).toMatchObject({outcome:'stale',appliedRevision:2});expect((await lookup()).free_units).toBe(1);
+ });
 });

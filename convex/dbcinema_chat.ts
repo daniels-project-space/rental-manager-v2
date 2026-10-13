@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import {
   basketSwapSnapshot,
   websiteSwapSnapshot,
@@ -24,7 +24,7 @@ type RemoteResult<T> = {
   status?: string;
   value?: T;
   errorMessage?: string;
-  errorData?: { code?: string };
+  errorData?: { code?: string;approvalUrl?:string };
 };
 class EquipmentReviewChanged extends Error {
   constructor() {
@@ -51,7 +51,7 @@ export async function callDbCinema<T>(
       args: { ...(args as object), token },
       format: "json",
     }),
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(path === "checkout:previewReturned" ? 45_000 : 15_000),
   });
   let result: RemoteResult<T>;
   try {
@@ -60,6 +60,8 @@ export async function callDbCinema<T>(
     throw new Error("DB Cinema returned an unreadable chat response.");
   }
   if (!response.ok || result.status !== "success") {
+    if (result.errorData?.code === "DEPOSIT_REFUND_REVIEW"){const url=result.errorData.approvalUrl;const valid=typeof url==="string"&&/^https:\/\/dashboard\.stripe\.com\/(?:acct_[A-Za-z0-9]+\/)?settings\/approvals\/requests\/apreq_[A-Za-z0-9]+$/.test(url);throw new ConvexError({code:"DEPOSIT_REFUND_REVIEW",message:"The original deposit refund requires provider review. Resume the saved decision after review; no second refund was issued.",...(valid?{approvalUrl:url}:{})});}
+    if (result.errorData?.code === "RETURN_REVIEW_STALE") throw new ConvexError({code:"RETURN_REVIEW_STALE",message:"The rental changed after review. Refresh and review the completion again."});
     if (result.errorData?.code === "EQUIPMENT_REVIEW_STALE")
       throw new EquipmentReviewChanged();
     // Keep provider details out of the browser; in particular, never echo a
@@ -667,7 +669,13 @@ export const rentalControls = action({
     if (!b) throw Error("Rental details are unavailable.");
     return {
       status: b.status,
-      total: b.total,
+      total: Math.max(0,Math.round((b.total-(b.depositAmount??0))*100)/100),
+      depositAmount: b.depositAmount ?? 0,
+      depositKept: b.depositKept ?? 0,
+      depositRefunded: b.depositRefunded ?? false,
+      depositRefundAmount: b.depositRefundAmount ?? 0,
+      securityPolicyVersion: b.securityPolicyVersion ?? null,
+      savedCardLimit: b.savedCardLimit ?? 0,
       depositHoldAmount: b.depositHoldAmount ?? 0,
       snapshot: b.controlsSnapshot,
       canChangeDates:
@@ -703,6 +711,7 @@ export const rentalControls = action({
       refunds: (b.rentalRefunds ?? []).map((r: any) => ({
         status: r.status,
         amountPence: r.amountPence ?? 0,
+        id:r._id,approvalUrls:(r.refundReceipts??[]).filter((p:any)=>p.status==="awaiting_approval").map((p:any)=>p.approvalUrl).filter(Boolean),
       })),
     };
   },
@@ -804,6 +813,14 @@ export const refundRental = action({
   },
 });
 
+export const rentalPriceProposals=action({args:{booking_id:v.string()},handler:async(ctx,{booking_id})=>{await requireOwner(ctx);return callDbCinema<any[]>("query","rentalPriceState:list",{bookingId:booking_id,admin:true});}});
+export const previewRentalPrice=action({args:{booking_id:v.string(),new_total:v.number()},handler:async(ctx,{booking_id,new_total})=>{await requireOwner(ctx);return callDbCinema<any>("query","rentalPriceState:preview",{bookingId:booking_id,newTotal:new_total});}});
+export const applyRentalPrice=action({args:{booking_id:v.string(),request_id:v.string(),new_total:v.number(),reviewed_snapshot:v.string(),direction:v.union(v.literal("increase"),v.literal("decrease")),confirmed:v.boolean()},handler:async(ctx,a)=>{
+ await requireOwner(ctx);if(!a.confirmed||!a.reviewed_snapshot)throw Error("Review and confirm the price first.");
+ return callDbCinema<any>(a.direction==="increase"?"mutation":"action",a.direction==="increase"?"rentalPriceState:propose":"rentalPricePayments:decrease",{bookingId:a.booking_id,requestId:a.request_id,newTotal:a.new_total,expectedSnapshot:a.reviewed_snapshot,confirmed:true});
+}});
+export const withdrawRentalPrice=action({args:{proposal_id:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx);if(!a.confirmed)throw Error("Confirm proposal withdrawal first.");return callDbCinema<any>("action","rentalPricePayments:withdraw",{id:a.proposal_id});}});
+
 /** These bridges only execute a change after the operator confirms the exact review. */
 export const equipmentCatalog = action({
   args: { search: v.optional(v.string()) },
@@ -880,6 +897,7 @@ export const addEquipment = action({
         url: string;
         id: string;
         applied?: boolean;
+        awaitingAcceptance?:boolean;
       }>("action", "rentalAdditions:start", {
         bookingId: booking_id,
         listingId: listing_id,
@@ -890,6 +908,7 @@ export const addEquipment = action({
       });
       return {
         applied: !!result.applied,
+        ...(result.awaitingAcceptance?{awaiting_acceptance:true}:{}),
         payment_url: result.url,
         addition_id: result.id,
       };
@@ -949,3 +968,21 @@ export const removeEquipment = action({
     }
   },
 });
+
+const returnInspectionInput=v.object({key:v.string(),condition:v.union(v.literal("good"),v.literal("issue")),details:v.string(),openCase:v.boolean()});
+const returnSelectionArgs={booking_id:v.string(),actual_returned_at:v.number(),damage_assessed:v.number(),deposit_kept:v.optional(v.number()),reason:v.optional(v.string()),charge_late:v.boolean(),late_waiver_reason:v.optional(v.string()),inspection:v.array(returnInspectionInput)};
+function returnSelection(a:{booking_id:string;actual_returned_at:number;damage_assessed:number;deposit_kept?:number;reason?:string;charge_late:boolean;late_waiver_reason?:string;inspection:unknown[]}){
+ return {bookingId:a.booking_id,actualReturnedAt:a.actual_returned_at,damageKept:a.damage_assessed,...(a.deposit_kept!==undefined?{depositKept:a.deposit_kept}:{}),damageNote:a.reason?.trim()||undefined,chargeLate:a.charge_late,lateWaiverReason:a.late_waiver_reason?.trim()||undefined,inspection:a.inspection};
+}
+export const returnInspectionContext=action({args:{booking_id:v.string()},handler:async(ctx,a)=>{await requireOwner(ctx);return callDbCinema<any>("query","returnInspections:context",{bookingId:a.booking_id});}});
+export const previewReturn=action({args:returnSelectionArgs,handler:async(ctx,a)=>{await requireOwner(ctx);return callDbCinema<any>("action","checkout:previewReturned",returnSelection(a));}});
+export const completeReturn=action({args:{...returnSelectionArgs,reviewed_snapshot:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{
+ await requireOwner(ctx);if(!a.confirmed||!a.reviewed_snapshot)throw Error("Review and confirm the return decision before completion.");
+ return callDbCinema<any>("action","checkout:markReturned",{...returnSelection(a),expectedSnapshot:a.reviewed_snapshot});
+}});
+
+export const resumeDepositRefund=action({args:{booking_id:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx);if(!a.confirmed)throw Error("Confirm resuming the saved decision first.");return callDbCinema<any>("action","checkout:resumeDepositRefund",{bookingId:a.booking_id,confirmed:true});}});
+export const retryDepositRefund=action({args:{booking_id:v.string(),refund_id:v.string(),request_id:v.string(),reviewed_snapshot:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx);if(!a.confirmed||!a.reviewed_snapshot)throw Error("Review and confirm the failed refund first.");return callDbCinema<any>("action","checkout:retryDepositRefund",{bookingId:a.booking_id,refundId:a.refund_id,requestId:a.request_id,expectedSnapshot:a.reviewed_snapshot,confirmed:true});}});
+
+export const resumeRentalRefund=action({args:{refund_id:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx);if(!a.confirmed)throw Error("Confirm resuming the original refund first.");return callDbCinema<any>("action","checkout:resumeRentalRefund",{refundId:a.refund_id,confirmed:true});}});
+export const resumeRentalPriceReview=action({args:{proposal_id:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx);if(!a.confirmed)throw Error("Confirm resuming the original price request first.");return callDbCinema<any>("action","rentalPricePayments:resumeReview",{id:a.proposal_id,confirmed:true});}});

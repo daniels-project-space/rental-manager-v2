@@ -164,7 +164,7 @@ export function DbCinemaEquipmentEditor({
           expected_snapshot: quote.snapshot,
           expected_quote: quote.quoteSnapshot,
           operator_confirmed: true,
-        })) as { applied: boolean; review_required?: boolean };
+        })) as { applied: boolean; review_required?: boolean;awaiting_acceptance?:boolean };
         if (r.review_required) {
           reset();
           onNote(
@@ -176,7 +176,7 @@ export function DbCinemaEquipmentEditor({
         onNote(
           r.applied
             ? "Equipment added. Agreed rental charges are unchanged."
-            : "Addition prepared. The renter's payment link is in their DB Cinema conversation; the kit updates after payment and any security approval.",
+            : r.awaiting_acceptance?"Equipment proposal prepared. The renter must accept the deposit and saved-card amounts in their DB Cinema conversation before payment.": "Addition prepared. The renter's payment link is in their DB Cinema conversation; the kit updates after payment and any security approval.",
         );
       } else if (mode === "remove" && line && removalSnapshot) {
         const r = (await remove({

@@ -1,0 +1,13 @@
+{
+  "generator": "node scripts/fixtures/paid-stock-pipeline.cjs items:1",
+  "sourceRepository": "daniels-project-space/db-cinema-v2",
+  "sourceCommit": "a969b06",
+  "syntheticOnly": true,
+  "runtimeSources": {
+    "scripts/fixtures/paid-stock-pipeline.cjs": "c736d4d413cd4ec794bb00bc7e3028cdc49996c7c649dfe91985f884827e5874",
+    "convex/bookings.ts": "d76e8006905d6655401da206a99d515ae39e336f01c9153663da3c2a30df811f",
+    "convex/rmv2_sync.ts": "970b5723dcb6cb7aa93cd3de4bbbc32c0cd47094f2cf10e3e4aad7cbd4cf5c3e",
+    "convex/lib/stockWindows.ts": "bc5e2cba4e49572dc41f0d541cc1af5c1fcd7e63231df31ae128a59ac6c61f9a"
+  },
+  "fixtureSha256": "560b6161ac323dc16aec50c3e613667306c09ee6782f17826ad7d082eacb2625"
+}

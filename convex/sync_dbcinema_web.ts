@@ -486,6 +486,8 @@ export const upsertSiteBookingsBatch = internalMutation({
     // the change now (the hourly MV cron's dirty-probe can miss web rows).
     if (upserted > 0 || cancelled > 0) {
       await ctx.scheduler.runAfter(0, statsDrawerRefreshRef, { force: true });
+      // Website stock and verification changes must invalidate the reply tiles immediately.
+      await ctx.scheduler.runAfter(0, internal.mv.reply_queue.refresh, { force: true });
     }
 
     return {
