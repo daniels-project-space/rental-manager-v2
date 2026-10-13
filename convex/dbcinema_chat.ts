@@ -342,7 +342,7 @@ export const inbox = action({
           booking.status === "pending_payment"
             ? ("request" as const)
             : ("message" as const),
-        human_requested: !!booking.escalated,
+        human_requested: !!booking.escalated && booking.lastSender !== "owner",
         is_request: booking.status === "pending_payment",
         has_reservation: booking.status !== "support",
         can_decide: false,

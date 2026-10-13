@@ -558,3 +558,13 @@ describe("general website support conversations",()=>{
   expect(sent.map(s=>s.path)).toEqual(["rentalChat:messages","rentalChat:sendOwner"]);
  });
 });
+
+describe("human attention after an operator reply",()=>{
+ it("keeps handoff attention only until the operator answers",async()=>{
+  const waiting=await read([], {escalated:true,lastSender:"system"});
+  expect(waiting[0].human_requested).toBe(true);
+  const answered=await read([], {escalated:true,lastSender:"owner"});
+  expect(answered[0].human_requested).toBe(false);
+  expect(answered[0].last_sender).toBe("owner");
+ });
+});
