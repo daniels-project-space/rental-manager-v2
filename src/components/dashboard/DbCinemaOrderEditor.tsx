@@ -1,4 +1,5 @@
 "use client";
+import {DbCinemaPriceEditor} from "./DbCinemaPriceEditor";
 import { DbCinemaDepositEditor } from "./DbCinemaDepositEditor";
 import { RentalMoneyControl } from "./RentalMoneyControl";
 import {
@@ -92,7 +93,7 @@ export function DbCinemaOrderEditor({
   const [amount, setAmount] = useState(""),
     [refundReason, setRefundReason] = useState(""),
     [refundReview, setRefundReview] = useState(false);
-  const [editorTab,setEditorTab]=useState<"gear"|"dates"|"refund"|"return">(initialAction==="dates"?"dates":initialAction==="refund"||initialAction==="discount"?"refund":"gear");
+  const [editorTab,setEditorTab]=useState<"gear"|"dates"|"price"|"refund"|"return">(initialAction==="dates"?"dates":initialAction==="refund"||initialAction==="discount"?"refund":"gear");
   const [calendarRevision, setCalendarRevision] = useState(0);
   const equipmentSection = useRef<HTMLElement | null>(null),
     datesSection = useRef<HTMLElement | null>(null),
@@ -230,7 +231,7 @@ export function DbCinemaOrderEditor({
     end = returned.date;
   return (
     <div className={styles.sourceEditor}>
-      <nav className={styles.editorTabs} aria-label="Rental control sections">{(["gear","dates","refund",...(["confirmed","active","returned"].includes(details.status)?["return" as const]:[])] as const).map(tab=><button type="button" key={tab} aria-selected={tab===editorTab} onClick={()=>setEditorTab(tab)}>{tab==="gear"?"Equipment":tab==="dates"?"Dates":tab==="return"?"Deposit / return":"Refund"}</button>)}</nav>
+      <nav className={styles.editorTabs} aria-label="Rental control sections">{(["gear","dates","price","refund",...(["confirmed","active","returned"].includes(details.status)?["return" as const]:[])] as const).map(tab=><button type="button" key={tab} aria-selected={tab===editorTab} onClick={()=>setEditorTab(tab)}>{tab==="gear"?"Equipment":tab==="dates"?"Dates":tab==="return"?"Deposit / return":tab==="price"?"Price":"Refund"}</button>)}</nav>
       {editorTab==="return"&&<DbCinemaDepositEditor bookingId={bookingId} onComplete={refresh}/>}
       {editorTab==="gear"&&<section ref={equipmentSection}>
         <h4>Equipment</h4>
@@ -312,6 +313,7 @@ export function DbCinemaOrderEditor({
           </div>
         )}
       </section>}
+      {editorTab==="price"&&<DbCinemaPriceEditor bookingId={bookingId} onUpdated={refresh} currentTotal={Math.max(0,details.total-details.refunds.filter(r=>r.status==="succeeded").reduce((sum,r)=>sum+r.amountPence/100,0))}/>}
       {editorTab==="refund"&&<section ref={pricingSection}>
         <h4>Refund</h4>
         <RentalMoneyControl mode="refund" total={details.total} limit={Math.max(0,details.total-details.refunds.filter(r=>["succeeded","completed"].includes(r.status)).reduce((sum,r)=>sum+r.amountPence/100,0))} value={amount} onChange={v=>{setAmount(v);setRefundReview(false);}} busy={busy||pendingRefund.current} canReview={!locked} onReview={()=>setRefundReview(true)}/>

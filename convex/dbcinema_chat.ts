@@ -812,6 +812,14 @@ export const refundRental = action({
   },
 });
 
+export const rentalPriceProposals=action({args:{booking_id:v.string()},handler:async(ctx,{booking_id})=>{await requireOwner(ctx);return callDbCinema<any[]>("query","rentalPriceState:list",{bookingId:booking_id,admin:true});}});
+export const previewRentalPrice=action({args:{booking_id:v.string(),new_total:v.number()},handler:async(ctx,{booking_id,new_total})=>{await requireOwner(ctx);return callDbCinema<any>("query","rentalPriceState:preview",{bookingId:booking_id,newTotal:new_total});}});
+export const applyRentalPrice=action({args:{booking_id:v.string(),request_id:v.string(),new_total:v.number(),reviewed_snapshot:v.string(),direction:v.union(v.literal("increase"),v.literal("decrease")),confirmed:v.boolean()},handler:async(ctx,a)=>{
+ await requireOwner(ctx);if(!a.confirmed||!a.reviewed_snapshot)throw Error("Review and confirm the price first.");
+ return callDbCinema<any>(a.direction==="increase"?"mutation":"action",a.direction==="increase"?"rentalPriceState:propose":"rentalPricePayments:decrease",{bookingId:a.booking_id,requestId:a.request_id,newTotal:a.new_total,expectedSnapshot:a.reviewed_snapshot,confirmed:true});
+}});
+export const withdrawRentalPrice=action({args:{proposal_id:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx);if(!a.confirmed)throw Error("Confirm proposal withdrawal first.");return callDbCinema<any>("action","rentalPricePayments:withdraw",{id:a.proposal_id});}});
+
 /** These bridges only execute a change after the operator confirms the exact review. */
 export const equipmentCatalog = action({
   args: { search: v.optional(v.string()) },

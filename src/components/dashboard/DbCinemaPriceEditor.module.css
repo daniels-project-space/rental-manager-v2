@@ -1,0 +1,5 @@
+.root { min-width:0; }
+.root p { margin:0; font-size:13px; line-height:1.5; color:#c2d2e2; }
+.root .caption { font-size:12px; color:#8fa8bd; }
+.secondary { border:1px solid #344c60; border-radius:999px; background:#172a3b; color:#d9e8f5; padding:10px 16px; min-height:40px; cursor:pointer; }
+.secondary:disabled { opacity:.5; cursor:wait; }
