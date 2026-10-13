@@ -1,4 +1,5 @@
 "use client";
+import {DbCinemaRefundStatus,type DepositSettlement} from "./DbCinemaRefundStatus";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAction } from "convex/react";
 import { makeFunctionReference } from "convex/server";
@@ -10,7 +11,7 @@ const previewRef=makeFunctionReference<"action">("dbcinema_chat:previewReturn");
 const completeRef=makeFunctionReference<"action">("dbcinema_chat:completeReturn");
 const cashPolicy="2026-10-refundable-deposit-v1";
 type Inspection={key:string;condition:"good"|"issue";details:string;openCase:boolean};
-type Context={status:string;depositAmount:number;depositHoldAmount:number;depositRefunded:boolean;depositKept:number;depositRefundAmount:number;securityPolicyVersion:string|null;savedCardLimit:number;replacementValue:number;items:Array<{key:string;title:string;imageSources?:string[]}>;returnDecision?:{actualReturnedAt:number;damageKept:number;depositKept?:number;damageNote?:string;chargeLate:boolean;lateWaiverReason?:string;inspection?:Inspection[]}|null;returnStatement?:unknown;lateQuote?:{amount:number}};
+type Context={depositSettlement?:DepositSettlement;status:string;depositAmount:number;depositHoldAmount:number;depositRefunded:boolean;depositKept:number;depositRefundAmount:number;securityPolicyVersion:string|null;savedCardLimit:number;replacementValue:number;items:Array<{key:string;title:string;imageSources?:string[]}>;returnDecision?:{actualReturnedAt:number;damageKept:number;depositKept?:number;damageNote?:string;chargeLate:boolean;lateWaiverReason?:string;inspection?:Inspection[]}|null;returnStatement?:unknown;lateQuote?:{amount:number}};
 type Review={snapshot:string;financial:{depositRefund:number;damageFromDeposit:number;holdRelease:number};alreadySettled:boolean;statement:{damageNote?:string;damageAssessed?:number};email:{subject:string;html:string}};
 const currencyFormat=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP"});
 const gbp=(value:number)=>currencyFormat.format(value);
@@ -32,6 +33,7 @@ function ScopedDepositEditor({bookingId,onComplete}:{bookingId:string;onComplete
     if(next.returnDecision){const decision=next.returnDecision;setReturnedAt(decision.actualReturnedAt);setDamage(String(decision.damageKept));setKept(decision.depositKept??0);setReason(decision.damageNote??"");setChargeLate(decision.chargeLate);setLateReason(decision.lateWaiverReason??"");setInspection(Object.fromEntries((decision.inspection??[]).map(row=>[row.key,row])));}
   },[get,bookingId]);
   useEffect(()=>{alive.current=true;setBusy(true);void load().catch(()=>{if(alive.current)setError("Could not load this rental’s return controls.")}).finally(()=>{if(alive.current)setBusy(false)});return()=>{alive.current=false}},[load]);
+  useEffect(()=>{if(!context?.returnDecision||!context.depositSettlement||!["pending","awaiting_approval","processing"].includes(context.depositSettlement.state))return;const refresh=()=>{if(document.visibilityState==="visible")void load().catch(()=>{})};const timer=setInterval(refresh,20000);document.addEventListener("visibilitychange",refresh);return()=>{clearInterval(timer);document.removeEventListener("visibilitychange",refresh)}},[context?.depositSettlement?.state,!!context?.returnDecision,load]);
   const isCash=context?.securityPolicyVersion===cashPolicy,assessed=Number(damage),frozen=!!context?.returnDecision;
   const selection={booking_id:bookingId,actual_returned_at:returnedAt,damage_assessed:assessed,...(isCash?{deposit_kept:kept}:{}),reason:reason.trim()||undefined,charge_late:chargeLate,late_waiver_reason:lateReason.trim()||undefined,inspection:Object.values(inspection)};
   const selectionKey=JSON.stringify(selection);
@@ -41,8 +43,10 @@ function ScopedDepositEditor({bookingId,onComplete}:{bookingId:string;onComplete
   async function finish(){if(!valid||!reviewed||!confirmed||flight.current)return;flight.current=true;setBusy(true);setError("");try{await complete({...selection,reviewed_snapshot:reviewed.snapshot,confirmed:true});if(alive.current){setReview(null);setConfirmed(false);await load();await onComplete()}}catch(e:any){if(alive.current){setError(e?.data?.message??"Completion did not finish. Resume the saved decision; check the refund status before retrying.");setReview(null);setConfirmed(false);await load().catch(()=>{})}}finally{flight.current=false;if(alive.current)setBusy(false)}}
   function condition(item:Context["items"][number],value:"good"|"issue"){setInspection(previous=>({...previous,[item.key]:{key:item.key,condition:value,details:value==="good"?"":previous[item.key]?.details??"",openCase:false}}));setConfirmed(false)}
   if(!context)return <div role="status">{error||"Loading return controls…"}<button type="button" disabled={busy} onClick={()=>void load().catch(()=>setError("Could not load return controls."))}>Retry</button></div>;
-  if(context.returnStatement)return <section className={styles.moneyControl}><h4>Return completed</h4><div className={styles.moneyResult}><div><span>Deposit retained</span><strong>{gbp(context.depositKept)}</strong></div><div><span>Refund issued</span><strong>{gbp(context.depositRefundAmount)}</strong></div></div><p>The itemised completion statement records the retained amount and reason.</p></section>;
+  const refundStatus=isCash&&context.returnDecision&&context.depositSettlement?<DbCinemaRefundStatus bookingId={bookingId} settlement={context.depositSettlement} onUpdated={load}/>:null;
+  if(context.returnStatement)return <section className={styles.moneyControl}><h4>Return recorded</h4>{refundStatus}<div className={styles.moneyResult}><div><span>Deposit retained</span><strong>{gbp(context.depositKept)}</strong></div><div><span>Refund issued</span><strong>{gbp(context.depositRefundAmount)}</strong></div></div><p>The itemised completion statement records the retained amount and reason.</p></section>;
   return <section className={`${styles.moneyControl} ${depositStyles.panel}`} aria-label="DB Cinema web deposit and return">
+    {refundStatus}
     <div className={styles.moneyReceipt}><span>DB Cinema web · deposit paid</span><strong>{gbp(context.depositAmount)}</strong></div>
     <p>Return recorded {new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/London",dateStyle:"medium",timeStyle:"short"}).format(returnedAt)} · London</p>
     {!frozen&&<button type="button" disabled={busy} onClick={()=>setReturnedAt(Date.now())}>Use current return time</button>}

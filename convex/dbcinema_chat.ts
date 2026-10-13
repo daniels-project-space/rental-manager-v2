@@ -24,7 +24,7 @@ type RemoteResult<T> = {
   status?: string;
   value?: T;
   errorMessage?: string;
-  errorData?: { code?: string };
+  errorData?: { code?: string;approvalUrl?:string };
 };
 class EquipmentReviewChanged extends Error {
   constructor() {
@@ -60,7 +60,7 @@ export async function callDbCinema<T>(
     throw new Error("DB Cinema returned an unreadable chat response.");
   }
   if (!response.ok || result.status !== "success") {
-    if (result.errorData?.code === "DEPOSIT_REFUND_REVIEW") throw new ConvexError({code:"DEPOSIT_REFUND_REVIEW",message:"The original deposit refund requires provider review. Resume the saved decision after review; no second refund was issued."});
+    if (result.errorData?.code === "DEPOSIT_REFUND_REVIEW"){const url=result.errorData.approvalUrl;const valid=typeof url==="string"&&/^https:\/\/dashboard\.stripe\.com\/(?:acct_[A-Za-z0-9]+\/)?settings\/approvals\/requests\/apreq_[A-Za-z0-9]+$/.test(url);throw new ConvexError({code:"DEPOSIT_REFUND_REVIEW",message:"The original deposit refund requires provider review. Resume the saved decision after review; no second refund was issued.",...(valid?{approvalUrl:url}:{})});}
     if (result.errorData?.code === "RETURN_REVIEW_STALE") throw new ConvexError({code:"RETURN_REVIEW_STALE",message:"The rental changed after review. Refresh and review the completion again."});
     if (result.errorData?.code === "EQUIPMENT_REVIEW_STALE")
       throw new EquipmentReviewChanged();
@@ -979,3 +979,6 @@ export const completeReturn=action({args:{...returnSelectionArgs,reviewed_snapsh
  await requireOwner(ctx);if(!a.confirmed||!a.reviewed_snapshot)throw Error("Review and confirm the return decision before completion.");
  return callDbCinema<any>("action","checkout:markReturned",{...returnSelection(a),expectedSnapshot:a.reviewed_snapshot});
 }});
+
+export const resumeDepositRefund=action({args:{booking_id:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx);if(!a.confirmed)throw Error("Confirm resuming the saved decision first.");return callDbCinema<any>("action","checkout:resumeDepositRefund",{bookingId:a.booking_id,confirmed:true});}});
+export const retryDepositRefund=action({args:{booking_id:v.string(),refund_id:v.string(),request_id:v.string(),reviewed_snapshot:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx);if(!a.confirmed||!a.reviewed_snapshot)throw Error("Review and confirm the failed refund first.");return callDbCinema<any>("action","checkout:retryDepositRefund",{bookingId:a.booking_id,refundId:a.refund_id,requestId:a.request_id,expectedSnapshot:a.reviewed_snapshot,confirmed:true});}});

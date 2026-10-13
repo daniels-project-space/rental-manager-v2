@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("./auth",()=>({authComponent:{safeGetAuthUser:vi.fn()}}));
-import {addEquipment,applyRentalPrice,previewRentalPrice,withdrawRentalPrice,completeReturn,previewReturn,rentalControls,returnInspectionContext} from "./dbcinema_chat";
+import {retryDepositRefund,resumeDepositRefund,addEquipment,applyRentalPrice,previewRentalPrice,withdrawRentalPrice,completeReturn,previewReturn,rentalControls,returnInspectionContext} from "./dbcinema_chat";
 afterEach(()=>{vi.unstubAllEnvs();vi.unstubAllGlobals();vi.clearAllMocks()});
 const selection={booking_id:"fixture-rental",actual_returned_at:1,damage_assessed:20,deposit_kept:20,reason:"Inspected issue with documented evidence.",charge_late:false,inspection:[{key:"camera",condition:"issue",details:"Documented damaged case",openCase:false}]};
 function fixture(value:unknown){vi.stubEnv("OWNER_AUTH_REQUIRED","false");vi.stubEnv("DBCINEMA_CONVEX_URL","https://fixture.invalid");vi.stubEnv("DBCINEMA_ADMIN_TOKEN","local-owner-fixture");const request=vi.fn(async(_url:string,options:RequestInit)=>new Response(JSON.stringify({status:"success",value})));vi.stubGlobal("fetch",request);return request}
@@ -19,3 +19,9 @@ describe("DB Cinema reviewed price controls",()=>{
 });
 
 it("preserves the website equipment-acceptance step in Quick Reply",async()=>{fixture({id:"addition",url:"",awaitingAcceptance:true});expect(await(addEquipment as any)._handler({}, {booking_id:"fixture-rental",listing_id:"fixture-lens",request_id:"fixture-equipment-123",qty:1,reason:"Operator addition",operator_confirmed:true,expected_snapshot:"source",expected_quote:"quote"})).toMatchObject({applied:false,awaiting_acceptance:true,addition_id:"addition"})});
+
+describe("DB Cinema refund recovery bridge",()=>{
+ it("blocks unconfirmed resumption/retries before any remote call",async()=>{const call=fixture({});await expect((resumeDepositRefund as any)._handler({}, {booking_id:"fixture",confirmed:false})).rejects.toThrow("Confirm");await expect((retryDepositRefund as any)._handler({}, {booking_id:"fixture",refund_id:"re_fixture",request_id:"fixture-retry-01234",reviewed_snapshot:"source",confirmed:false})).rejects.toThrow("Review");expect(call).not.toHaveBeenCalled()});
+ it("passes original refund identity and reviewed snapshot for a confirmed retry",async()=>{const call=fixture({ok:true});await(retryDepositRefund as any)._handler({}, {booking_id:"fixture",refund_id:"re_fixture",request_id:"fixture-retry-01234",reviewed_snapshot:"source",confirmed:true});expect(JSON.parse(String(call.mock.calls[0][1].body))).toMatchObject({path:"checkout:retryDepositRefund",args:{bookingId:"fixture",refundId:"re_fixture",requestId:"fixture-retry-01234",expectedSnapshot:"source",confirmed:true}})});
+ it("exposes only a valid Stripe approval link in provider-review errors",async()=>{fixture({});const payload={status:"error",errorData:{code:"DEPOSIT_REFUND_REVIEW",approvalUrl:"https://dashboard.stripe.com/settings/approvals/requests/apreq_fixture"}};vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(payload))));await expect((resumeDepositRefund as any)._handler({}, {booking_id:"fixture",confirmed:true})).rejects.toMatchObject({data:{approvalUrl:payload.errorData.approvalUrl}});payload.errorData.approvalUrl="https://fixture.invalid/unsafe";const denied=await(resumeDepositRefund as any)._handler({}, {booking_id:"fixture",confirmed:true}).catch((e:any)=>e.data);expect(denied).not.toHaveProperty("approvalUrl")});
+});
