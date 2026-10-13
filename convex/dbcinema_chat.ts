@@ -711,6 +711,7 @@ export const rentalControls = action({
       refunds: (b.rentalRefunds ?? []).map((r: any) => ({
         status: r.status,
         amountPence: r.amountPence ?? 0,
+        id:r._id,approvalUrls:(r.refundReceipts??[]).filter((p:any)=>p.status==="awaiting_approval").map((p:any)=>p.approvalUrl).filter(Boolean),
       })),
     };
   },
@@ -982,3 +983,6 @@ export const completeReturn=action({args:{...returnSelectionArgs,reviewed_snapsh
 
 export const resumeDepositRefund=action({args:{booking_id:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx);if(!a.confirmed)throw Error("Confirm resuming the saved decision first.");return callDbCinema<any>("action","checkout:resumeDepositRefund",{bookingId:a.booking_id,confirmed:true});}});
 export const retryDepositRefund=action({args:{booking_id:v.string(),refund_id:v.string(),request_id:v.string(),reviewed_snapshot:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx);if(!a.confirmed||!a.reviewed_snapshot)throw Error("Review and confirm the failed refund first.");return callDbCinema<any>("action","checkout:retryDepositRefund",{bookingId:a.booking_id,refundId:a.refund_id,requestId:a.request_id,expectedSnapshot:a.reviewed_snapshot,confirmed:true});}});
+
+export const resumeRentalRefund=action({args:{refund_id:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx);if(!a.confirmed)throw Error("Confirm resuming the original refund first.");return callDbCinema<any>("action","checkout:resumeRentalRefund",{refundId:a.refund_id,confirmed:true});}});
+export const resumeRentalPriceReview=action({args:{proposal_id:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx);if(!a.confirmed)throw Error("Confirm resuming the original price request first.");return callDbCinema<any>("action","rentalPricePayments:resumeReview",{id:a.proposal_id,confirmed:true});}});
