@@ -1,0 +1,96 @@
+{
+  "source": "Actual Diogo catalogue descriptions,14 Oct2026; Daniel confirmed ONE Wireless PRO kit(2TX+1RX) for each basic/RGB GoPro offer.",
+  "products": [
+    {
+      "accountSlug": "diogo",
+      "description": "Looking for an affordable multi-camera setup that still delivers 4K quality? This kit is perfect for interviews, vlogs, and capturing multiple angles on a budget.\n\nIn this kit:\n*   3x GoPro Hero 12 cameras\n*   2x Rode Wireless Pro microphone systems with lavalier mics and wind shields\n*   3x SanDisk Extreme 128GB microSD cards\n*   3x mini camera stands\n*   6x GoPro batteries\n*   A protective carry bag for the audio gear\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+      "name": "3x GoPro Hero 12 Multi-Cam Kit | Budget Interview Setup / Rode Wireless Pro Mics",
+      "productId": 1173687
+    },
+    {
+      "accountSlug": "diogo",
+      "description": "I've put together this comprehensive, budget-friendly kit for multi-camera 4K interviews, perfect for content creators and filmmakers looking for an entry-level solution.\n\nIn this kit, you'll find everything I've included to get your shoot going:\n*   3x GoPro Hero 12 cameras\n*   2x Rode Wireless Pro microphone systems, each with a lavalier microphone\n*   3x SanDisk Extreme 128GB microSD cards (V30, A2 rated)\n*   3x GVM RGB LED panel lights\n*   3x Compact light stands for the LED panels\n*   1x GVM carry bag for the lights\n*   1x Hard charging case for the Rode Wireless Pro systems\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+      "name": "GoPro Hero 12 (x3) & Rode Wireless Pro (x2) Kit | Budget 4K Interview Setup /",
+      "productId": 1173688
+    }
+  ],
+  "items": [
+    {
+      "_id": "kn72f7s8b5dkspbqq2eghaxak186a61p",
+      "name_canonical": "Rode Wireless Mic Pro set",
+      "kind": "audio",
+      "qty": 2,
+      "aliases": [
+        "RØDE Wireless PRO"
+      ],
+      "unit_kind": "set",
+      "status": "active",
+      "is_marketing_only": false,
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "2x transmitter",
+          "1x receiver",
+          "2x lavalier mic",
+          "1x smart charge case"
+        ],
+        "lenses": []
+      }
+    },
+    {
+      "_id": "kn72bfr0py9rts0pwfpg2faxvs86a7m2",
+      "name_canonical": "GoPro 12 Hero",
+      "kind": "camera",
+      "qty": 3,
+      "aliases": [
+        "GoPro HERO12 Black"
+      ],
+      "unit_kind": "unit",
+      "status": "active",
+      "is_marketing_only": false,
+      "compatibility": {
+        "accessories": [
+          "Suction cups"
+        ],
+        "batteries": [],
+        "cards": [
+          "256GB card"
+        ],
+        "included_with_rental": [
+          "2x GoPro Enduro battery",
+          "1x 128GB microSD card",
+          "1x suction mount",
+          "1x carry bag"
+        ],
+        "lenses": []
+      }
+    },
+    {
+      "_id": "kn7a3ja3jypm2z1n04wmtfbmd186a8x3",
+      "name_canonical": "LED light panels RGB",
+      "kind": "lighting",
+      "qty": 3,
+      "aliases": [],
+      "unit_kind": "unit",
+      "status": "active",
+      "is_marketing_only": false,
+      "compatibility": {
+        "accessories": [
+          "C-stand",
+          "Small rig tripod"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "1x GVM RGB LED panel",
+          "1x stand",
+          "1x power adapter/cable",
+          "1x barn doors"
+        ],
+        "lenses": []
+      }
+    }
+  ]
+}

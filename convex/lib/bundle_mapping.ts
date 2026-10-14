@@ -11,7 +11,8 @@ const tokens = (text: string) => (text.toLowerCase().replace(/(\d+)\s*(?:wah|wh|
 // Whole generic supplied hardware lines do not describe independent rentals.
 // Named or explicitly tracked matching pools still participate in coverage.
 const bundledHardware = /^(?:(?:mounting\s+)?(?:clamps?|clips?|brackets?)|antennas?|side\s+handles?|barn\s+doors?|soft\s+diffusion(?:\s+sheets?)?|power\s+adapters?|charging\s+cases?|fluid\s+head\s+handles?|rod rig systems?|manual follow focus wheels?|(?:DJI\s+)?(?:adapter|quick[- ]release|mounting)\s+plates?|sandbags?|gel\s+(?:kits?|sets?|sheets?))$/i;
-const incidental = /\b(?:batter(?:y|ies)|chargers?|cables?|carrying (?:bag|case)|uv\s+filters?|(?:camera )?cage|(?:sd|memory) cards?|(?:cfexpress|sdxc|sdhc)\b[^.;]{0,50}\bcard|ssds?|\d+\s*(?:tb|gb)\s+(?:card|media))\b/i;
+const incidental = /\b(?:batter(?:y|ies)|chargers?|cables?|(?:carry|carrying|charging|charge)\s+(?:bags?|cases?)|uv\s+filters?|(?:camera )?cage|(?:sd|memory) cards?|(?:cfexpress|micro[- ]?sd|sdxc|sdhc)\b[^.;]{0,50}\bcards?|ssds?|\d+\s*(?:tb|gb)\s+(?:card|media))\b/i;
+const suppliedCaseObject=(name:string)=>/\b(?:carry|carrying|charging|charge)\s+(?:bags?|cases?)\b/i.test(name.split(/\b(?:with|including|includes|and|plus)\b|[,;+&]/i)[0]);
 
 export type BundleMappingContext = {
   inventory: Inventory[];
@@ -51,6 +52,10 @@ function componentIdentity(name:string,items:Inventory[],genericHardware:boolean
   // Apply this before both alias matching and the fuzzy fallback.
   const candidates = items.filter(item => {
     if (!matchesGimbalComponentRole(identityName, item)) return false;
+    // A named device's supplied case is not another copy of that device.
+    // A registered case may still match its own explicit inventory identity.
+    const caseRequest=suppliedCaseObject(identityName);
+    if(caseRequest && !/\b(?:bag|case)\b/i.test(item.name_canonical))return false;
     const recordedMount = item.lens_mount?.toLowerCase().match(/\b(ef|rf|pl|e|l)\b/)?.[1]
     ?? item.name_canonical.toLowerCase().match(/\b(ef|rf|pl)\b/)?.[1];
     return !mount || !recordedMount || mount === recordedMount;
@@ -109,7 +114,12 @@ export function resolveBundleMapping(description: string, items: Inventory[], co
     // Named independently tracked pools still participate in kit coverage.
     const majorEquipment = /\b(?:camera(?!\s+(?:batter|cage))|bmpcc|blackmagic|fx\d|a7\w*|gimbal|lens(?:es)?|tripod|mic(?:rophone)?|rig|monitor|lights?|led)\b/i;
     const genericHardware = bundledHardware.test(component.name);
-    const incidentalComponent = genericHardware || incidental.test(component.name) && !majorEquipment.test(component.name);
+    const caseParts=component.name.split(/\b(?:with|including|includes|and|plus)\b|[,;+&]/i);
+    const suppliedCase=suppliedCaseObject(component.name);
+    if(suppliedCase && caseParts.length>1 && majorEquipment.test(caseParts.slice(1).join(" "))){
+      unmatched.push(`${component.qty}x ${component.name}`);continue;
+    }
+    const incidentalComponent = genericHardware || suppliedCase || incidental.test(component.name) && !majorEquipment.test(component.name);
     const name = component.name.replace(/\bdzo(?:film)?\b/gi, "DZOFilm");
     const key=name.toLowerCase();
     let identity=context?.matches.get(key);

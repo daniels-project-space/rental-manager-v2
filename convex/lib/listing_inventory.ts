@@ -55,5 +55,6 @@ export function listingStock(sources: Awaited<ReturnType<typeof loadStockSources
     product_id: listing.product_id, requested_units: request.quantity ?? 1, free_units: capacity("free_units"), total_units: capacity("total_units"),
     start_date: request.start_date, end_date: request.end_date, checked_at: Date.now(), source: "complete_listing_components",
     reason: !identityVerified ? "listing_identity_unverified" : !listing.valid_quantity ? "invalid_request" : listing.owned === false ? "not_rentable" : negative ? "component_unavailable" : available === true ? "available" : "incomplete_listing_mapping",
-    components, conflicts: [], mapping_complete: listing.complete };
+    components, conflicts: [], mapping_complete: listing.complete,
+    ...(listing.applied_stock_rules?.length?{stock_corrections:listing.applied_stock_rules}:{}) };
 }
