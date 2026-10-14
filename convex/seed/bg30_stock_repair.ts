@@ -18,7 +18,7 @@ export const apply = internalMutation({
     // One-off bounded inventory audit, never used by a reactive client query.
     const items = await ctx.db.query("items").take(1000);
     if (items.length === 1000) throw Error("Inventory audit bound reached");
-    const batteries = items.filter(i => i.battery_type === "DJI RS BG30 grip battery");
+    const batteries = items.filter(i => i.kind === "power" && i.battery_type === "DJI RS BG30 grip battery");
     if (batteries.length !== 1) throw Error("BG30 physical identity is ambiguous");
     const battery = batteries[0];
     if (String(battery._id) !== "kn79kzg6j393vz9mjh7ghqx0gn86bz73" || battery.name_canonical !== "DJI gimbal battery" || battery.kind !== "power" || battery.qty !== 3 || battery.status !== "active" || battery.is_marketing_only) throw Error("BG30 inventory changed; review required");

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { resolveBundleMapping } from "./bundle_mapping";
 import { apply } from "../seed/bg30_stock_repair";
 
-const gimbal = { _id: "gimbal", name_canonical: "DJI RS3 Pro gimbal", kind: "gimbal", qty: 2 };
+const gimbal = { _id: "gimbal", name_canonical: "DJI RS3 Pro gimbal", kind: "gimbal", qty: 2, battery_type: "DJI RS BG30 grip battery" };
 const battery = {
   _id: "battery", name_canonical: "DJI gimbal battery", kind: "power", qty: 3,
   track_independent_stock: true,
