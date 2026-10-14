@@ -9,12 +9,24 @@ type Component = { item_id: string; qty: number };
 export function resolveListingComponents(items: Doc<"items">[], override: Component[] | undefined, primaryId?: string, quantity = 1, description?: string, context?: BundleMappingContext, listingName?: string) {
   const validQuantity = Number.isInteger(quantity) && quantity >= 1 && quantity <= 20;
   let parsed = description ? resolveBundleMapping(description, items, context) : null;
-  const rules=(items.find(i=>String(i._id)===primaryId)?.listing_stock_rules??[]).filter(rule=>{
+  const declaredIds=new Set(parsed?.components.map(c=>c.item_id));
+  const rules=items.flatMap(item=>(item.listing_stock_rules??[]).filter(rule=>
+    String(item._id)===primaryId || rule.apply_to_declared_component===true && parsed?.explicit && parsed.structured && declaredIds.has(String(item._id)) && item.status==="active" && item.is_marketing_only===false && item.qty>0
+  )).filter(rule=>{
     if(!listingName || !rule.source.trim() || rule.title_pattern.length>200)return false;
     try{return new RegExp(rule.title_pattern,"i").test(listingName);}catch{return false;}
   });
   const excluded=new Set(rules.flatMap(rule=>rule.excludes.map(String)));
   if(parsed && excluded.size)parsed={...parsed,components:parsed.components.filter(c=>!excluded.has(c.item_id))};
+  // Reviewed, offering-specific supplied accessories do not invent a separate
+  // stock pool. Only an exact recorded name and sufficient count cover a line.
+  const partKey=(name:string)=>name.toLowerCase().replace(/\s+/g," ").trim();
+  const suppliedPartsFromRules=rules.flatMap(rule=>rule.supplied_parts??[]);
+  if(parsed && suppliedPartsFromRules.length)parsed={...parsed,unmatched:parsed.unmatched.filter(line=>{
+    const m=line.match(/^(\d+)x (.+)$/);if(!m)return true;
+    const matches=suppliedPartsFromRules.filter(p=>partKey(p.name)===partKey(m[2]) && Number.isSafeInteger(p.qty) && p.qty>0);
+    return !matches.some(p=>p.qty>=Number(m[1]));
+  })};
   const suppliedDeclaration = override===undefined && parsed?.explicit && parsed.structured && primaryId && parsed.components.some(c=>c.item_id===primaryId)
     ? coverReviewedSuppliedParts(parsed,items,new Map(parsed.components.map(c=>[c.item_id,c.qty]))) : null;
   let rawDeclared = suppliedDeclaration?.declared ?? parsed;
@@ -100,5 +112,5 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
   const complete = !supplied.unresolved.length && coverageComplete && (override !== undefined || derive || !!titlePack) && validQuantity && components.every((c) => c.owned !== null);
   const owned = !validQuantity ? null : override?.length === 0 || ownership_blockers.length > 0 || components.some((c) => c.owned === false) ? false
     : !complete || !components.length ? null : true;
-  return { components, complete, owned, primary_camera, ownership_blockers, valid_quantity: validQuantity, supplied_part_bindings:[...(suppliedDeclaration?.bindings??[]),...(suppliedParts?.bindings??[])], declared_components_added, source:derive?"declared_contents":override === undefined ? "primary_item_only" : "listing_override", coverage, unresolved_default_adapters:supplied.unresolved };
+  return { components, complete, owned, primary_camera, ownership_blockers, valid_quantity: validQuantity, supplied_part_bindings:[...(suppliedDeclaration?.bindings??[]),...(suppliedParts?.bindings??[])], applied_stock_rules:rules.map(rule=>({source:rule.source,title_pattern:rule.title_pattern})), declared_components_added, source:derive?"declared_contents":override === undefined ? "primary_item_only" : "listing_override", coverage, unresolved_default_adapters:supplied.unresolved };
 }
