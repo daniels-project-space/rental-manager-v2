@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveBundleMapping } from "./bundle_mapping";
 import { apply } from "../seed/bg30_stock_repair";
+import { resolveListingComponents } from "./listing_components";
 
 const gimbal = { _id: "gimbal", name_canonical: "DJI RS3 Pro gimbal", kind: "gimbal", qty: 2, battery_type: "DJI RS BG30 grip battery" };
 const battery = {
@@ -52,6 +53,21 @@ describe("gimbal versus spare battery stock identity", () => {
     const light = { _id: "light", name_canonical: "Aputure MC light", kind: "light", qty: 1 };
     const result = resolveBundleMapping("Included in this kit:\n* 1x Sony A7S III with batteries\n* 1x battery-powered Aputure MC light", [...inventory, body, light]);
     expect(result.components.map(c => c.item_id)).toEqual(["body", "light"]);
+  });
+
+  it("does not hold BG30 spares for the actual RSC2 listing's wrong legacy master", () => {
+    const items = inventory.map(i => ({ ...i, status: "active", is_marketing_only: false }));
+    const result = resolveListingComponents(items as any, undefined, "battery", 1, "Included in this rental:\n1x Dji RSC 2 Gimbal\n1x Ronin Battery\n1x Carrying bag", undefined, "Dji RSC 2 Gimbal ronin stabilizer");
+    expect(result.complete).toBe(false);
+    expect(result.owned).toBeNull();
+    expect(result.components).toEqual([]);
+  });
+
+  it("preserves a reviewed spare listing override despite its legacy gimbal master", () => {
+    const items = inventory.map(i => ({ ...i, status: "active", is_marketing_only: false }));
+    const result = resolveListingComponents(items as any, [{item_id:"battery",qty:2}], "gimbal", 1, "Included in this kit:\n2x DJI RS3 Pro Gimbal Batteries", undefined, "DJI Ronin Gimbal Batteries | RS2 / RS3 Pro | Power Pack / Spares");
+    expect(result.complete).toBe(true);
+    expect(result.components.map(c => [c.item_id,c.units_per_listing,c.stock_required])).toEqual([["battery",2,true]]);
   });
 });
 

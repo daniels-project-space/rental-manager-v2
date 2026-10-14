@@ -2,7 +2,7 @@ import { powerListingPrimary } from "./power_listing_identity";
 import type { Doc } from "../_generated/dataModel";
 import { isStandardAccessory } from "./reservations/itemUnits";
 import { coverReviewedSuppliedParts } from "./supplied_parts_coverage";
-import { resolveBundleMapping, declaredRentalBlockers, type BundleMappingContext } from "./bundle_mapping";
+import { resolveBundleMapping, declaredRentalBlockers, matchesGimbalComponentRole, type BundleMappingContext } from "./bundle_mapping";
 import { withDefaultAdapters } from "./default_adapter_units";
 
 type Component = { item_id: string; qty: number };
@@ -22,6 +22,9 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
   // separate stock pool. Only exact generic parts explicitly recorded on the
   // named, owned master qualify; named or unrecorded equipment stays unknown.
   const primary=items.find(i=>String(i._id)===primaryId);
+  // Legacy lexical master links can point an entire gimbal at a spare battery.
+  // An unresolved body must stay unresolved, without holding unrelated spares.
+  const fallbackPrimary = primary && matchesGimbalComponentRole(listingName ?? "", primary) ? primaryId : undefined;
   if (rawDeclared?.explicit && rawDeclared.structured && primary?.kind==="lighting" && primary.status==="active" && primary.is_marketing_only===false && primary.qty>0 && rawDeclared.components.some(c=>c.item_id===primaryId)) {
     const partKey=(s:string)=>s.toLowerCase().replace(/^sturdy\s+/i,"").replace(/[^a-z0-9]+/g," ").trim();
     const knownParts=(primary.compatibility?.included_with_rental??[]).flatMap(line=>{
@@ -60,7 +63,7 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
   const powerTitleQty=(listingName??"").match(/(?:^|\b)(\d{1,2})\s*[x×](?:\b|\s)|\(\s*(\d{1,2})\s*[x×]\s*\)/i);
   const titlePack = powerTitlePrimary && powerTitleQty ? {item_id:powerTitlePrimary,qty:Number(powerTitleQty[1]??powerTitleQty[2])} : null;
   const quantities = new Map<string, number>();
-  for (const c of override ?? (derive ? rawDeclared!.components.map(c=>({item_id:c.item_id,qty:c.qty})) : titlePack ? [titlePack] : primaryId ? [{ item_id: primaryId, qty: 1 }] : []))
+  for (const c of override ?? (derive ? rawDeclared!.components.map(c=>({item_id:c.item_id,qty:c.qty})) : titlePack ? [titlePack] : fallbackPrimary ? [{ item_id: fallbackPrimary, qty: 1 }] : []))
     quantities.set(c.item_id, (quantities.get(c.item_id) ?? 0) + c.qty);
   const declared_components_added: Component[]=[];
   if (verifiedContents && (derive || !!override?.length)) for (const c of rawDeclared!.components) {
@@ -99,4 +102,3 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
     : !complete || !components.length ? null : true;
   return { components, complete, owned, primary_camera, ownership_blockers, valid_quantity: validQuantity, supplied_part_bindings:[...(suppliedDeclaration?.bindings??[]),...(suppliedParts?.bindings??[])], declared_components_added, source:derive?"declared_contents":override === undefined ? "primary_item_only" : "listing_override", coverage, unresolved_default_adapters:supplied.unresolved };
 }
-

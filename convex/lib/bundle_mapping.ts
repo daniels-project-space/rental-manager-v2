@@ -24,6 +24,16 @@ export type BundleMappingContext = {
 export function createBundleMappingContext(inventory: Inventory[]): BundleMappingContext {
   return { inventory, matches: new Map(), tokens: new Map(), rankedTokens: new Map(), lenses: new Map() };
 }
+/** Shared by declared components and legacy primary-item fallback. */
+export function matchesGimbalComponentRole(name: string, item: Pick<Inventory, "name_canonical">) {
+  const requestedObject = name.split(/\b(?:with|including|includes)\b/i)[0];
+  if (!/\b(?:gimbal|ronin|rs\s*[234](?:\s*pro)?|rsc\s*2|bg\s*30)\b/i.test(requestedObject)) return true;
+  const chargerRequest = /\bchargers?\b/i.test(requestedObject);
+  const batteryRequest = /\bbg\s*30\b/i.test(requestedObject) || /\bbatter(?:y|ies)\b/i.test(requestedObject) && !/\bbattery[- ]powered\b/i.test(requestedObject);
+  const charger = /\bchargers?\b/i.test(item.name_canonical);
+  const battery = /\bbatter(?:y|ies)\b/i.test(item.name_canonical) && !charger;
+  return chargerRequest ? charger : batteryRequest ? battery : !battery && !charger;
+}
 function componentIdentity(name:string,items:Inventory[],genericHardware:boolean,incidentalComponent:boolean,context?:BundleMappingContext) {
   const cachedTokens = (text: string) => {
     let result = context?.tokens.get(text);
@@ -39,16 +49,8 @@ function componentIdentity(name:string,items:Inventory[],genericHardware:boolean
   // A model name shared by a gimbal and its battery is not a stock identity.
   // Inspect the requested object, before supplied accessories ("with battery").
   // Apply this before both alias matching and the fuzzy fallback.
-  const requestedObject = identityName.split(/\b(?:with|including|includes)\b/i)[0];
-  const gimbalRequest = /\b(?:gimbal|ronin|rs\s*[234](?:\s*pro)?|bg\s*30)\b/i.test(requestedObject);
-  const chargerRequest = /\bchargers?\b/i.test(requestedObject);
-  const batteryRequest = /\bbatter(?:y|ies)\b/i.test(requestedObject) && !/\bbattery[- ]powered\b/i.test(requestedObject);
   const candidates = items.filter(item => {
-    if (gimbalRequest) {
-      const charger = /\bchargers?\b/i.test(item.name_canonical);
-      const battery = /\bbatter(?:y|ies)\b/i.test(item.name_canonical) && !charger;
-      if (chargerRequest ? !charger : batteryRequest ? !battery : battery || charger) return false;
-    }
+    if (!matchesGimbalComponentRole(identityName, item)) return false;
     const recordedMount = item.lens_mount?.toLowerCase().match(/\b(ef|rf|pl|e|l)\b/)?.[1]
     ?? item.name_canonical.toLowerCase().match(/\b(ef|rf|pl)\b/)?.[1];
     return !mount || !recordedMount || mount === recordedMount;
