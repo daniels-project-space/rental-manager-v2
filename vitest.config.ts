@@ -144,6 +144,7 @@ export default defineConfig({
       "convex/lib/item_name_match.test.ts",
       "convex/lib/platform_fallout.test.ts",
       "convex/lib/bundle_description_parse.test.ts",
+      "convex/lib/gimbal_battery_identity.test.ts",
       "convex/renter_bot_lab_order.test.ts",
       "convex/renter_bot_lab_order.atomic.test.ts",
       "convex/lib/renter_sent_proposal.test.ts",
