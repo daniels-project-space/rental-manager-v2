@@ -36,20 +36,25 @@ export const apply=internalMutation({args:{dry_run:v.optional(v.boolean())},hand
     const products=await ctx.db.query("hygglo_products").withIndex("by_account_product",q=>q.eq("accountSlug","diogo").eq("productId",target.product)).take(2);
     const product=products[0];
     if(products.length!==1||product.name!==target.title||!product.description?.includes("3x GoPro Hero 12 cameras")||!product.description.includes("2x Rode Wireless Pro microphone systems")||!product.description.toLowerCase().includes(target.part.toLowerCase()))throw Error("Exact offering contents changed; re-review required");
+    if(product.isMarketingOnlyOverride===true)throw Error("An operator marked this offering marketing-only; review required");
     const components=[{item_id:camera._id,qty:3},{item_id:audio._id,qty:1},...(target.rgb?[{item_id:lights._id,qty:3}]:[])];
     const overrides=await ctx.db.query("listing_resolution_override").withIndex("by_account_product",q=>q.eq("account_slug","diogo").eq("product_id",target.product)).take(2);
     if(overrides.length>1||overrides[0]&&(overrides[0].source!=="manual_audit"||overrides[0].note!==source||JSON.stringify(overrides[0].components)!==JSON.stringify(components)))throw Error("Existing manual mapping requires review");
     const resolved=resolveListingComponents(nextItems,components,product.masterItemId,1,product.description,undefined,product.name);
     if(!resolved.complete||!resolved.owned||resolved.components.length!==components.length||components.some(c=>resolved.components.find(r=>r.item_id===String(c.item_id))?.units_per_listing!==c.qty))throw Error("Owner-confirmed kit identity is not complete");
-    plans.push({product:target.product,components,existing:overrides[0]?._id});
+    plans.push({product:target.product,productRow:product._id,correctMarketing:product.isMarketingOnlyOverride!==false,components,existing:overrides[0]?._id});
   }
-  const metadataChanged=nextRules.length!==existingRules.length,inserted=plans.filter(p=>!p.existing).length;
-  if(args.dry_run!==false)return {preview:true,metadataChanged,inserted,plans,quantityOwned:{cameras:camera.qty,audioKits:audio.qty,panels:lights.qty}};
-  if(metadataChanged)await ctx.db.patch(camera._id,{listing_stock_rules:nextRules});
+  const rulesChanged=nextRules.length!==existingRules.length,marketingCorrected=plans.filter(p=>p.correctMarketing).length,metadataChanged=rulesChanged||marketingCorrected>0,inserted=plans.filter(p=>!p.existing).length;
+  if(args.dry_run!==false)return {preview:true,metadataChanged,marketingCorrected,inserted,plans,quantityOwned:{cameras:camera.qty,audioKits:audio.qty,panels:lights.qty}};
+  if(rulesChanged)await ctx.db.patch(camera._id,{listing_stock_rules:nextRules});
+  // Imported master-link guesses must not override these verified physical
+  // kits. The existing importer preserves this explicit internal correction.
+  for(const p of plans)if(p.correctMarketing)await ctx.db.patch(p.productRow,{isMarketingOnlyOverride:false,marketingOnlyUpdatedAt:Date.now()});
   for(const p of plans)if(!p.existing)await ctx.db.insert("listing_resolution_override",{account_slug:"diogo",product_id:p.product,components:p.components,note:source,source:"manual_audit",updated_at:Date.now()});
   if(metadataChanged||inserted){
-    await ctx.db.insert("audit_log",{table_name:"items/listing_resolution_override",actor:"owner-confirmed-catalogue-correction",op:"update",count:Number(metadataChanged)+inserted,source_file:"seed/gopro_interview_stock_repair.apply",note:source,ts:Date.now()});
+    await ctx.db.insert("audit_log",{table_name:"items/listing_resolution_override/hygglo_products",actor:"owner-confirmed-catalogue-correction",op:"update",count:Number(rulesChanged)+marketingCorrected+inserted,source_file:"seed/gopro_interview_stock_repair.apply",note:source,ts:Date.now()});
     const settings=await ctx.db.query("settings").first();if(settings)await ctx.db.patch(settings._id,{draft_epoch:(settings.draft_epoch??0)+1});
+    for(const account of ["diogo","diogo:pending","all","all:pending"]){const cache=await ctx.db.query("mv_reply_queue").withIndex("by_account",q=>q.eq("account",account)).first();if(cache)await ctx.db.delete(cache._id);}
   }
-  return {preview:false,metadataChanged,inserted,quantityOwned:{cameras:camera.qty,audioKits:audio.qty,panels:lights.qty}};
+  return {preview:false,metadataChanged,marketingCorrected,inserted,quantityOwned:{cameras:camera.qty,audioKits:audio.qty,panels:lights.qty}};
 }});

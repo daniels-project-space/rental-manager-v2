@@ -4,16 +4,18 @@ import { apply } from "../seed/gopro_interview_stock_repair";
 import { resolveListingComponents } from "./listing_components";
 import { resolveBundleMapping } from "./bundle_mapping";
 import { listingStock } from "./listing_inventory";
+import { upsertProductsBatch } from "../hygglo_products";
 
 const cameraId=data.items.find(i=>i.kind==="camera")!._id;
 const audioId=data.items.find(i=>i.kind==="audio")!._id;
 const lightId=data.items.find(i=>i.kind==="lighting")!._id;
 const serialise=(value:any):any=>Array.isArray(value)?value.map(serialise):value&&typeof value==="object"?Object.fromEntries(Object.keys(value).sort().map(k=>[k,serialise(value[k])])):value;
 function fixture(){
-  const rows:Record<string,any[]>={items:structuredClone(data.items),hygglo_products:structuredClone(data.products),listing_resolution_override:[],audit_log:[],settings:[{_id:"settings",draft_epoch:7}]};
+  const rows:Record<string,any[]>={items:structuredClone(data.items),hygglo_products:structuredClone(data.products).map(p=>({...p,_id:`product:${p.productId}`,isMarketingOnly:true})),listing_resolution_override:[],audit_log:[],settings:[{_id:"settings",draft_epoch:7}],mv_reply_queue:["diogo","diogo:pending","all","all:pending","leo"].map(account=>({_id:`cache:${account}`,account}))};
   const writes:string[]=[];
-  const db={query(table:string){let selected=rows[table];const q={withIndex(_name:string,fn:any){const index={eq(key:string,value:unknown){selected=selected.filter(x=>x[key]===value);return index;}};fn(index);return q;},async take(n:number){return selected.slice(0,n);},async first(){return selected[0]??null;}};return q;},async patch(id:string,change:any){const row=Object.values(rows).flat().find(x=>x._id===id);if(!row)throw Error("Unknown record");Object.assign(row,serialise(change));writes.push(`patch:${id}`);},async insert(table:string,change:any){const id=`${table}:${rows[table].length}`;rows[table].push({...serialise(change),_id:id});writes.push(`insert:${table}`);return id;}};
-  return {rows,writes,run:(dry_run?:boolean)=>(apply as any)._handler({db},{dry_run}),resolve:(productId:number,title?:string,description?:string)=>{
+  const db={query(table:string){let selected=rows[table];const q={withIndex(_name:string,fn:any){const index={eq(key:string,value:unknown){selected=selected.filter(x=>x[key]===value);return index;}};fn(index);return q;},async take(n:number){return selected.slice(0,n);},async first(){return selected[0]??null;}};return q;},async patch(id:string,change:any){const row=Object.values(rows).flat().find(x=>x._id===id);if(!row)throw Error("Unknown record");Object.assign(row,serialise(change));writes.push(`patch:${id}`);},async insert(table:string,change:any){const id=`${table}:${rows[table].length}`;rows[table].push({...serialise(change),_id:id});writes.push(`insert:${table}`);return id;},async delete(id:string){for(const table of Object.keys(rows))rows[table]=rows[table].filter(r=>r._id!==id);writes.push(`delete:${id}`);}};
+  const ctx={db,auth:{getUserIdentity:async()=>({issuer:"urn:rental-manager:deployment-service",subject:"rental-manager-service"})}};
+  return {rows,writes,ctx,run:(dry_run?:boolean)=>(apply as any)._handler(ctx,{dry_run}),resolve:(productId:number,title?:string,description?:string)=>{
     const product=rows.hygglo_products.find(x=>x.productId===productId),override=rows.listing_resolution_override.find(x=>x.product_id===productId);
     return resolveListingComponents(rows.items as any,override?.components,product.masterItemId,1,description??product.description,undefined,title??product.name);
   }};
@@ -23,7 +25,7 @@ describe("owner-confirmed GoPro interview stock",()=>{
   it("previews, applies both actual source kits and replays with no extra writes after object-key normalisation",async()=>{
     const f=fixture(),products=structuredClone(f.rows.hygglo_products),quantities=f.rows.items.map(i=>i.qty);
     expect(await f.run()).toMatchObject({preview:true,inserted:2,metadataChanged:true});expect(f.writes).toEqual([]);
-    expect(await f.run(false)).toMatchObject({preview:false,inserted:2,quantityOwned:{cameras:3,audioKits:2,panels:3}});
+    expect(await f.run(false)).toMatchObject({preview:false,inserted:2,marketingCorrected:2,quantityOwned:{cameras:3,audioKits:2,panels:3}});
     for(const id of [1173687,1173688]){
       const result=f.resolve(id);expect(result.complete).toBe(true);expect(result.owned).toBe(true);
       expect(result.components.find(c=>c.item_id===cameraId)?.units_per_listing).toBe(3);
@@ -32,9 +34,11 @@ describe("owner-confirmed GoPro interview stock",()=>{
       expect(result.components).toHaveLength(id===1173688?3:2);expect(result.coverage?.unresolved).toEqual([]);
       expect(result.applied_stock_rules[0].source).toContain("ONE RODE");
     }
-    expect(f.rows.hygglo_products).toEqual(products);expect(f.rows.items.map(i=>i.qty)).toEqual(quantities);
+    expect(f.rows.hygglo_products.map(({isMarketingOnlyOverride,marketingOnlyUpdatedAt,...p})=>p)).toEqual(products);
+    expect(f.rows.hygglo_products.every(p=>p.isMarketingOnlyOverride===false)).toBe(true);
+    expect(f.rows.mv_reply_queue.map(r=>r.account)).toEqual(["leo"]);expect(f.rows.items.map(i=>i.qty)).toEqual(quantities);
     expect(f.rows.settings[0].draft_epoch).toBe(8);const count=f.writes.length;
-    expect(await f.run(false)).toMatchObject({inserted:0,metadataChanged:false});expect(f.writes).toHaveLength(count);
+    expect(await f.run(false)).toMatchObject({inserted:0,metadataChanged:false,marketingCorrected:0});expect(f.writes).toHaveLength(count);
   });
 
   it.each(["inventory","description","manual mapping","offering rule"])("refuses changed %s before writing",async kind=>{
@@ -46,6 +50,17 @@ describe("owner-confirmed GoPro interview stock",()=>{
       const preview=await f.run();f.rows.items.find(i=>i._id===cameraId).listing_stock_rules=[{title_pattern:"^"+data.products[0].name.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"$",source:"Another rule",components:[],excludes:[]}];expect(preview.preview).toBe(true);
     }
     await expect(f.run(false)).rejects.toThrow();expect(f.writes).toEqual([]);
+  });
+  it("preserves an operator's deliberate marketing-only choice",async()=>{
+    const f=fixture();f.rows.hygglo_products[1].isMarketingOnlyOverride=true;
+    await expect(f.run(false)).rejects.toThrow("operator");expect(f.writes).toEqual([]);
+  });
+  it("keeps the physical-stock correction after the actual catalogue importer repeats its old automatic tag",async()=>{
+    const f=fixture();await f.run(false);
+    const products=data.products.map(p=>({...p,isMarketingOnly:true}));
+    expect(await (upsertProductsBatch as any)._handler(f.ctx,{products})).toMatchObject({updated:2,inserted:0});
+    expect(f.rows.hygglo_products.every(p=>p.isMarketingOnlyOverride===false&&p.isMarketingOnly===true)).toBe(true);
+    expect(await f.run(false)).toMatchObject({marketingCorrected:0,metadataChanged:false,inserted:0});
   });
 
   it("does not apply the owner correction to another kit title",async()=>{
