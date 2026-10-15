@@ -103,7 +103,8 @@ export function evaluateStockWindow(args: {
 
 type StockSources = { items:Doc<"items">[]; reservations:Doc<"reservations">[]; productIndex:Map<string,string>;overrides:OverrideMap;
   claims:Doc<"insurance_claims">[];blackouts:Doc<"owner_unavailability">[];vacations:Doc<"vacation_periods">[];
-  checkoutHolds?:Doc<"storefront_checkout_stock">["rows"];reservationUnits?:Map<string,Map<string,number>> };
+  checkoutHolds?:Doc<"storefront_checkout_stock">["rows"];reservationUnits?:Map<string,Map<string,number>>;
+  occupancyCache?:{signature?:unknown[];byItem:Map<string,Occupancy[]>} };
 export async function loadStockSources(ctx: QueryCtx):Promise<StockSources> {
   const [items, confirmed, ongoing, websitePending, index, overrides, claims, blackouts, vacations, checkoutStock] = await Promise.all([
     ctx.db.query("items").collect(),
@@ -125,7 +126,7 @@ export async function loadStockSources(ctx: QueryCtx):Promise<StockSources> {
     reservationUnits.set(String(r._id),reservationItemUnits(r,productIndex,allocation,items));
   const paidWebsite=new Set(reservations.filter(r=>r.account_slug==="dbcinema_web").map(r=>r.hygglo_order_id?.replace(/^dbcinema[_:-]/,"")));
   const checkoutHolds=(checkoutStock?.rows??[]).filter(h=>h.expiresAt>Date.now()&&!paidWebsite.has(h.bookingId));
-  return {checkoutHolds,items,reservations,productIndex,overrides:allocation,claims,blackouts,vacations,reservationUnits};
+  return {checkoutHolds,items,reservations,productIndex,overrides:allocation,claims,blackouts,vacations,reservationUnits,occupancyCache:{byItem:new Map()}};
 }
 
 export function resolveStockItem(name: string, items: Doc<"items">[]) {
@@ -210,7 +211,19 @@ export function stockOccupancyForItem(sources: Awaited<ReturnType<typeof loadSto
 }
 
 export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources>>, item: Doc<"items">, request: StockRequest) {
-  const occupancy = stockOccupancyForItem(sources,item,request);
+  // Project physical custody once per immutable query snapshot and item. A
+  // different conversation/date only changes exclusion and window evaluation.
+  // There is no cross-query cache or weaker stock freshness.
+  const cache=sources.occupancyCache;
+  let occupancy:Occupancy[];
+  if(cache){
+    const signature=[sources.reservations,sources.items,sources.productIndex,sources.overrides,sources.reservationUnits,sources.checkoutHolds];
+    if(!cache.signature||signature.some((value,index)=>value!==cache.signature![index])){cache.byItem.clear();cache.signature=signature;}
+    const id=String(item._id);
+    let all=cache.byItem.get(id);
+    if(!all){all=stockOccupancyForItem(sources,item,{...request,thread_id:undefined});cache.byItem.set(id,all);}
+    occupancy=request.thread_id?all.filter(row=>row.order_id!==request.thread_id&&row.order_id!==`checkout:${request.thread_id}`):all;
+  }else occupancy=stockOccupancyForItem(sources,item,request);
   const repair = sources.claims.filter(claimHoldsStock).reduce((n, c) => n + (c.repair_item_ids ?? []).filter((id) => id === item._id).length, 0);
   const result = evaluateStockWindow({ request, owned: item.status === "active" && !item.is_marketing_only && item.qty > 0, total: item.qty, repair, occupancy, blackouts: sources.blackouts.filter((b) => b.item_id === item._id), vacations: sources.vacations });
   return { ...result, ...(item.quantity_basis ? { quantity_basis: item.quantity_basis } : {}), item_name: item.name_canonical, item_id: item._id, kind: item.kind, owned: item.status === "active" && !item.is_marketing_only && item.qty > 0, is_marketing_only: item.is_marketing_only === true, buffer_minutes: TURNAROUND_BUFFER_MINUTES, source: "shared_inventory_confirmed_rentals", checked_at: Date.now() };

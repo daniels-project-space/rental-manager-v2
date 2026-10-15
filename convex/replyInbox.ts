@@ -373,6 +373,7 @@ type AvailCtx = {
   itemRows: Doc<"items">[];
   includePending: boolean;
   stockSources: Awaited<ReturnType<typeof loadStockSources>>;
+  mergedStockSources?:{base:Awaited<ReturnType<typeof loadStockSources>>;confirmed:Doc<"reservations">[];pending:Doc<"reservations">[];value:Awaited<ReturnType<typeof loadStockSources>>};
   listingQualification?: Map<string,{complete:boolean;owned:boolean|null;marketingOnly?:boolean;reason?:string}>;
   // PERF (2026-07-12): every reservation row the confirmed/pending collects
   // already paid for, keyed by hygglo_order_id — built from the RAW collect
@@ -474,7 +475,10 @@ export function computeAvailability(reservation:BotBooking|null,av?:AvailCtx,req
   const checked_at=Date.now(),include_pending=av?.includePending??false;
   const lines=requested??buildRichItems(reservation);
   const start=window?.start_date??reservation?.pickup_date??reservation?.start_date,end=window?.end_date??reservation?.return_date??reservation?.end_date;
-  const sources=av?{...av.stockSources,reservations:[...av.confirmed,...av.pending.filter(row=>!av.confirmed.some(other=>other._id===row._id))]}:null;
+  if(av&&(!av.mergedStockSources||av.mergedStockSources.base!==av.stockSources||av.mergedStockSources.confirmed!==av.confirmed||av.mergedStockSources.pending!==av.pending)){
+    av.mergedStockSources={base:av.stockSources,confirmed:av.confirmed,pending:av.pending,value:{...av.stockSources,reservations:[...av.confirmed,...av.pending.filter(row=>!av.confirmed.some(other=>other._id===row._id))],occupancyCache:{byItem:new Map()}}};
+  }
+  const sources=av?.mergedStockSources?.value??null;
   const resolveLine=(line:RichItem)=>{
     if(!av||!Number.isSafeInteger(line.qty)||line.qty<1)return new Map<string,number>();
     const slug=reservation?.account_slug??accountSlug??"";
