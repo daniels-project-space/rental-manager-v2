@@ -129,39 +129,17 @@ crons.weekly(
 // Trigger.dev keeps an independent low-frequency backup cron (12/day, still
 // self-gating) so a Convex cron outage cannot silently stop the poller.
 //
-// ⚠️ REGISTRATION INTENTIONALLY COMMENTED OUT — NOT YET ENABLED (2026-08-22).
-//
-// `convex/poll_clock.ts` is complete, typechecked and live on the deployment,
-// but it cannot enqueue anything yet: BOTH `POLL_TRIGGER_URL` and
-// `POLL_TRIGGER_SECRET` are unset in the Convex deployment AND
-// `POLL_TRIGGER_SECRET` is unset in Vercel production, so `/api/poll-hygglo`
-// currently fails closed with 503 `server_missing_POLL_TRIGGER_SECRET` for
-// every caller. (Same root cause silently disables the staleness auto-heal
-// `enqueueRecoveryPoll` in convex/poller_health.ts — that "L3" layer has been
-// dead, not merely unused.)
-//
-// Enabling this cron before provisioning those vars just logs an enqueue
-// failure every 2 minutes; enabling it AFTER provisioning but BEFORE the
-// Trigger.dev backup cron ships would double-poll (clock + the existing
-// 768/day declarative cron).
-//
-// TO ENABLE, in this order:
-//   1. Set POLL_TRIGGER_SECRET in Vercel production + the Convex deployment
-//      (same value), and POLL_TRIGGER_URL in Convex
-//      (https://<prod-domain>/api/poll-hygglo).
-//   2. Deploy Vercel so the route sees the secret and the new
-//      {mode, source} body handling.
-//   3. Uncomment the registration below and deploy Convex.
-//   4. Switch src/trigger/poll-hygglo.ts to HYGGLO_POLL_BACKUP_CRON and run
-//      `trigger deploy` — this is what actually removes the ~768 billed
-//      runs/day. Steps 3 and 4 must ship together.
-//
-// crons.interval(
-//   "hygglo poll clock",
-//   { minutes: 2 },
-//   internal.poll_clock.tickPollClock,
-//   {},
-// );
+// One primary clock decides when a poll is due from Convex local state.
+// Production requires POLL_TRIGGER_URL in Convex and the same
+// POLL_TRIGGER_SECRET in Convex and Vercel. Keep Trigger.dev on its
+// low-frequency backup cadence; deploy both schedules together to avoid
+// duplicate polling.
+crons.interval(
+  "hygglo poll clock",
+  { minutes: 2 },
+  internal.poll_clock.tickPollClock,
+  {},
+);
 
 // Demote stale-confirmed rows (Hygglo dropped them from every filter) to
 // completed so they stop appearing as ongoing/overdue in the Active widget.
