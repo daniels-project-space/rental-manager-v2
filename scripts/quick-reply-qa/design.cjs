@@ -181,7 +181,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       );
     }
     const handoffSummary = await ev(
-      `(()=>{const rail=document.querySelector('[class*="handoffRail"]');const heading=rail.querySelector('[class*="handoffIntro"]');return {headingVisible:getComputedStyle(heading).display!=='none',nameCount:rail.querySelectorAll('[class*="handoffRenter"]').length,cardCount:rail.querySelectorAll('button').length};})()`,
+      `(()=>{const rail=document.querySelector('[class*="handoffRail"]');const heading=rail.querySelector('[class*="handoffIntro"]');return {headingVisible:getComputedStyle(heading).display!=='none',nameCount:[...rail.querySelectorAll('[class*="handoffRenter"]')].filter(n=>n.getBoundingClientRect().height>0).length,cardCount:rail.querySelectorAll('button').length};})()`,
     );
     assert(
       handoffSummary.headingVisible,

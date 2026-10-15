@@ -4924,11 +4924,11 @@ export function ReplyInbox() {
                             }}
                           />
                         </div>
-                        <div>
+                        <div className={styles.handoffDetails}>
                           <strong className={styles.handoffRenter}>
                             {h.renter_name}
                           </strong>
-                          <span
+                          <div className={styles.handoffTiming}><span
                             className={
                               h.kind === "pickup"
                                 ? styles.pickup
@@ -4941,7 +4941,7 @@ export function ReplyInbox() {
                               : h.minutes_away > 0
                                 ? `${h.minutes_away}m`
                                 : `${-h.minutes_away}m ago`}
-                          </span>
+                          </span><time>{h.time}</time></div>
                           <div className={styles.handoffIdentity}>
                             {row?.renter_image_url && (
                               <img
