@@ -28,9 +28,9 @@ function isProtectivePackaging(name:string):boolean {
   // Match the whole remaining line: mixed equipment must remain unresolved.
   const packaging = name.replace(/\s+for (?:safe transport|safe handling|sensor protection)$/i, "");
   return PROTECTIVE_PACKAGING_RE.test(packaging) ||
-    /^(?:protective\s+)?kit\s+bags?$/i.test(packaging) ||
+    /^(?:protective\s+)?(?:camera|kit)\s+bags?$/i.test(packaging) ||
     /^(?:camera|kit) bags?$|^lens caps? for (?:both|the) lenses$|^(?:Canon\s+)?[a-z]+-?\d+[a-z]*\s+lens hood$/i.test(packaging) ||
-    /^(?:original\s+)?(?:[a-z0-9-]+\s+)?camera straps?$|^protective transport cover$/i.test(packaging) ||
+    /^(?:original\s+)?(?:[a-z0-9-]+\s+)?camera straps?$|^protective transport (?:cover|case)$/i.test(packaging) ||
     /^(?:(?:protective|hard)\s+)?(?:lens\s+)?(?:pouch(?:es)?(?:\/cases?)?|cases?(?:\/pouch(?:es)?)?)$/i.test(packaging) ||
     /\bcarry(?:ing)?\s+(?:case|bag)\s*$/i.test(name) && !/\b(?:with|and|plus)\b|[+]/i.test(name);
 }
@@ -44,14 +44,20 @@ export function extractComponents(desc: string): {
   // Preserve structural Unicode before the ASCII cleanup. Removing bullets
   // here made every real “• 1× …” kit look unstructured to callers.
   // Keep a real bullet list separate from the prose paragraph that follows it.
-  const lines = desc.split(/\r?\n/);
+  const lines = desc.split(/\r?\n/).map(line => {
+    // A standalone heading describes the set, not an extra quantity of it.
+    // Remove presentation marks only for heading recognition; preserve inline contents.
+    const heading = line.trim().replace(/^[^a-z0-9]+/i, "").replace(/\*\*/g, "");
+    return /^(?:included in (?:this|the)\b[^:•‣●]*\b(?:set|kit|rental|bundle|package)|in (?:this|the) (?:kit|rental|bundle|package)|what['’]?s included|contents)\s*:?$/i.test(heading)
+      ? "Contents:" : line;
+  });
   let contents = false, bullets = false, end = lines.length;
   for (const [index, line] of lines.entries()) {
     const text = line.trim();
     if (/^(?:in (?:this|the) (?:kit|rental|bundle|package)(?:,\s*you['’]ll find[^:]*)?|(?:what'?s|whats) included|contents)\s*:/i.test(text)) { contents = true; continue; }
     if (!contents || !text) continue;
     if (/^(?:[-*•]\s+|\d{1,2}\s*[x×]\s+)/.test(text)) { bullets = true; continue; }
-    if (bullets && !/^(?:camera|lenses?|media|audio|support|accessories|lighting|power)(?:\s*\([^)]*\))?\s*:$/i.test(text)) { end = index; break; }
+    if (bullets && !/^(?:cameras?|lens(?:es)?|media|audio|support|accessories|lighting|power|mounting)(?:\s*\([^)]*\))?\s*:$/i.test(text)) { end = index; break; }
   }
   const clean = lines.slice(0,end).join("\n").replace(/\r?\n+/g, " * ").replace(/[•‣●]/g, " * ").replace(/×/g, "x")
     .replace(/(\d)\s*[–—−]\s*(?=\d)/g, "$1-")
@@ -85,8 +91,8 @@ export function extractComponents(desc: string): {
     /\bDirect Add-?on\b|\bAdd-?on direct\b|\bAdd-?ons?\s*:|\bADD-?ONS\b|\bOptional (?:extras?|add-?ons?|upgrades?)\b|\bUpgrades?\s*:|\bI also have\b|\bI also offer\b|\bBeyond this kit\b|\bAbout My Service\b|\bI\'ve been providing\b/i,
   )[0];
   // Section labels ("Camera:", "Lenses (Anamorphic):", "Media:") are headings.
-  body = body.replace(/(?:\b\d{1,2}\s*x?\s+)?\b(cameras?|lens(?:es)?|media|audio|support|accessories|lighting|power)\s*\([^)]*\)\s*:/gi, " ");
-  body = body.replace(/(?:\b\d{1,2}\s*x?\s+)?\b(cameras?|lens(?:es)?|media|audio|support|accessories|lighting|power)\s*:/gi, " ");
+  body = body.replace(/(?:\b\d{1,2}\s*x?\s+)?\b(cameras?|lens(?:es)?|media|audio|support|accessories|lighting|power|mounting)\s*\([^)]*\)\s*:/gi, " ");
+  body = body.replace(/(?:\b\d{1,2}\s*x?\s+)?\b(cameras?|lens(?:es)?|media|audio|support|accessories|lighting|power|mounting)\s*:/gi, " ");
 
   // Common misspellings in the real listings — normalise BEFORE matching, so a
   // genuinely-owned component isn't dropped for a typo. Live: "1x 24-105mm f4

@@ -71,7 +71,7 @@ describe("Quick Reply full-basket shared stock checks", () => {
     ).toMatchObject({
       status: "unknown",
       items: [
-        { available: null, reason: "Kit contents need inventory review" },
+        { available: null, reason: "Not bookable · unresolved kit: 1x Mystery cinema lens" },
       ],
     });
   });
@@ -233,7 +233,14 @@ describe("marketing-only listing availability",()=>{
     const ctx={db:{query:(table:string)=>{const q={withIndex:()=>q,first:async()=>table==="hygglo_products"?product:null};return q;}}} as any;
     const rental={...booking,hygglo_items:[{name:"ViewSonic projector",product_id:7,qty:1}]};
     await extendAvailabilityMappings(ctx,av,[rental]);
-    expect(computeAvailability(rental,av,[{...line("ViewSonic projector"),product_id:7}])).toMatchObject({status:"conflict",stock_rules_version:5,items:[{available:false,reason:"Marketing-only listing · not stocked for hire"}]});
+    expect(computeAvailability(rental,av,[{...line("ViewSonic projector"),product_id:7}])).toMatchObject({status:"conflict",stock_rules_version:6,items:[{available:false,reason:"Marketing-only listing · not stocked for hire"}]});
     expect(computeAvailability({...rental,start_date:undefined,end_date:undefined},av,[{...line("ViewSonic projector"),product_id:7}])).toMatchObject({status:"conflict"});
   });
+});
+
+
+it("reports explicitly non-owned listings as unavailable even before dates are supplied",()=>{
+  const av=context([gear("a","Camera")]);
+  av.listingQualification=new Map([["fixture#7",{complete:true,owned:false}]]);
+  expect(computeAvailability({account_slug:"fixture"} as any,av,[{...line("Camera"),product_id:7}])).toMatchObject({status:"conflict",items:[{available:false}]});
 });

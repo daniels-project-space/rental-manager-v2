@@ -469,3 +469,47 @@ it("does not discard the alternative to an individually tracked camera",()=>{
  const body={_id:"fx3",name_canonical:"Sony FX3",kind:"camera",unit_kind:"unit",status:"active",is_marketing_only:false,qty:4};
  const r=resolveListingComponents([body] as any,[{item_id:body._id,qty:1}],body._id,1,"Included in this rental: • 1x Sony FX3 (or Sony FX6)");expect(r.complete).toBe(false);expect(r.coverage?.unresolved).toHaveLength(1);
 });
+
+
+describe("live inventory resolution boundaries", () => {
+  it("does not count the number in a standalone kit heading twice", () => {
+    expect(extractComponents(`📦 Included in this 3× DJI Osmo Action 5 Pro Set
+Cameras:
+• 3× DJI Osmo Action 5 Pro cameras
+Mounting:
+• 3× Suction cups
+Power:
+• 3× camera batteries
+This kit is also compatible with 2× optional tripods.`).components).toEqual([
+      {qty:3,name:"DJI Osmo Action 5 Pro cameras"},
+      {qty:3,name:"Suction cups"},
+      {qty:3,name:"camera batteries"},
+    ]);
+  });
+  it("ends markdown contents before compatibility prose", () => {
+    expect(extractComponents(`**In this kit:**
+* 1× Sony FX3
+* Protective camera bag
+* Protective transport case
+The card is compatible with Sony FX6 and 2× A7SIII cameras.`).components).toEqual([{qty:1,name:"Sony FX3"}]);
+  });
+  it("preserves inline quantities and mixed packaging/equipment lines", () => {
+    expect(extractComponents("Included in this rental: • 1× Sony FX3 • 2× Sony GM 24-70mm f2.8").components).toHaveLength(2);
+    expect(extractComponents("Contents: • 1× protective transport case with Sony FX3").components).toHaveLength(1);
+  });
+  it("resolves cosmetic lens labels without substituting aperture or maker", () => {
+    const items:any[]=[{_id:"lens",name_canonical:"Sony GM 24-70mm f2.8",kind:"lens",qty:4,status:"active",is_marketing_only:false}];
+    expect(resolveBundleMapping("Contents: • 1× professional Sony 24-70mm f2.8 GM (G Master) lens",items).components[0]?.item_id).toBe("lens");
+    expect(resolveBundleMapping("Contents: • 1× professional Sony 24-70mm f4 GM lens",items).unmatched).toHaveLength(1);
+  });
+  it("ignores a sensor comparison without reserving the compared camera", () => {
+    const items:any[]=[{_id:"fx3",name_canonical:"Sony FX3",kind:"camera",qty:2,status:"active",is_marketing_only:false},{_id:"a7",name_canonical:"Sony A7SIII",kind:"camera",qty:2,status:"active",is_marketing_only:false}];
+    expect(resolveBundleMapping("Contents: • 1× Sony FX3 Full-Frame Digital Cinema Camera (featuring the same sensor as the A7SIII, capable of 4K120fps recording)",items).components.map(c=>c.item_id)).toEqual(["fx3"]);
+  });
+  it("uses explicitly recorded panel stands without borrowing independent stock", () => {
+    const items:any[]=[{_id:"panel",name_canonical:"LED light panels RGB",aliases:["RGB LED Light Panels"],kind:"lighting",qty:3,status:"active",is_marketing_only:false,compatibility:{included_with_rental:["1x stand"]}}];
+    const resolved=resolveListingComponents(items,[{item_id:"panel",qty:2}],"panel",1,"Contents: • 2× RGB LED Light Panels • 2× Light Stands");
+    expect(resolved.complete).toBe(true);
+    expect(resolved.components).toMatchObject([{item_id:"panel",units_per_listing:2}]);
+  });
+});

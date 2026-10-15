@@ -354,7 +354,7 @@ type ItemAvail = {
 type TileAvailability = {
   status: "available" | "conflict" | "unknown";
   include_pending: boolean;
-  stock_rules_version: 5;
+  stock_rules_version: 6;
   reason?: string;
   checked_at?: number;
   items: ItemAvail[];
@@ -370,7 +370,7 @@ type AvailCtx = {
   itemRows: Doc<"items">[];
   includePending: boolean;
   stockSources: Awaited<ReturnType<typeof loadStockSources>>;
-  listingQualification?: Map<string,{complete:boolean;owned:boolean|null;marketingOnly?:boolean}>;
+  listingQualification?: Map<string,{complete:boolean;owned:boolean|null;marketingOnly?:boolean;reason?:string}>;
   // PERF (2026-07-12): every reservation row the confirmed/pending collects
   // already paid for, keyed by hygglo_order_id — built from the RAW collect
   // results (before the order_step/is_obsolete filters) so RETURNED/obsolete
@@ -447,12 +447,20 @@ export async function extendAvailabilityMappings(ctx:QueryCtx,av:AvailCtx,rental
   ]);
   const productRows=products.filter((row):row is Doc<"hygglo_products">=>row!==null),listingRows=listings.filter((row):row is Doc<"online_listings">=>row!==null);
   const overrides=canonicalListingAllocation(av.itemRows,seed,productRows,listingRows);
-  const qualification=av.listingQualification??new Map<string,{complete:boolean;owned:boolean|null;marketingOnly?:boolean}>(),context=createBundleMappingContext(av.itemRows);
+  const qualification=av.listingQualification??new Map<string,{complete:boolean;owned:boolean|null;marketingOnly?:boolean;reason?:string}>(),context=createBundleMappingContext(av.itemRows);
   keys.forEach((key,index)=>{
     const id=`${key.account}#${key.productId}`,product=products[index],listing=listings[index];
     const resolved=resolveListingComponents(av.itemRows,av.overrideMap.get(id),product?.masterItemId?String(product.masterItemId):undefined,1,product?.description??listing?.description,context,product?.name??listing?.name);
     const marketingOnly=(product?.isMarketingOnlyOverride ?? product?.isMarketingOnly)===true;
-    qualification.set(id,{complete:resolved.complete,owned:marketingOnly?false:resolved.owned,marketingOnly});
+    const unresolved = [
+      ...(resolved.coverage?.unresolved ?? []),
+      ...(resolved.coverage?.missing ?? []).map(c=>`${c.qty}× ${c.name ?? "unmapped component"}`),
+      ...resolved.unresolved_default_adapters,
+    ];
+    const reason = !resolved.complete ? unresolved.length
+      ? `Not bookable · unresolved kit: ${unresolved.slice(0,3).join("; ")}`
+      : "Not bookable · no verified complete inventory mapping" : undefined;
+    qualification.set(id,{complete:resolved.complete,owned:marketingOnly?false:resolved.owned,marketingOnly,...(reason?{reason}:{})});
   });
   av.listingQualification=qualification;
   av.overrideMap=overrides;
@@ -489,25 +497,25 @@ export function computeAvailability(reservation:BotBooking|null,av?:AvailCtx,req
   const items:ItemAvail[]=lines.map((line,item_index)=>{
     const unknown=(reason:string):ItemAvail=>({name:line.name,requested:line.qty??1,total_units:0,booked:0,pending:0,free:0,available:null,reason,item_index});
     if(!av||!sources)return unknown("Inventory is loading");
-    if(!Number.isSafeInteger(line.qty)||line.qty<1)return unknown("Requested quantity needs review");
+    if(!Number.isSafeInteger(line.qty)||line.qty<1)return unknown("Not bookable · invalid requested quantity");
     const listing=line.product_id!=null?av.listingQualification?.get(`${reservation?.account_slug??""}#${line.product_id}`):undefined;
     if(listing?.marketingOnly)return {...unknown("Marketing-only listing · not stocked for hire"),available:false};
-    if(!start||!end)return unknown("Dates needed to check stock");
     if(listing?.owned===false)return {...unknown("Requested listing includes gear not available for hire"),available:false};
-    if(listing&& !listing.complete)return unknown("Kit contents need inventory review");
+    if(!start||!end)return unknown("Dates needed to check stock");
+    if(listing&& !listing.complete)return unknown(listing.reason ?? "Not bookable · no verified complete inventory mapping");
     const units=resolved[item_index];
-    if(!units.size)return unknown("Gear needs an inventory mapping");
+    if(!units.size)return unknown("Not bookable · no exact inventory mapping");
     const components=[...units];
     const results=components.map(([id])=>checked.get(id)??null);
     const unavailable=results.some(result=>result?.available===false);
     const complete=results.every(result=>result?.available===true);
     const free=Math.min(...results.map((result,index)=>result?.free_units!=null?Math.floor(result.free_units/(components[index][1]/line.qty)):0));
     const total=Math.min(...results.map((result,index)=>result?Math.floor(result.total_units/(components[index][1]/line.qty)):0));
-    return {name:line.name,requested:line.qty,total_units:total,booked:Math.max(0,total-free),pending:0,free,available:unavailable?false:complete?true:null,item_index,...(!complete?{reason:unavailable?"Requested gear or supplied component is unavailable":"Stock check needs review"}:{})};
+    return {name:line.name,requested:line.qty,total_units:total,booked:Math.max(0,total-free),pending:0,free,available:unavailable?false:complete?true:null,item_index,...(!complete?{reason:unavailable?"Requested gear or supplied component is unavailable":"Not bookable · no complete stock result"}:{})};
   });
   const conflict=items.some(item=>item.available===false);
   const complete=items.length>0&&items.every(item=>item.available===true);
-  return {status:conflict?"conflict":complete?"available":"unknown",stock_rules_version:5,include_pending,checked_at,items,...(!conflict&&!complete?{reason:items.find(item=>item.available===null)?.reason??"No requested gear to check"}:{})};
+  return {status:conflict?"conflict":complete?"available":"unknown",stock_rules_version:6,include_pending,checked_at,items,...(!conflict&&!complete?{reason:items.find(item=>item.available===null)?.reason??"No requested gear to check"}:{})};
 }
 
 

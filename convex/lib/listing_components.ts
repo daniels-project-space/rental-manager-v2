@@ -38,10 +38,10 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
   // An unresolved body must stay unresolved, without holding unrelated spares.
   const fallbackPrimary = primary && matchesGimbalComponentRole(listingName ?? "", primary) ? primaryId : undefined;
   if (rawDeclared?.explicit && rawDeclared.structured && primary?.kind==="lighting" && primary.status==="active" && primary.is_marketing_only===false && primary.qty>0 && rawDeclared.components.some(c=>c.item_id===primaryId)) {
-    const partKey=(s:string)=>s.toLowerCase().replace(/^sturdy\s+/i,"").replace(/[^a-z0-9]+/g," ").trim();
+    const partKey=(s:string)=>s.toLowerCase().replace(/^sturdy\s+/i,"").replace(/[^a-z0-9]+/g," ").trim().replace(/^(?:light )?stands?$/, "light stand");
     const knownParts=(primary.compatibility?.included_with_rental??[]).flatMap(line=>{
       const m=line.match(/^(\d+)\s*[x×]\s+(.+)$/i);
-      return m&&/^(?:light stand|sandbag|gel kit|reflector)$/i.test(m[2].trim())?[{key:partKey(m[2]),qty:Number(m[1])}]:[];
+      return m&&/^(?:(?:light )?stands?|sandbag|gel kit|reflector)$/i.test(m[2].trim())?[{key:partKey(m[2]),qty:Number(m[1])}]:[];
     });
     const components=rawDeclared.components.map(c=>({...c}));
     const unmatched=rawDeclared.unmatched.filter(line=>{

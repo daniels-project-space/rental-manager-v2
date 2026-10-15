@@ -42,8 +42,9 @@ function componentIdentity(name:string,items:Inventory[],genericHardware:boolean
     return result;
   };
   // An integrated tripod head is part of that tripod, not an extra standalone head.
-  const identityName = /\btripod\b.*\bwith\s+(?:an?\s+)?(?:integrated\s+)?fluid\s+head\b/i.test(name)
-    ? name.split(/\bwith\b/i)[0].replace(/\bheavy[- ]duty\b/ig,"") : name;
+  const modelName = name.replace(/\s*\((?:featuring|capable of|same sensor as)\b[^)]*\)/gi, "");
+  const identityName = /\btripod\b.*\bwith\s+(?:an?\s+)?(?:integrated\s+)?fluid\s+head\b/i.test(modelName)
+    ? modelName.split(/\bwith\b/i)[0].replace(/\bheavy[- ]duty\b/ig,"") : modelName;
   const lineTokens = new Set(tokens(identityName));
   const explicitMount = name.match(/\bCanon\s+(EF|RF)\b|\b(EF|RF|PL|E|L)[ -]?mount\b/i);
   const mount = (explicitMount?.[1] ?? explicitMount?.[2])?.toLowerCase();
