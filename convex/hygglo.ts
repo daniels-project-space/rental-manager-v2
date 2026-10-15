@@ -1459,25 +1459,28 @@ export const upsertOrdersAsReservationsBatch = mutation({
     //  • revenue MVs: only when realised revenue actually changed (pickups) —
     //    sparse, so the daily-only staleness that hid diogo's £18 can't recur.
     const pendingChanged = anyTransitionedToObsolete || allNotify.length > 0;
-    // 2026-07-13 cost audit: any real row change (not just obsolete/notify
-    // transitions) now converges the "all" stats row, because the chat
-    // surfaces read the MV instead of running the ~4.4MB live compute per
-    // message (dashboard-tools.ts fetchDrawer). Scope "all" only — the
-    // account drill-down rows are staleness-tolerant by design (6h cron)
-    // and the old force+both kick rebuilt all 5 slugs (~5× the reads).
+    // 2026-07-13 cost audit: any real row change can converge the "all" stats
+    // row, because chat surfaces read the MV instead of running the live
+    // compute per message. Scope "all" only — account drill-down rows are
+    // staleness-tolerant by design (6h cron).
     const anyRowChanged = results.some((r) => r.action !== "skipped");
     if (pendingChanged || anyRevenueRealized || anyRowChanged) {
       try {
         if (anyRowChanged || pendingChanged) {
-          // Debounce: the poller sends several batches per cycle and each can
-          // land changes — without this guard every batch forced its own
-          // ~4.4MB "all" rebuild. One rebuild per 5 min is plenty (the cron
-          // and the next cycle's kick cover the rest).
+          // The broad dashboard compute reads ~15MB from the database per run.
+          // New requests, confirmations and cancellations keep the fast
+          // 5-minute convergence needed by the pending lists. Ordinary field
+          // changes use the existing hourly dashboard cadence; repeatedly
+          // rebuilding the full snapshot for them added several costly runs
+          // per hour without improving the live Active Rentals / Monthly cards.
           const mvAll = await ctx.db
             .query("mv_stats_drawer")
             .withIndex("by_account", (q) => q.eq("account", "all"))
             .first();
-          if (!mvAll || Date.now() - mvAll.generatedAt > 5 * 60 * 1000) {
+          const minRefreshIntervalMs = pendingChanged
+            ? 5 * 60 * 1000
+            : 60 * 60 * 1000;
+          if (!mvAll || Date.now() - mvAll.generatedAt > minRefreshIntervalMs) {
             await ctx.scheduler.runAfter(0, internal.mv.stats_drawer.refresh, {
               force: true,
               scope: "all",
