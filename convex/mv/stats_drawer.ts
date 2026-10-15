@@ -29,10 +29,16 @@ import { londonTime } from "../lib/effectiveDates";
 export const refresh = internalAction({
   args: {
     force: v.optional(v.boolean()),
-    scope: v.optional(v.union(v.literal("all"), v.literal("accounts"), v.literal("both"))),
+    scope: v.optional(v.union(
+      v.literal("all"),
+      v.literal("accounts"),
+      v.literal("both"),
+      v.literal("all_and_account"),
+    )),
+    accountSlug: v.optional(v.string()),
   },
-  handler: async (ctx, { force, scope }): Promise<{ ok: true; written: number; durationMs: number; skipped?: number }> => {
-    return await refreshAll(ctx, force, scope ?? "both");
+  handler: async (ctx, { force, scope, accountSlug }): Promise<{ ok: true; written: number; durationMs: number; skipped?: number }> => {
+    return await refreshAll(ctx, force, scope ?? "both", accountSlug);
   },
 });
 
@@ -59,18 +65,24 @@ export async function refreshAll(
   // "all" default view hourly; a separate 6h cron refreshes the 4 per-account rows
   // (drill-down views tolerate ≤6h staleness; their live-critical fields — claim
   // stage, scanner, conflicts, insurance — are already read-time overlays).
-  scope: "all" | "accounts" | "both" = "both",
+  scope: "all" | "accounts" | "both" | "all_and_account" = "both",
+  accountSlug?: string,
 ): Promise<{ ok: true; written: number; durationMs: number; skipped: number }> {
   const startedAt = Date.now();
   const allSlugs: Array<{ key: string; arg: string | null }> = [
     { key: ACCOUNT_ALL, arg: null },
     ...ACCOUNTS.map((s) => ({ key: s, arg: s })),
   ];
-  const slugs =
-    scope === "all"
-      ? allSlugs.filter((s) => s.key === ACCOUNT_ALL)
-      : scope === "accounts"
-        ? allSlugs.filter((s) => s.key !== ACCOUNT_ALL)
+  if (scope === "all_and_account" &&
+      (!accountSlug || !allSlugs.some((s) => s.key === accountSlug && s.key !== ACCOUNT_ALL))) {
+    throw new Error("all_and_account refresh needs a configured non-all accountSlug");
+  }
+  const slugs = scope === "all"
+    ? allSlugs.filter((s) => s.key === ACCOUNT_ALL)
+    : scope === "accounts"
+      ? allSlugs.filter((s) => s.key !== ACCOUNT_ALL)
+      : scope === "all_and_account"
+        ? allSlugs.filter((s) => s.key === ACCOUNT_ALL || s.key === accountSlug)
         : allSlugs;
 
   // Read the prior generatedAt for each row. Use the lowest across accounts
