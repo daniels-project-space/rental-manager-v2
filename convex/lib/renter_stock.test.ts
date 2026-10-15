@@ -193,3 +193,29 @@ describe("website temporary holds in the same physical stock pool",()=>{
   sources.checkoutHolds[0].expiresAt=Date.now()-1;expect(stockForItem(sources,item,{...request,item_name:item.name_canonical}).available).toBe(true);
  });
 });
+
+describe('query-local physical occupancy reuse',()=>{
+ const item:any={_id:'camera',name_canonical:'Sony FX3',kind:'camera',qty:3,status:'active',is_marketing_only:false};
+ const booking=(id:string,qty=1)=>({_id:id,hygglo_order_id:id,account_slug:'fixture',status:'confirmed',start_date:'2026-10-02',end_date:'2026-10-04',resolved_items:[{item_id:'camera',qty}]});
+ const source=()=>({items:[item],reservations:[booking('one'),booking('two')],productIndex:new Map(),overrides:new Map(),claims:[],blackouts:[],vacations:[],occupancyCache:{byItem:new Map()}} as any);
+ it('matches uncached stock for different requester exclusions and date windows while reusing one physical timeline',()=>{
+  const sources=source();
+  for(const thread_id of [undefined,'one','two','outside'])for(const start_date of ['2026-10-02','2026-10-08']){
+   const input={...request,thread_id,start_date,end_date:start_date};
+   const actual=stockForItem(sources,item,input),expected=stockForItem({...sources,occupancyCache:undefined},item,input);
+   expect({...actual,checked_at:0}).toEqual({...expected,checked_at:0});
+  }
+  expect(sources.occupancyCache.byItem.size).toBe(1);
+  const timeline=sources.occupancyCache.byItem.get('camera');stockForItem(sources,item,request);expect(sources.occupancyCache.byItem.get('camera')).toBe(timeline);
+ });
+ it('invalidates custody when reservation membership or allocation maps change',()=>{
+  const sources=source();expect(stockForItem(sources,item,request).free_units).toBe(1);
+  const old=sources.occupancyCache.byItem.get('camera');sources.reservations=[...sources.reservations,booking('three')];expect(stockForItem(sources,item,request).free_units).toBe(0);expect(sources.occupancyCache.byItem.get('camera')).not.toBe(old);
+  const prior=sources.occupancyCache.byItem.get('camera');sources.overrides=new Map();stockForItem(sources,item,request);expect(sources.occupancyCache.byItem.get('camera')).not.toBe(prior);
+ });
+ it('excludes only the requesting checkout hold and retains other holds',()=>{
+  const sources=source();sources.reservations=[];sources.checkoutHolds=[{bookingId:'checkout-fixture',item_id:'camera',start:Date.parse('2026-10-02T00:00Z'),end:Date.parse('2026-10-04T23:00Z'),endExclusive:true,bufferMinutes:60,qty:2,expiresAt:Date.now()+60000}];
+  expect(stockForItem(sources,item,{...request,thread_id:'other'}).free_units).toBe(1);
+  expect(stockForItem(sources,item,{...request,thread_id:'checkout-fixture'}).free_units).toBe(3);
+ });
+});
