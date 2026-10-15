@@ -4956,17 +4956,15 @@ export function ReplyInbox() {
                                   source={row.source}
                                 />
                               ) : (
-                                <strong>{h.renter_name}</strong>
+                                <span title={h.items.join(", ")}>
+                                  {h.items.join(", ") || "Requested equipment"}
+                                </span>
                               )}
-                              <small>
-                                {row?.renter_rating != null ? (
-                                  <>
+                              {row?.renter_rating != null && (
+                                <small>
                                     {row.renter_rating.toFixed(1)} <b>★</b>
-                                  </>
-                                ) : (
-                                  h.items.join(", ")
-                                )}
-                              </small>
+                                </small>
+                              )}
                             </div>
                           </div>
                         </div>
