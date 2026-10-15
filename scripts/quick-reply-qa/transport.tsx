@@ -174,7 +174,7 @@ export function useQuery(ref, args) {
   if (name === "settings:get") return settings;
   if (name === "hygglo:listByThread") return messages;
   if (name === "replyInbox:getImminentHandoffs")
-    return [
+    return window.__fixture.handoffCases ?? [
       {
         thread_id: rows[0].thread_id,
         renter_name: names[0],

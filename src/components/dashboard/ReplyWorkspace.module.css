@@ -88,7 +88,7 @@
 .return { border-color: #465c78; background: #202c3a; color: #a4ceff; }
 .handoffIdentity { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .handoffIdentity img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
-.handoffIdentity > div { min-width: 0; display: flex; align-items: center; gap: 6px; }
+.handoffIdentity > div { min-width: 0; flex: 1; display: flex; align-items: center; gap: 6px; }
 .handoffIdentity > div > span { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .handoffIdentity small { display: block; margin-top: 0; font-size: 11px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .handoffIdentity small b { color: #ffc24c; }

@@ -87,6 +87,17 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
         `document.querySelector('[aria-label="Close conversation"]').click()`,
       );
       await pause(100);
+      await c.evaluate(
+        `{window.__fixture.handoffCases=[{thread_id:'not-in-queue-one',renter_name:'Jolene Brian Enniful',items:['Full Boom Mic Kit – Sennheiser MKE 600, recorder and accessories'],kind:'pickup',date:'14 May',time:'17:00',minutes_away:-17},{thread_id:'not-in-queue-two',renter_name:'Oluwatobi Olayisade',items:['Sony A7 V Camera 4K + 70–200mm lens, batteries, charger and carry case'],kind:'return',date:'14 May',time:'16:45',minutes_away:-32}];window.__fixture.changed();}`,
+      );
+      await pause(100);
+      await check("unmatched");
+      assert(
+        await c.evaluate(
+          `(()=>{const rail=document.querySelector('[class*="handoffRail"]');return [...rail.querySelectorAll('button')].every(card=>{const n=card.querySelector('[class*="handoffRenter"]').textContent;return card.innerText.split(n).length===2&&card.scrollWidth<=card.clientWidth+1})})()`,
+        ),
+        "Unmatched cards must not repeat names or spill equipment text",
+      );
       assert.equal(
         await c.evaluate(
           `window.__calls.filter(x=>x.name.includes('send')||x.name.includes('apply')).length`,
