@@ -100,6 +100,45 @@ function rollup(rows: { name: string; value: number }[]): MissedItem[] {
 }
 
 /**
+ * Read only confirmed rentals that can overlap the demand date envelope.
+ * Starts inside the envelope are found through the start/pickup indexes;
+ * older long rentals are found through return/end indexes. The latter range
+ * is intentionally open-ended: a booking that began years ago can still
+ * overlap a requested date. Effective dates are rechecked with the exact same
+ * pickup/return fallbacks as bookedUnitsOnDate before a row is retained.
+ */
+async function confirmedForDemandWindow(
+  ctx: QueryCtx,
+  from: string,
+  to: string,
+): Promise<Doc<"reservations">[]> {
+  const [byStart, byPickup, byReturn, byEnd] = await Promise.all([
+    ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+      q.eq("status", "confirmed").gte("start_date", from).lte("start_date", to),
+    ).collect(),
+    ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
+      q.eq("status", "confirmed").gte("pickup_date", from).lte("pickup_date", to),
+    ).collect(),
+    ctx.db.query("reservations").withIndex("by_status_return_date", (q) =>
+      q.eq("status", "confirmed").gte("return_date", from),
+    ).collect(),
+    ctx.db.query("reservations").withIndex("by_status_end_date", (q) =>
+      q.eq("status", "confirmed").gte("end_date", from),
+    ).collect(),
+  ]);
+
+  const rows = new Map<string, Doc<"reservations">>();
+  const retainOverlap = (r: Doc<"reservations">) => {
+    const start = r.pickup_date ?? r.start_date;
+    const end = r.return_date ?? r.end_date;
+    if (!start || !end || start > to || end < from) return;
+    rows.set(String(r._id), r);
+  };
+  for (const r of [...byStart, ...byPickup, ...byReturn, ...byEnd]) retainOverlap(r);
+  return [...rows.values()];
+}
+
+/**
  * Optional pre-collected inputs (2026-07-12). getStatsDrawerData's live
  * compute (the _bypassMv path run once per slug by mv/stats_drawer.ts)
  * already collects these exact tables for its own cards; passing them in
@@ -224,20 +263,32 @@ export async function computeMissedRevenue(
   }
 
   // ── 3. Expensive occupancy inputs, only when demand can use them ──
-  const [items, productIndexRows, confirmed] = await Promise.all([
+  const capacityWindows = cancelled.flatMap((r) => {
+    if (
+      classifyRow(r) !== "genuine_demand" ||
+      (r.net_to_owner_gbp ?? (r.gross_paid_gbp ?? 0) * OWNER_SHARE) <= 0
+    ) return [];
+    const start = r.pickup_date ?? r.start_date;
+    const end = r.return_date ?? r.end_date;
+    return start && end ? expandDates(start, end) : [];
+  });
+  const capacityFrom = capacityWindows.length ? capacityWindows.reduce((a, b) => a < b ? a : b) : null;
+  const capacityTo = capacityWindows.length ? capacityWindows.reduce((a, b) => a > b ? a : b) : null;
+
+  const [items, productIndexRows, overrideRows, confirmed] = await Promise.all([
     pre?.items ?? ctx.db.query("items").collect(),
     pre?.productIndexRows ?? ctx.db.query("hygglo_product_index").collect(),
-    // Exact live-capacity check: long confirmed rentals may have started well
-    // before the requested window, so retain the complete status-scoped read
-    // whenever there is countable demand to compare against it.
-    ctx.db.query("reservations").withIndex("by_status", (q) => q.eq("status", "confirmed")).collect(),
+    pre?.overrideRows ?? ctx.db.query("listing_resolution_override").collect(),
+    capacityFrom && capacityTo
+      ? confirmedForDemandWindow(ctx, capacityFrom, capacityTo)
+      : Promise.resolve([] as Doc<"reservations">[]),
   ]);
   const itemById = new Map(items.map((i) => [String(i._id), i]));
   const productIndex = buildProductIndexMap(
     productIndexRows as Array<{ account_slug: string; product_id: number; item_id: Id<"items"> }>,
   );
 
-  const overrideMap = await loadCanonicalListingAllocation(ctx,items,pre?.overrideRows,[...confirmed,...cancelled]);
+  const overrideMap = await loadCanonicalListingAllocation(ctx,items,overrideRows,[...confirmed,...cancelled]);
 
   const ownedUnitsOf = (r: Doc<"reservations">): Array<[Id<"items">, number]> => {
     const out: Array<[Id<"items">, number]> = [];
