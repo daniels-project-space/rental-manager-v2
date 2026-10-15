@@ -907,6 +907,7 @@ export function StatsGrid() {
         qty_drift_count={(rawData as any)?.qty_drift_count ?? 0}
         qty_drift_sample={(rawData as any)?.qty_drift_sample ?? []}
       />
+      <PendingReviewPanel rentals={rentalHeadlines?.active.pending_review_rentals ?? []} />
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -948,8 +949,6 @@ export function StatsGrid() {
           </StatPackingGrid>
         </SortableContext>
       </DndContext>
-
-      <PendingReviewPanel rentals={rentalHeadlines?.active.pending_review_rentals ?? []} />
 
       {/* Insurance Claims full-screen modal board — opened from the insurance
           stat card. Rendered at grid level so it overlays the whole dashboard.
