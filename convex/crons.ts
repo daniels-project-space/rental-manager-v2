@@ -134,6 +134,8 @@ crons.weekly(
 // POLL_TRIGGER_SECRET in Convex and Vercel. Keep Trigger.dev on its
 // low-frequency backup cadence; deploy both schedules together to avoid
 // duplicate polling.
+// Set POLL_TRIGGER_URL and POLL_TRIGGER_SECRET on the same Convex deployment
+// exposed by NEXT_PUBLIC_CONVEX_URL so the dashboard reads the refreshed data.
 crons.interval(
   "hygglo poll clock",
   { minutes: 2 },
