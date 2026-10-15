@@ -54,6 +54,54 @@ import {
 import { loadMonthlyVerificationLosses } from "./lib/monthly_verification";
 import { countPlatformFallout } from "./lib/platform_fallout";
 
+/** Apply the dashboard's logical-rental grouping and active-date rules in one place. */
+function groupActiveRentals<T extends ReservationRow>(rows: T[], today: string, time: string) {
+  const confirmedWithDates = rows.filter((r) => isConfirmedWithDates(r));
+  const groupId = logicalGroupIds(confirmedWithDates);
+  const groups = new Map<string, T[]>();
+  for (const row of dedupByLogicalRental(confirmedWithDates)) {
+    const id = groupId.get(row._id) ?? row._id;
+    const members = groups.get(id);
+    if (members) members.push(row);
+    else groups.set(id, [row]);
+  }
+
+  const merged = Array.from(groups.values()).map((members): T => {
+    const sorted = members.slice().sort((a, b) =>
+      displayPickupDate(a).localeCompare(displayPickupDate(b)),
+    );
+    const base = sorted[0];
+    let spanEnd = displayReturnDate(base);
+    let netSum = 0;
+    for (const member of sorted) {
+      const end = displayReturnDate(member);
+      if (end > spanEnd) spanEnd = end;
+      netSum += netOf(member);
+    }
+    const live = sorted.find((member) =>
+      displayPickupDate(member) <= today && displayReturnDate(member) >= today,
+    ) ?? base;
+    return {
+      ...base,
+      return_date: spanEnd,
+      net_to_owner_gbp: netSum,
+      order_step: live.order_step,
+    } as T;
+  });
+
+  const upcoming = (row: ReservationRow) =>
+    isConfirmedWithDates(row) && pickupIsUpcoming(row, today, time);
+  const upcomingRows = merged.filter(upcoming);
+  const ongoingRows = merged.filter((row) => isOngoing(row, today) && !upcoming(row));
+  return { ongoingRows, upcomingRows };
+}
+
+const POST_PICKUP_ORDER_STEPS = new Set(["BOOKED_AFTER_VERIFIED", "DELIVERED", "RETURNED", "REVIEWED"]);
+const isPostPickupRental = (row: { order_step?: string }) =>
+  typeof row.order_step === "string" && POST_PICKUP_ORDER_STEPS.has(row.order_step);
+const inclusiveRentalDays = (start: string, end: string) =>
+  Math.max(1, Math.round((Date.parse(end) - Date.parse(start)) / 86_400_000) + 1);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared item-tile builder (Phase 9 / FIX-DESIGN §4.5)
 // Lifted out of getStatsDrawerData / getNextRentals to eliminate the previous
@@ -673,47 +721,8 @@ export const getStatsDrawerData = query({
     // rental": counted once and listed once, spanning the whole period with the
     // members' £ summed. Earnings/revenue rollups elsewhere stay on RAW rows so
     // totals never change — only the rental COUNT collapses.
-    const activeGroupId = logicalGroupIds(confirmedWithDates as unknown as ReservationRow[]);
-    const activeGroups = new Map<string, ResRow[]>();
-    for (const r of dedupRes(confirmedWithDates)) {
-      const gid = activeGroupId.get(r._id) ?? r._id;
-      const arr = activeGroups.get(gid);
-      if (arr) arr.push(r);
-      else activeGroups.set(gid, [r]);
-    }
-    // One synthetic representative row per group: earliest member as the base
-    // (items / renter / image), effective return extended to the merged span end
-    // and net = Σ members (so the card shows the full period + total £); status
-    // reflects whichever member is live today.
-    const mergedActiveRows: ResRow[] = Array.from(activeGroups.values()).map((members) => {
-      const sorted = members
-        .slice()
-        .sort((a, b) =>
-          displayPickupDate(a as ReservationRow).localeCompare(displayPickupDate(b as ReservationRow)),
-        );
-      const base = sorted[0];
-      let spanEnd = displayReturnDate(base as ReservationRow);
-      let netSum = 0;
-      for (const m of sorted) {
-        const e = displayReturnDate(m as ReservationRow);
-        if (e > spanEnd) spanEnd = e;
-        netSum += netOf(m as ReservationRow);
-      }
-      const live =
-        sorted.find(
-          (m) =>
-            displayPickupDate(m as ReservationRow) <= activeToday &&
-            displayReturnDate(m as ReservationRow) >= activeToday,
-        ) ?? base;
-      return {
-        ...base,
-        return_date: spanEnd,
-        net_to_owner_gbp: netSum,
-        order_step: (live as { order_step?: string }).order_step,
-      } as ResRow;
-    });
-    const ongoingGroupRows = mergedActiveRows.filter((r) => isActiveOngoing(r as ResRow));
-    const upcomingGroupRows = mergedActiveRows.filter((r) => isActiveUpcoming(r as ResRow));
+    const { ongoingRows: ongoingGroupRows, upcomingRows: upcomingGroupRows } =
+      groupActiveRentals(confirmedWithDates, activeToday, activeTime);
 
     // Monthly confirmed bookings (deduped) — confirmed status only, used for the
     // "still going" segments (done-via-date / active / upcoming).
@@ -2813,4 +2822,142 @@ export const getMonthlyVerificationLosses = query({
 export const __service_getRentalVolumeByCategory = internalQueryOf(getRentalVolumeByCategory);
 
 // Privileged caller counterpart; shares the original handler and validators.
+/**
+ * Small, reactive source for the two rental headline metrics. The full stats
+ * drawer snapshot does broad reporting reads and can exceed Convex's query
+ * time limit; these values need only the confirmed date window and current
+ * booking month, so they stay live independently of that snapshot refresh.
+ */
+export const getRentalHeadlineStats = query({
+  args: { accountSlug: v.union(v.string(), v.null()) },
+  handler: async (ctx, { accountSlug }) => {
+    const now = new Date();
+    const today = londonToday();
+    const time = londonTime(now);
+    const dashCutoffDate = new Date(now);
+    dashCutoffDate.setDate(now.getDate() - 365);
+    const dashCutoff = dashCutoffDate.toISOString().slice(0, 10);
+    const [year, monthNumber] = today.split("-").map(Number);
+    const monthKey = today.slice(0, 7);
+    const monthStart = `${monthKey}-01`;
+    const monthEnd = new Date(Date.UTC(year, monthNumber, 0)).toISOString().slice(0, 10);
+    const projectionStart = new Date(Date.UTC(year, monthNumber - 4, 1)).toISOString().slice(0, 10);
+
+    // Match the main dashboard's 365-day source window, but use the composite
+    // status/date index so cancelled, declined and completed history is not read.
+    const confirmedRows = await ctx.db
+      .query("reservations")
+      .withIndex("by_status_start_date", (q) =>
+        q.eq("status", "confirmed").gte("start_date", dashCutoff),
+      )
+      .collect();
+    const scopedConfirmed = accountSlug
+      ? confirmedRows.filter((row) => row.account_slug === accountSlug)
+      : confirmedRows;
+    const { ongoingRows, upcomingRows } = groupActiveRentals(
+      scopedConfirmed,
+      today,
+      time,
+    );
+
+    // Effective revenue date prefers pickup_date, otherwise start_date. Read
+    // the current and three trailing months through bounded indexed windows
+    // so both the booked total and its projection stay live without waiting
+    // for the expensive all-dashboard snapshot.
+    const [confirmedMonthRows, completedMonthRows, pickupMonthRows] = await Promise.all([
+      ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+        q.eq("status", "confirmed").gte("start_date", projectionStart).lte("start_date", monthEnd),
+      ).collect(),
+      ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+        q.eq("status", "completed").gte("start_date", projectionStart).lte("start_date", monthEnd),
+      ).collect(),
+      ctx.db.query("reservations").withIndex("by_pickup_date", (q) =>
+        q.gte("pickup_date", projectionStart).lte("pickup_date", monthEnd),
+      ).collect(),
+    ]);
+    const monthRowsById = new Map<string, (typeof confirmedRows)[number]>();
+    for (const row of [...confirmedMonthRows, ...completedMonthRows, ...pickupMonthRows]) {
+      if (!accountSlug || row.account_slug === accountSlug) monthRowsById.set(row._id, row);
+    }
+    const projectionRows = Array.from(monthRowsById.values()) as unknown as ReservationRow[];
+    const monthly = realisedMonthRevenue(projectionRows, monthKey, accountSlug);
+    const projectionInputs = rentalMonthProjectionInputs(projectionRows, today, accountSlug);
+    const projection = projectCurrentMonth(projectionInputs);
+    const remainingDays = projectionInputs.daysInMonth - projectionInputs.daysElapsed;
+    const elapsedCalendarDays = new Date().getDate();
+    const earnedThisMonth = monthly.rentals
+      .filter((row) => {
+        const date = effectiveDate(row);
+        return date !== undefined && date <= today && isPostPickupRental(row);
+      })
+      .reduce((sum, row) => sum + netOf(row), 0);
+    const activeRentals = [...ongoingRows.map((row) => ({ row, kind: "ongoing" as const })),
+      ...upcomingRows.map((row) => ({ row, kind: "upcoming" as const }))]
+      .map(({ row, kind }) => {
+        const rowAny = row as typeof row & { hygglo_items?: Array<{ name?: string; qty?: number; image_url?: string | null }> };
+        const names = Array.isArray(rowAny.hygglo_items)
+          ? rowAny.hygglo_items.filter((item) => item?.name && !/insurance/i.test(item.name)).map((item) =>
+              item.qty && item.qty > 1 ? `${item.name} ×${item.qty}` : item.name as string)
+          : ((row.items ?? []).map((item) => item.item_name).filter(Boolean));
+        const summary = names.join(", ") || "(no item)";
+        const itemImageTiles = Array.isArray(rowAny.hygglo_items)
+          ? rowAny.hygglo_items.filter((item) => item?.name && item.image_url && item.type !== "INSURANCE").map((item) => ({
+              image_url: item.image_url as string,
+              name: item.name as string,
+              names_in_group: [item.name as string],
+              qty: item.qty && item.qty > 0 ? item.qty : 1,
+            }))
+          : [];
+        return {
+          reservation_id: row.v1_rental_id ?? row.hygglo_order_id ?? row._id,
+          calendar_reservation_id: row._id,
+          renter_name: row.renter_name ?? null,
+          account_slug: row.account_slug ?? "",
+          start_date: row.start_date ?? null,
+          end_date: row.end_date ?? null,
+          pickup_date: row.pickup_date ?? row.start_date ?? null,
+          pickup_time: row.pickup_time ?? null,
+          return_date: row.return_date ?? row.end_date ?? null,
+          return_time: row.return_time ?? null,
+          items: names,
+          item_names_summary: summary,
+          item_image_tiles: itemImageTiles,
+          extra_text_items: names,
+          photo_url: null,
+          master_image_url: null,
+          duration_days: row.duration_days ?? (row.start_date && row.end_date ? inclusiveRentalDays(row.start_date, row.end_date) : null),
+          net_gbp: row.net_to_owner_gbp ?? null,
+          order_step: row.order_step ?? null,
+          kind,
+          is_ongoing: kind === "ongoing",
+        };
+      }).slice(0, 30);
+
+    return {
+      active: {
+        total: ongoingRows.length + upcomingRows.length,
+        ongoing_count: ongoingRows.length,
+        upcoming_count: upcomingRows.length,
+        rentals: activeRentals,
+      },
+      monthly: {
+        confirmed_revenue: monthly.netGbp,
+        projected: projection.projected,
+        target_gbp: projection.target,
+        pct_of_target: pctOfTarget(monthly.netGbp, projection.target),
+        expected_additional_gbp: Math.max(0, projection.projected - monthly.netGbp),
+        committed_gbp: projection.committed,
+        projection_basis: projection.basis,
+        baseline_gbp: projection.target,
+        days_remaining: Math.max(0, projectionInputs.daysInMonth - elapsedCalendarDays),
+        days_in_month: projectionInputs.daysInMonth,
+        days_elapsed: elapsedCalendarDays,
+        avg_daily_rate: elapsedCalendarDays > 0 ? Math.round((earnedThisMonth / elapsedCalendarDays) * 100) / 100 : 0,
+        current_earnings: Math.round(earnedThisMonth * 100) / 100,
+      },
+      generatedAt: now.getTime(),
+    };
+  },
+});
+
 export const __service_getStatsDrawerData = internalQueryOf(getStatsDrawerData);
