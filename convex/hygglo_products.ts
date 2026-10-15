@@ -186,7 +186,7 @@ export const __service_catalogueForStorefront = internalQuery({
     for (const row of listings) if (!descriptions.has(row.product_id)) descriptions.set(row.product_id, row);
     const byId = new Map(inventory.map(i => [String(i._id), i]));
     const context=createBundleMappingContext(inventory);
-    return products.map(product => {
+    return await Promise.all(products.map(async product => {
       const resolved = resolveListingComponents(inventory,
         mapping.get(product.productId)?.components.map(c => ({item_id:String(c.item_id),qty:c.qty})),
         product.masterItemId ? String(product.masterItemId) : undefined, 1,
@@ -203,14 +203,19 @@ export const __service_catalogueForStorefront = internalQuery({
       const complete = resolved.complete && components.length > 0 && components.every(c => Number.isSafeInteger(c.qty) && c.qty > 0);
       // Match the public bridge projection here, before serializing rich private descriptions.
       const {productId,name,isPublished,isMarketingOnly,valuation,minimumRentalDays,prices,images,unavailableDates,listings,masterItemId}=product;
+      // Copy identity follows actual seller wording, not repaired stock links.
+      // Only the digest crosses the service bridge; descriptions stay private.
+      const sourceDescription=product.description??descriptions.get(product.productId)?.description??null;
+      const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify([1,accountSlug,productId,name??"",sourceDescription])));
+      const copySourceFingerprint="v1:"+Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,"0")).join("");
       return {
-        productId,name,isPublished,
+        productId,name,isPublished,copySourceFingerprint,
         isMarketingOnly:classifiedMarketing,
         marketingOnlyMode:product.isMarketingOnlyOverride === undefined ? "automatic" as const : "manual" as const,
         marketingOnlyUpdatedAt:product.marketingOnlyUpdatedAt ?? 0,
         valuation,minimumRentalDays,prices,images,unavailableDates,listings,masterItemId,
         stockMapping:{version:1,complete,owned:classifiedMarketing?false:resolved.owned,components} };
-    });
+    }));
   },
 });
 

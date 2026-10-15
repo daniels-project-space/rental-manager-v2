@@ -42,14 +42,14 @@ describe("registered private storefront read transport",()=>{
  });
  it("passes effective marketing-tag state through the private catalogue bridge",async()=>{
   vi.stubEnv("DBCINEMA_WEBHOOK_SECRET",secret);
-  const row={productId:31,name:"Fixture light",isPublished:true,isMarketingOnly:true,marketingOnlyMode:"manual",marketingOnlyUpdatedAt:123,privateNote:"MUST NOT LEAK"};
+  const row={productId:31,name:"Fixture light",isPublished:true,isMarketingOnly:true,marketingOnlyMode:"manual",marketingOnlyUpdatedAt:123,copySourceFingerprint:"v1:"+"a".repeat(64),description:"PRIVATE SELLER DESCRIPTION",privateNote:"MUST NOT LEAK"};
   const runQuery=vi.fn(async()=>[row]);
   const response=await invoke({runQuery},request({path:"hygglo_products:catalogueForStorefront",args:{accountSlug:"dbcinema"}}));
   expect(response.status).toBe(200);
   expect(runQuery).toHaveBeenCalledTimes(1);
   const receipt=await response.json();
-  expect(receipt.value).toEqual([{productId:31,name:"Fixture light",isPublished:true,isMarketingOnly:true,marketingOnlyMode:"manual",marketingOnlyUpdatedAt:123}]);
- expect(JSON.stringify(receipt)).not.toContain("MUST NOT LEAK");
+  expect(receipt.value).toEqual([{productId:31,name:"Fixture light",isPublished:true,isMarketingOnly:true,marketingOnlyMode:"manual",marketingOnlyUpdatedAt:123,copySourceFingerprint:"v1:"+"a".repeat(64)}]);
+ expect(JSON.stringify(receipt)).not.toContain("MUST NOT LEAK");expect(JSON.stringify(receipt)).not.toContain("PRIVATE SELLER DESCRIPTION");
  });
  it("pushes saved tags only to the configured DB Cinema Convex route and verifies the receipt",async()=>{
   vi.stubEnv("DBCINEMA_WEBHOOK_SECRET",secret);vi.stubEnv("DBCINEMA_MARKETING_SYNC_URL","https://zany-wolf-18.convex.site/dbcinema/manager-marketing-tags");
