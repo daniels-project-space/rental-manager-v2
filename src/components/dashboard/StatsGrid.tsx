@@ -187,6 +187,9 @@ export function StatsGrid() {
   const rawData = useStableQuery(api.dashboard.getStatsDrawerData, {
     accountSlug: activeAccountSlug,
   });
+  const rentalHeadlines = useStableQuery(api.dashboard.getRentalHeadlineStats, {
+    accountSlug: activeAccountSlug,
+  });
   const reportingMonth = useReportingMonth();
   const verificationLosses = useStableQuery(api.dashboard.getMonthlyVerificationLosses, {
     accountSlug: activeAccountSlug, month: reportingMonth,
@@ -225,8 +228,16 @@ export function StatsGrid() {
     };
     const data = {
       ...rawData,
-      monthly: { ...rawAsAny.monthly, missed: verificationLosses ?? rawAsAny.monthly.missed },
-      active: { ...rawAsAny.active, rentals: pickRentals("active") },
+      monthly: {
+        ...rawAsAny.monthly,
+        confirmed_revenue: rentalHeadlines?.monthly.confirmed_revenue ?? rawAsAny.monthly.confirmed_revenue,
+        missed: verificationLosses ?? rawAsAny.monthly.missed,
+      },
+      active: {
+        ...rawAsAny.active,
+        ...(rentalHeadlines?.active ?? {}),
+        rentals: pickRentals("active"),
+      },
       ongoing: { ...rawAsAny.ongoing, rentals: pickRentals("ongoing") },
       upcoming: { ...rawAsAny.upcoming, rentals: pickRentals("upcoming") },
       confirmed: { ...rawAsAny.confirmed, rentals: pickRentals("confirmed") },
@@ -689,7 +700,7 @@ export function StatsGrid() {
       walle: <WallE accountSlug={activeAccountSlug} />,
       todos: <TodoWidget />,
     };
-  }, [rawData, rentalsRow, scannerLive, verificationLosses, expandedId, activeAccountSlug, catVolExpanded]);
+  }, [rawData, rentalsRow, scannerLive, verificationLosses, rentalHeadlines, expandedId, activeAccountSlug, catVolExpanded]);
 
   if (!cards) return <StatsGridSkeleton />;
 
