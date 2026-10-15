@@ -213,10 +213,12 @@ export function StatsGrid() {
   const cards = useMemo<Record<string, ReactElement> | null>(() => {
     if (!rawData) return null;
     // Merge the split rentals back into the data shape that drawer
-    // components expect (data.active.rentals, etc.). Three states:
+    // components expect (data.active.rentals, etc.). Four states:
     //   1. Drawer collapsed: rentalsRow is "skip" → empty arrays (unused).
     //   2. Drawer expanded + MV row available: rentalsRow.rentals.X.
-    //   3. Cold-start fallback path: rawData itself was a live compute
+    //   3. Active Rentals uses its small live query so fresh bookings appear
+    //      even if the broad stats snapshot is stale.
+    //   4. Cold-start fallback path: rawData itself was a live compute
     //      that included the embedded rentals → use those.
     const r = rentalsRow?.rentals;
     const rawAsAny = rawData as any;
@@ -226,17 +228,28 @@ export function StatsGrid() {
       if (Array.isArray(rawAsAny?.[card]?.rentals)) return rawAsAny[card].rentals;
       return [];
     };
+    const snapshotActiveRentals = pickRentals("active") as Array<{ reservation_id?: string; kind?: string }>;
+    const liveActiveRentals = rentalHeadlines?.active.rentals;
+    const activeRentals = liveActiveRentals
+      ? [
+          ...liveActiveRentals,
+          ...snapshotActiveRentals.filter((row) =>
+            row.kind === "pending" && !liveActiveRentals.some((live) => live.reservation_id === row.reservation_id),
+          ),
+        ]
+      : snapshotActiveRentals;
     const data = {
       ...rawData,
       monthly: {
         ...rawAsAny.monthly,
+        ...(rentalHeadlines?.monthly ?? {}),
         confirmed_revenue: rentalHeadlines?.monthly.confirmed_revenue ?? rawAsAny.monthly.confirmed_revenue,
         missed: verificationLosses ?? rawAsAny.monthly.missed,
       },
       active: {
         ...rawAsAny.active,
         ...(rentalHeadlines?.active ?? {}),
-        rentals: pickRentals("active"),
+        rentals: activeRentals,
       },
       ongoing: { ...rawAsAny.ongoing, rentals: pickRentals("ongoing") },
       upcoming: { ...rawAsAny.upcoming, rentals: pickRentals("upcoming") },

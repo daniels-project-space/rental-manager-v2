@@ -96,6 +96,12 @@ function groupActiveRentals<T extends ReservationRow>(rows: T[], today: string, 
   return { ongoingRows, upcomingRows };
 }
 
+const POST_PICKUP_ORDER_STEPS = new Set(["BOOKED_AFTER_VERIFIED", "DELIVERED", "RETURNED", "REVIEWED"]);
+const isPostPickupRental = (row: { order_step?: string }) =>
+  typeof row.order_step === "string" && POST_PICKUP_ORDER_STEPS.has(row.order_step);
+const inclusiveRentalDays = (start: string, end: string) =>
+  Math.max(1, Math.round((Date.parse(end) - Date.parse(start)) / 86_400_000) + 1);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared item-tile builder (Phase 9 / FIX-DESIGN §4.5)
 // Lifted out of getStatsDrawerData / getNextRentals to eliminate the previous
@@ -2831,9 +2837,11 @@ export const getRentalHeadlineStats = query({
     const dashCutoffDate = new Date(now);
     dashCutoffDate.setDate(now.getDate() - 365);
     const dashCutoff = dashCutoffDate.toISOString().slice(0, 10);
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
-    const monthKey = monthStart.slice(0, 7);
+    const [year, monthNumber] = today.split("-").map(Number);
+    const monthKey = today.slice(0, 7);
+    const monthStart = `${monthKey}-01`;
+    const monthEnd = new Date(Date.UTC(year, monthNumber, 0)).toISOString().slice(0, 10);
+    const projectionStart = new Date(Date.UTC(year, monthNumber - 4, 1)).toISOString().slice(0, 10);
 
     // Match the main dashboard's 365-day source window, but use the composite
     // status/date index so cancelled, declined and completed history is not read.
@@ -2852,37 +2860,101 @@ export const getRentalHeadlineStats = query({
       time,
     );
 
-    // Effective revenue date prefers pickup_date, otherwise start_date. Query
-    // both indexed date fields for this month, then use the canonical revenue
-    // helper for status, obsolete and logical-rental rules.
+    // Effective revenue date prefers pickup_date, otherwise start_date. Read
+    // the current and three trailing months through bounded indexed windows
+    // so both the booked total and its projection stay live without waiting
+    // for the expensive all-dashboard snapshot.
     const [confirmedMonthRows, completedMonthRows, pickupMonthRows] = await Promise.all([
       ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
-        q.eq("status", "confirmed").gte("start_date", monthStart).lte("start_date", monthEnd),
+        q.eq("status", "confirmed").gte("start_date", projectionStart).lte("start_date", monthEnd),
       ).collect(),
       ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
-        q.eq("status", "completed").gte("start_date", monthStart).lte("start_date", monthEnd),
+        q.eq("status", "completed").gte("start_date", projectionStart).lte("start_date", monthEnd),
       ).collect(),
       ctx.db.query("reservations").withIndex("by_pickup_date", (q) =>
-        q.gte("pickup_date", monthStart).lte("pickup_date", monthEnd),
+        q.gte("pickup_date", projectionStart).lte("pickup_date", monthEnd),
       ).collect(),
     ]);
     const monthRowsById = new Map<string, (typeof confirmedRows)[number]>();
     for (const row of [...confirmedMonthRows, ...completedMonthRows, ...pickupMonthRows]) {
       if (!accountSlug || row.account_slug === accountSlug) monthRowsById.set(row._id, row);
     }
-    const monthly = realisedMonthRevenue(
-      Array.from(monthRowsById.values()) as unknown as ReservationRow[],
-      monthKey,
-      accountSlug,
-    );
+    const projectionRows = Array.from(monthRowsById.values()) as unknown as ReservationRow[];
+    const monthly = realisedMonthRevenue(projectionRows, monthKey, accountSlug);
+    const projectionInputs = rentalMonthProjectionInputs(projectionRows, today, accountSlug);
+    const projection = projectCurrentMonth(projectionInputs);
+    const remainingDays = projectionInputs.daysInMonth - projectionInputs.daysElapsed;
+    const elapsedCalendarDays = new Date().getDate();
+    const earnedThisMonth = monthly.rentals
+      .filter((row) => {
+        const date = effectiveDate(row);
+        return date !== undefined && date <= today && isPostPickupRental(row);
+      })
+      .reduce((sum, row) => sum + netOf(row), 0);
+    const activeRentals = [...ongoingRows.map((row) => ({ row, kind: "ongoing" as const })),
+      ...upcomingRows.map((row) => ({ row, kind: "upcoming" as const }))]
+      .map(({ row, kind }) => {
+        const rowAny = row as typeof row & { hygglo_items?: Array<{ name?: string; qty?: number; image_url?: string | null }> };
+        const names = Array.isArray(rowAny.hygglo_items)
+          ? rowAny.hygglo_items.filter((item) => item?.name && !/insurance/i.test(item.name)).map((item) =>
+              item.qty && item.qty > 1 ? `${item.name} ×${item.qty}` : item.name as string)
+          : ((row.items ?? []).map((item) => item.item_name).filter(Boolean));
+        const summary = names.join(", ") || "(no item)";
+        const itemImageTiles = Array.isArray(rowAny.hygglo_items)
+          ? rowAny.hygglo_items.filter((item) => item?.name && item.image_url && item.type !== "INSURANCE").map((item) => ({
+              image_url: item.image_url as string,
+              name: item.name as string,
+              names_in_group: [item.name as string],
+              qty: item.qty && item.qty > 0 ? item.qty : 1,
+            }))
+          : [];
+        return {
+          reservation_id: row.v1_rental_id ?? row.hygglo_order_id ?? row._id,
+          calendar_reservation_id: row._id,
+          renter_name: row.renter_name ?? null,
+          account_slug: row.account_slug ?? "",
+          start_date: row.start_date ?? null,
+          end_date: row.end_date ?? null,
+          pickup_date: row.pickup_date ?? row.start_date ?? null,
+          pickup_time: row.pickup_time ?? null,
+          return_date: row.return_date ?? row.end_date ?? null,
+          return_time: row.return_time ?? null,
+          items: names,
+          item_names_summary: summary,
+          item_image_tiles: itemImageTiles,
+          extra_text_items: names,
+          photo_url: null,
+          master_image_url: null,
+          duration_days: row.duration_days ?? (row.start_date && row.end_date ? inclusiveRentalDays(row.start_date, row.end_date) : null),
+          net_gbp: row.net_to_owner_gbp ?? null,
+          order_step: row.order_step ?? null,
+          kind,
+          is_ongoing: kind === "ongoing",
+        };
+      }).slice(0, 30);
 
     return {
       active: {
         total: ongoingRows.length + upcomingRows.length,
         ongoing_count: ongoingRows.length,
         upcoming_count: upcomingRows.length,
+        rentals: activeRentals,
       },
-      monthly: { confirmed_revenue: monthly.netGbp },
+      monthly: {
+        confirmed_revenue: monthly.netGbp,
+        projected: projection.projected,
+        target_gbp: projection.target,
+        pct_of_target: pctOfTarget(monthly.netGbp, projection.target),
+        expected_additional_gbp: Math.max(0, projection.projected - monthly.netGbp),
+        committed_gbp: projection.committed,
+        projection_basis: projection.basis,
+        baseline_gbp: projection.target,
+        days_remaining: Math.max(0, projectionInputs.daysInMonth - elapsedCalendarDays),
+        days_in_month: projectionInputs.daysInMonth,
+        days_elapsed: elapsedCalendarDays,
+        avg_daily_rate: elapsedCalendarDays > 0 ? Math.round((earnedThisMonth / elapsedCalendarDays) * 100) / 100 : 0,
+        current_earnings: Math.round(earnedThisMonth * 100) / 100,
+      },
       generatedAt: now.getTime(),
     };
   },
