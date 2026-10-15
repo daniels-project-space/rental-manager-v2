@@ -623,7 +623,7 @@ function QueueAvailability({ tile }: { tile: ReplyTileData }) {
         ? "Unavailable"
         : tile.availability?.reason?.startsWith("Dates")
           ? "Dates needed"
-          : "Needs stock review";
+          : "Not bookable";
   return (
     <span
       className={`${styles.availability} ${status === "available" ? styles.available : status === "conflict" ? styles.unavailable : styles.unknown}`}
@@ -632,7 +632,7 @@ function QueueAvailability({ tile }: { tile: ReplyTileData }) {
         tile.availability?.items
           .map(
             (item) =>
-              `${item.name}: ${item.available === null ? (item.reason ?? "Needs stock review") : `${item.free} free / ${item.requested} requested`}`,
+              `${item.name}: ${item.available === null ? (item.reason ?? "Not bookable") : `${item.free} free / ${item.requested} requested`}`,
           )
           .join("; ") ??
         "Checking availability"
@@ -789,7 +789,7 @@ function AvailabilityBadge({
   if (a.status === "unknown")
     return (
       <span className="inline-flex rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-[#a6adbb]">
-        Availability not verified
+        {a.reason?.startsWith("Dates") ? "Dates needed" : "Not bookable"}
       </span>
     );
   const ok = a.status === "available";

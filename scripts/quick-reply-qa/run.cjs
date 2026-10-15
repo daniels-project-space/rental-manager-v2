@@ -141,7 +141,9 @@ let browser, server;
   console.log(
     "Testing Quick Reply with fixture-only transport and external DNS disabled.",
   );
-  if(process.env.RM_QA_HANDOFF_ONLY) {
+  if(process.env.RM_QA_AVAILABILITY_ONLY) {
+    await child(process.execPath,[__dirname+"/availability.cjs"],{env});
+  } else if(process.env.RM_QA_HANDOFF_ONLY) {
     await child(process.execPath,[__dirname+"/handoffs.cjs"],{env});
   } else if(process.env.RM_QA_SPACIOUS_ONLY) {
     await child(process.execPath,[__dirname+"/spacious.cjs"],{env});

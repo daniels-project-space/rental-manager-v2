@@ -1,0 +1,23 @@
+/* Real React surface; synthetic inventory and DNS-blocked transport only. */
+const {connect}=require('./browser.cjs'),assert=require('node:assert/strict'),fs=require('node:fs');
+const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+(async()=>{
+ const proof=[];
+ for(const width of [1505,390]){
+  const c=await connect('about:blank');
+  try {
+   await c.cmd('Emulation.setDeviceMetricsOverride',{width,height:1045,deviceScaleFactor:1,mobile:width<500});
+   await c.cmd('Page.navigate',{url:process.env.RM_QA_ORIGIN});await pause(700);
+   await c.evaluate(`(()=>{const rows=window.__fixture.rows;const states=[['available',undefined,true],['conflict','Marketing-only listing · not stocked for hire',false],['unknown','Dates needed to check stock',null],['unknown','Not bookable · unresolved kit: 1x unknown receiver',null]];states.forEach(([status,reason,available],i)=>{rows[i].availability={status,reason,stock_rules_version:6,checked_at:Date.now(),items:rows[i].items.map(item=>({...item,requested:item.qty,available,reason,free:available?2:0,total_units:2}))};});window.__fixture.changed()})()`);
+   await pause(200);
+   await c.evaluate(`[...document.querySelectorAll('button')].find(b=>b.getAttribute('aria-label')?.startsWith('All (')).click()`);await pause(150);
+   const actual=await c.evaluate(`[0,1,2,3].map(i=>document.querySelector('[data-thread-id="fixture-'+i+'"]').querySelector('[class*="availability"]').textContent)`);
+   assert.deepEqual(actual,['Available','Unavailable','Dates needed','Not bookable']);
+   assert(!await c.evaluate(`document.body.textContent.includes('Needs stock review')`));
+   assert(await c.evaluate(`document.documentElement.scrollWidth<=innerWidth+1`));
+   fs.writeFileSync(`${process.env.RM_QA_OUTPUT}/availability-${width}.png`,Buffer.from((await c.cmd('Page.captureScreenshot',{captureBeyondViewport:false})).data,'base64'));
+   proof.push({width,labels:actual,noPageOverflow:true,externalDNSBlocked:true});
+  } finally {await c.closePage();}
+ }
+ fs.writeFileSync(`${process.env.RM_QA_OUTPUT}/availability-proof.json`,JSON.stringify({proof,realMessages:0,realRentalChanges:0},null,2));
+})().catch(error=>{console.error(error);process.exitCode=1});

@@ -1,7 +1,7 @@
 import { tokenize } from "./item_name_match";
 
 type Lens = { _id: unknown; name_canonical: string; aliases?: string[]; kind?: string; lens_mount?: string | null };
-const labels = tokenize("lens lenses zoom telephoto full frame mount");
+const labels = tokenize("lens lenses zoom telephoto full frame mount professional wide angle set");
 const normalize = (text:string) => text.replace(/\bg\s*-?\s*master\b/gi,"GM").replace(/\bL[ -]series\b/gi,"")
   .replace(/\bSony\s+FE\b/gi,"Sony E")
   // Canon motor/stabilization labels do not change focal range, aperture or generation.
