@@ -488,10 +488,10 @@ function decideState(t: ReplyTileData): {
   canDecline: boolean;
   approved: boolean;
 } {
-  const canApprove =
-    t.availability?.status !== "conflict" && (t.can_accept ?? t.is_request);
+  const acceptanceOffered = t.can_accept ?? t.is_request;
+  const canApprove = t.availability?.status === "available" && acceptanceOffered;
   const canDecline = t.can_deny ?? t.is_request;
-  return { canApprove, canDecline, approved: !canApprove && canDecline };
+  return { canApprove, canDecline, approved: !acceptanceOffered && canDecline };
 }
 /** Lifecycle states I (the owner) have already resolved. Once a request is
  *  cancelled or declined the thread is closed — cancelling IS the answer — so it
