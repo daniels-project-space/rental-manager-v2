@@ -786,8 +786,6 @@ function AvailabilityBadge({
   a: TileAvailability;
   compact?: boolean;
 }) {
-  if (a.items.length === 0)
-    return <span className="text-[11px] text-[#a6adbb]">No equipment requested</span>;
   if (a.status === "unknown")
     return (
       <span title={a.reason} className="inline-flex rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-[#a6adbb]">
