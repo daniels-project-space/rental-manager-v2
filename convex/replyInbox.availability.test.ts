@@ -244,3 +244,20 @@ it("reports explicitly non-owned listings as unavailable even before dates are s
   av.listingQualification=new Map([["fixture#7",{complete:true,owned:false}]]);
   expect(computeAvailability({account_slug:"fixture"} as any,av,[{...line("Camera"),product_id:7}])).toMatchObject({status:"conflict",items:[{available:false}]});
 });
+
+
+describe("stock request schedule evidence",()=>{
+  it("checks the full booked day when unproven extracted clocks are equal",()=>{
+    const rental={...booking,start_date:"2026-10-15",end_date:"2026-10-15",pickup_time:"13:00",return_time:"13:00"};
+    expect(computeAvailability(rental,context([gear("a","Camera")]),[line("Camera")])).toMatchObject({status:"available",items:[{available:true}],window:{source:"booking",start_date:"2026-10-15",end_date:"2026-10-15"}});
+  });
+  it("does not hide another booking behind unproven collection clocks",()=>{
+    const rental={...booking,start_date:"2026-10-15",end_date:"2026-10-15",pickup_time:"13:00",return_time:"14:00"};
+    const occupied={...rental,_id:"other",hygglo_order_id:"other",pickup_time:undefined,return_time:undefined,resolved_items:[{item_id:"a",qty:1}]};
+    expect(computeAvailability(rental,context([gear("a","Camera")],{reservations:[occupied]}),[line("Camera")])).toMatchObject({status:"conflict",items:[{available:false}]});
+  });
+  it("widens impossible confirmed same-day clocks instead of returning unknown",()=>{
+    const rental={...booking,account_slug:"dbcinema_web",start_date:"2026-10-15",end_date:"2026-10-15",pickup_time:"13:00",return_time:"13:00"};
+    expect(computeAvailability(rental,context([gear("a","Camera")]),[line("Camera")])).toMatchObject({status:"available",items:[{available:true}]});
+  });
+});
