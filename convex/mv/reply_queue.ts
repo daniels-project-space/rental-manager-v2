@@ -26,7 +26,8 @@
  * Mirrors the mv/stats_drawer.ts wrap-and-cache pattern.
  */
 import { v } from "convex/values";
-import { internalAction, internalMutation, query } from "../owner_functions";
+import { internalAction, internalMutation, internalQuery, query } from "../owner_functions";
+import { mergeReplyPartitions } from "../lib/reply_queue_partitions";
 import { internal } from "../_generated/api";
 import { anyApi } from "convex/server";
 import { refreshHandoffsWidget } from "./widgets";
@@ -96,16 +97,14 @@ export async function refreshAll(
   // Run the live assembly once (accountSlug null → all tiles; high limit so the
   // stored list is never truncated before the reader slices per-account).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tiles: any = await ctx.runQuery(internal.replyInbox.__service_getReplyQueue, {
-    accountSlug: undefined,
-    limit: REPLY_MV_LIMIT,
-    withinDays: REPLY_MV_WITHIN_DAYS,
-    messagesWithinDays: REPLY_MV_MESSAGES_WITHIN_DAYS,
-    includeFinished: false,
-    includeMessages: true,
-    includePending: incPending,
-    _bypassMv: true,
-  });
+  const partitions:Array<string|null>=await ctx.runQuery(anyApi.mv.reply_queue.partitionAccounts,{});
+  const parts=await Promise.all(partitions.map(_partitionSlug=>ctx.runQuery(internal.replyInbox.__service_getReplyQueue, {
+    limit:REPLY_MV_LIMIT,withinDays:REPLY_MV_WITHIN_DAYS,messagesWithinDays:REPLY_MV_MESSAGES_WITHIN_DAYS,
+    includeFinished:false,includeMessages:true,includePending:incPending,_bypassMv:true,_partitionSlug,
+  })));
+  // Never publish a partial account result. Promise.all rejects on any failed
+  // cohort; global ordering, full coverage and thread identity are retained.
+  const tiles=mergeReplyPartitions(parts,REPLY_MV_LIMIT);
   await ctx.runMutation(anyApi.mv.reply_queue.write, {
     account: key,
     tiles,
@@ -113,6 +112,15 @@ export async function refreshAll(
   });
   return { ok: true, written: 1, skipped: 0, durationMs: Date.now() - startedAt };
 }
+
+export const partitionAccounts=internalQuery({
+  args:{},
+  handler:async(ctx)=>{
+    const accounts=await ctx.db.query("accounts").take(51);
+    if(accounts.length===51)throw Error("Reply queue account partition exceeds its audited bound");
+    return [...new Set(accounts.map(account=>account.slug)),null];
+  },
+});
 
 /** The single global setting that selects which variant is read/refreshed. */
 export const currentIncludePending = query({

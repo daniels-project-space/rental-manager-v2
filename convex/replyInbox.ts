@@ -56,6 +56,7 @@ import { v } from "convex/values";
 import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
 import { currentDraftApproval, currentDraftReview, draftContextKey, sameDraftApproval } from "./lib/draft_review";
 import { replyStockWindow, type ReplyStockWindow } from "./lib/reply_stock_dates";
+import { replyPartitionKey, compareReplyQueue } from "./lib/reply_queue_partitions";
 import type { ResolvableRes } from "./lib/reservations/itemUnits";
 import { loadStockSources, resolveStockItem, stockForRentalItem } from "./lib/renter_stock";
 import { stockRequestForSeparateCheck, stockRequestForInquiryQuote, unsupportedStockClaims, type StockReceipt } from "./lib/stock_claims";
@@ -898,6 +899,8 @@ export const getReplyQueue = query({
     // Set ONLY by mv/reply_queue.ts:refreshAll to run the live assembly below
     // instead of reading the cache (avoids a reader→MV→reader loop).
     _bypassMv: v.optional(v.boolean()),
+    // Internal MV producer cohort. Null keeps legacy/unassigned accounts.
+    _partitionSlug: v.optional(v.union(v.string(),v.null())),
   },
   handler: async (
     ctx,
@@ -910,6 +913,7 @@ export const getReplyQueue = query({
       messagesWithinDays = 30,
       includePending,
       _bypassMv,
+      _partitionSlug,
     },
   ) => {
     // ── MV fast path ────────────────────────────────────────────────────────
@@ -961,13 +965,10 @@ export const getReplyQueue = query({
       string,
       NonNullable<Awaited<ReturnType<typeof assembleTile>>>
     >();
-    const priceIndex = await loadPriceIndex(ctx);
-    const settingsRow = await ctx.db.query("settings").first();
-    const incPending =
-      includePending ?? settingsRow?.availability_include_pending ?? false;
-    const hub = await loadHubBook(ctx);
-    const display = await listingDisplayCatalog(ctx);
-    const availCtx = await loadAvailCtx(ctx, incPending);
+    const partitioned=_partitionSlug!==undefined;
+    const partitionAccounts=partitioned?await ctx.db.query("accounts").take(51):[];
+    if(partitionAccounts.length===51)throw Error("Reply queue account partition exceeds its audited bound");
+    const inPartition=(row:{account_slug?:string;account_id?:unknown})=>!partitioned||replyPartitionKey(row,partitionAccounts)===_partitionSlug;
 
     // ── Shared reads (PERF, 2026-07-12) ─────────────────────────────────────
     // One windowed conversations collect serves BOTH Pass 1 and Pass 3 (on the
@@ -980,7 +981,7 @@ export const getReplyQueue = query({
         .query("conversations")
         .withIndex("by_last_msg_at", (q) => q.gte("last_msg_at", windowStart))
         .collect()
-    ).filter((c) => !c.thread_id.startsWith(PROBE_THREAD_PREFIX));
+    ).filter((c) => !c.thread_id.startsWith(PROBE_THREAD_PREFIX)&&inPartition(c));
     // thread_id → conversation, for Pass 2's per-request lookups. thread_id is
     // unique across conversations (every writer upserts via by_thread .first()),
     // so a map hit returns exactly what `.first()` would; misses fall through to
@@ -1006,11 +1007,18 @@ export const getReplyQueue = query({
         )
         .collect(),
     ]);
+    // No stock scan for an empty cohort. Every nonempty cohort still reads
+    // the entire shared fleet, including bookings from all other accounts.
+    if(partitioned&&!windowConvos.length&&![...byStep,...byAction].some(inPartition))return [];
+    const [priceIndex,settingsRow,hub,display]=await Promise.all([loadPriceIndex(ctx),ctx.db.query("settings").first(),loadHubBook(ctx),listingDisplayCatalog(ctx)]);
+    const incPending=includePending??settingsRow?.availability_include_pending??false;
+    const availCtx=await loadAvailCtx(ctx,incPending);
     // Reservation-by-order-id cache: loadAvailCtx's confirmed/pending rows plus
     // the request rows above — every reservation already read this execution.
     // See AvailCtx.byOrderId for why a hit is exactly `.first()`'s answer.
     const resByOrderId = availCtx.byOrderId;
     for (const r of [...byStep, ...byAction]) {
+      if(!inPartition(r))continue;
       if (!r.hygglo_order_id) continue;
       const prev = resByOrderId.get(r.hygglo_order_id);
       if (!prev || r._creationTime < prev._creationTime)
@@ -1028,7 +1036,7 @@ export const getReplyQueue = query({
       if (reservation) resByOrderId.set(missingThreads[index], reservation);
     });
     await extendAvailabilityMappings(ctx, availCtx, [
-      ...[...resByOrderId.values()].filter(r => !!r.hygglo_order_id && (convByThread.has(r.hygglo_order_id) || (r.created_at ?? r._creationTime) >= cutoff)),
+      ...[...resByOrderId.values()].filter(r => !!r.hygglo_order_id && (convByThread.has(r.hygglo_order_id) || inPartition(r)&&(r.created_at ?? r._creationTime) >= cutoff)),
       // Enquiries have no reservation, but their exact account/product identity
       // still needs the same ownership and full-kit qualification.
       ...windowConvos.filter(c=>!resByOrderId.has(c.thread_id)&&!!c.account_slug).map(c=>({account_slug:c.account_slug,hygglo_items:c.inquiry_items})),
@@ -1107,6 +1115,7 @@ export const getReplyQueue = query({
     const seenReq = new Set<string>();
     const requests: typeof byStep = [];
     for (const r of [...byStep, ...byAction]) {
+      if(!inPartition(r))continue;
       const k = r._id as unknown as string;
       if (seenReq.has(k)) continue;
       seenReq.add(k);
@@ -1180,14 +1189,7 @@ export const getReplyQueue = query({
     const tiles = [...byThread.values()]
       .filter((t) => !t.dismissed)
       .filter((t) => (t.last_activity_at ?? 0) >= hardCutoff)
-      .sort((a, b) => {
-      if (a.is_request !== b.is_request) return Number(b.is_request) - Number(a.is_request);
-      const aAwait = a.last_sender === "renter";
-      const bAwait = b.last_sender === "renter";
-      if (aAwait !== bAwait) return Number(bAwait) - Number(aAwait);
-      if (aAwait) return (a.last_renter_msg_at ?? 0) - (b.last_renter_msg_at ?? 0);
-      return (b.last_msg_at ?? 0) - (a.last_msg_at ?? 0);
-    });
+      .sort(compareReplyQueue);
     // Lean the list payload before returning/storing — see leanTile. The reader
     // MV-hit path returns already-lean stored tiles; this covers the live
     // assembly (refresher store + cold-start fallback).
