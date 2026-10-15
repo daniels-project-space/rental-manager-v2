@@ -228,11 +228,27 @@ export function StatsGrid() {
       if (Array.isArray(rawAsAny?.[card]?.rentals)) return rawAsAny[card].rentals;
       return [];
     };
-    const snapshotActiveRentals = pickRentals("active") as Array<{ reservation_id?: string; kind?: string }>;
+    const snapshotActiveRentals = pickRentals("active") as Array<Record<string, any> & { reservation_id?: string; kind?: string }>;
     const liveActiveRentals = rentalHeadlines?.active.rentals;
+    const cachedActiveById = new Map(
+      snapshotActiveRentals.filter((row) => row.reservation_id).map((row) => [row.reservation_id, row]),
+    );
+    const displayedLiveActiveRentals = liveActiveRentals?.map((live) => {
+      const cached = cachedActiveById.get(live.reservation_id);
+      if (!cached) return live;
+      const liveFields = live as typeof live & Record<string, any>;
+      return {
+        ...cached,
+        ...liveFields,
+        item_tiles: liveFields.item_tiles?.length ? liveFields.item_tiles : cached.item_tiles,
+        item_image_tiles: liveFields.item_image_tiles?.length ? liveFields.item_image_tiles : cached.item_image_tiles,
+        photo_url: liveFields.photo_url ?? cached.photo_url,
+        master_image_url: liveFields.master_image_url ?? cached.master_image_url,
+      };
+    });
     const activeRentals = liveActiveRentals
       ? [
-          ...liveActiveRentals,
+          ...(displayedLiveActiveRentals ?? []),
           ...snapshotActiveRentals.filter((row) =>
             row.kind === "pending" && !liveActiveRentals.some((live) => live.reservation_id === row.reservation_id),
           ),

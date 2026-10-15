@@ -2894,20 +2894,12 @@ export const getRentalHeadlineStats = query({
     const activeRentals = [...ongoingRows.map((row) => ({ row, kind: "ongoing" as const })),
       ...upcomingRows.map((row) => ({ row, kind: "upcoming" as const }))]
       .map(({ row, kind }) => {
-        const rowAny = row as typeof row & { hygglo_items?: Array<{ name?: string; qty?: number; image_url?: string | null }> };
+        const rowAny = row as typeof row & { hygglo_items?: Array<{ name?: string; qty?: number }> };
         const names = Array.isArray(rowAny.hygglo_items)
           ? rowAny.hygglo_items.filter((item) => item?.name && !/insurance/i.test(item.name)).map((item) =>
               item.qty && item.qty > 1 ? `${item.name} ×${item.qty}` : item.name as string)
           : ((row.items ?? []).map((item) => item.item_name).filter(Boolean));
         const summary = names.join(", ") || "(no item)";
-        const itemImageTiles = Array.isArray(rowAny.hygglo_items)
-          ? rowAny.hygglo_items.filter((item) => item?.name && item.image_url && item.type !== "INSURANCE").map((item) => ({
-              image_url: item.image_url as string,
-              name: item.name as string,
-              names_in_group: [item.name as string],
-              qty: item.qty && item.qty > 0 ? item.qty : 1,
-            }))
-          : [];
         return {
           reservation_id: row.v1_rental_id ?? row.hygglo_order_id ?? row._id,
           calendar_reservation_id: row._id,
@@ -2921,8 +2913,8 @@ export const getRentalHeadlineStats = query({
           return_time: row.return_time ?? null,
           items: names,
           item_names_summary: summary,
-          item_image_tiles: itemImageTiles,
-          extra_text_items: names,
+          item_image_tiles: [] as Array<{ image_url: string; name: string; names_in_group: string[]; qty: number }>,
+          extra_text_items: [] as string[],
           photo_url: null,
           master_image_url: null,
           duration_days: row.duration_days ?? (row.start_date && row.end_date ? inclusiveRentalDays(row.start_date, row.end_date) : null),
