@@ -2886,6 +2886,7 @@ export const getRentalHeadlineStats = query({
         return {
           reservation_id: row.v1_rental_id ?? row.hygglo_order_id ?? row._id,
           calendar_reservation_id: row._id,
+          created_at: row._creationTime,
           renter_name: row.renter_name ?? null,
           account_slug: row.account_slug ?? "",
           start_date: row.start_date ?? null,
@@ -2903,9 +2904,12 @@ export const getRentalHeadlineStats = query({
           is_ongoing: false,
         };
       })
-      .sort((a, b) => (a.start_date ?? "").localeCompare(b.start_date ?? ""))
+      .sort((a, b) => b.created_at - a.created_at)
       .slice(0, 30);
     const pendingReviewValue = scopedPendingReview.reduce((sum, row) => sum + netOf(row), 0);
+    const pendingReviewMonthValue = scopedPendingReview
+      .filter((row) => effectiveDate(row)?.slice(0, 7) === monthKey)
+      .reduce((sum, row) => sum + netOf(row), 0);
 
     // Effective revenue date prefers pickup_date, otherwise start_date. Read
     // the current and three trailing months through bounded indexed windows
@@ -2984,7 +2988,7 @@ export const getRentalHeadlineStats = query({
       },
       monthly: {
         confirmed_revenue: monthly.netGbp,
-        pending_review_value_gbp: Math.round(pendingReviewValue * 100) / 100,
+        pending_review_value_gbp: Math.round(pendingReviewMonthValue * 100) / 100,
         projected: projection.projected,
         target_gbp: projection.target,
         pct_of_target: pctOfTarget(monthly.netGbp, projection.target),

@@ -18,6 +18,7 @@ import {
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
 import { api } from "../../../convex/_generated/api";
+import { useQuery } from "convex/react";
 import { makeFunctionReference } from "convex/server";
 import { useAccount } from "@/lib/account-context";
 import { useEditMode } from "@/lib/dashboard/edit-mode-context";
@@ -168,6 +169,36 @@ function StatsGridSkeleton() {
 // Tailwind safelist: keep col-span-2 / row-span-2 reachable so JIT emits them.
 // (used as string literals below: "col-span-2", "row-span-2")
 
+function PendingReviewPanel({ rentals }: { rentals: Array<{
+  reservation_id: string;
+  renter_name?: string | null;
+  item_names_summary?: string | null;
+  start_date?: string | null;
+  net_gbp?: number | null;
+}> }) {
+  if (!rentals.length) return null;
+
+  return (
+    <section className="mt-4 rounded-xl border border-sky-500/20 bg-sky-500/[0.04] p-4" aria-label="Bookings awaiting confirmation">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-xs font-bold uppercase tracking-wider text-sky-300">Bookings awaiting confirmation</h2>
+        <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[11px] font-semibold text-sky-300">{rentals.length}</span>
+      </div>
+      <div className="space-y-2">
+        {rentals.slice(0, 8).map((rental) => (
+          <div key={rental.reservation_id} className="flex min-w-0 items-center justify-between gap-3 text-xs">
+            <div className="min-w-0">
+              <div className="truncate text-slate-200">{rental.renter_name || rental.item_names_summary || "New booking"}</div>
+              <div className="truncate text-[10px] text-slate-500">{rental.item_names_summary || "Items pending"} · {rental.start_date || "Date pending"}</div>
+            </div>
+            {rental.net_gbp != null && <span className="shrink-0 text-sky-300">{fmtGbpFull(rental.net_gbp)}</span>}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function StatsGrid() {
   const { activeAccountSlug } = useAccount();
   const { layout, isStatHidden, reorderStats } = useEditMode();
@@ -187,9 +218,13 @@ export function StatsGrid() {
   const rawData = useStableQuery(api.dashboard.getStatsDrawerData, {
     accountSlug: activeAccountSlug,
   });
-  const rentalHeadlines = useStableQuery(api.dashboard.getRentalHeadlineStats, {
+  // Do not retain the last account's totals while this query switches account.
+  // Also avoid presenting old MV values as if they were current while the live
+  // headline subscription is still resolving.
+  const rentalHeadlines = useQuery(api.dashboard.getRentalHeadlineStats, {
     accountSlug: activeAccountSlug,
   });
+  const hasLiveRentalHeadlines = rentalHeadlines !== undefined;
   const reportingMonth = useReportingMonth();
   const verificationLosses = useStableQuery(api.dashboard.getMonthlyVerificationLosses, {
     accountSlug: activeAccountSlug, month: reportingMonth,
@@ -393,7 +428,7 @@ export function StatsGrid() {
               </div>
               {(data.monthly.pending_review_value_gbp ?? 0) > 0 && (
                 <div className="text-right text-[10px] text-sky-300">
-                  {fmtGbpFull(data.monthly.pending_review_value_gbp)} in bookings awaiting confirmation
+                  {fmtGbpFull(data.monthly.pending_review_value_gbp)} in bookings awaiting confirmation this month
                 </div>
               )}
               <ProgressBar pct={data.monthly.pct_of_target} />
@@ -429,7 +464,7 @@ export function StatsGrid() {
               <span className="text-pink-400">+{fmtGbpFull(data.confirmed.pending_value_gbp)}</span>
             ) : undefined
           }
-          subtitle={
+          subtitle={(
             <span className="block">
               {data.confirmed.pending_count > 0 && (
                 <span className="block text-pink-400 text-[11px] font-medium leading-tight">pending</span>
@@ -438,7 +473,7 @@ export function StatsGrid() {
                 {data.confirmed.done_count} done, {data.confirmed.active_count} active, {data.confirmed.upcoming_count} upcoming · {data.confirmed.total_rentals} rentals
               </span>
             </span>
-          }
+          )}
           isExpanded={expandedId === "confirmed"}
           onToggle={() => toggle("confirmed")}
           headerExtra={
@@ -827,7 +862,7 @@ export function StatsGrid() {
                   <span>Confirmed: {fmtGbpFull(rentalHeadlines.monthly.confirmed_revenue)}</span>
                   {(rentalHeadlines.monthly.pending_review_value_gbp ?? 0) > 0 && (
                     <span className="ml-2 text-sky-300">
-                      · {fmtGbpFull(rentalHeadlines.monthly.pending_review_value_gbp)} awaiting confirmation
+                      · {fmtGbpFull(rentalHeadlines.monthly.pending_review_value_gbp)} awaiting confirmation this month
                     </span>
                   )}
                 </span>
@@ -844,6 +879,7 @@ export function StatsGrid() {
             </ExpandableStatCard>
           </div>
         </div>
+        <PendingReviewPanel rentals={rentalHeadlines.active.pending_review_rentals ?? []} />
         <StatsGridSkeleton />
       </>
     );
@@ -912,6 +948,8 @@ export function StatsGrid() {
           </StatPackingGrid>
         </SortableContext>
       </DndContext>
+
+      <PendingReviewPanel rentals={rentalHeadlines?.active.pending_review_rentals ?? []} />
 
       {/* Insurance Claims full-screen modal board — opened from the insurance
           stat card. Rendered at grid level so it overlays the whole dashboard.
