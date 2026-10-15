@@ -1218,7 +1218,7 @@ async function upsertOrderImpl(
       poll_hash: newPollHash,
     });
     if (datesChanged) {
-      await ctx.scheduler.runAfter(0, internal.mv.calendar.refresh, {});
+      await ctx.scheduler.runAfter(0, internal.mv.calendar.requestRefresh, {});
     }
     const hintsUpdate = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
     await ctx.db.patch(existing._id, { image_hints: hintsUpdate, hygglo_items: hyggloItemsUpdate });
