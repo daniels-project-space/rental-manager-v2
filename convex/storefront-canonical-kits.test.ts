@@ -107,3 +107,18 @@ it("uses recorded counted units for offered kits, occupied stock and the actual 
  const [rental]=await (__service_listActiveForStorefront as any)._handler({db:f.db},{account_slug:"dbcinema"});expect(rental.physical_items).toEqual([{item_id:"tubes",qty:1}]);
  expect(JSON.stringify(f.tables.items)).toBe(before);expect(f.tables.reservations[0].expanded_items).toEqual([{item_id:"tubes",qty:2}]);
 });
+
+
+it("binds reviewed-copy identity to seller wording without leaking it or coupling to stock repairs",async()=>{
+ const f=fixture();const read=async()=> (await (__service_catalogueForStorefront as any)._handler({db:f.db},{accountSlug:"dbcinema"}))[0];
+ const first=await read();expect(first.copySourceFingerprint).toMatch(/^v1:[a-f0-9]{64}$/);expect(first).not.toHaveProperty("description");
+ f.tables.items[0].qty=3;f.tables.listing_resolution_override[0].components[0].qty=1;
+ expect((await read()).copySourceFingerprint).toBe(first.copySourceFingerprint);
+ f.tables.online_listings[0].description+=" • 1x Unknown lens";
+ const changed=await read();expect(changed.copySourceFingerprint).not.toBe(first.copySourceFingerprint);
+ f.tables.hygglo_products[0].description="Current provider contents";
+ const current=await read();f.tables.online_listings[0].description+="fallback text changed";
+ expect((await read()).copySourceFingerprint).toBe(current.copySourceFingerprint);
+ f.tables.hygglo_products[0].name+=" different configuration";
+ expect((await read()).copySourceFingerprint).not.toBe(current.copySourceFingerprint);
+});
