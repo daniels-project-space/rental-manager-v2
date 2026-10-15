@@ -2842,23 +2842,70 @@ export const getRentalHeadlineStats = query({
     const monthStart = `${monthKey}-01`;
     const monthEnd = new Date(Date.UTC(year, monthNumber, 0)).toISOString().slice(0, 10);
     const projectionStart = new Date(Date.UTC(year, monthNumber - 4, 1)).toISOString().slice(0, 10);
+    const pendingHorizonDate = new Date(`${today}T00:00:00.000Z`);
+    pendingHorizonDate.setUTCDate(pendingHorizonDate.getUTCDate() + 365);
+    const pendingHorizon = pendingHorizonDate.toISOString().slice(0, 10);
 
     // Match the main dashboard's 365-day source window, but use the composite
     // status/date index so cancelled, declined and completed history is not read.
-    const confirmedRows = await ctx.db
-      .query("reservations")
-      .withIndex("by_status_start_date", (q) =>
-        q.eq("status", "confirmed").gte("start_date", dashCutoff),
-      )
-      .collect();
+    // Pending-review reservations get their own bounded live read. The heavy
+    // dashboard snapshot is intentionally refreshed less often, so it cannot
+    // be the only source for new bookings on the page.
+    const [confirmedRows, pendingReviewRows] = await Promise.all([
+      ctx.db
+        .query("reservations")
+        .withIndex("by_status_start_date", (q) =>
+          q.eq("status", "confirmed").gte("start_date", dashCutoff),
+        )
+        .collect(),
+      ctx.db
+        .query("reservations")
+        .withIndex("by_status_start_date", (q) =>
+          q.eq("status", "pending_review").gte("start_date", dashCutoff).lte("start_date", pendingHorizon),
+        )
+        .collect(),
+    ]);
     const scopedConfirmed = accountSlug
       ? confirmedRows.filter((row) => row.account_slug === accountSlug)
       : confirmedRows;
+    const scopedPendingReview = dedupByLogicalRental(pendingReviewRows.filter((row) =>
+      !row.is_obsolete && (!accountSlug || row.account_slug === accountSlug),
+    ));
     const { ongoingRows, upcomingRows } = groupActiveRentals(
       scopedConfirmed,
       today,
       time,
     );
+    const pendingReviewRentals = scopedPendingReview
+      .map((row) => {
+        const rowAny = row as typeof row & { hygglo_items?: Array<{ name?: string; qty?: number }> };
+        const names = Array.isArray(rowAny.hygglo_items)
+          ? rowAny.hygglo_items.filter((item) => item?.name && !/insurance/i.test(item.name)).map((item) =>
+              item.qty && item.qty > 1 ? `${item.name} ×${item.qty}` : item.name as string)
+          : ((row.items ?? []).map((item) => item.item_name).filter(Boolean));
+        return {
+          reservation_id: row.v1_rental_id ?? row.hygglo_order_id ?? row._id,
+          calendar_reservation_id: row._id,
+          renter_name: row.renter_name ?? null,
+          account_slug: row.account_slug ?? "",
+          start_date: row.start_date ?? null,
+          end_date: row.end_date ?? null,
+          pickup_date: row.pickup_date ?? row.start_date ?? null,
+          pickup_time: row.pickup_time ?? null,
+          return_date: row.return_date ?? row.end_date ?? null,
+          return_time: row.return_time ?? null,
+          items: names,
+          item_names_summary: names.join(", ") || "(no item)",
+          duration_days: row.duration_days ?? (row.start_date && row.end_date ? inclusiveRentalDays(row.start_date, row.end_date) : null),
+          net_gbp: row.net_to_owner_gbp ?? null,
+          order_step: row.order_step ?? null,
+          kind: "review" as const,
+          is_ongoing: false,
+        };
+      })
+      .sort((a, b) => (a.start_date ?? "").localeCompare(b.start_date ?? ""))
+      .slice(0, 30);
+    const pendingReviewValue = scopedPendingReview.reduce((sum, row) => sum + netOf(row), 0);
 
     // Effective revenue date prefers pickup_date, otherwise start_date. Read
     // the current and three trailing months through bounded indexed windows
@@ -2930,10 +2977,14 @@ export const getRentalHeadlineStats = query({
         total: ongoingRows.length + upcomingRows.length,
         ongoing_count: ongoingRows.length,
         upcoming_count: upcomingRows.length,
+        pending_review_count: scopedPendingReview.length,
+        pending_review_value_gbp: Math.round(pendingReviewValue * 100) / 100,
+        pending_review_rentals: pendingReviewRentals,
         rentals: activeRentals,
       },
       monthly: {
         confirmed_revenue: monthly.netGbp,
+        pending_review_value_gbp: Math.round(pendingReviewValue * 100) / 100,
         projected: projection.projected,
         target_gbp: projection.target,
         pct_of_target: pctOfTarget(monthly.netGbp, projection.target),

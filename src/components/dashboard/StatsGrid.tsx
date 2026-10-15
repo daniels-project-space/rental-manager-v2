@@ -230,6 +230,7 @@ export function StatsGrid() {
     };
     const snapshotActiveRentals = pickRentals("active") as Array<Record<string, any> & { reservation_id?: string; kind?: string }>;
     const liveActiveRentals = rentalHeadlines?.active.rentals;
+    const livePendingReviewRentals = rentalHeadlines?.active.pending_review_rentals ?? [];
     const cachedActiveById = new Map(
       snapshotActiveRentals.filter((row) => row.reservation_id).map((row) => [row.reservation_id, row]),
     );
@@ -250,8 +251,11 @@ export function StatsGrid() {
       ? [
           ...(displayedLiveActiveRentals ?? []),
           ...snapshotActiveRentals.filter((row) =>
-            row.kind === "pending" && !liveActiveRentals.some((live) => live.reservation_id === row.reservation_id),
+            row.kind === "pending" &&
+            !liveActiveRentals.some((live) => live.reservation_id === row.reservation_id) &&
+            !livePendingReviewRentals.some((live) => live.reservation_id === row.reservation_id),
           ),
+          ...livePendingReviewRentals,
         ]
       : snapshotActiveRentals;
     const data = {
@@ -320,6 +324,15 @@ export function StatsGrid() {
                       </span>
                     </>
                   )}
+                  {(data.active.pending_review_count ?? 0) > 0 && (
+                    <>
+                      <span className="text-slate-600">+</span>
+                      <span className="inline-flex items-center gap-1 text-sky-300">
+                        <Dot color="#38bdf8" />
+                        <span className="font-semibold">{data.active.pending_review_count}</span> awaiting confirmation
+                      </span>
+                    </>
+                  )}
                 </span>
                 {data.active.pending_count > 0 && pendingNextMonth > 0 && (
                   <span className="block text-[10px] text-zinc-500 mt-0.5 leading-tight">
@@ -378,6 +391,11 @@ export function StatsGrid() {
                   <span className="text-emerald-300 font-semibold">{data.monthly.pct_of_target}%</span> of usual month
                 </span>
               </div>
+              {(data.monthly.pending_review_value_gbp ?? 0) > 0 && (
+                <div className="text-right text-[10px] text-sky-300">
+                  {fmtGbpFull(data.monthly.pending_review_value_gbp)} in bookings awaiting confirmation
+                </div>
+              )}
               <ProgressBar pct={data.monthly.pct_of_target} />
               <div className="text-[10px] text-slate-500">
                 {fmtGbpFull(data.monthly.expected_additional_gbp ?? Math.max(0, data.monthly.projected - data.monthly.confirmed_revenue))} additional bookings expected
@@ -765,6 +783,12 @@ export function StatsGrid() {
                   <span>{rentalHeadlines.active.ongoing_count} ongoing</span>
                   <span className="text-slate-600">+</span>
                   <span>{rentalHeadlines.active.upcoming_count} upcoming</span>
+                  {(rentalHeadlines.active.pending_review_count ?? 0) > 0 && (
+                    <>
+                      <span className="text-slate-600">+</span>
+                      <span className="text-sky-300">{rentalHeadlines.active.pending_review_count} awaiting confirmation</span>
+                    </>
+                  )}
                 </span>
               }
             >
@@ -775,6 +799,17 @@ export function StatsGrid() {
                     <span className="shrink-0 text-slate-500">{rental.start_date} · {rental.kind}</span>
                   </div>
                 ))}
+                {rentalHeadlines.active.pending_review_rentals?.length > 0 && (
+                  <div className="space-y-1 border-t border-slate-700/60 pt-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-sky-300">Awaiting confirmation</div>
+                    {rentalHeadlines.active.pending_review_rentals.map((rental) => (
+                      <div key={rental.calendar_reservation_id} className="flex justify-between gap-3">
+                        <span className="truncate">{rental.renter_name || rental.item_names_summary}</span>
+                        <span className="shrink-0 text-slate-500">{rental.start_date || "Date pending"}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </ExpandableStatCard>
           </div>
@@ -787,7 +822,16 @@ export function StatsGrid() {
               accentColor="green"
               isExpanded={expandedId === "monthly"}
               onToggle={() => setExpandedId((id) => id === "monthly" ? null : "monthly")}
-              subtitle={`Confirmed: ${fmtGbpFull(rentalHeadlines.monthly.confirmed_revenue)}`}
+              subtitle={
+                <span className="block">
+                  <span>Confirmed: {fmtGbpFull(rentalHeadlines.monthly.confirmed_revenue)}</span>
+                  {(rentalHeadlines.monthly.pending_review_value_gbp ?? 0) > 0 && (
+                    <span className="ml-2 text-sky-300">
+                      · {fmtGbpFull(rentalHeadlines.monthly.pending_review_value_gbp)} awaiting confirmation
+                    </span>
+                  )}
+                </span>
+              }
               headerExtra={
                 <div className="text-[11px] text-slate-400">
                   {rentalHeadlines.monthly.pct_of_target}% of usual month · {fmtGbpFull(rentalHeadlines.monthly.expected_additional_gbp)} additional bookings expected
