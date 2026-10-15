@@ -140,47 +140,44 @@ export async function computeMissedRevenue(
   const cutoffMs = Date.now() - days * DAY;
   const cutoffStr = new Date(cutoffMs).toISOString().slice(0, 10);
 
-  let accountId: Doc<"accounts">["_id"] | undefined;
-  if (accountSlug) {
-    const acc = await ctx.db.query("accounts").withIndex("by_slug", (q) => q.eq("slug", accountSlug)).first();
-    accountId = acc?._id;
-  }
+  // ── 1. Small, relevant inputs first ──────────────────────────────
+  // Most reactive reads have no genuine turned-away demand in the requested
+  // window. Discover that from selective reservation indexes before loading
+  // the much larger confirmed-rental set and inventory/resolution tables.
+  // This keeps the live result while avoiding repeated multi-MB reads when the
+  // recent cancelled/obsolete slice contains nothing this metric can count.
+  const accountPromise = accountSlug
+    ? ctx.db.query("accounts").withIndex("by_slug", (q) => q.eq("slug", accountSlug)).first()
+    : Promise.resolve(null);
+  const cancellationPromise = pre?.reservations && pre.reservations.gteStartDate <= cutoffStr
+    ? Promise.resolve(pre.reservations.rows.filter(
+        (r) => typeof r.start_date === "string" && r.start_date >= cutoffStr,
+      ))
+    : Promise.all([
+        ctx.db.query("reservations").withIndex("by_is_obsolete_start_date", (q) =>
+          q.eq("is_obsolete", true).gte("start_date", cutoffStr),
+        ).collect(),
+        ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+          q.eq("status", "cancelled").gte("start_date", cutoffStr),
+        ).collect(),
+        ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+          q.eq("status", "declined").gte("start_date", cutoffStr),
+        ).collect(),
+      ]).then((groups) => [...new Map(groups.flat().map((r) => [String(r._id), r])).values()]);
 
-  // ── Inventory + resolution maps ──────────────────────────────────
-  const items = pre?.items ?? (await ctx.db.query("items").collect());
-  const itemById = new Map(items.map((i) => [String(i._id), i]));
-  const productIndex = buildProductIndexMap(
-    (pre?.productIndexRows ??
-      (await ctx.db.query("hygglo_product_index").collect())) as Array<{
-      account_slug: string; product_id: number; item_id: Id<"items">;
-    }>,
-  );
-  // Confirmed occupancy (for the fully-booked / double-booking test).
-  // Deliberately NOT preloadable from a start_date-windowed pool: confirmed
-  // rows can have start_date arbitrarily far in the past (e.g. >365d-old
-  // long bookings) yet still occupy dates inside this run's window, so only
-  // the by_status index provably returns them all.
-  const confirmed = await ctx.db
-    .query("reservations")
-    .withIndex("by_status", (q) => q.eq("status", "confirmed"))
-    .collect();
+  const [account, denialRows, cancellationRows] = await Promise.all([
+    accountPromise,
+    pre?.denialRows ?? ctx.db.query("denial_records").collect(),
+    cancellationPromise,
+  ]);
+  const accountId = account?._id;
 
-  const ownedUnitsOf = (r: Doc<"reservations">): Array<[Id<"items">, number]> => {
-    const out: Array<[Id<"items">, number]> = [];
-    for (const [idStr, qty] of reservationItemUnits(r, productIndex, overrideMap, items)) {
-      const it = itemById.get(idStr);
-      if (it && !it.is_marketing_only && it.status === "active" && (it.qty ?? 0) > 0) {
-        out.push([idStr as Id<"items">, qty]);
-      }
-    }
-    return out;
-  };
-
-  // ── 1. Recorded denials (explicit owner declines → real lost revenue) ──
-  let denials = pre?.denialRows ?? (await ctx.db.query("denial_records").collect());
+  // ── 2. Recorded denials (explicit owner declines → real lost revenue) ──
+  let denials = denialRows;
   if (accountId) denials = denials.filter((d) => d.account_id === accountId);
   denials = denials.filter((d) => d.created_at >= cutoffMs);
-  const pricing = await ctx.db.query("pricing_catalog").collect();
+  const needsPricingFallback = denials.some((d) => (d.estimated_value ?? 0) === 0 && Boolean(d.item_name));
+  const pricing = needsPricingFallback ? await ctx.db.query("pricing_catalog").collect() : [];
   const priceByName = new Map(pricing.map((p) => [p.item_name_canonical, p.daily_price_min]));
   const denialLosses: DenialLoss[] = denials.map((d) => {
     let gross = d.estimated_value ?? 0;
@@ -200,27 +197,58 @@ export async function computeMissedRevenue(
   });
   const denialTotal = parseFloat(denialLosses.reduce((s, d) => s + d.estimatedValue, 0).toFixed(2));
 
-  // ── 2. Turned-away demand, split by ownership + capacity ─────────
-  // When the caller passed a pre-collected by_start_date window that provably
-  // contains this one (same index, same gte, wider-or-equal bound), derive in
-  // memory with the identical predicate. Rows lacking start_date are excluded
-  // by the string-gte index in both cases (undefined sorts below strings),
-  // and ISO-date string comparison is identical in Convex and JS.
-  let cancelled =
-    pre?.reservations && pre.reservations.gteStartDate <= cutoffStr
-      ? pre.reservations.rows.filter(
-          (r) => typeof r.start_date === "string" && r.start_date >= cutoffStr,
-        )
-      : await ctx.db
-          .query("reservations")
-          .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
-          .collect();
+  let cancelled = cancellationRows;
   if (accountSlug) cancelled = cancelled.filter((r) => r.account_slug === accountSlug);
   cancelled = cancelled.filter(
     (r) => r.is_obsolete || r.status === "cancelled" || r.status === "declined",
   );
 
+  const hasCountableDemand = cancelled.some((r) =>
+    classifyRow(r) === "genuine_demand" &&
+    (r.net_to_owner_gbp ?? (r.gross_paid_gbp ?? 0) * OWNER_SHARE) > 0,
+  );
+  if (!hasCountableDemand) {
+    const denialItems = denialLosses.map((d) => ({
+      name: d.itemName ?? "Unknown item",
+      value: d.estimatedValue,
+    }));
+    return {
+      totalMissed: denialTotal,
+      lostRevenueTotal: denialTotal,
+      missedMarketingTotal: 0,
+      denialTotal,
+      lostItems: rollup(denialItems),
+      marketingItems: [],
+      denialLosses,
+    };
+  }
+
+  // ── 3. Expensive occupancy inputs, only when demand can use them ──
+  const [items, productIndexRows, confirmed] = await Promise.all([
+    pre?.items ?? ctx.db.query("items").collect(),
+    pre?.productIndexRows ?? ctx.db.query("hygglo_product_index").collect(),
+    // Exact live-capacity check: long confirmed rentals may have started well
+    // before the requested window, so retain the complete status-scoped read
+    // whenever there is countable demand to compare against it.
+    ctx.db.query("reservations").withIndex("by_status", (q) => q.eq("status", "confirmed")).collect(),
+  ]);
+  const itemById = new Map(items.map((i) => [String(i._id), i]));
+  const productIndex = buildProductIndexMap(
+    productIndexRows as Array<{ account_slug: string; product_id: number; item_id: Id<"items"> }>,
+  );
+
   const overrideMap = await loadCanonicalListingAllocation(ctx,items,pre?.overrideRows,[...confirmed,...cancelled]);
+
+  const ownedUnitsOf = (r: Doc<"reservations">): Array<[Id<"items">, number]> => {
+    const out: Array<[Id<"items">, number]> = [];
+    for (const [idStr, qty] of reservationItemUnits(r, productIndex, overrideMap, items)) {
+      const it = itemById.get(idStr);
+      if (it && !it.is_marketing_only && it.status === "active" && (it.qty ?? 0) > 0) {
+        out.push([idStr as Id<"items">, qty]);
+      }
+    }
+    return out;
+  };
 
   const lostRows: { name: string; value: number }[] = [];
   const marketingRows: { name: string; value: number }[] = [];
