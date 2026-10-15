@@ -50,7 +50,10 @@ export function ownerAvailabilityReview(items: Doc<"items">[], products: Doc<"hy
   const notOwned=products.filter(p=>{
     const name=p.name??"";
     const object=name.split(/\b(?:with|including|plus)\b|[+]/i)[0];
-    const absentGimbal=/\b(?:rs\s*4\s*pro|rs\s*2|rsc\s*2)\b/i.test(object)&&!/\bbatter(?:y|ies)\b|\bchargers?\b|\bgrip\b/i.test(object);
+    // Trailing SEO compatibility keywords ("RS3 ... RS2, RS4") do not
+    // change the advertised gimbal into one of the owner's absent models.
+    const firstGimbal=object.match(/\b(?:rsc\s*2|rs\s*[234](?:\s*pro)?)\b/i)?.[0].replace(/\s/g,"").toLowerCase();
+    const absentGimbal=!!firstGimbal&&["rs4pro","rs2","rs2pro","rsc2"].includes(firstGimbal)&&!/\bbatter(?:y|ies)\b|\bchargers?\b|\bgrip\b/i.test(object);
     const absentLens=/\bZeiss\b/i.test(name)&&/16\s*[-–]\s*35/.test(name)&&/\bf\s*\/?\s*4\b/i.test(name);
     const absentKit=/\bAmaran\s*300\s*c\b|\bARLES\b|\bSenn?heiser\b[^|]*\bG\s*3\b/i.test(name);
     return absentGimbal||absentLens||absentKit;

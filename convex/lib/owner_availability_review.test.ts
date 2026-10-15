@@ -20,6 +20,11 @@ describe('owner-confirmed availability and real catalogue regressions',()=>{
   const {data}=corrected();for(const id of [1028831,1173851,1173859,1172669,1173523,1173744,1172820])expect(data.records.find((r:any)=>r.key.productId===id).product.isMarketingOnlyOverride).toBe(true);
   expect(data.items.find((i:any)=>i.name_canonical==='DJI RS3 Pro gimbal')).toMatchObject({qty:2,is_marketing_only:false});
  });
+ it('does not classify a genuine RS3 listing or spare battery from trailing RS2 compatibility keywords',()=>{
+  const data=snapshot(),products=data.records.map((r:any)=>r.product),base=products[0];
+  for(const [id,name] of [[900001,'DJI RS3 Gimbal | Ronin Stabilizer, RS2, RS4'],[900002,'DJI Ronin RS2 RS3 Pro Gimbal Battery']])products.push({...base,_id:String(id),productId:id,name,isMarketingOnly:false,isMarketingOnlyOverride:false});
+  expect(ownerAvailabilityReview(data.items,products).products.some(p=>p.productId===900001||p.productId===900002)).toBe(false);
+ });
  it('holds both speakers and both camera/lens units despite malformed legacy wrapper counts',()=>{
   const {data}=corrected();expect(resolved(data,'leo',1172801)).toMatchObject({complete:true,owned:true,components:[{name:'JBL Club 120 speaker',units_per_listing:2}]});
   expect(resolved(data,'leo',1172559).components).toEqual(expect.arrayContaining([expect.objectContaining({name:'Sony FX3',units_per_listing:2}),expect.objectContaining({name:'Sony GM 24-70mm f2.8',units_per_listing:2})]));
