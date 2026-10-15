@@ -161,7 +161,7 @@ const operationalSchema = defineSchema({
       basis: v.union(v.literal("owner_lower_bound"), v.literal("owner_exact")),
       source: v.string(), note: v.string(), recorded_at: v.number(),
     })),
-    listing_stock_rules: v.optional(v.array(v.object({ title_pattern:v.string(), components:v.array(v.object({item_id:v.id("items"),qty:v.number()})), excludes:v.array(v.id("items")), source:v.string(), apply_to_declared_component:v.optional(v.boolean()), supplied_parts:v.optional(v.array(v.object({name:v.string(),qty:v.number()}))) }))),
+    listing_stock_rules: v.optional(v.array(v.object({ title_pattern:v.string(), components:v.array(v.object({item_id:v.id("items"),qty:v.number()})), excludes:v.array(v.id("items")), source:v.string(), apply_to_declared_component:v.optional(v.boolean()), supplied_parts:v.optional(v.array(v.object({name:v.string(),qty:v.number()}))), optional_parts:v.optional(v.array(v.string())), description_override:v.optional(v.string()) }))),
     supplied_stock: v.optional(v.array(v.object({
       item_id: v.id("items"), qty: v.number(), source: v.string(),
     }))),

@@ -45,6 +45,8 @@ export default defineConfig({
       "convex/renter_trust.cache.test.ts",
       "convex/lib/quick_reply_sort.test.ts",
       "convex/lib/quick_reply_cache.test.ts",
+      "convex/lib/reply_stock_dates.test.ts",
+      "convex/lib/owner_availability_review.test.ts",
       "convex/lib/quick_reply_requested_items.test.ts",
       "convex/lib/review_time.test.ts",
       "convex/inventory_onboarding.test.ts",

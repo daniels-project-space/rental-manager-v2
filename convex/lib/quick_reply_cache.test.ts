@@ -24,7 +24,7 @@ describe("Quick Reply cache compatibility", () => {
           requested_items: [],
           items: [{}],
           availability: {
-            stock_rules_version:6,
+            stock_rules_version:7,
             items: [{ available: null, reason: "Dates needed" }],
           },
         },

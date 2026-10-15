@@ -1,0 +1,3105 @@
+{
+  "recordedAt": "2026-10-15",
+  "items": [
+    {
+      "_id": "kn78qjrz8qk1zxk9vqrgnbqw3s86aqpt",
+      "aliases": [
+        "Blazar Remus 33mm"
+      ],
+      "compatibility": {
+        "accessories": [
+          "PL to Sony E mount",
+          "PL to EF mount",
+          "PL to L mount",
+          "PL to RF mount",
+          "Tilta Nucleus Nano 2 follow focus",
+          "ND filter",
+          "Cinebloom filter mist"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "PL mount (requires adapter for all our cameras)",
+      "name_canonical": "Anamorphic Blazar Remus 33mm",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn71y2p1ascfw2gv9snasdwhkn86b90w",
+      "aliases": [
+        "Blazar Remus 45mm"
+      ],
+      "compatibility": {
+        "accessories": [
+          "PL to Sony E mount",
+          "PL to EF mount",
+          "PL to L mount",
+          "PL to RF mount",
+          "Tilta Nucleus Nano 2 follow focus",
+          "ND filter",
+          "Cinebloom filter mist"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "PL mount (requires adapter for all our cameras)",
+      "name_canonical": "Anamorphic Blazar Remus 45mm",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn71mytpv3d5m8nw6z1kpx2qqs86acrd",
+      "aliases": [
+        "Blazar Remus 65mm"
+      ],
+      "compatibility": {
+        "accessories": [
+          "PL to Sony E mount",
+          "PL to EF mount",
+          "PL to L mount",
+          "PL to RF mount",
+          "Tilta Nucleus Nano 2 follow focus",
+          "ND filter",
+          "Cinebloom filter mist"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "PL mount (requires adapter for all our cameras)",
+      "name_canonical": "Anamorphic Blazar Remus 65mm",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn759mg9g9m7hm59btvx827cw186astx",
+      "aliases": [
+        "Blazar Remus 100mm"
+      ],
+      "compatibility": {
+        "accessories": [
+          "PL to Sony E mount",
+          "PL to EF mount",
+          "PL to L mount",
+          "PL to RF mount",
+          "Tilta Nucleus Nano 2 follow focus",
+          "Sirui tripod",
+          "ND filter",
+          "Cinebloom filter mist"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "PL mount (requires adapter for all our cameras)",
+      "name_canonical": "Anamorphic Blazar Remus 100mm",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn79e6tav264zrh9zs5pvfg5kd86avn6",
+      "aliases": [
+        "Sony 24-70mm f2.8 GM"
+      ],
+      "compatibility": {
+        "accessories": [
+          "ND filter",
+          "Cinebloom filter mist",
+          "Tilta Nucleus Nano 2 follow focus",
+          "DJI RS3 Pro gimbal"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "Sony E-mount (full frame)",
+      "name_canonical": "Sony GM 24-70mm f2.8",
+      "qty": 4,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn73ga9tdczw4azpvv41qm3dw186b9pb",
+      "aliases": [
+        "Sony 16-35mm f2.8 GM"
+      ],
+      "compatibility": {
+        "accessories": [
+          "ND filter",
+          "Cinebloom filter mist",
+          "Tilta Nucleus Nano 2 follow focus",
+          "DJI RS3 Pro gimbal"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "Sony E-mount (full frame)",
+      "name_canonical": "Sony GM 16-35mm f2.8",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn741p3xbx9e9yvby7qcmvvnj586akhv",
+      "aliases": [
+        "Sony 70-200mm f2.8 GM"
+      ],
+      "compatibility": {
+        "accessories": [
+          "ND filter",
+          "Cinebloom filter mist",
+          "Tilta Nucleus Nano 2 follow focus",
+          "Sirui tripod",
+          "Small rig tripod"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "Sony E-mount (full frame)",
+      "name_canonical": "Sony GM 70-200mm f2.8",
+      "qty": 2,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7byeb6ez8gty76rbhhb7e2t586b6wk",
+      "aliases": [
+        "Sony GM 90mm f2.8",
+        "Sony 90mm f/2.8 Macro G OSS"
+      ],
+      "compatibility": {
+        "accessories": [
+          "Tilta Nucleus Nano 2 follow focus",
+          "DJI RS3 Pro gimbal"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "Sony E-mount (full frame)",
+      "name_canonical": "Sony FE 90mm f2.8 Macro G OSS",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn74ggzk8jjvpxdy0g5zh0f15h86b2hq",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "Sony E-mount (full frame)",
+      "name_canonical": "Sony 28-70mm",
+      "qty": 2,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn76chbtwhyv1987y4ae3pj2dh86bw7d",
+      "aliases": [
+        "Sony 11mm f2.8 fisheye",
+        "Sony 11mm f2.8 fisheye lens",
+        "TTArtisan 11mm f/2.8 fisheye (E)"
+      ],
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "Sony E-mount (full frame)",
+      "name_canonical": "TTArtisan 11mm f2.8 Fisheye (Sony E)",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn701tq0apy4hps33r49be6a0986a051",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "ND filter",
+          "Cinebloom filter mist",
+          "Tilta Nucleus Nano 2 follow focus",
+          "DJI RS3 Pro gimbal"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "Canon EF mount",
+      "name_canonical": "Canon EF 24-105mm f4",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn73vyme6exjhxqnz8g5es2s5h86bg2s",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "ND filter",
+          "Cinebloom filter mist",
+          "Tilta Nucleus Nano 2 follow focus",
+          "DJI RS3 Pro gimbal"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "Canon EF mount",
+      "name_canonical": "Canon EF 16-35mm f2.8",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7bw2cr1ye5hqj3x770b332ks86atzw",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal",
+          "Atomos Ninja V",
+          "Hollyland Mars 4K transmitter",
+          "Hollyland Pyro S transmitter",
+          "Hollyland 7-inch monitor",
+          "ND filter",
+          "Cinebloom filter mist",
+          "Tilta shoulder rig",
+          "Tilta Nucleus Nano 2 follow focus",
+          "V-mount 95Wh",
+          "V-mount 150Wh",
+          "Small rig tripod",
+          "Sirui tripod",
+          "Motorized slider",
+          "PL to Sony E mount"
+        ],
+        "batteries": [
+          "Sony NP-FZ100"
+        ],
+        "cards": [
+          "CF Express Type A card",
+          "256GB card"
+        ],
+        "included_with_rental": [
+          "Sony NP-FZ100 batteries 2x sets",
+          "CF Express Type A card"
+        ],
+        "lenses": [
+          "Sony GM 24-70mm f2.8",
+          "Sony GM 16-35mm f2.8",
+          "Sony GM 70-200mm f2.8",
+          "Sony FE 90mm f2.8 Macro G OSS",
+          "Sony 28-70mm",
+          "TTArtisan 11mm f2.8 Fisheye (Sony E)",
+          "Anamorphic Blazar Remus 33mm",
+          "Anamorphic Blazar Remus 45mm",
+          "Anamorphic Blazar Remus 65mm",
+          "Anamorphic Blazar Remus 100mm"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "camera",
+      "lens_mount": "Sony E-mount (full frame)",
+      "name_canonical": "Sony FX3",
+      "qty": 4,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn74p93r60ndmmb0qghjqg84yh86abvh",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal",
+          "ND filter",
+          "Cinebloom filter mist",
+          "Tilta shoulder rig",
+          "Small rig tripod",
+          "Sirui tripod",
+          "PL to Sony E mount"
+        ],
+        "batteries": [
+          "Sony NP-FZ100"
+        ],
+        "cards": [
+          "256GB card"
+        ],
+        "included_with_rental": [
+          "Sony NP-FZ100 batteries 2x sets",
+          "256GB card"
+        ],
+        "lenses": [
+          "Sony GM 24-70mm f2.8",
+          "Sony GM 16-35mm f2.8",
+          "Sony GM 70-200mm f2.8",
+          "Sony FE 90mm f2.8 Macro G OSS",
+          "Sony 28-70mm",
+          "TTArtisan 11mm f2.8 Fisheye (Sony E)",
+          "Anamorphic Blazar Remus 33mm",
+          "Anamorphic Blazar Remus 45mm",
+          "Anamorphic Blazar Remus 65mm",
+          "Anamorphic Blazar Remus 100mm"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "camera",
+      "lens_mount": "Sony E-mount (full frame)",
+      "name_canonical": "Sony A7 III",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn71src7p25m5ppzkxnjwadm1s86azfk",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal",
+          "ND filter",
+          "Cinebloom filter mist",
+          "Small rig tripod",
+          "Sirui tripod",
+          "PL to Sony E mount"
+        ],
+        "batteries": [],
+        "cards": [
+          "256GB card"
+        ],
+        "included_with_rental": [
+          "Sony NP-FW50 batteries 2x sets",
+          "256GB card"
+        ],
+        "lenses": [
+          "Sony GM 24-70mm f2.8",
+          "Sony GM 16-35mm f2.8",
+          "Sony GM 70-200mm f2.8",
+          "Sony FE 90mm f2.8 Macro G OSS",
+          "Sony 28-70mm",
+          "TTArtisan 11mm f2.8 Fisheye (Sony E)",
+          "Anamorphic Blazar Remus 33mm",
+          "Anamorphic Blazar Remus 45mm",
+          "Anamorphic Blazar Remus 65mm",
+          "Anamorphic Blazar Remus 100mm"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "camera",
+      "lens_mount": "Sony E-mount (full frame)",
+      "name_canonical": "Sony A7 II",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn737xq0jcc8a011f6x2m6srt986az25",
+      "aliases": [
+        "blackmagic 6k pro",
+        "blackmagic pocket cinema camera 6k pro",
+        "blackmagic pocket 6k pro"
+      ],
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal",
+          "Atomos Ninja V",
+          "Hollyland Mars 4K transmitter",
+          "Hollyland Pyro S transmitter",
+          "Hollyland 7-inch monitor",
+          "V-mount 95Wh",
+          "V-mount 150Wh",
+          "Tilta shoulder rig",
+          "Tilta Nucleus Nano 2 follow focus",
+          "Small rig tripod",
+          "Sirui tripod",
+          "ND filter",
+          "PL to EF mount"
+        ],
+        "batteries": [
+          "NP-F570"
+        ],
+        "cards": [
+          "256GB card"
+        ],
+        "included_with_rental": [
+          "5x NP-F570 battery",
+          "1x 1TB SSD",
+          "1x camera cage",
+          "1x hard carrying case"
+        ],
+        "lenses": [
+          "Canon EF 24-105mm f4",
+          "Canon EF 16-35mm f2.8"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "camera",
+      "lens_mount": "Canon EF mount",
+      "listing_stock_rules": [
+        {
+          "components": [
+            {
+              "item_id": "kn76nvabr4kaj5rm90x52pxkxn86bjv2",
+              "qty": 2
+            }
+          ],
+          "excludes": [
+            "kn7ee2cx4923bk3vmxy14ec3bs86aqmh"
+          ],
+          "source": "Daniel confirmed 2026-10-13: Chantal BMPCC 6K Pro V-mount kit includes 2x 95Wh; applies to equivalent account listings and website.",
+          "title_pattern": "v[ -]?mount"
+        }
+      ],
+      "name_canonical": "BMPCC 6K Pro",
+      "qty": 1,
+      "status": "active",
+      "supplied_stock": [
+        {
+          "item_id": "kn7fwc3jkvtbfnkr6tfb0hgxcn8fhdp6",
+          "qty": 5,
+          "source": "Owner confirmation 2026-10-02: native NP-F570; total 'like over 12'. Kit allocations retain the recorded five batteries per camera."
+        }
+      ],
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn740n15w16172sn1qj8h89gx586b2xf",
+      "aliases": [
+        "blackmagic 6k full frame",
+        "blackmagic cinema camera 6k full frame",
+        "blackmagic cinema camera 6k"
+      ],
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal",
+          "Atomos Ninja V",
+          "Hollyland Mars 4K transmitter",
+          "V-mount 95Wh",
+          "V-mount 150Wh",
+          "Tilta shoulder rig",
+          "Tilta Nucleus Nano 2 follow focus",
+          "Small rig tripod",
+          "Sirui tripod",
+          "ND filter",
+          "PL to L mount"
+        ],
+        "batteries": [
+          "NP-F570"
+        ],
+        "cards": [
+          "1TB CFexpress Type B card"
+        ],
+        "included_with_rental": [
+          "Canon EF-to-L mount adapter",
+          "NP-F570 batteries 5x",
+          "1x 1TB CFexpress Type B card"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "camera",
+      "lens_mount": "Leica L-mount (native)",
+      "name_canonical": "BMPCC 6K Full Frame",
+      "qty": 1,
+      "status": "active",
+      "supplied_stock": [
+        {
+          "item_id": "kn7fwc3jkvtbfnkr6tfb0hgxcn8fhdp6",
+          "qty": 5,
+          "source": "Owner confirmation 2026-10-02: native NP-F570; total 'like over 12'. Kit allocations retain the recorded five batteries per camera."
+        }
+      ],
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn71951h7f9z8p3cea06v6zjjx86bgn4",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal",
+          "ND filter",
+          "Cinebloom filter mist",
+          "Tilta shoulder rig",
+          "Small rig tripod",
+          "Sirui tripod",
+          "PL to Sony E mount"
+        ],
+        "batteries": [
+          "Sony NP-FZ100"
+        ],
+        "cards": [
+          "256GB card"
+        ],
+        "included_with_rental": [
+          "Sony NP-FZ100 batteries 2x sets",
+          "CF Express Type A card"
+        ],
+        "lenses": [
+          "Sony GM 24-70mm f2.8",
+          "Sony GM 16-35mm f2.8",
+          "Sony GM 70-200mm f2.8",
+          "Sony FE 90mm f2.8 Macro G OSS",
+          "Sony 28-70mm",
+          "TTArtisan 11mm f2.8 Fisheye (Sony E)",
+          "Anamorphic Blazar Remus 33mm",
+          "Anamorphic Blazar Remus 45mm",
+          "Anamorphic Blazar Remus 65mm",
+          "Anamorphic Blazar Remus 100mm"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "camera",
+      "lens_mount": "Sony E-mount (full frame)",
+      "name_canonical": "Sony A7 V",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7agmkc5fav8apays0bj95d1x86azbk",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Nanlite Forza 300",
+          "Nanlite 500B",
+          "C-stand"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "1x Bowens-mount adapter ring"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lighting",
+      "lens_mount": "N/A",
+      "name_canonical": "Softbox 85cm",
+      "qty": 2,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7a3ja3jypm2z1n04wmtfbmd186a8x3",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "C-stand",
+          "Small rig tripod"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "1x GVM RGB LED panel",
+          "1x stand",
+          "1x power adapter/cable",
+          "1x barn doors"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lighting",
+      "lens_mount": "N/A",
+      "name_canonical": "LED light panels RGB",
+      "qty": 3,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7e3hztddjngzf3tka096mqrx86avn9",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "C-stand",
+          "Softbox 85cm"
+        ],
+        "batteries": [
+          "V-mount 95Wh",
+          "V-mount 150Wh"
+        ],
+        "cards": [],
+        "included_with_rental": [
+          "1x Nanlite Forza 300 light",
+          "1x power ballast & cable",
+          "1x reflector",
+          "1x light stand",
+          "1x carry case"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lighting",
+      "lens_mount": "N/A",
+      "name_canonical": "Nanlite Forza 300",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7e4ecrf5fwb7sp11jger73t586ak9w",
+      "aliases": [],
+      "is_marketing_only": false,
+      "kind": "lighting",
+      "name_canonical": "Nanlite Pavotube 30x II",
+      "qty": 4,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7d621zqcxe6a26tfyzbh09ts86at0g",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "C-stand",
+          "Softbox 85cm"
+        ],
+        "batteries": [
+          "V-mount 95Wh",
+          "V-mount 150Wh"
+        ],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lighting",
+      "lens_mount": "N/A",
+      "name_canonical": "Nanlite 500B",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn76nvabr4kaj5rm90x52pxkxn86bjv2",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Nanlite Forza 300",
+          "Nanlite 500B",
+          "Tilta shoulder rig"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "power",
+      "lens_mount": "N/A",
+      "name_canonical": "V-mount 95Wh",
+      "qty": 2,
+      "status": "active",
+      "track_independent_stock": true,
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7ee2cx4923bk3vmxy14ec3bs86aqmh",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Nanlite Forza 300",
+          "Nanlite 500B",
+          "Tilta shoulder rig"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "power",
+      "lens_mount": "N/A",
+      "name_canonical": "V-mount 150Wh",
+      "qty": 4,
+      "status": "active",
+      "track_independent_stock": true,
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn79kzg6j393vz9mjh7ghqx0gn86bz73",
+      "aliases": [
+        "DJI RS3 Pro Gimbal Batteries",
+        "DJI RS3 Pro batteries",
+        "DJI Ronin RS2 RS3 Pro Gimbal Battery",
+        "DJI RS BG30 grip battery"
+      ],
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "power",
+      "lens_mount": "N/A",
+      "name_canonical": "DJI gimbal battery",
+      "qty": 3,
+      "status": "active",
+      "track_independent_stock": true,
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn71tc5enf40a1kahhanr0cjz586ak5g",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "power",
+      "lens_mount": "N/A",
+      "name_canonical": "Anker Power Station F2000",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn76ynt7yda9s63ewbg2sab1en86a0ts",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Atomos Ninja V",
+          "Hollyland 7-inch monitor",
+          "Hollyland Mars 4K transmitter"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "2x NP-F970 batteries",
+          "Dual charger"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "power",
+      "lens_mount": "N/A",
+      "name_canonical": "Sony NPF 970 batteries 2x sets",
+      "qty": 4,
+      "status": "active",
+      "unit_kind": "kit"
+    },
+    {
+      "_id": "kn74kcta05c9nd5pyb9sz2vtqn86atbm",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Nanlite Forza 300",
+          "Nanlite 500B",
+          "Softbox 85cm",
+          "5-in-1 reflector panel"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "grip",
+      "lens_mount": "N/A",
+      "name_canonical": "C-stand",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn772m9zxc4p7ctb1rbeahy79h86apc6",
+      "aliases": [
+        "SmallRig tripod"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "support",
+      "lens_mount": "N/A",
+      "name_canonical": "Small rig tripod",
+      "qty": 3,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn74e9yatcn6xyth4ptrp6zqr586bhrn",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "support",
+      "lens_mount": "N/A",
+      "name_canonical": "Sirui tripod",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn72cbk6s14jarnhvdwwrsbx3s86bgth",
+      "aliases": [
+        "DJI RS3 Pro"
+      ],
+      "compatibility": {
+        "accessories": [
+          "Tilta Nucleus Nano 2 follow focus",
+          "Small rig tripod"
+        ],
+        "batteries": [
+          "DJI gimbal battery"
+        ],
+        "cards": [],
+        "included_with_rental": [
+          "1x DJI RS3 Pro gimbal",
+          "1x battery grip",
+          "1x extended tripod grip",
+          "1x camera mounting plate",
+          "1x cable set",
+          "1x carry case"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "gimbal",
+      "lens_mount": "Quick-release plate (universal)",
+      "name_canonical": "DJI RS3 Pro gimbal",
+      "qty": 2,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn70nsxs16detsje0kd1hgxbw986bn71",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Sirui tripod",
+          "Small rig tripod"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "motion",
+      "lens_mount": "N/A",
+      "name_canonical": "Motorized slider",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn77jnwhcbvenk18v3qceqafh586byar",
+      "aliases": [
+        "Tilta Nucleus Nano II"
+      ],
+      "compatibility": {
+        "accessories": [
+          "DJI RS3 Pro gimbal",
+          "Tilta shoulder rig"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "stabilizer",
+      "lens_mount": "N/A",
+      "name_canonical": "Tilta Nucleus Nano 2 follow focus",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7b7hk95n8stj9f6p5n6vk49n86ahry",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Tilta Nucleus Nano 2 follow focus",
+          "Atomos Ninja V",
+          "V-mount 95Wh",
+          "V-mount 150Wh"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "support",
+      "lens_mount": "N/A",
+      "name_canonical": "Tilta shoulder rig",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn730pkfaq0n0dqnwjw6swepjd86b34h",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Audio boom mic Sennheiser"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "support",
+      "lens_mount": "N/A",
+      "name_canonical": "Monopod arm support",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7dy8zf34tffmcvzvdtrnn3jn86an19",
+      "aliases": [
+        "DJI Osmo Action 5 Pro"
+      ],
+      "compatibility": {
+        "accessories": [
+          "Suction cups"
+        ],
+        "batteries": [],
+        "cards": [
+          "256GB card"
+        ],
+        "included_with_rental": [
+          "2x DJI Osmo Action battery",
+          "1x 128GB microSD card",
+          "1x suction mount",
+          "battery charging solution"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "camera",
+      "lens_mount": "Fixed wide-angle lens",
+      "name_canonical": "DJI Osmo Action Pro 5",
+      "qty": 3,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn79ydca5fj0e9bbh19b6egfn186a8hv",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [
+          "256GB card"
+        ],
+        "included_with_rental": [
+          "3x Intelligent Flight Battery",
+          "1x charging hub",
+          "1x carrying case"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "drone",
+      "lens_mount": "Fixed triple-camera system",
+      "name_canonical": "DJI Mavic 3 Pro",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn79mc5rgqhsr64hbn58z737hs86b5ks",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [
+          "256GB card"
+        ],
+        "included_with_rental": [
+          "5x battery",
+          "1x charger",
+          "1x 256GB SD card",
+          "1x ND filter set",
+          "1x controller"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "drone",
+      "lens_mount": "Fixed camera",
+      "name_canonical": "DJI Mini 4 Pro",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn72bfr0py9rts0pwfpg2faxvs86a7m2",
+      "aliases": [
+        "GoPro HERO12 Black"
+      ],
+      "compatibility": {
+        "accessories": [
+          "Suction cups"
+        ],
+        "batteries": [],
+        "cards": [
+          "256GB card"
+        ],
+        "included_with_rental": [
+          "2x GoPro Enduro battery",
+          "1x 128GB microSD card",
+          "1x suction mount",
+          "1x carry bag"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "camera",
+      "lens_mount": "Fixed wide-angle lens",
+      "listing_stock_rules": [
+        {
+          "apply_to_declared_component": true,
+          "components": [
+            {
+              "item_id": "kn72f7s8b5dkspbqq2eghaxak186a61p",
+              "qty": 1
+            }
+          ],
+          "excludes": [
+            "kn72f7s8b5dkspbqq2eghaxak186a61p"
+          ],
+          "source": "Daniel confirmed 14 Oct 2026: each basic/RGB GoPro interview package includes ONE RODE Wireless PRO kit (2 transmitters +1 receiver), not two systems. Supplied accessory counts are from each exact Diogo contents list. No owned quantities or external listings changed.",
+          "supplied_parts": [
+            {
+              "name": "mini camera stands",
+              "qty": 3
+            }
+          ],
+          "title_pattern": "^3x GoPro Hero 12 Multi-Cam Kit \\| Budget Interview Setup / Rode Wireless Pro Mics$"
+        },
+        {
+          "apply_to_declared_component": true,
+          "components": [
+            {
+              "item_id": "kn72f7s8b5dkspbqq2eghaxak186a61p",
+              "qty": 1
+            }
+          ],
+          "excludes": [
+            "kn72f7s8b5dkspbqq2eghaxak186a61p"
+          ],
+          "source": "Daniel confirmed 14 Oct 2026: each basic/RGB GoPro interview package includes ONE RODE Wireless PRO kit (2 transmitters +1 receiver), not two systems. Supplied accessory counts are from each exact Diogo contents list. No owned quantities or external listings changed.",
+          "supplied_parts": [
+            {
+              "name": "Compact light stands for the LED panels",
+              "qty": 3
+            }
+          ],
+          "title_pattern": "^GoPro Hero 12 \\(x3\\) & Rode Wireless Pro \\(x2\\) Kit \\| Budget 4K Interview Setup /$"
+        }
+      ],
+      "name_canonical": "GoPro 12 Hero",
+      "qty": 3,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn79qjzqzdf1hd7843v6t098yn86bavz",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "GoPro 12 Hero",
+          "DJI Osmo Action Pro 5"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "accessory",
+      "lens_mount": "N/A",
+      "name_canonical": "Suction cups",
+      "qty": 6,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn71sgc80nc6fkqehrtghp9j9h86b9zg",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "V-mount 95Wh",
+          "V-mount 150Wh"
+        ],
+        "batteries": [
+          "Sony NP-F (NPF 970 compatible)"
+        ],
+        "cards": [],
+        "included_with_rental": [
+          "1x AtomX SSD caddy",
+          "1x sun hood",
+          "1x mounting bracket"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "monitor",
+      "lens_mount": "N/A",
+      "name_canonical": "Atomos Ninja V",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn76mqhv1bv291x5z68fxerzg986bnmq",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Hollyland 7-inch monitor"
+        ],
+        "batteries": [
+          "Built-in rechargeable + Sony NP-F compatible"
+        ],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "transmission",
+      "lens_mount": "N/A",
+      "name_canonical": "Hollyland Mars 4K transmitter",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7fqh3k3fqnxanqv0h7bmm8e186bn2s",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Hollyland 7-inch monitor"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "transmission",
+      "lens_mount": "N/A",
+      "name_canonical": "Hollyland Pyro S transmitter",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7ftrwrc0arnx7qfm7syjvy1x86b1ej",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [
+          "Sony NP-F (NPF 970 compatible)"
+        ],
+        "cards": [],
+        "included_with_rental": [
+          "1x monitor (receiver unit)",
+          "1x HDMI cable",
+          "2x battery",
+          "1x battery charger",
+          "1x carry bag"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "monitor",
+      "lens_mount": "N/A",
+      "name_canonical": "Hollyland 7-inch monitor",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn73k6qc2v113vh7bb9n3atkwn86bfh4",
+      "aliases": [
+        "R\u00d8DE VideoMic GO"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "no battery needed \u2014 plugs directly into camera mic input"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "audio",
+      "lens_mount": "N/A",
+      "name_canonical": "Rode Video Mic Go",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn72f7s8b5dkspbqq2eghaxak186a61p",
+      "aliases": [
+        "R\u00d8DE Wireless PRO"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "2x transmitter",
+          "1x receiver",
+          "2x lavalier mic",
+          "1x smart charge case"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "audio",
+      "lens_mount": "N/A",
+      "name_canonical": "Rode Wireless Mic Pro set",
+      "qty": 2,
+      "status": "active",
+      "unit_kind": "set"
+    },
+    {
+      "_id": "kn79c4nk2mb3fpfk3yen9ame6586b8j8",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Monopod arm support"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "1x Sennheiser MKE 600 mic",
+          "1x Zoom H1 XLR recorder",
+          "1x shock mount",
+          "1x windshield",
+          "1x boom pole (3 sections)",
+          "1x XLR cable",
+          "1x 32GB SD card",
+          "1x carry pouch"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "audio",
+      "lens_mount": "N/A",
+      "name_canonical": "Audio boom mic Sennheiser",
+      "qty": 2,
+      "status": "active",
+      "unit_kind": "kit"
+    },
+    {
+      "_id": "kn7cqfdykt0jawskn4e6dyft1186bxn3",
+      "aliases": [
+        "dji wireless mics",
+        "dji wireless microphones"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "2x transmitter",
+          "1x receiver",
+          "1x charging case"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "audio",
+      "lens_mount": "N/A",
+      "name_canonical": "DJI Wireless Mics",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "set"
+    },
+    {
+      "_id": "kn77hh2859zy0m9aetw9btz3d586a8gq",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "Softbox 85cm"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "1x Yongnuo YN560 IV speedlight",
+          "batteries included (no full-charge guarantee)"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lighting",
+      "lens_mount": "N/A",
+      "name_canonical": "Camera flash",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn74tzh51br8vxnynztdr657xx86by5x",
+      "aliases": [
+        "R\u00d8DE VideoMic Pro+"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "1x Rode Video Mic Pro Plus",
+          "built-in Rycote Lyre shock mount",
+          "built-in LB-1 rechargeable battery"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "audio",
+      "lens_mount": "N/A",
+      "name_canonical": "Rode Video Mic Pro Plus",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn76xseth9fn990s4ryv5rhfx986bnxt",
+      "aliases": [
+        "jbl wireless mics",
+        "jbl wireless microphone"
+      ],
+      "compatibility": {
+        "accessories": [
+          "JBL Club 120 speaker"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "1x wireless mic",
+          "1x dongle/receiver"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "audio",
+      "lens_mount": "N/A",
+      "name_canonical": "JBL wireless microphones",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "set"
+    },
+    {
+      "_id": "kn798d7b6nv7rvpcfhzek01h8h86b320",
+      "aliases": [
+        "dji mic 2",
+        "dji mic2",
+        "dji wireless mic 2"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "2x transmitter",
+          "1x receiver",
+          "1x charging case"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "audio",
+      "lens_mount": "N/A",
+      "name_canonical": "DJI Mic 2 wireless",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "set"
+    },
+    {
+      "_id": "kn7240nk0fs32pkn22cmwrvf4s86aps0",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "smoke_fx",
+      "lens_mount": "N/A",
+      "name_canonical": "Smoke machine fogger",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn70sapjg8gnkt330453bbbhkd86at3n",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "smoke_fx",
+      "lens_mount": "N/A",
+      "name_canonical": "Smoke Ninja Pro hazer",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn78q8je188na64af4a96v7tkd86akg9",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "smoke_fx",
+      "lens_mount": "N/A",
+      "name_canonical": "Smoke Ninja",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn78zk30xt2dva7y6ev430x97186bqmq",
+      "aliases": [
+        "Pioneer XDJ-RX3"
+      ],
+      "compatibility": {
+        "accessories": [
+          "JBL Club 120 speaker"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "1x Pioneer XDJ-RX3 controller",
+          "1x power cable",
+          "1x data transfer cable",
+          "1x protective transport case"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "dj_audio",
+      "lens_mount": "N/A",
+      "name_canonical": "DJ RX3 Pioneer controller",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7amjd9r3hks17nssn396s1yn86bc8q",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "DJ RX3 Pioneer controller",
+          "JBL wireless microphones"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "1x JBL PartyBox Club 120 speaker",
+          "1x speaker stand",
+          "1x power cable/charger",
+          "1x AUX cable",
+          "1x carrying bag"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "dj_audio",
+      "lens_mount": "N/A",
+      "name_canonical": "JBL Club 120 speaker",
+      "qty": 2,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn75e370fh417hgv0n394b4ved86bcqc",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "accessory",
+      "lens_mount": "N/A",
+      "name_canonical": "ND filter",
+      "qty": 3,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn71j0gjxcfvem33m6k8q8csfn86bjmp",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "storage_card",
+      "lens_mount": "N/A",
+      "name_canonical": "256GB card",
+      "qty": 3,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn754zpg9s2g5s08p4scsasngx86bnr5",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "accessory",
+      "lens_mount": "N/A",
+      "name_canonical": "Cinebloom filter mist",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn78qeqezcrpjr12gzmynyfgb986b1rn",
+      "aliases": [
+        "CFexpress Type A card"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "storage_card",
+      "lens_mount": "N/A",
+      "name_canonical": "CF Express Type A card",
+      "qty": 3,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7dmb0g4f4sj25m6q6gyknxc986axfr",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "C-stand"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "2x Ambitful RGB LED tube light",
+          "2x mounting bracket",
+          "2x power adapter/cable",
+          "1x carry case"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lighting",
+      "lens_mount": "N/A",
+      "name_canonical": "Ambitful RGB light tubes 2x set",
+      "qty": 2,
+      "status": "active",
+      "unit_kind": "set"
+    },
+    {
+      "_id": "kn785zky4ns7msdghany5m1db186ac6h",
+      "aliases": [
+        "PL \u2192 E adapter"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": [
+          "Anamorphic Blazar Remus 33mm",
+          "Anamorphic Blazar Remus 45mm",
+          "Anamorphic Blazar Remus 65mm",
+          "Anamorphic Blazar Remus 100mm"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "accessory",
+      "lens_mount": "PL to Sony E-mount adapter",
+      "name_canonical": "PL to Sony E mount",
+      "qty": 2,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn777s1ct1gw4nrfsfz9xak8ns86b8wa",
+      "aliases": [
+        "PL \u2192 EF adapter"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": [
+          "Anamorphic Blazar Remus 33mm",
+          "Anamorphic Blazar Remus 45mm",
+          "Anamorphic Blazar Remus 65mm",
+          "Anamorphic Blazar Remus 100mm"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "accessory",
+      "lens_mount": "PL to Canon EF-mount adapter",
+      "name_canonical": "PL to EF mount",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn73dn42x6q85h2kyf66xg3g6586btgy",
+      "aliases": [
+        "PL \u2192 RF adapter"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": [
+          "Anamorphic Blazar Remus 33mm",
+          "Anamorphic Blazar Remus 45mm",
+          "Anamorphic Blazar Remus 65mm",
+          "Anamorphic Blazar Remus 100mm"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "accessory",
+      "lens_mount": "PL to Canon RF-mount adapter",
+      "name_canonical": "PL to RF mount",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7ce6wad1dfrsf2fxdthbynmn86bf0s",
+      "aliases": [
+        "PL \u2192 L adapter"
+      ],
+      "compatibility": {
+        "accessories": [],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [],
+        "lenses": [
+          "Anamorphic Blazar Remus 33mm",
+          "Anamorphic Blazar Remus 45mm",
+          "Anamorphic Blazar Remus 65mm",
+          "Anamorphic Blazar Remus 100mm"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "accessory",
+      "lens_mount": "PL to L-mount adapter",
+      "name_canonical": "PL to L mount",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7fg3tc2yndn42snr3xds8h2586a2cx",
+      "aliases": [],
+      "compatibility": {
+        "accessories": [
+          "C-stand"
+        ],
+        "batteries": [],
+        "cards": [],
+        "included_with_rental": [
+          "1x 5-in-1 reflector panel (42in, folds to 1/3 size)"
+        ],
+        "lenses": []
+      },
+      "is_marketing_only": false,
+      "kind": "lighting",
+      "lens_mount": "N/A",
+      "name_canonical": "5-in-1 reflector panel",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7dw0xajwt0v8nb0xw92abexx86bspf",
+      "aliases": [
+        "Great Joy 35mm"
+      ],
+      "is_marketing_only": true,
+      "kind": "lens",
+      "name_canonical": "Anamorphic Great Joy lens 35mm",
+      "qty": 0,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn70h5me7r347xwdhxbk4bc00186b70v",
+      "aliases": [
+        "Great Joy 50mm"
+      ],
+      "is_marketing_only": true,
+      "kind": "lens",
+      "name_canonical": "Anamorphic Great Joy lens 50mm",
+      "qty": 0,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn769vk4psfqc1t2p7hwhnt2j986acd1",
+      "aliases": [
+        "Great Joy 85mm"
+      ],
+      "is_marketing_only": true,
+      "kind": "lens",
+      "name_canonical": "Anamorphic Great Joy lens 85mm",
+      "qty": 0,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn74nbvbga03n0k2e1crhj9yr986afq0",
+      "aliases": [],
+      "compatibility": {
+        "included_with_rental": []
+      },
+      "is_marketing_only": false,
+      "kind": "camera",
+      "name_canonical": "Fujifilm X100 VI",
+      "qty": 0,
+      "status": "inactive",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7ae54ermh21msysxwfh7hanx871gk8",
+      "aliases": [],
+      "is_marketing_only": false,
+      "kind": "power",
+      "name_canonical": "NP-FW50 batteries",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn782v9vnh4w7j35b9j1repaqh870mwd",
+      "aliases": [],
+      "is_marketing_only": false,
+      "kind": "power",
+      "name_canonical": "NP-W126S batteries",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn72r54nkzjphnr54kkysjbxnn870cgn",
+      "aliases": [],
+      "is_marketing_only": false,
+      "kind": "power",
+      "name_canonical": "BMPCC battery pack",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7a0m1pgkxxma9wdhgdwrjarh871a8a",
+      "aliases": [],
+      "is_marketing_only": false,
+      "kind": "media",
+      "name_canonical": "128GB V30 SD card",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn784pn91v1m5mv0994by9vt6587169t",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "camera_body",
+      "name_canonical": "Sony FX6",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn758tccqwp1ts1qjk63ecvy0d871rne",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "camera_body",
+      "name_canonical": "Sony A7S III",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7e4kka2fq9djz5fherff5pwh870ggq",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "camera_body",
+      "name_canonical": "Canon R5",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn75zwx71dd0rt5nenjknj8wks871jad",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "camera_body",
+      "name_canonical": "Canon C70",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn767mdybj67bcnq4krxtn70jh8707c6",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "camera_body",
+      "name_canonical": "RED Komodo",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7chb9abhnqfm8stvc3vwt8rn870qa3",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "camera_body",
+      "name_canonical": "DJI Ronin 4D",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn724qcrvw1621ftjfxnh4qceh871ps8",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "camera_body",
+      "name_canonical": "Sony A1",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn79f1ygyd5p9s6rx6r4t2ybn5870q7c",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "camera_body",
+      "name_canonical": "Panasonic S5 II",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn75pj6z7ffjh1xamzvqe1bw3n870mzg",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "camera_body",
+      "name_canonical": "DJI Air 3",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn70q3hyx3j3ncbjzk95yx92wn870n78",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "camera_body",
+      "name_canonical": "DJI Inspire 3",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn74449d74316p3d8cc4npd7a1871dv5",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "lighting",
+      "name_canonical": "Aputure 600d Pro",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7295pav8wctqf3br9dqkzjen871ksy",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "lighting",
+      "name_canonical": "Aputure 300x",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn746pmpevvgmrtmf7vnjkbhzs8714d2",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "support",
+      "name_canonical": "DJI RS4 Pro",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn79805x5xyedwsxej5626ht5s8717hp",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "audio",
+      "name_canonical": "Sennheiser EW 500 Wireless",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn785c25yeg5xrqhsd5frjphs9871q06",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "lens",
+      "name_canonical": "Sigma 24-70mm f2.8 Art",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn77a9s1gxkpkr2n8qn2qwrapn87001m",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "lens",
+      "name_canonical": "Sony FE 135mm f1.8 GM",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn75g2rnpcebz42zcvch5c61px8706aa",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "lens",
+      "name_canonical": "Sony FE 50mm f1.2 GM",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn75ber4qgc62sendyzmgb347x870wwn",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "lens",
+      "name_canonical": "Sony FE 14mm f1.8 GM",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7bmkkkzd4dz4aehp7gm6rwhh870408",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "support",
+      "name_canonical": "Tilta Float Gimbal Support",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn736h8m12nsja45mfeekne9f5871bs1",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "monitoring",
+      "name_canonical": "SmallHD Cine 7 Monitor",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn760v1z99tybdwkcqry8eagns87a6qq",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "dj_audio",
+      "name_canonical": "Pioneer XDJ-RX2",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn721nsax9egsfs5n246b4zx6h87arbw",
+      "aliases": [],
+      "is_marketing_only": false,
+      "kind": "accessory",
+      "name_canonical": "DJI Fly More Kit",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "kit"
+    },
+    {
+      "_id": "kn7c9e2jhf35cway1221k5fzhh87becd",
+      "aliases": [],
+      "compatibility": {
+        "included_with_rental": [
+          "25mm T2.1 lens",
+          "50mm T2.1 lens",
+          "75mm T2.1 lens",
+          "front & rear caps for each lens",
+          "hard protective case"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "lens",
+      "lens_mount": "PL",
+      "name_canonical": "DZOFilm Vespid 3-Lens Set",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "set"
+    },
+    {
+      "_id": "kn73hvhtdk1pmyyphkynfcj8an87aaav",
+      "aliases": [],
+      "is_marketing_only": false,
+      "kind": "support",
+      "name_canonical": "Manfrotto 190X Tripod",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn72epb69by4z9khg9jxbvqqx187bjzz",
+      "aliases": [],
+      "is_marketing_only": true,
+      "kind": "video",
+      "name_canonical": "ViewSonic 4K Projector",
+      "qty": 1,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn74gbk1z31fnmhtk8zsgs2yss87aj38",
+      "aliases": [
+        "Mackie Thump GO"
+      ],
+      "compatibility": {
+        "included_with_rental": [
+          "1x built-in rechargeable battery",
+          "1x carrying bag"
+        ]
+      },
+      "is_marketing_only": true,
+      "kind": "dj_audio",
+      "name_canonical": "MACKIE Thump Go speaker",
+      "qty": 0,
+      "status": "marketing_only",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn77m0xd9gjzbt9kg6hgb1zfyn87bw3d",
+      "aliases": [],
+      "is_marketing_only": false,
+      "kind": "storage_card",
+      "name_canonical": "Atomos 1TB SSD",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7cv20cmz2k8fb3cwgt9qgdsx87advv",
+      "aliases": [],
+      "compatibility": {
+        "included_with_rental": [
+          "1x carrying pouch",
+          "1x puff attachment",
+          "1x wind shield",
+          "1x XLR to 3.5mm converter (optional)",
+          "1x carrying case"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "audio",
+      "name_canonical": "Sennheiser MKE 600",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn75kqmcsgrgf8dwsxf19a427d87ez77",
+      "aliases": [
+        "zoom recorder",
+        "zoom h5n",
+        "zoom recorder h5"
+      ],
+      "compatibility": {
+        "included_with_rental": [
+          "1x 32GB SD card",
+          "2x battery",
+          "1x XLR cable (optional)"
+        ]
+      },
+      "is_marketing_only": false,
+      "kind": "audio",
+      "name_canonical": "Zoom H5",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn77ghtcyjn3xdws93s0e5cdth87f86e",
+      "aliases": [
+        "fluid video head",
+        "fluid head",
+        "video head"
+      ],
+      "is_marketing_only": false,
+      "kind": "support",
+      "name_canonical": "SmallRig Fluid Head",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7b8ezbpk7k3c4gdrb1smn7ad89a2j0",
+      "aliases": [
+        "EF-L adapter",
+        "Canon EF to L mount adapter",
+        "EF to L adapter",
+        "EF-to-L mount",
+        "EF \u2192 L adapter"
+      ],
+      "is_marketing_only": false,
+      "kind": "accessory",
+      "name_canonical": "EF to L mount",
+      "qty": 1,
+      "status": "active",
+      "unit_kind": "unit"
+    },
+    {
+      "_id": "kn7fwc3jkvtbfnkr6tfb0hgxcn8fhdp6",
+      "aliases": [
+        "NP-F570 battery",
+        "Blackmagic NP-F570 batteries"
+      ],
+      "is_marketing_only": false,
+      "kind": "power",
+      "name_canonical": "NP-F570 batteries",
+      "qty": 12,
+      "status": "active",
+      "track_independent_stock": true,
+      "unit_kind": "unit"
+    }
+  ],
+  "records": [
+    {
+      "key": {
+        "account": "dbcinema",
+        "productId": 954077
+      },
+      "product": {
+        "_id": "wd79mccn5jxykfr71aden5nd1d881mv6",
+        "accountSlug": "dbcinema",
+        "description": "The MIGHTY BMPCC 6k PRO together with one of the best stabilisiert in the industry, ronin rs 2 deliver a smooth and sharp ready to shoot kit that can be extended any will !\n(Lenses, acessories and transmitters avaliable at request!)\n\nGet 7 Days for the price of 5\nGet a Month for the price of 2.5 weeks\n\n\u2b50\ufe0fIncluded in this rental \u2b50\ufe0f\n1x BMPCC 6k pro Camera\n1x 1 TB SSD\n1x DJI RS 3 Pro Gimbal\n4x Camera Batteries\n1x DJI Battery (upgradable)\n2x carrying cases\nVarious needed cables\n\nAdd-on direct: \nUpgrade to a Nanlite 500 Bi color 2x lights + 1x 300 Setup for 90\u00a3/d\nUpgrade and add Wireless Video transmission with 1km range for 20\u00a3/d\n\n\u26a1\ufe0fADD-ONS\u26a1\ufe0f\nLights:\ud83d\udca1\nAdd 2x nanlite 500 bi color key lights (like aputure 600x) for 50\u00a3/d\nAdd 3x strong RGB LED Lights with stands and diffusion for 35\u00a3/d\n\nLenses:\ud83d\udcf7\nAdd the anamorphic cinema lens set from great joy 35,50,85 1.8x t2.9 lenses for 100\u00a3/d          (or individually for 35\u00a3/d per lens)\nAdd the Cannon 24-105mm f4 Lens for 20\u00a3/d\n\nDrone:\u2708\ufe0f\nAdd the dji mavic 3 classic 5k drone + fly more kit for 35\u00a3/d\n\nGimbals: \u2699\ufe0f\nAdd the DJI RS2 gimbal system to your set for 20\u00a3/d\nAdd the DJI RS3 Pro gimbal to you set for 25\u00a3/d\n\nMicrophones:\ud83c\udf99\ufe0f\nAdd the Senheiser MKE 600 Shotgun mic with boom pole and sound recorder for 28\u00a3/d\nAdd the dji wireless mic system with 2x transmitters and 1x receivers for 20\u00a3/d\nAdd the premium rode wireless pro set including 2x pro lavs for 28\u00a3/d\nAdd a third microphone and lavaliere mic for 10\u00a3/d\nAdd 2x lavalieres for 5\u00a3/d\n\nMonitors:\ud83d\udda5\ufe0f\nadd the Atomos shinobi 7 inch 2200nits 7 inch 4k Monitor for 20\u00a3/d\nAdd the Atomos Shogun 7 hdr 3000nits 7 inch 4k hdmi/sdi monitor for 30\u00a3/d\nAdd the Atomos Shinobi 5 inch 4k Monitor for 15\u00a3/d\n\nPower:\ud83d\udd0b\nAdd a power generator solix f2000 from Anker with 2080wah and 4000w for 60\u00a3/d\n\nAccessories:\u2692\nAdd a Heavy duty fluid head tripod for 15\u00a3/d\nAdd a matte box with variable nd filter system for 15\u00a3/d\nAdd a soft box for your light for 10\u00a3/d\nAdd image transmission wireless for 20\u00a3/d\nAdd an additional DJI Gimbal battery for 5\u00a3/d\nAdd Powerful 2x Sony Np970 batteries for all day battery life of 10\u00a3/d\nAdd a Mistfilter Moment Cinebloom for 10\u00a3/d\nAdd a VND Filter for 5\u00a3/d\nAdd a 100cm slider with carbon fibre arms for 10\u00a3/d\n\nIf\nSony and Blackmagic cameras\nDrones\nGimbals\nLights\nLEDS\nWireless mics\nImage Transmitters\nFollow focus\nMonitor\nSliders (motorized as well)\nMobile power generators\nLenses\nAnamorphic lenses\nTripods and stands\nsmoke machines\nfilters (vnd, mist, uv)\n\nPlease kindly note:\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary, any other charger that uses normal usb c and usb2.0 does NOT come with the cable included.\nWe try our best to ensure the items are charged when picked up but are unable to guarantee this due to partially very short times between rentals. If you have an important project please book and pickup equipment the day before your shoot or ensure you have a few hours to charge the batteries if necessary.\nSome items in the kit are labelled as \u201coptional\u201d in the kit and will only be included if explicitly requested so please make sure to let us know you would like those included at no extra cost.",
+        "isMarketingOnly": false,
+        "masterItemId": "kn737xq0jcc8a011f6x2m6srt986az25",
+        "name": "BMPCC 6k PRO Cinema Camera Blackmagic + RS 3 Pro Gimbal Kit",
+        "productId": 954077
+      },
+      "description": "The MIGHTY BMPCC 6k PRO together with one of the best stabilisiert in the industry, ronin rs 2 deliver a smooth and sharp ready to shoot kit that can be extended any will !\n(Lenses, acessories and transmitters avaliable at request!)\n\nGet 7 Days for the price of 5\nGet a Month for the price of 2.5 weeks\n\n\u2b50\ufe0fIncluded in this rental \u2b50\ufe0f\n1x BMPCC 6k pro Camera\n1x 1 TB SSD\n1x DJI RS 3 Pro Gimbal\n4x Camera Batteries\n1x DJI Battery (upgradable)\n2x carrying cases\nVarious needed cables\n\nAdd-on direct: \nUpgrade to a Nanlite 500 Bi color 2x lights + 1x 300 Setup for 90\u00a3/d\nUpgrade and add Wireless Video transmission with 1km range for 20\u00a3/d\n\n\u26a1\ufe0fADD-ONS\u26a1\ufe0f\nLights:\ud83d\udca1\nAdd 2x nanlite 500 bi color key lights (like aputure 600x) for 50\u00a3/d\nAdd 3x strong RGB LED Lights with stands and diffusion for 35\u00a3/d\n\nLenses:\ud83d\udcf7\nAdd the anamorphic cinema lens set from great joy 35,50,85 1.8x t2.9 lenses for 100\u00a3/d          (or individually for 35\u00a3/d per lens)\nAdd the Cannon 24-105mm f4 Lens for 20\u00a3/d\n\nDrone:\u2708\ufe0f\nAdd the dji mavic 3 classic 5k drone + fly more kit for 35\u00a3/d\n\nGimbals: \u2699\ufe0f\nAdd the DJI RS2 gimbal system to your set for 20\u00a3/d\nAdd the DJI RS3 Pro gimbal to you set for 25\u00a3/d\n\nMicrophones:\ud83c\udf99\ufe0f\nAdd the Senheiser MKE 600 Shotgun mic with boom pole and sound recorder for 28\u00a3/d\nAdd the dji wireless mic system with 2x transmitters and 1x receivers for 20\u00a3/d\nAdd the premium rode wireless pro set including 2x pro lavs for 28\u00a3/d\nAdd a third microphone and lavaliere mic for 10\u00a3/d\nAdd 2x lavalieres for 5\u00a3/d\n\nMonitors:\ud83d\udda5\ufe0f\nadd the Atomos shinobi 7 inch 2200nits 7 inch 4k Monitor for 20\u00a3/d\nAdd the Atomos Shogun 7 hdr 3000nits 7 inch 4k hdmi/sdi monitor for 30\u00a3/d\nAdd the Atomos Shinobi 5 inch 4k Monitor for 15\u00a3/d\n\nPower:\ud83d\udd0b\nAdd a power generator solix f2000 from Anker with 2080wah and 4000w for 60\u00a3/d\n\nAccessories:\u2692\nAdd a Heavy duty fluid head tripod for 15\u00a3/d\nAdd a matte box with variable nd filter system for 15\u00a3/d\nAdd a soft box for your light for 10\u00a3/d\nAdd image transmission wireless for 20\u00a3/d\nAdd an additional DJI Gimbal battery for 5\u00a3/d\nAdd Powerful 2x Sony Np970 batteries for all day battery life of 10\u00a3/d\nAdd a Mistfilter Moment Cinebloom for 10\u00a3/d\nAdd a VND Filter for 5\u00a3/d\nAdd a 100cm slider with carbon fibre arms for 10\u00a3/d\n\nIf\nSony and Blackmagic cameras\nDrones\nGimbals\nLights\nLEDS\nWireless mics\nImage Transmitters\nFollow focus\nMonitor\nSliders (motorized as well)\nMobile power generators\nLenses\nAnamorphic lenses\nTripods and stands\nsmoke machines\nfilters (vnd, mist, uv)\n\nPlease kindly note:\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary, any other charger that uses normal usb c and usb2.0 does NOT come with the cable included.\nWe try our best to ensure the items are charged when picked up but are unable to guarantee this due to partially very short times between rentals. If you have an important project please book and pickup equipment the day before your shoot or ensure you have a few hours to charge the batteries if necessary.\nSome items in the kit are labelled as \u201coptional\u201d in the kit and will only be included if explicitly requested so please make sure to let us know you would like those included at no extra cost.",
+      "override": [
+        {
+          "item_id": "kn737xq0jcc8a011f6x2m6srt986az25",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "key": {
+        "account": "dbcinema",
+        "productId": 1028831
+      },
+      "product": {
+        "_id": "wd7a5v7s1pex8qhb73s09nw45n880hb6",
+        "accountSlug": "dbcinema",
+        "description": "The newest Dji premium gimbal for large rigs and ultra smooth footage and great battery life.",
+        "isMarketingOnly": false,
+        "masterItemId": "kn72cbk6s14jarnhvdwwrsbx3s86bgth",
+        "name": "DJI rs 4 pro gimbal set 4.5kg payload stabilizer",
+        "productId": 1028831
+      },
+      "description": null,
+      "override": null
+    },
+    {
+      "key": {
+        "account": "dbcinema",
+        "productId": 1046235
+      },
+      "product": {
+        "_id": "wd79ee2mtavckn9mh698zkr1598808nw",
+        "accountSlug": "dbcinema",
+        "description": "\u2b50\ufe0fIncluded in this rental \u2b50\ufe0f\n1x Sony a 7 iii camera \n3x battery\n1x 128gb sd card\n1x Carrying bag \n\n\nAbout us\ud83d\udc68\ud83c\udffb\u200d\ud83d\udd27\nOperation times: 9am-12pm and 7pm-9pm\ud83d\udd50\nDelivery is always available! Please enquire for rates if interested \ud83d\ude9a\ud83d\udccd\nLocated 3 min away from Tottenham court road Station \ud83d\ude89 \ud83c\udf0d\nWe\u00b4re a London based commercial and equipment rental company since 2019 \ud83c\udfa5\n\n\n\u26a1\ufe0fADD-ONS\u26a1\ufe0f\nWe also offer:\n\n- Sony, Cannon, Arri and Blackmagic cameras\n- Drones\n- Party and event equipment\n- Speakers\n- Gimbals\n- Lights\n- LEDS\n- Wireless mics\n- Image Transmitters\n- Follow focus\n- Monitor\n- Sliders (motorized as well)\n- Mobile power generators\n- Lenses\n- Anamorphic lenses\n- Tripods and stands\n- Smoke machines\n- Filters (vnd, mist, uv)\n\n\nPlease kindly note:\n- We always provide chargers with the equipment but only supply the needed cable if it is proprietary, any other charger that uses normal usb c and usb2.0 does NOT come with the cable included.\n- We try our best to ensure the items are charged when picked up but are unable to guarantee this due to partially very short times between rentals. If you have an important project please book and pickup equipment the day before your shoot or ensure you have a few hours to charge the batteries if necessary.\n- Delivery is a separate charge to the rental fee charged here and will be processed separately.\n- Some items in the kit are labelled as \u201coptional\u201d in the kit and will only be included if explicitly requested so please make sure to let us know you would like those included at no extra cost.",
+        "isMarketingOnly": false,
+        "masterItemId": "kn74p93r60ndmmb0qghjqg84yh86abvh",
+        "name": "Sony a7 iii a7iii 4k cinema camera full frame mirrorless body set Sony a7 3 Sony",
+        "productId": 1046235
+      },
+      "description": null,
+      "override": null
+    },
+    {
+      "key": {
+        "account": "dbcinema",
+        "productId": 1051801
+      },
+      "product": {
+        "_id": "wd7fydae0jrrtqesj2j90zrkbd881b4s",
+        "accountSlug": "dbcinema",
+        "description": "\u2b50\ufe0fIncluded in this rental \u2b50\ufe0f\n2x Senheiser g3 transmitter\n2x Senheiser g3 reciever\n2x lav mic\n1x Carrying bag \n\n\nAbout us\ud83d\udc68\ud83c\udffb\u200d\ud83d\udd27\nOperation times: 9am-12pm and 7pm-9pm\ud83d\udd50\nDelivery is always available! Please enquire for rates if interested \ud83d\ude9a\ud83d\udccd\nLocated 3 min away from Tottenham court road Station \ud83d\ude89 \ud83c\udf0d\nWe\u00b4re a London based commercial and equipment rental company since 2019 \ud83c\udfa5\n\n\n\u26a1\ufe0fADD-ONS\u26a1\ufe0f\nWe also offer:\n\n- Sony, Cannon, Arri and Blackmagic cameras\n- Drones\n- Party and event equipment\n- Speakers\n- Gimbals\n- Lights\n- LEDS\n- Wireless mics\n- Image Transmitters\n- Follow focus\n- Monitor\n- Sliders (motorized as well)\n- Mobile power generators\n- Lenses\n- Anamorphic lenses\n- Tripods and stands\n- Smoke machines\n- Filters (vnd, mist, uv)\n\n\nPlease kindly note:\n- We always provide chargers with the equipment but only supply the needed cable if it is proprietary, any other charger that uses normal usb c and usb2.0 does NOT come with the cable included.\n- We try our best to ensure the items are charged when picked up but are unable to guarantee this due to partially very short times between rentals. If you have an important project please book and pickup equipment the day before your shoot or ensure you have a few hours to charge the batteries if necessary.\n- Delivery is a separate charge to the rental fee charged here and will be processed separately.\n- Some items in the kit are labelled as \u201coptional\u201d in the kit and will only be included if explicitly requested so please make sure to let us know you would like those included at no extra cost.",
+        "isMarketingOnly": true,
+        "name": "2x Senheiser g3 radio mic microphone 2x transmitter 2x reciever audio recorder",
+        "productId": 1051801
+      },
+      "description": null,
+      "override": null
+    },
+    {
+      "key": {
+        "account": "diogo",
+        "productId": 1173285
+      },
+      "product": {
+        "_id": "wd7dmx5jqeaa883gr53h13e4cn896sc3",
+        "accountSlug": "diogo",
+        "description": "Get ready to capture stunning 4K footage with my reliable Sony a7 III full-frame mirrorless camera kit!\n\nIn this kit:\n- 1x Sony a7 III camera body\n- 3x Sony NP-FZ100 batteries\n- 1x SanDisk Extreme PRO 128GB SD card\n- 1x Carrying bag\n\nA quick note on power: chargers are included with the kit. I only supply proprietary charging cables \u2014 anything that charges over a standard USB-C or USB 2.0 lead isn't included, so please bring your own. I do my best to have everything charged for pickup, but with tight turnarounds between rentals I can't always promise a full battery; if it's a time-sensitive shoot, collect the day before or leave an hour or two to top up.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn74p93r60ndmmb0qghjqg84yh86abvh",
+        "name": "Sony a7 III Full Frame Mirrorless Camera Body Kit | 4K / Cinema / a7iii / a73 /",
+        "productId": 1173285
+      },
+      "description": "Get ready to capture stunning 4K footage with my reliable Sony a7 III full-frame mirrorless camera kit! In this kit: - 1x Sony a7 III camera body - 3x Sony NP-FZ100 batteries - 1x SanDisk Extreme PRO 128GB SD card - 1x Carrying bag A quick note on power: chargers are included with the kit. I only supply proprietary charging cables \u2014 anything that charges over a standard USB-C or USB 2.0 lead isn't included, so please bring your own. I do my best to have everything charged for pickup, but with tight turnarounds between rentals I can't always promise a full battery; if it's a time-sensitive shoo",
+      "override": null
+    },
+    {
+      "key": {
+        "account": "diogo",
+        "productId": 1173510
+      },
+      "product": {
+        "_id": "wd740b4qt9ry1986xnesppqyax896ydz",
+        "accountSlug": "diogo",
+        "description": "Elevate your next event with my professional sound setup, featuring two powerful JBL PartyBox Club 120 speakers. This pair delivers massive sound, thumping bass, rich clarity, and dynamic LED light shows to transform any gathering into a full party atmosphere. You can run them in True Wireless Stereo mode for seamless paired performance, and I've included stands for optimal placement.\n\nIn this kit, I include:\n- 2\u00d7 JBL PartyBox Club 120 speakers\n- 2\u00d7 Height-adjustable speaker stands\n- 2\u00d7 Power cables / chargers\n- 2\u00d7 AUX cables (3.5mm to 3.5mm)\n- 1\u00d7 Carry bag for accessories\n\nThese speakers are perfect for:\n- DJ setups (they pair well with a Pioneer RX2 controller)\n- Weddings and large events, providing excellent double coverage.\n- Outdoor BBQs or birthdays where you need significant sound power.\n- House parties, creating an immersive stereo effect.\n\nAs a trusted renter since 2019, I manage a wide inventory of production and event gear, including cameras, drones, DJ decks, and other PA systems.\n\nThe speakers come fully charged, each offering up to 12 hours of battery life. However, I recommend connecting them to mains power for events lasting longer than a few hours to ensure continuous performance.\n\nA quick note on power: chargers are included with the kit. I only supply proprietary charging cables \u2014 anything that charges over a standard USB-C or USB 2.0 lead isn't included, so please bring your own. I do my best to have everything charged for pickup, but with tight turnarounds between rentals I can't always promise a full battery; if it's a time-sensitive shoot, collect the day before or leave an hour or two to top up.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn7amjd9r3hks17nssn396s1yn86bc8q",
+        "name": "2x JBL PartyBox Club 120 Speakers | Portable Bluetooth Party Speaker Pair / Bass",
+        "productId": 1173510
+      },
+      "description": "Elevate your next event with my professional sound setup, featuring two powerful JBL PartyBox Club 120 speakers. This pair delivers massive sound, thumping bass, rich clarity, and dynamic LED light shows to transform any gathering into a full party atmosphere. You can run them in True Wireless Stereo mode for seamless paired performance, and I've included stands for optimal placement. In this kit, I include: - 2\u00d7 JBL PartyBox Club 120 speakers - 2\u00d7 Height-adjustable speaker stands - 2\u00d7 Power cables / chargers - 2\u00d7 AUX cables (3.5mm to 3.5mm) - 1\u00d7 Carry bag for accessories These speakers are pe",
+      "override": null
+    },
+    {
+      "key": {
+        "account": "diogo",
+        "productId": 1173523
+      },
+      "product": {
+        "_id": "wd7628aptk320a9qfmc53c0scx89673y",
+        "accountSlug": "diogo",
+        "description": "Get professional-grade wireless audio for your next shoot with my Sennheiser G3 kit.\n\nIn this kit, you'll find:\n- 2x Sennheiser G3 Transmitters\n- 2x Sennheiser G3 Receivers\n- 2x Lavalier Microphones\n- 1x Carrying bag\n\nAbout me:\nI have been providing commercial and equipment rentals in London since 2019.\n\n\u26a1\ufe0fADD-ONS\u26a1\ufe0f\nI also offer a wide range of additional gear, including:\n- Sony, Canon, Arri, and Blackmagic cameras\n- Drones\n- Party and event equipment\n- Speakers\n- Gimbals\n- Lights\n- LEDs\n- Wireless mics\n- Image Transmitters\n- Follow focus\n- Monitors\n- Sliders (motorized as well)\n- Mobile power generators\n- Lenses\n- Anamorphic lenses\n- Tripods and stands\n- Smoke machines\n- Filters (VND, mist, UV)\n\nPlease note:\nDelivery is a separate charge to the rental fee here and will be processed separately.\n\nA quick note on power: chargers are included with the kit. I only supply proprietary charging cables \u2014 anything that charges over a standard USB-C or USB 2.0 lead isn't included, so please bring your own. I do my best to have everything charged for pickup, but with tight turnarounds between rentals I can't always promise a full battery; if it's a time-sensitive shoot, collect the day before or leave an hour or two to top up.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn79c4nk2mb3fpfk3yen9ame6586b8j8",
+        "name": "Sennheiser G3 Wireless Microphone Kit | 2x Radio Mic / 2x Transmitter / 2x",
+        "productId": 1173523
+      },
+      "description": "Get professional-grade wireless audio for your next shoot with my Sennheiser G3 kit. In this kit, you'll find: - 2x Sennheiser G3 Transmitters - 2x Sennheiser G3 Receivers - 2x Lavalier Microphones - 1x Carrying bag About me: I have been providing commercial and equipment rentals in London since 2019. \u26a1\ufe0fADD-ONS\u26a1\ufe0f I also offer a wide range of additional gear, including: - Sony, Canon, Arri, and Blackmagic cameras - Drones - Party and event equipment - Speakers - Gimbals - Lights - LEDs - Wireless mics - Image Transmitters - Follow focus - Monitors - Sliders (motorized as well) - Mobile power ge",
+      "override": null
+    },
+    {
+      "key": {
+        "account": "diogo",
+        "productId": 1173608
+      },
+      "product": {
+        "_id": "wd71mwwzzqkssxtpj1gfhj3qns897rhh",
+        "accountSlug": "diogo",
+        "description": "Elevate your visual storytelling with this exceptional dual set of Sony G-Master zoom lenses. These lenses are renowned for their outstanding image quality and are widely considered an ideal pairing for Sony camera systems.\n\nIn this kit:\n- 2x Sony FE 24-70mm f/2.8 GM G Master Lenses\n- 1x Protective carry bag\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn79e6tav264zrh9zs5pvfg5kd86avn6",
+        "name": "Sony G-Master 24-70mm f/2.8 Lenses | Twin Set / Zoom / E-mount",
+        "productId": 1173608
+      },
+      "description": null,
+      "override": null
+    },
+    {
+      "key": {
+        "account": "diogo",
+        "productId": 1173651
+      },
+      "product": {
+        "_id": "wd70h2zph8b4xcha3basfen2c1897ads",
+        "accountSlug": "diogo",
+        "description": "This comprehensive lens kit provides everything you need for professional-grade photography across a versatile range of focal lengths. My ultimate Sony lens set delivers exceptional image quality across the entire professional zoom range. It includes two premium G Master lenses and one high-quality G series lens, ensuring superb performance for any shoot.\n\nIn this kit:\n*   Sony G Master 16-35mm lens\n*   Sony G Master 24-70mm lens\n*   Sony G series 70-200mm lens\n*   A protective carry bag\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn79e6tav264zrh9zs5pvfg5kd86avn6",
+        "name": "Sony G Master Lens Kit | 16-35mm / 24-70mm / 70-200mm",
+        "productId": 1173651
+      },
+      "description": null,
+      "override": null
+    },
+    {
+      "key": {
+        "account": "diogo",
+        "productId": 1173660
+      },
+      "product": {
+        "_id": "wd73999sjwcjs41q3sp5p70vf9896qrp",
+        "accountSlug": "diogo",
+        "description": "This is my go-to lens for stunning wide-angle shots, offering incredible sharpness and rapid autofocus for any demanding shoot.\n\nIn this kit:\n- Sony G Master 14mm f/1.8 prime lens\n- Integrated lens hood\n- Front lens cap\n- Rear lens cap\n- Protective carrying bag\n\nI find it\u2019s one of the sharpest lenses available on the market, with autofocus that is blazing fast and highly reliable.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn75ber4qgc62sendyzmgb347x870wwn",
+        "name": "Sony G Master 14mm f/1.8 Prime Lens | Wide-Angle / Fast / E-Mount",
+        "productId": 1173660
+      },
+      "description": "This is my go-to lens for stunning wide-angle shots, offering incredible sharpness and rapid autofocus for any demanding shoot. In this kit: - Sony G Master 14mm f/1.8 prime lens - Integrated lens hood - Front lens cap - Rear lens cap - Protective carrying bag I find it\u2019s one of the sharpest lenses available on the market, with autofocus that is blazing fast and highly reliable.",
+      "override": null
+    },
+    {
+      "key": {
+        "account": "diogo",
+        "productId": 1173675
+      },
+      "product": {
+        "_id": "wd7f2s46n1rmdctq105rtjamn1896f8a",
+        "accountSlug": "diogo",
+        "description": "I'm offering my DJI RS 4 Pro gimbal kit, the latest premium stabilizer designed to deliver incredibly smooth footage with larger camera setups.\n\nIn this kit, you'll find:\n*   DJI RS 4 Pro gimbal\n*   Extended grip / tripod\n*   Briefcase handle\n*   Focus motor\n*   Quick release plates\n*   Various control cables (including USB-C and HDMI)\n*   Accessory kit (screws, wrench)\n*   DJI Pro carry bag\n\nThis professional gimbal boasts a robust 4.5kg payload capacity, making it suitable for a wide range of camera and lens combinations. Its advanced stabilization algorithms ensure ultra-smooth, cinematic results, and I've found it offers excellent battery life, allowing you to shoot for longer on set.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn72cbk6s14jarnhvdwwrsbx3s86bgth",
+        "name": "DJI RS 4 Pro Gimbal Set | 4.5kg Payload / Stabilizer / Ronin",
+        "productId": 1173675
+      },
+      "description": "I'm offering my DJI RS 4 Pro gimbal kit, the latest premium stabilizer designed to deliver incredibly smooth footage with larger camera setups. In this kit, you'll find: * DJI RS 4 Pro gimbal * Extended grip / tripod * Briefcase handle * Focus motor * Quick release plates * Various control cables (including USB-C and HDMI) * Accessory kit (screws, wrench) * DJI Pro carry bag This professional gimbal boasts a robust 4.5kg payload capacity, making it suitable for a wide range of camera and lens combinations. Its advanced stabilization algorithms ensure ultra-smooth, cinematic results, and I've f",
+      "override": null
+    },
+    {
+      "key": {
+        "account": "diogo",
+        "productId": 1173744
+      },
+      "product": {
+        "_id": "wd7fxfjb012vsm0h318nq4jjeh8986gm",
+        "accountSlug": "diogo",
+        "description": "I'm offering a versatile lighting solution for your next project: two Aputure Amaran 300c RGBWW LED lights. These are perfect for key or fill lighting in interviews, commercials, music videos, or any creative shoot. They offer a full RGBWW spectrum, a CCT range from 2,500K to 7,500K, and boast high CRI/TLCI colour accuracy, all controllable via app with built-in effects.\n\nIn this kit, I include:\n*   2\u00d7 Aputure Amaran 300c RGB light heads\n*   2\u00d7 Bowens-mount reflectors\n*   2\u00d7 AC power supply units with mains cables\n*   2\u00d7 Adjustable light stands\n*   2\u00d7 Carry bags for the lights\nYou'll have everything needed to power, mount, and operate both lights immediately.\n\nI've been providing equipment in London since 2019.\n\nBy default, the lights come with reflectors; softboxes can be arranged if you prefer. I always check and test all items thoroughly before handing them over.\n\nA quick note on power: chargers are included with the kit. I only supply proprietary charging cables \u2014 anything that charges over a standard USB-C or USB 2.0 lead isn't included, so please bring your own. I do my best to have everything charged for pickup, but with tight turnarounds between rentals I can't always promise a full battery; if it's a time-sensitive shoot, collect the day before or leave an hour or two to top up.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn7a3ja3jypm2z1n04wmtfbmd186a8x3",
+        "name": "2\u00d7 Aputure Amaran 300c RGBWW LED Lights | Studio Lighting Kit / Video Lights /",
+        "productId": 1173744
+      },
+      "description": null,
+      "override": null
+    },
+    {
+      "key": {
+        "account": "diogo",
+        "productId": 1173762
+      },
+      "product": {
+        "_id": "wd75nyghvvjt1m7htwby5zf5vh898b65",
+        "accountSlug": "diogo",
+        "description": "My Sony 16-35mm f/2.8 G Master lens is an exceptional wide-angle zoom, ideal for capturing stunning visuals on Sony full-frame cameras. It's perfect for a wide range of applications, including real estate photography, dynamic city shots, professional interviews, and cinematic short films.\n\nIn this kit:\n- Sony FE 16-35mm f/2.8 GM Lens\n- Lens carry bag\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn73ga9tdczw4azpvv41qm3dw186b9pb",
+        "name": "Sony FE 16-35mm f/2.8 GM G Master Lens | Wide Angle Zoom / Full Frame / E-mount",
+        "productId": 1173762
+      },
+      "description": "My Sony 16-35mm f/2.8 G Master lens is an exceptional wide-angle zoom, ideal for capturing stunning visuals on Sony full-frame cameras. It's perfect for a wide range of applications, including real estate photography, dynamic city shots, professional interviews, and cinematic short films. In this kit: - Sony FE 16-35mm f/2.8 GM Lens - Lens carry bag",
+      "override": null
+    },
+    {
+      "key": {
+        "account": "diogo",
+        "productId": 1173773
+      },
+      "product": {
+        "_id": "wd74masfphegmedz8j8gyhe25n899s27",
+        "accountSlug": "diogo",
+        "description": "I'm offering a fantastic and accessible kit, perfect for those stepping into the world of cinema cameras and high-frame-rate shooting.\n\nIn this kit:\n- Sony FX3 Full-Frame Digital Cinema Camera (featuring the same sensor as the A7SIII, capable of 4K 120fps recording)\n- Sony FE 28-70mm f/3.5-5.6 OSS Zoom Lens\n- Sony XLR Handle Unit\n- 1\u00d7 320GB Lexar CFexpress Type A card\n- 3x Sony NP-FZ100 batteries\n- Protective camera bag\n\nThis setup is ideal for exploring 4K 120fps shooting, making it a great choice for those looking to get started with this format. The included 28-70mm lens serves as a versatile, basic lens to get you shooting right away.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn74ggzk8jjvpxdy0g5zh0f15h86b2hq",
+        "name": "Sony FX3 Digital Cinema Camera | 4K Full Frame Mirrorless | 28-70mm Zoom Lens |",
+        "productId": 1173773
+      },
+      "description": "I'm offering a fantastic and accessible kit, perfect for those stepping into the world of cinema cameras and high-frame-rate shooting. In this kit: - Sony FX3 Full-Frame Digital Cinema Camera (featuring the same sensor as the A7SIII, capable of 4K 120fps recording) - Sony FE 28-70mm f/3.5-5.6 OSS Zoom Lens - Sony XLR Handle Unit - SanDisk Extreme PRO 128GB UHS-II V90 SDXC Memory Card - 3x Sony NP-FZ100 batteries - Protective camera bag This setup is ideal for exploring 4K 120fps shooting, making it a great choice for those looking to get started with this format. The included 28-70mm lens serv",
+      "override": null
+    },
+    {
+      "key": {
+        "account": "diogo",
+        "productId": 1173780
+      },
+      "product": {
+        "_id": "wd7ad5wcdyxbf2vphxz1ey9cf58980fh",
+        "accountSlug": "diogo",
+        "description": "Bring the big screen experience to any location with my Anker Nebula 4K Laser Projector and screen kit. This portable, battery-powered projector delivers stunning 4K UHD resolution, features a built-in smart OS, and boasts strong integrated audio. It's perfectly suited for everything from home cinema nights and garden screenings to parties, presentations, and events. The included large white projection screen ensures a bright, clear image in any setting, making this the easiest way to create a cinema experience anywhere without extra hassle.\n\nIn this kit, you'll find everything you need for instant portable cinema:\n* Anker Nebula 4K Laser Projector (battery powered)\n* Projection screen with tripod stand (white backdrop)\n* Remote control (with battery)\n* Power adapter/charger\n* HDMI cable\n* Carry case\n\nThe projector's internal battery provides approximately 2\u20133 hours of use. For longer screenings, it can also run continuously via mains power. Please ensure the charger, screen, and remote are returned with the kit to avoid any replacement fees.\n\nA quick note on power: chargers are included with the kit. I only supply proprietary charging cables \u2014 anything that charges over a standard USB-C or USB 2.0 lead isn't included, so please bring your own. I do my best to have everything charged for pickup, but with tight turnarounds between rentals I can't always promise a full battery; if it's a time-sensitive shoot, collect the day before or leave an hour or two to top up.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": true,
+        "name": "Anker Nebula 4K Laser Projector + Projection Screen Kit | Portable / Battery",
+        "productId": 1173780
+      },
+      "description": "Bring the big screen experience to any location with my Anker Nebula 4K Laser Projector and screen kit. This portable, battery-powered projector delivers stunning 4K UHD resolution, features a built-in smart OS, and boasts strong integrated audio. It's perfectly suited for everything from home cinema nights and garden screenings to parties, presentations, and events. The included large white projection screen ensures a bright, clear image in any setting, making this the easiest way to create a cinema experience anywhere without extra hassle. In this kit, you'll find everything you need for ins",
+      "override": null
+    },
+    {
+      "key": {
+        "account": "diogo",
+        "productId": 1173793
+      },
+      "product": {
+        "_id": "wd72gjpf9qck6a9bn4n156tx9s898bh2",
+        "accountSlug": "diogo",
+        "description": "Unlock seamless high-resolution video and rapid data transfers with my Lexar CFexpress Type A 320GB card and reader kit.\n\n**In this kit:**\n*   1\u00d7 Lexar CFexpress Type A 320GB memory card\n*   1\u00d7 Lexar CFexpress Type A card reader\n*   1\u00d7 USB-C cable (for the card reader)\n*   Protective case\n*   Carry case\n\nThis professional-grade Lexar CFexpress Type A 320GB card offers impressive 900MB/s read and 800MB/s write speeds, ensuring incredibly smooth 4K, 6K, and 8K video recording, alongside lightning-fast data transfers. It's an ideal choice for demanding long shoots, high-bitrate video formats, and provides reliable data backup. My rental includes a dedicated Lexar USB 3.2 card reader for quick and efficient offloads.\n\nThe card is fully compatible with popular Sony cinema and mirrorless cameras, including the Sony FX3, FX6, FX30, A7SIII, A1, and A7IV, as well as any other camera that uses CFexpress Type A media.\n\nI've been providing gear rentals since 2019, and my inventory includes a full range of cameras, lenses, audio equipment, and lighting solutions.\n\nConsider pairing this with some of my popular combos, such as Sony FX3 / FX6 Cinema Camera kits, Sony A7SIII / A1 bodies, G-Master lenses (like the 24\u201370mm 2.8 or 70\u2013200mm 2.8), or a DJI Ronin RS3 Pro gimbal.\n\nA quick note on power: chargers are included with the kit. I only supply proprietary charging cables \u2014 anything that charges over a standard USB-C or USB 2.0 lead isn't included, so please bring your own. I do my best to have everything charged for pickup, but with tight turnarounds between rentals I can't always promise a full battery; if it's a time-sensitive shoot, collect the day before or leave an hour or two to top up.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn78qeqezcrpjr12gzmynyfgb986b1rn",
+        "name": "Lexar CFexpress Type A 320GB Memory Card & Reader | High-Speed 900MB/s Storage",
+        "productId": 1173793
+      },
+      "description": "Unlock seamless high-resolution video and rapid data transfers with my Lexar CFexpress Type A 320GB card and reader kit. **In this kit:** * 1\u00d7 Lexar CFexpress Type A 320GB memory card * 1\u00d7 Lexar CFexpress Type A card reader * 1\u00d7 USB-C cable (for the card reader) * Protective case * Carry case This professional-grade Lexar CFexpress Type A 320GB card offers impressive 900MB/s read and 800MB/s write speeds, ensuring incredibly smooth 4K, 6K, and 8K video recording, alongside lightning-fast data transfers. It's an ideal choice for demanding long shoots, high-bitrate video formats, and provides re",
+      "override": null
+    },
+    {
+      "key": {
+        "account": "diogo",
+        "productId": 1173839
+      },
+      "product": {
+        "_id": "wd792d1kpt0h9wtdx1am3cf189899tkf",
+        "accountSlug": "diogo",
+        "description": "Unlock exceptional image quality and versatility with my Sony 24-70mm f/2.8 G Master lens, renowned for its incredible sharpness and fast autofocus.\n\nIn this kit:\n- 1x Sony 24-70mm f/2.8 G Master Lens\n- 1x UV Filter\n- 1x Protective Carrying Case\n\nWeekend hires are also available. I've been providing equipment rentals in London since 2019.\n\nA quick note on power: chargers are included with the kit. I only supply proprietary charging cables \u2014 anything that charges over a standard USB-C or USB 2.0 lead isn't included, so please bring your own. I do my best to have everything charged for pickup, but with tight turnarounds between rentals I can't always promise a full battery; if it's a time-sensitive shoot, collect the day before or leave an hour or two to top up.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn79e6tav264zrh9zs5pvfg5kd86avn6",
+        "name": "Sony 24-70mm f/2.8 G Master Lens | Zoom, GM, E-Mount",
+        "productId": 1173839
+      },
+      "description": "Unlock exceptional image quality and versatility with my Sony 24-70mm f/2.8 G Master lens, renowned for its incredible sharpness and fast autofocus. In this kit: - 1x Sony 24-70mm f/2.8 G Master Lens - 1x UV Filter - 1x Protective Carrying Case Weekend hires are also available. I've been providing equipment rentals in London since 2019. A quick note on power: chargers are included with the kit. I only supply proprietary charging cables \u2014 anything that charges over a standard USB-C or USB 2.0 lead isn't included, so please bring your own. I do my best to have everything charged for pickup, but ",
+      "override": null
+    },
+    {
+      "key": {
+        "account": "diogo",
+        "productId": 1173851
+      },
+      "product": {
+        "_id": "wd796etmvany0nvws314rngrd18986x9",
+        "accountSlug": "diogo",
+        "description": "My DJI RS 2 is a robust and highly dependable gimbal, perfect for serious cinematic work. It's capable of handling professional cameras such as a RED, Blackmagic Pocket 4K, or Canon C300 and similar models. Its maximum payload, including counterweights, reaches 4kg.\n\nIn this kit:\n- My DJI RS 2 gimbal system\n- A DJI carrying case\n- Gimbal grip/mini tripod\n- Camera mounting plate and essential accessories\n- Various necessary cables\n\nPlease note: depending on availability, I might substitute this with an RSC 2 if I can confirm it will properly balance your intended camera setup.\n\nA quick note on power: chargers are included with the kit. I only supply proprietary charging cables \u2014 anything that charges over a standard USB-C or USB 2.0 lead isn't included, so please bring your own. I do my best to have everything charged for pickup, but with tight turnarounds between rentals I can't always promise a full battery; if it's a time-sensitive shoot, collect the day before or leave an hour or two to top up.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn79kzg6j393vz9mjh7ghqx0gn86bz73",
+        "name": "DJI RS 2 Gimbal | 3.5kg Payload | Ronin RS2 & RSC 2 Compatible",
+        "productId": 1173851
+      },
+      "description": "My DJI RS 2 is a robust and highly dependable gimbal, perfect for serious cinematic work. It's capable of handling professional cameras such as a RED, Blackmagic Pocket 4K, or Canon C300 and similar models. Its maximum payload, including counterweights, reaches 4kg. In this kit: - My DJI RS 2 gimbal system - A DJI carrying case - Gimbal grip/mini tripod - Camera mounting plate and essential accessories - Various necessary cables Please note: depending on availability, I might substitute this with an RSC 2 if I can confirm it will properly balance your intended camera setup. A quick note on pow",
+      "override": null
+    },
+    {
+      "key": {
+        "account": "diogo",
+        "productId": 1173859
+      },
+      "product": {
+        "_id": "wd798tddp39x3jq0jq8wanbp81899wr6",
+        "accountSlug": "diogo",
+        "description": "I'm offering my versatile Sony Zeiss 16-35mm f/4 lens, perfect for capturing expansive scenes with stunning clarity. My 16-35mm lens delivers outstanding sharpness across its entire zoom range, complemented by fast and reliable autofocus, making it ideal for ultrawide to wide-angle shots.\n\nIn this kit, you'll find:\n1x Sony Zeiss Vario-Tessar T* FE 16-35mm f/4 ZA OSS Lens\n1x Lens Carrying Case\n\nA quick note on power: chargers are included with the kit. I only supply proprietary charging cables \u2014 anything that charges over a standard USB-C or USB 2.0 lead isn't included, so please bring your own. I do my best to have everything charged for pickup, but with tight turnarounds between rentals I can't always promise a full battery; if it's a time-sensitive shoot, collect the day before or leave an hour or two to top up.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn73ga9tdczw4azpvv41qm3dw186b9pb",
+        "name": "Sony Zeiss 16-35mm F4 Lens | Wide Angle Zoom",
+        "productId": 1173859
+      },
+      "description": null,
+      "override": null
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1097510
+      },
+      "product": {
+        "_id": "wd7et4ab1dtv97b90fytwncyc188118z",
+        "accountSlug": "leo",
+        "description": "The mighty Sony FX3 is the smallest netflix approved camera commercially avaliable on the market right now.\u00a0\n\n\u2b50\ufe0fIncluded in this rental \u2b50\ufe0f \n1x Sony Fx3 Camera \n1\u00d7 320GB Lexar CFexpress Type A card\n1x Cage\n3x Batteries \n1x carrying case\n\nPlease kindly note: We always provide chargers with the equipment but only supply the needed cable if it is proprietary, any other charger that uses normal usb c and usb2.0 does NOT come with the cable included. Some cameras are Asian market only , please let us know if you must have gb. We try our best to ensure the items are charged when picked up but are unable to guarantee this due to partially very short times between rentals. If you have an important project please book and pickup equipment the day before your shoot or ensure you have a few hours to charge the batteries if necessary.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn7bw2cr1ye5hqj3x770b332ks86atzw",
+        "name": "Sony fx 3 cinema camera full frame mirrorless 4k sony fx3 (same sensor as a7siii",
+        "productId": 1097510
+      },
+      "description": "The mighty Sony FX3 is the smallest netflix approved camera commercially avaliable on the market right now.\u00a0\n\n\u2b50\ufe0fIncluded in this rental \u2b50\ufe0f \n1x Sony Fx3 Camera \n1\u00d7 320GB Lexar CFexpress Type A card\n1x Cage\n3x Batteries \n1x carrying case\n\nPlease kindly note: We always provide chargers with the equipment but only supply the needed cable if it is proprietary, any other charger that uses normal usb c and usb2.0 does NOT come with the cable included. Some cameras are Asian market only , please let us know if you must have gb. We try our best to ensure the items are charged when picked up but are unable to guarantee this due to partially very short times between rentals. If you have an important project please book and pickup equipment the day before your shoot or ensure you have a few hours to charge the batteries if necessary.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+      "override": [
+        {
+          "item_id": "kn7bw2cr1ye5hqj3x770b332ks86atzw",
+          "qty": 1
+        },
+        {
+          "item_id": "kn78qeqezcrpjr12gzmynyfgb986b1rn",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1097512
+      },
+      "product": {
+        "_id": "wd73jey2vhx76xq4ek7sw6e7mx881gq5",
+        "accountSlug": "leo",
+        "description": "\u2b50\ufe0fIncluded in this rental \u2b50\ufe0f \n1x Sony 70-200mm f2.8 zoom lens\u00a0\n\nPlease kindly note: - We always provide chargers with the equipment but only supply the needed cable if it is proprietary, any other charger that uses normal usb c and usb2.0 does NOT come with the cable included. - We try our best to ensure the items are charged when picked up but are unable to guarantee this due to partially very short times between rentals. If you have an important project please book and pickup equipment the day before your shoot or ensure you have a few hours to charge the batteries if necessary. - Delivery is a separate charge to the rental fee charged here and will be processed separately.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn741p3xbx9e9yvby7qcmvvnj586akhv",
+        "name": "Sony 70-200mm f2.8 zoom tele gmaster gm g-master g master lens",
+        "productId": 1097512
+      },
+      "description": "\u2b50\ufe0fIncluded in this rental \u2b50\ufe0f 1x Sony 70-200mm f2.8 zoom lens Please kindly note: - We always provide chargers with the equipment but only supply the needed cable if it is proprietary, any other charger that uses normal usb c and usb2.0 does NOT come with the cable included. - We try our best to ensure the items are charged when picked up but are unable to guarantee this due to partially very short times between rentals. If you have an important project please book and pickup equipment the day before your shoot or ensure you have a few hours to charge the batteries if necessary. - Delivery is a",
+      "override": [
+        {
+          "item_id": "kn741p3xbx9e9yvby7qcmvvnj586akhv",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1097514
+      },
+      "product": {
+        "_id": "wd757y32eyb543xdj7j29hbted88052j",
+        "accountSlug": "leo",
+        "description": "The mother of all zoom lenses and widely considered one of the best pairings with Sony lenses there is! 2x Sony 24-70mm gm lenses.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn79e6tav264zrh9zs5pvfg5kd86avn6",
+        "name": "Sony g-master 24-70mm f2.8 2x zoom lens set",
+        "productId": 1097514
+      },
+      "description": null,
+      "override": null
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1107015
+      },
+      "product": {
+        "_id": "wd73ek8yxv69cv3stp6f7z4a85881wvh",
+        "accountSlug": "leo",
+        "description": "Sharp, versatile, and beautifully rendered \u2014 the Sony 90mm f2.8 G OSS Macro delivers exceptional detail for portraits, close-ups, and product photography. Its optical stabilization and crisp bokeh make it one of the most reliable full-frame macro lenses available.\n\n\n\u2b50 Included in this rental \u2b50\n\t\u2022\t1x Sony 90mm f2.8 G OSS Macro Lens\n\t\u2022\t1x Front & rear lens caps\n\t\u2022\t1x Lens hood\n\t\u2022\t1x Carry pouch\n\n\nPlease kindly note: We always provide chargers with the equipment but only supply the needed cable if it is proprietary, any other charger that uses normal usb c and usb2.0 does NOT come with the cable included. We try our best to ensure the items are charged when picked up but are unable to guarantee this due to partially very short times between rentals. If you have an important project please book and pickup equipment the day before your shoot or ensure you have a few hours to charge the batteries if necessary.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn7byeb6ez8gty76rbhhb7e2t586b6wk",
+        "name": "Sony 90mm f2.8 Macro / Portrait Lens (Like Sigma 105mm / Canon 100mm Macro) \u2013",
+        "productId": 1107015
+      },
+      "description": "Sharp, versatile, and beautifully rendered \u2014 the Sony 90mm f2.8 G OSS Macro delivers exceptional detail for portraits, close-ups, and product photography. Its optical stabilization and crisp bokeh make it one of the most reliable full-frame macro lenses available. \u2b50 Included in this rental \u2b50 \u2022 1x Sony 90mm f2.8 G OSS Macro Lens \u2022 1x Front & rear lens caps \u2022 1x Lens hood \u2022 1x Carry pouch Please kindly note: We always provide chargers with the equipment but only supply the needed cable if it is proprietary, any other charger that uses normal usb c and usb2.0 does NOT come with the cable included",
+      "override": [
+        {
+          "item_id": "kn7byeb6ez8gty76rbhhb7e2t586b6wk",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1114711
+      },
+      "product": {
+        "_id": "wd77vhaew9yrjfh750rwbz1k1n880e7v",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 1x Hollyland Mars 4K Transmitter\n\u2022 1x Hollyland Mars 4K Receiver\n\u2022 2x NP-F Batteries\n\u2022 2x HDMI Cables\n\u2022 Protective Carry Case\n\n\n\ud83d\ude80 About this item \ud83d\ude80\nThe Hollyland Mars 4K delivers zero-delay wireless video transmission up to 450ft with crystal-clear 4K UHD quality over HDMI and SDI.\nPerfect for on-set monitoring, live directing, and client viewing, this system ensures rock-solid connectivity and professional-grade stability even in complex environments.\nIdeal for use with Sony FX3 / FX6, BMPCC 6K, RED Komodo, ARRI, and Canon C-Series cameras, it\u2019s the go-to wireless solution for film shoots, music videos, and live events.\n\n\n\u2699\ufe0f Notes:\nChargers are always included for applicable items, but only proprietary cables are provided.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn76mqhv1bv291x5z68fxerzg986bnmq",
+        "name": "Hollyland Mars 4K Wireless Video Transmitter Kit \u2013 HDMI / SDI \u2013 Real-Time 4K",
+        "productId": 1114711
+      },
+      "description": "If it\u2019s your first rental on the platform, you get \u00a320 off! \ud83e\udd73 Go to: \u27a1\ufe0f My Profile \u27a1\ufe0f Vouchers and use the code: 83I2T If that doesn\u2019t work, just message Fat Llama Live Chat before booking \u2014 they\u2019ll apply it manually! \u2b50 Included in this rental: \u2022 1x Hollyland Mars 4K Transmitter \u2022 1x Hollyland Mars 4K Receiver \u2022 2x NP-F Batteries \u2022 2x HDMI Cables \u2022 Protective Carry Case \ud83d\ude80 About this item \ud83d\ude80 The Hollyland Mars 4K delivers zero-delay wireless video transmission up to 450ft with crystal-clear 4K UHD quality over HDMI and SDI. Perfect for on-set monitoring, live directing, and client viewing, th",
+      "override": [
+        {
+          "item_id": "kn76mqhv1bv291x5z68fxerzg986bnmq",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1172383
+      },
+      "product": {
+        "_id": "wd70csbpcf6p4drbga6qjd2ghd894qrx",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 1x Cameras:\n\u2022 1x 3\u00d7 DJI Osmo Action 5 Pro cameras\n\u2022 1x Carrying bag\n\n\ud83d\ude80 About this 3\u00d7 DJI Osmo Action 5 Pro + Suction Cup Mounts \ud83d\ude80\nThe 3\u00d7 DJI Osmo Action 5 Pro + Suction Cup Mounts is rock-solid support gear that keeps your shots stable and your rig safe \u2014 built for studio and location work alike. Works across narrative, commercial and documentary setups.\n\nPerfect for:\n\ud83c\udfac Narrative & short films\n\ud83c\udfa5 Commercials & brand content\n\ud83d\udcf8 Studio & location work\n\n\u2699\ufe0f Notes\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary; any other charger that uses normal USB-C / USB 2.0 does NOT come with the cable included.\nWe try our best to ensure items are charged when picked up but cannot guarantee this due to sometimes very short turnarounds between rentals. For an important project, please book and pick up the day before your shoot, or allow a few hours to charge if needed.\nSome items are listed as \"Optional\" \u2014 if you don't let us know you want one included, we won't be adding it.\nDelivery is a separate charge to the rental fee and is processed separately.\n\nAlso included:\n- 3\u00d7 128GB SanDisk Extreme microSD cards\n- 6\u00d7 DJI Osmo Action batteries\n- Battery charging solution\n- High-resolution 4K recording capabilities\n- Excellent stabilisation for smooth action footage\n- Strong low-light performance (for an action camera)\n- Convenient front and rear screens for easy framing\n- Reliable battery life, ideal for longer takes\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn7dy8zf34tffmcvzvdtrnn3jn86an19",
+        "name": "3\u00d7 DJI Osmo Action 5 Pro + Suction Cup Mounts | DJI / Osmo / Action 5 / Action5",
+        "productId": 1172383
+      },
+      "description": "\u2b50 Included in this rental: \u2022 1x Cameras: \u2022 1x 3\u00d7 DJI Osmo Action 5 Pro cameras \u2022 1x Carrying bag \ud83d\ude80 About this 3\u00d7 DJI Osmo Action 5 Pro + Suction Cup Mounts \ud83d\ude80 The 3\u00d7 DJI Osmo Action 5 Pro + Suction Cup Mounts is rock-solid support gear that keeps your shots stable and your rig safe \u2014 built for studio and location work alike. Works across narrative, commercial and documentary setups. Perfect for: \ud83c\udfac Narrative & short films \ud83c\udfa5 Commercials & brand content \ud83d\udcf8 Studio & location work \u2699\ufe0f Notes We always provide chargers with the equipment but only supply the needed cable if it is proprietary; any ot",
+      "override": [
+        {
+          "item_id": "kn7dy8zf34tffmcvzvdtrnn3jn86an19",
+          "qty": 3
+        }
+      ]
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1172544
+      },
+      "product": {
+        "_id": "wd78e7fdh1tg5c46ykdp3ysq9h8951r9",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 2x DJ Light party led event gigbar chauvet dekker, laser\n\u2022 1x Carrying bag\n\n\ud83d\ude80 About this 2x DJ Light party led event gigbar chauvet dekker, laser \ud83d\ude80\nThe 2x DJ Light party led event gigbar chauvet dekker, laser is a workhorse light for controlled and on-location setups \u2014 clean output and easy control for interviews, commercials and music videos. Pairs well with the modifiers and stands in our range.\n\nPerfect for:\n\ud83c\udfa5 Commercials & brand content\n\ud83d\udcf8 Interviews & portraits\n\ud83d\udfe3 Music videos\n\n\u2699\ufe0f Notes\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary; any other charger that uses normal USB-C / USB 2.0 does NOT come with the cable included.\nWe try our best to ensure items are charged when picked up but cannot guarantee this due to sometimes very short turnarounds between rentals. For an important project, please book and pick up the day before your shoot, or allow a few hours to charge if needed.\nSome items are listed as \"Optional\" \u2014 if you don't let us know you want one included, we won't be adding it.\nDelivery is a separate charge to the rental fee and is processed separately.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": true,
+        "name": "2x DJ Light party led event gigbar chauvet dekker, laser",
+        "productId": 1172544
+      },
+      "description": null,
+      "override": null
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1172559
+      },
+      "product": {
+        "_id": "wd7abv2qykf3srwm7pmzm0adk5894hrn",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 2x Sony FX3\n\u2022 2x 24-70mm Cinema Camera Set\n\u2022 1x Carrying bag\n\n\ud83d\ude80 About this 2x Sony FX3 + 2x 24-70mm Cinema Camera Set \ud83d\ude80\nThe 2x Sony FX3 + 2x 24-70mm Cinema Camera Set is a sharp, dependable optic that earns its place on most shoots \u2014 clean rendering, fast handling and consistent results across interviews, narrative and documentary work. Mounts on the matching camera bodies in our kit.\n\nPerfect for:\n\ud83c\udfac Narrative & short films\n\ud83c\udfa5 Commercials & brand content\n\ud83d\udcf8 Interviews & documentary\n\n\u2699\ufe0f Notes\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary; any other charger that uses normal USB-C / USB 2.0 does NOT come with the cable included.\nWe try our best to ensure items are charged when picked up but cannot guarantee this due to sometimes very short turnarounds between rentals. For an important project, please book and pick up the day before your shoot, or allow a few hours to charge if needed.\nSome items are listed as \"Optional\" \u2014 if you don't let us know you want one included, we won't be adding it.\nDelivery is a separate charge to the rental fee and is processed separately.\n\nAlso included:\n- 2\u00d7 320GB Lexar CFexpress Type A cards\n- 6x Sony NP-FZ100 batteries\n- 2x top plate audio handle adapters\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn79e6tav264zrh9zs5pvfg5kd86avn6",
+        "name": "2x Sony FX3 + 2x 24-70mm Cinema Camera Set",
+        "productId": 1172559
+      },
+      "description": "\u2b50 Included in this rental: \u2022 2x Sony FX3 \u2022 2x 24-70mm Cinema Camera Set \u2022 1x Carrying bag \ud83d\ude80 About this 2x Sony FX3 + 2x 24-70mm Cinema Camera Set \ud83d\ude80 The 2x Sony FX3 + 2x 24-70mm Cinema Camera Set is a sharp, dependable optic that earns its place on most shoots \u2014 clean rendering, fast handling and consistent results across interviews, narrative and documentary work. Mounts on the matching camera bodies in our kit. Perfect for: \ud83c\udfac Narrative & short films \ud83c\udfa5 Commercials & brand content \ud83d\udcf8 Interviews & documentary \u2699\ufe0f Notes We always provide chargers with the equipment but only supply the needed c",
+      "override": [
+        {
+          "item_id": "kn7bw2cr1ye5hqj3x770b332ks86atzw",
+          "qty": 2
+        },
+        {
+          "item_id": "kn79e6tav264zrh9zs5pvfg5kd86avn6",
+          "qty": 2
+        }
+      ]
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1172634
+      },
+      "product": {
+        "_id": "wd7ddy4ja7bvry9res32c2baqh8946dr",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 1x Aputure 600x pro Light\n\u2022 1x Light stand (2.6m height)\n\u2022 1x Carrying Case\n\u2022 1x Gels\n\u2022 1x Sand Bag\n\u2022 1x Various needed cables\n\n\ud83d\ude80 About this Aputure 600X PRO \ud83d\ude80\nThe Aputure 600X PRO is a workhorse light for controlled and on-location setups \u2014 clean output and easy control for interviews, commercials and music videos. Pairs well with the modifiers and stands in our range.\n\nPerfect for:\n\ud83c\udfa5 Commercials & brand content\n\ud83d\udcf8 Interviews & portraits\n\ud83d\udfe3 Music videos\n\n\u2699\ufe0f Notes\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary; any other charger that uses normal USB-C / USB 2.0 does NOT come with the cable included.\nWe try our best to ensure items are charged when picked up but cannot guarantee this due to sometimes very short turnarounds between rentals. For an important project, please book and pick up the day before your shoot, or allow a few hours to charge if needed.\nSome items are listed as \"Optional\" \u2014 if you don't let us know you want one included, we won't be adding it.\nDelivery is a separate charge to the rental fee and is processed separately.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn74449d74316p3d8cc4npd7a1871dv5",
+        "name": "Aputure 600X PRO",
+        "productId": 1172634
+      },
+      "description": null,
+      "override": null
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1172669
+      },
+      "product": {
+        "_id": "wd7epw3h85sgq6t1t5hb99cp9n895t9b",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 1x Dji RSC 2 Gimbal\n\u2022 1x Ronin Battery\n\u2022 1x Carrying bag\n\n\ud83d\ude80 About this Dji RSC 2 Gimbal ronin stabilizer \ud83d\ude80\nThe Dji RSC 2 Gimbal ronin stabilizer is rock-solid support gear that keeps your shots stable and your rig safe \u2014 built for studio and location work alike. Works across narrative, commercial and documentary setups.\n\nPerfect for:\n\ud83c\udfac Narrative & short films\n\ud83c\udfa5 Commercials & brand content\n\ud83d\udcf8 Studio & location work\n\n\u2699\ufe0f Notes\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary; any other charger that uses normal USB-C / USB 2.0 does NOT come with the cable included.\nWe try our best to ensure items are charged when picked up but cannot guarantee this due to sometimes very short turnarounds between rentals. For an important project, please book and pick up the day before your shoot, or allow a few hours to charge if needed.\nSome items are listed as \"Optional\" \u2014 if you don't let us know you want one included, we won't be adding it.\nDelivery is a separate charge to the rental fee and is processed separately.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn79kzg6j393vz9mjh7ghqx0gn86bz73",
+        "name": "Dji RSC 2 Gimbal ronin stabilizer ",
+        "productId": 1172669
+      },
+      "description": null,
+      "override": null
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1172686
+      },
+      "product": {
+        "_id": "wd7ea60f874vm874ng2y5x2p3s895rh0",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 1x Sony fx3 mirrorless full frame camera\n\u2022 1x 16-35mm gm gmaster f2.8 g-master zoom wide lens set\n\u2022 1x Carrying bag\n\n\ud83d\ude80 About this Sony fx3 mirrorless full frame camera + 16-35mm gm gmaster \ud83d\ude80\nThe Sony fx3 mirrorless full frame camera + 16-35mm gm gmaster is a sharp, dependable optic that earns its place on most shoots \u2014 clean rendering, fast handling and consistent results across interviews, narrative and documentary work. Mounts on the matching camera bodies in our kit.\n\nPerfect for:\n\ud83c\udfac Narrative & short films\n\ud83c\udfa5 Commercials & brand content\n\ud83d\udcf8 Interviews & documentary\n\n\u2699\ufe0f Notes\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary; any other charger that uses normal USB-C / USB 2.0 does NOT come with the cable included.\nWe try our best to ensure items are charged when picked up but cannot guarantee this due to sometimes very short turnarounds between rentals. For an important project, please book and pick up the day before your shoot, or allow a few hours to charge if needed.\nSome items are listed as \"Optional\" \u2014 if you don't let us know you want one included, we won't be adding it.\nDelivery is a separate charge to the rental fee and is processed separately.\n\nAlso included:\n- Top handle with XLR audio unit\n- Three NP-FZ100 batteries\n- 1\u00d7 320GB Lexar CFexpress Type A card\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn73ga9tdczw4azpvv41qm3dw186b9pb",
+        "name": "Sony fx3 mirrorless full frame camera + 16-35mm gm gmaster f2.8 g-master zoom",
+        "productId": 1172686
+      },
+      "description": null,
+      "override": [
+        {
+          "item_id": "kn7bw2cr1ye5hqj3x770b332ks86atzw",
+          "qty": 1
+        },
+        {
+          "item_id": "kn73ga9tdczw4azpvv41qm3dw186b9pb",
+          "qty": 1
+        },
+        {
+          "item_id": "kn78qeqezcrpjr12gzmynyfgb986b1rn",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1172687
+      },
+      "product": {
+        "_id": "wd752hsmd87v36pdr81tk120ms894j7j",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 2x Smallrig tripods\n\u2022 2x side handles\n\u2022 2x Carrying bag\n\n\ud83d\ude80 About this 2x smallrig tripod camera heavy duty set Fluid head and hand \ud83d\ude80\nThe 2x smallrig tripod camera heavy duty set Fluid head and hand is rock-solid support gear that keeps your shots stable and your rig safe \u2014 built for studio and location work alike. Works across narrative, commercial and documentary setups.\n\nPerfect for:\n\ud83c\udfac Narrative & short films\n\ud83c\udfa5 Commercials & brand content\n\ud83d\udcf8 Studio & location work\n\n\u2699\ufe0f Notes\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary; any other charger that uses normal USB-C / USB 2.0 does NOT come with the cable included.\nWe try our best to ensure items are charged when picked up but cannot guarantee this due to sometimes very short turnarounds between rentals. For an important project, please book and pick up the day before your shoot, or allow a few hours to charge if needed.\nSome items are listed as \"Optional\" \u2014 if you don't let us know you want one included, we won't be adding it.\nDelivery is a separate charge to the rental fee and is processed separately.\n\nAlso included:\n- 2x Side handles for precise control\n- 2x Carrying bags for easy transport\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": true,
+        "name": "2x smallrig tripod camera heavy duty set Fluid head and handle work with Sony ,",
+        "productId": 1172687
+      },
+      "description": "\u2b50 Included in this rental: \u2022 2x Smallrig tripods \u2022 2x side handles \u2022 2x Carrying bag \ud83d\ude80 About this 2x smallrig tripod camera heavy duty set Fluid head and hand \ud83d\ude80 The 2x smallrig tripod camera heavy duty set Fluid head and hand is rock-solid support gear that keeps your shots stable and your rig safe \u2014 built for studio and location work alike. Works across narrative, commercial and documentary setups. Perfect for: \ud83c\udfac Narrative & short films \ud83c\udfa5 Commercials & brand content \ud83d\udcf8 Studio & location work \u2699\ufe0f Notes We always provide chargers with the equipment but only supply the needed cable if it is p",
+      "override": [
+        {
+          "item_id": "kn772m9zxc4p7ctb1rbeahy79h86apc6",
+          "qty": 2
+        }
+      ]
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1172730
+      },
+      "product": {
+        "_id": "wd73rwkr5mjgq6gtr9qxths6px894z17",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 1x 1\u00d7 Smoke Ninja Pro Hazer Unit\n\u2022 1x 1\u00d7 Smoke Ninja battery grip (rechargeable)\n\u2022 1x 1\u00d7 Spare battery (for extended runtime)\n\u2022 1x 1\u00d7 Charger & USB-C cable\n\u2022 1x 1\u00d7 Remote trigger for off-camera control\n\u2022 2x filled smoke chamber fillings (last 20 minutes continuous each)\n\u2022 1x 3\u00d7 Nozzle attachments (standard, wide haze, precision)\n\u2022 1x Protective carry case for transport\n\n\ud83d\ude80 About this Smoke Ninja Pro Hazer Kit \ud83d\ude80\nThe Smoke Ninja Pro Hazer Kit is reliable production audio for dialogue, interviews and run-and-gun capture \u2014 clean sound when it matters. Pairs with the recorders and cameras in our kit.\n\nPerfect for:\n\ud83c\udf99\ufe0f Interviews & dialogue\n\ud83c\udfa5 Documentary & run-and-gun\n\ud83d\udfe3 Music & live capture\n\n\u2699\ufe0f Notes\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary; any other charger that uses normal USB-C / USB 2.0 does NOT come with the cable included.\nWe try our best to ensure items are charged when picked up but cannot guarantee this due to sometimes very short turnarounds between rentals. For an important project, please book and pick up the day before your shoot, or allow a few hours to charge if needed.\nSome items are listed as \"Optional\" \u2014 if you don't let us know you want one included, we won't be adding it.\nDelivery is a separate charge to the rental fee and is processed separately.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn70sapjg8gnkt330453bbbhkd86at3n",
+        "name": "Smoke Ninja Pro Hazer Kit | Portable Handheld Smoke Machine, Mini Fogger &",
+        "productId": 1172730
+      },
+      "description": null,
+      "override": [
+        {
+          "item_id": "kn70sapjg8gnkt330453bbbhkd86at3n",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1172744
+      },
+      "product": {
+        "_id": "wd7a7y9c4bntsj2gqxyw3pr83h895a7b",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 1x Sony 16-35mm G master f2.8 lens gmaster g-master gm lens zoom wide angle\n\u2022 1x nd filter\n\u2022 1x Carrying bag\n\n\ud83d\ude80 About this Sony 16-35mm G master \ud83d\ude80\nThe Sony 16-35mm G master is a sharp, dependable optic that earns its place on most shoots \u2014 clean rendering, fast handling and consistent results across interviews, narrative and documentary work. Mounts on the matching camera bodies in our kit.\n\nPerfect for:\n\ud83c\udfac Narrative & short films\n\ud83c\udfa5 Commercials & brand content\n\ud83d\udcf8 Interviews & documentary\n\n\u2699\ufe0f Notes\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary; any other charger that uses normal USB-C / USB 2.0 does NOT come with the cable included.\nWe try our best to ensure items are charged when picked up but cannot guarantee this due to sometimes very short turnarounds between rentals. For an important project, please book and pick up the day before your shoot, or allow a few hours to charge if needed.\nSome items are listed as \"Optional\" \u2014 if you don't let us know you want one included, we won't be adding it.\nDelivery is a separate charge to the rental fee and is processed separately.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn73ga9tdczw4azpvv41qm3dw186b9pb",
+        "name": "Sony 16-35mm G master f2.8 lens gmaster g-master gm lens zoom wide angle ",
+        "productId": 1172744
+      },
+      "description": "\u2b50 Included in this rental: \u2022 1x Sony 16-35mm G master f2.8 lens gmaster g-master gm lens zoom wide angle \u2022 1x nd filter \u2022 1x Carrying bag \ud83d\ude80 About this Sony 16-35mm G master \ud83d\ude80 The Sony 16-35mm G master is a sharp, dependable optic that earns its place on most shoots \u2014 clean rendering, fast handling and consistent results across interviews, narrative and documentary work. Mounts on the matching camera bodies in our kit. Perfect for: \ud83c\udfac Narrative & short films \ud83c\udfa5 Commercials & brand content \ud83d\udcf8 Interviews & documentary \u2699\ufe0f Notes We always provide chargers with the equipment but only supply the ne",
+      "override": [
+        {
+          "item_id": "kn73ga9tdczw4azpvv41qm3dw186b9pb",
+          "qty": 1
+        },
+        {
+          "item_id": "kn75e370fh417hgv0n394b4ved86bcqc",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1172755
+      },
+      "product": {
+        "_id": "wd73afeg9jrrm38bjxbkjgtbbx89424v",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 1x 1\u00d7 Sigma 14\u201324mm f/2.8 DG DN Art Lens (Sony E-Mount)\n\u2022 1x 1\u00d7 Front lens cap\n\u2022 1x 1\u00d7 Rear lens cap\n\u2022 1x 1\u00d7 Lens pouch/carry case\n\n\ud83d\ude80 About this Sigma 14\u201324mm f/2.8 DG DN Wide Zoom Lens \ud83d\ude80\nThe Sigma 14\u201324mm f/2.8 DG DN Wide Zoom Lens is a sharp, dependable optic that earns its place on most shoots \u2014 clean rendering, fast handling and consistent results across interviews, narrative and documentary work. Mounts on the matching camera bodies in our kit.\n\nPerfect for:\n\ud83c\udfac Narrative & short films\n\ud83c\udfa5 Commercials & brand content\n\ud83d\udcf8 Interviews & documentary\n\n\u2699\ufe0f Notes\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary; any other charger that uses normal USB-C / USB 2.0 does NOT come with the cable included.\nWe try our best to ensure items are charged when picked up but cannot guarantee this due to sometimes very short turnarounds between rentals. For an important project, please book and pick up the day before your shoot, or allow a few hours to charge if needed.\nSome items are listed as \"Optional\" \u2014 if you don't let us know you want one included, we won't be adding it.\nDelivery is a separate charge to the rental fee and is processed separately.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": true,
+        "name": "Sigma 14\u201324mm f/2.8 DG DN Wide Zoom Lens (Sony E-Mount) | Ultra Wide Angle Full",
+        "productId": 1172755
+      },
+      "description": null,
+      "override": null
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1172756
+      },
+      "product": {
+        "_id": "wd72m6p568yxhz6k00mp6vg1yx89495k",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 1x 1\u00d7 Anker Nebula 4K Laser Projector (battery powered)\n\u2022 1x 1\u00d7 Power adapter/charger\n\u2022 1x 1\u00d7 Remote control (with battery)\n\u2022 1x 1\u00d7 HDMI cable\n\u2022 1x 1\u00d7 Carry case\n\n\ud83d\ude80 About this Anker Nebula 4K Laser Projector \ud83d\ude80\nThe Anker Nebula 4K Laser Projector is a go-to camera for prosumer and professional shoots \u2014 compact, riggable and dependable on set. Ideal for run-and-gun work, interviews, short films and commercials, and a reliable B-cam in a multi-camera setup.\n\nPerfect for:\n\ud83c\udfac Narrative & short films\n\ud83c\udfa5 Commercials & brand content\n\ud83d\udcf8 High-end interviews\n\ud83d\udfe3 Music videos\n\n\u2699\ufe0f Notes\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary; any other charger that uses normal USB-C / USB 2.0 does NOT come with the cable included.\nWe try our best to ensure items are charged when picked up but cannot guarantee this due to sometimes very short turnarounds between rentals. For an important project, please book and pick up the day before your shoot, or allow a few hours to charge if needed.\nSome items are listed as \"Optional\" \u2014 if you don't let us know you want one included, we won't be adding it.\nDelivery is a separate charge to the rental fee and is processed separately.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": true,
+        "name": "Anker Nebula 4K Laser Projector | Portable Battery Powered Smart Cinema",
+        "productId": 1172756
+      },
+      "description": "\u2b50 Included in this rental: \u2022 1x 1\u00d7 Anker Nebula 4K Laser Projector (battery powered) \u2022 1x 1\u00d7 Power adapter/charger \u2022 1x 1\u00d7 Remote control (with battery) \u2022 1x 1\u00d7 HDMI cable \u2022 1x 1\u00d7 Carry case \ud83d\ude80 About this Anker Nebula 4K Laser Projector \ud83d\ude80 The Anker Nebula 4K Laser Projector is a go-to camera for prosumer and professional shoots \u2014 compact, riggable and dependable on set. Ideal for run-and-gun work, interviews, short films and commercials, and a reliable B-cam in a multi-camera setup. Perfect for: \ud83c\udfac Narrative & short films \ud83c\udfa5 Commercials & brand content \ud83d\udcf8 High-end interviews \ud83d\udfe3 Music videos \u2699",
+      "override": [
+        {
+          "item_id": "kn72epb69by4z9khg9jxbvqqx187bjzz",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1172766
+      },
+      "product": {
+        "_id": "wd7dzwv8tw1761sqgjhtkhx02h8948m6",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 1x DJI RS 4 mini dji ronin gimbal gimble stabilizer pro combo set\n\u2022 1x Ai auto tracking module\n\u2022 1x handle\n\u2022 1x Carrying bag\n\n\ud83d\ude80 About this DJI RS 4 mini dji ronin gimbal gimble stabilizer pro combo s \ud83d\ude80\nThe DJI RS 4 mini dji ronin gimbal gimble stabilizer pro combo s is rock-solid support gear that keeps your shots stable and your rig safe \u2014 built for studio and location work alike. Works across narrative, commercial and documentary setups.\n\nPerfect for:\n\ud83c\udfac Narrative & short films\n\ud83c\udfa5 Commercials & brand content\n\ud83d\udcf8 Studio & location work\n\n\u2699\ufe0f Notes\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary; any other charger that uses normal USB-C / USB 2.0 does NOT come with the cable included.\nWe try our best to ensure items are charged when picked up but cannot guarantee this due to sometimes very short turnarounds between rentals. For an important project, please book and pick up the day before your shoot, or allow a few hours to charge if needed.\nSome items are listed as \"Optional\" \u2014 if you don't let us know you want one included, we won't be adding it.\nDelivery is a separate charge to the rental fee and is processed separately.\n\nAlso included:\n- DJI RS 4 Mini Gimbal with integrated mini-tripod\n- Side handle\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn79mc5rgqhsr64hbn58z737hs86b5ks",
+        "name": "DJI RS 4 mini  dji ronin gimbal gimble stabilizer pro combo set + Ai auto",
+        "productId": 1172766
+      },
+      "description": null,
+      "override": null
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1172771
+      },
+      "product": {
+        "_id": "wd73wgyh2c4cyyv72saqhnrrnh895bx4",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 1x Sirui Tripod and fluid head\n\u2022 1x Carrying bag\n\n\ud83d\ude80 About this Tripod Sirui stand with fluid head heavy duty 10kg capacity \ud83d\ude80\nThe Tripod Sirui stand with fluid head heavy duty 10kg capacity is rock-solid support gear that keeps your shots stable and your rig safe \u2014 built for studio and location work alike. Works across narrative, commercial and documentary setups.\n\nPerfect for:\n\ud83c\udfac Narrative & short films\n\ud83c\udfa5 Commercials & brand content\n\ud83d\udcf8 Studio & location work\n\n\u2699\ufe0f Notes\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary; any other charger that uses normal USB-C / USB 2.0 does NOT come with the cable included.\nWe try our best to ensure items are charged when picked up but cannot guarantee this due to sometimes very short turnarounds between rentals. For an important project, please book and pick up the day before your shoot, or allow a few hours to charge if needed.\nSome items are listed as \"Optional\" \u2014 if you don't let us know you want one included, we won't be adding it.\nDelivery is a separate charge to the rental fee and is processed separately.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": true,
+        "name": "Tripod Sirui stand with fluid head heavy duty 10kg capacity ",
+        "productId": 1172771
+      },
+      "description": null,
+      "override": null
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1172777
+      },
+      "product": {
+        "_id": "wd7fxqxndn0qqg3yzkxghnq6s989548a",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 1x 1\u00d7 ViewSonic 4K UHD 3500 Lumens Projector\n\u2022 1x 1\u00d7 Power Cable (UK plug)\n\u2022 1x 1\u00d7 10m HDMI Cable (suitable for long-distance setup)\n\u2022 1x 1\u00d7 Protective case\n\u2022 1x 1\u00d7 Remote control (with batteries included by default)\n\n\ud83d\ude80 About this ViewSonic 4K UHD 3500 Lumens Projector + 10m HDMI Cable \ud83d\ude80\nThe ViewSonic 4K UHD 3500 Lumens Projector + 10m HDMI Cable is a go-to camera for prosumer and professional shoots \u2014 compact, riggable and dependable on set. Ideal for run-and-gun work, interviews, short films and commercials, and a reliable B-cam in a multi-camera setup.\n\nPerfect for:\n\ud83c\udfac Narrative & short films\n\ud83c\udfa5 Commercials & brand content\n\ud83d\udcf8 High-end interviews\n\ud83d\udfe3 Music videos\n\n\u2699\ufe0f Notes\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary; any other charger that uses normal USB-C / USB 2.0 does NOT come with the cable included.\nWe try our best to ensure items are charged when picked up but cannot guarantee this due to sometimes very short turnarounds between rentals. For an important project, please book and pick up the day before your shoot, or allow a few hours to charge if needed.\nSome items are listed as \"Optional\" \u2014 if you don't let us know you want one included, we won't be adding it.\nDelivery is a separate charge to the rental fee and is processed separately.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn72epb69by4z9khg9jxbvqqx187bjzz",
+        "name": "ViewSonic 4K UHD 3500 Lumens Projector + 10m HDMI Cable | Home Cinema, Events,",
+        "productId": 1172777
+      },
+      "description": "\u2b50 Included in this rental: \u2022 1x 1\u00d7 ViewSonic 4K UHD 3500 Lumens Projector \u2022 1x 1\u00d7 Power Cable (UK plug) \u2022 1x 1\u00d7 10m HDMI Cable (suitable for long-distance setup) \u2022 1x 1\u00d7 Protective case \u2022 1x 1\u00d7 Remote control (with batteries included by default) \ud83d\ude80 About this ViewSonic 4K UHD 3500 Lumens Projector + 10m HDMI Cable \ud83d\ude80 The ViewSonic 4K UHD 3500 Lumens Projector + 10m HDMI Cable is a go-to camera for prosumer and professional shoots \u2014 compact, riggable and dependable on set. Ideal for run-and-gun work, interviews, short films and commercials, and a reliable B-cam in a multi-camera setup. Perfect ",
+      "override": [
+        {
+          "item_id": "kn72epb69by4z9khg9jxbvqqx187bjzz",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1172786
+      },
+      "product": {
+        "_id": "wd737fyxhhavjckjsjhqhdqz69895vmk",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 1x 1\u00d7 Lexar CFexpress Type A 320GB card\n\u2022 1x 1\u00d7 USB-C cable (for card reader)\n\u2022 1x Protective case\n\n\ud83d\ude80 About this Lexar CFexpress Type A \ud83d\ude80\nThe Lexar CFexpress Type A is a go-to camera for prosumer and professional shoots \u2014 compact, riggable and dependable on set. Ideal for run-and-gun work, interviews, short films and commercials, and a reliable B-cam in a multi-camera setup.\n\nPerfect for:\n\ud83c\udfac Narrative & short films\n\ud83c\udfa5 Commercials & brand content\n\ud83d\udcf8 High-end interviews\n\ud83d\udfe3 Music videos\n\n\u2699\ufe0f Notes\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary; any other charger that uses normal USB-C / USB 2.0 does NOT come with the cable included.\nWe try our best to ensure items are charged when picked up but cannot guarantee this due to sometimes very short turnarounds between rentals. For an important project, please book and pick up the day before your shoot, or allow a few hours to charge if needed.\nSome items are listed as \"Optional\" \u2014 if you don't let us know you want one included, we won't be adding it.\nDelivery is a separate charge to the rental fee and is processed separately.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn78qeqezcrpjr12gzmynyfgb986b1rn",
+        "name": "Lexar CFexpress Type A 320GB Memory Card + Card Reader | High-Speed CFexpress-A",
+        "productId": 1172786
+      },
+      "description": "\u2b50 Included in this rental: \u2022 1x 1\u00d7 Lexar CFexpress Type A 320GB card \u2022 1x 1\u00d7 USB-C cable (for card reader) \u2022 1x Protective case \ud83d\ude80 About this Lexar CFexpress Type A \ud83d\ude80 The Lexar CFexpress Type A is a go-to camera for prosumer and professional shoots \u2014 compact, riggable and dependable on set. Ideal for run-and-gun work, interviews, short films and commercials, and a reliable B-cam in a multi-camera setup. Perfect for: \ud83c\udfac Narrative & short films \ud83c\udfa5 Commercials & brand content \ud83d\udcf8 High-end interviews \ud83d\udfe3 Music videos \u2699\ufe0f Notes We always provide chargers with the equipment but only supply the needed ",
+      "override": null
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1172801
+      },
+      "product": {
+        "_id": "wd7dhjrb0tbavpbtwc26xc2za58944m5",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 1x 2\u00d7 Speaker stands (height adjustable)\n\u2022 1x 2\u00d7 Power cables / chargers\n\u2022 1x 2\u00d7 AUX cables (3.5mm to 3.5mm)\n\u2022 1x Both units fully charged on collection (12h battery each)\n\u2022 1x Carrying bag\n\n\ud83d\ude80 About this 2\u00d7 JBL PartyBox Club 120 Speakers \ud83d\ude80\nThe 2\u00d7 JBL PartyBox Club 120 Speakers is a workhorse light for controlled and on-location setups \u2014 clean output and easy control for interviews, commercials and music videos. Pairs well with the modifiers and stands in our range.\n\nPerfect for:\n\ud83c\udfa5 Commercials & brand content\n\ud83d\udcf8 Interviews & portraits\n\ud83d\udfe3 Music videos\n\n\u2699\ufe0f Notes\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary; any other charger that uses normal USB-C / USB 2.0 does NOT come with the cable included.\nWe try our best to ensure items are charged when picked up but cannot guarantee this due to sometimes very short turnarounds between rentals. For an important project, please book and pick up the day before your shoot, or allow a few hours to charge if needed.\nSome items are listed as \"Optional\" \u2014 if you don't let us know you want one included, we won't be adding it.\nDelivery is a separate charge to the rental fee and is processed separately.\n\nAlso included:\n- DJ setups (they pair well with a Pioneer RX2 controller)\n- Weddings and large events, providing excellent double coverage.\n- Outdoor BBQs or birthdays where you need significant sound power.\n- House parties, creating an immersive stereo effect.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn7amjd9r3hks17nssn396s1yn86bc8q",
+        "name": "2\u00d7 JBL PartyBox Club 120 Speakers | Portable Bluetooth Party Speaker Pair + Bass",
+        "productId": 1172801
+      },
+      "description": "\u2b50 Included in this rental: \u2022 1x 2\u00d7 Speaker stands (height adjustable) \u2022 1x 2\u00d7 Power cables / chargers \u2022 1x 2\u00d7 AUX cables (3.5mm to 3.5mm) \u2022 1x Both units fully charged on collection (12h battery each) \u2022 1x Carrying bag \ud83d\ude80 About this 2\u00d7 JBL PartyBox Club 120 Speakers \ud83d\ude80 The 2\u00d7 JBL PartyBox Club 120 Speakers is a workhorse light for controlled and on-location setups \u2014 clean output and easy control for interviews, commercials and music videos. Pairs well with the modifiers and stands in our range. Perfect for: \ud83c\udfa5 Commercials & brand content \ud83d\udcf8 Interviews & portraits \ud83d\udfe3 Music videos \u2699\ufe0f Notes We al",
+      "override": [
+        {
+          "item_id": "kn7amjd9r3hks17nssn396s1yn86bc8q",
+          "qty": 2
+        }
+      ]
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1172820
+      },
+      "product": {
+        "_id": "wd7f5vjsr7vptrcrq8bb1jhda9894cwy",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 1x DZO ARLES Prime set 3 lenses t1.4 25,50,75mm DZOFILM PL mount (e,l,x,rf) digital cinema lens Full frame vista vision coverage\n\u2022 1x Carrying bag\n\n\ud83d\ude80 About this DZO ARLES Prime set 3 lenses t1.4 25,50,75mm DZOFILM PL moun \ud83d\ude80\nThe DZO ARLES Prime set 3 lenses t1.4 25,50,75mm DZOFILM PL moun is a sharp, dependable optic that earns its place on most shoots \u2014 clean rendering, fast handling and consistent results across interviews, narrative and documentary work. Mounts on the matching camera bodies in our kit.\n\nPerfect for:\n\ud83c\udfac Narrative & short films\n\ud83c\udfa5 Commercials & brand content\n\ud83d\udcf8 Interviews & documentary\n\n\u2699\ufe0f Notes\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary; any other charger that uses normal USB-C / USB 2.0 does NOT come with the cable included.\nWe try our best to ensure items are charged when picked up but cannot guarantee this due to sometimes very short turnarounds between rentals. For an important project, please book and pick up the day before your shoot, or allow a few hours to charge if needed.\nSome items are listed as \"Optional\" \u2014 if you don't let us know you want one included, we won't be adding it.\nDelivery is a separate charge to the rental fee and is processed separately.\n\nAlso included:\n- 1x Protective hard case\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn7c9e2jhf35cway1221k5fzhh87becd",
+        "name": "DZO ARLES Prime set 3 lenses t1.4 25,50,75mm DZOFILM PL mount (e,l,x,rf) digital",
+        "productId": 1172820
+      },
+      "description": null,
+      "override": null
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1172830
+      },
+      "product": {
+        "_id": "wd7830nbvbrsqsbb0tfxser6xh8959ae",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 1x Arri Alexa mini cinema camera all licenses\n\u2022 1x media\n\u2022 1x v mounts\n\u2022 1x Carrying bag\n\n\ud83d\ude80 About this Arri Alexa mini cinema camera all licenses + media + v mount \ud83d\ude80\nThe Arri Alexa mini cinema camera all licenses + media + v mount is rock-solid support gear that keeps your shots stable and your rig safe \u2014 built for studio and location work alike. Works across narrative, commercial and documentary setups.\n\nPerfect for:\n\ud83c\udfac Narrative & short films\n\ud83c\udfa5 Commercials & brand content\n\ud83d\udcf8 Studio & location work\n\n\u2699\ufe0f Notes\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary; any other charger that uses normal USB-C / USB 2.0 does NOT come with the cable included.\nWe try our best to ensure items are charged when picked up but cannot guarantee this due to sometimes very short turnarounds between rentals. For an important project, please book and pick up the day before your shoot, or allow a few hours to charge if needed.\nSome items are listed as \"Optional\" \u2014 if you don't let us know you want one included, we won't be adding it.\nDelivery is a separate charge to the rental fee and is processed separately.\n\nAlso included:\n- ARRI MVF-1 viewfinder\n- Shoulder rig setup including baseplate, rods, and wooden handle\n- V-mount battery plate\n- Two 512GB media cards\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": true,
+        "name": "Arri Alexa mini cinema camera all licenses + media + v mounts ",
+        "productId": 1172830
+      },
+      "description": null,
+      "override": null
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1172914
+      },
+      "product": {
+        "_id": "wd769qm9d3p7yh88bhnzx2sghn8942xw",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 2x Senheiser g3 transmitter\n\u2022 2x Senheiser g3 reciever\n\u2022 2x lav mic\n\u2022 1x Carrying bag\n\n\ud83d\ude80 About this 2x Senheiser g3 radio mic microphone 2x transmitter 2x recie \ud83d\ude80\nThe 2x Senheiser g3 radio mic microphone 2x transmitter 2x recie is reliable production audio for dialogue, interviews and run-and-gun capture \u2014 clean sound when it matters. Pairs with the recorders and cameras in our kit.\n\nPerfect for:\n\ud83c\udf99\ufe0f Interviews & dialogue\n\ud83c\udfa5 Documentary & run-and-gun\n\ud83d\udfe3 Music & live capture\n\n\u2699\ufe0f Notes\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary; any other charger that uses normal USB-C / USB 2.0 does NOT come with the cable included.\nWe try our best to ensure items are charged when picked up but cannot guarantee this due to sometimes very short turnarounds between rentals. For an important project, please book and pick up the day before your shoot, or allow a few hours to charge if needed.\nSome items are listed as \"Optional\" \u2014 if you don't let us know you want one included, we won't be adding it.\nDelivery is a separate charge to the rental fee and is processed separately.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": true,
+        "name": "2x Senheiser g3 radio mic microphone 2x transmitter 2x reciever audio recorder",
+        "productId": 1172914
+      },
+      "description": null,
+      "override": null
+    },
+    {
+      "key": {
+        "account": "leo",
+        "productId": 1172943
+      },
+      "product": {
+        "_id": "wd7an3thxact25gqveax05wwcx894j2c",
+        "accountSlug": "leo",
+        "description": "\u2b50 Included in this rental:\n\u2022 1x Sony Fx 3\n\u2022 1x 16-35mm g master lens f2 .8 mirrorless camera cinema 4k Sony fx3 Sony zoom lens wide angle g-master gm full frame Sony FX 3 Mirrorless camera cinema full frame 4k fx3\n\u2022 1x Sony 24-70mm gmaster g-master gm zoom lens f2.8 (same sensor as a7siii a7s iii )\n\u2022 1x Carrying bag\n\n\ud83d\ude80 About this Sony Fx 3 + 16-35mm g master lens \ud83d\ude80\nThe Sony Fx 3 + 16-35mm g master lens is a sharp, dependable optic that earns its place on most shoots \u2014 clean rendering, fast handling and consistent results across interviews, narrative and documentary work. Mounts on the matching camera bodies in our kit.\n\nPerfect for:\n\ud83c\udfac Narrative & short films\n\ud83c\udfa5 Commercials & brand content\n\ud83d\udcf8 Interviews & documentary\n\n\u2699\ufe0f Notes\nWe always provide chargers with the equipment but only supply the needed cable if it is proprietary; any other charger that uses normal USB-C / USB 2.0 does NOT come with the cable included.\nWe try our best to ensure items are charged when picked up but cannot guarantee this due to sometimes very short turnarounds between rentals. For an important project, please book and pick up the day before your shoot, or allow a few hours to charge if needed.\nSome items are listed as \"Optional\" \u2014 if you don't let us know you want one included, we won't be adding it.\nDelivery is a separate charge to the rental fee and is processed separately.\n\nusually available 9 am to 10 pm\n\nthat is general timeframe im there for , that doesnt mean return and pickup anytime in those times, please be there at the in chat agreed time",
+        "isMarketingOnly": false,
+        "masterItemId": "kn7bw2cr1ye5hqj3x770b332ks86atzw",
+        "name": "Sony Fx 3 + 16-35mm g master lens f2 .8 mirrorless camera cinema 4k Sony fx3",
+        "productId": 1172943
+      },
+      "description": "\u2b50 Included in this rental: \u2022 1x Sony Fx 3 \u2022 1x 16-35mm g master lens f2 .8 mirrorless camera cinema 4k Sony fx3 Sony zoom lens wide angle g-master gm full frame Sony FX 3 Mirrorless camera cinema full frame 4k fx3 \u2022 1x Sony 24-70mm gmaster g-master gm zoom lens f2.8 (same sensor as a7siii a7s iii ) \u2022 1x Carrying bag \ud83d\ude80 About this Sony Fx 3 + 16-35mm g master lens \ud83d\ude80 The Sony Fx 3 + 16-35mm g master lens is a sharp, dependable optic that earns its place on most shoots \u2014 clean rendering, fast handling and consistent results across interviews, narrative and documentary work. Mounts on the matchin",
+      "override": null
+    }
+  ]
+}
