@@ -616,6 +616,9 @@ function StageBar({
 }
 
 function QueueAvailability({ tile }: { tile: ReplyTileData }) {
+  // Account support threads have no basket to certify or block.
+  if (tile.items.length === 0 && tile.item_count === 0)
+    return <span className={`${styles.availability} ${styles.unknown}`} title="General enquiry: no equipment requested">—</span>;
   const status = tile.availability?.status ?? "unknown";
   const baseLabel =
     status === "available"
@@ -783,6 +786,8 @@ function AvailabilityBadge({
   a: TileAvailability;
   compact?: boolean;
 }) {
+  if (a.items.length === 0)
+    return <span className="text-[11px] text-[#a6adbb]">No equipment requested</span>;
   if (a.status === "unknown")
     return (
       <span title={a.reason} className="inline-flex rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-[#a6adbb]">
