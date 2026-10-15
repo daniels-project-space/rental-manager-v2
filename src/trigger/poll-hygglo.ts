@@ -16,7 +16,7 @@ import type { FunctionReturnType } from "convex/server";
 import { api } from "../../convex/_generated/api";
 import type { deriveListingInfoPoolOnDemandTask } from "./derive-listing-info-pool";
 import { computeHoldsForReservations } from "../lib/reconcile-holds";
-import { HYGGLO_POLL_CRON, hyggloPollMode } from "../lib/quiet-hours";
+import { hyggloPollMode } from "../lib/quiet-hours";
 import {
   MAX_EFFECTIVE_POLL_INTERVAL_MS,
   MIN_EFFECTIVE_POLL_INTERVAL_MS,
@@ -55,12 +55,10 @@ const PAUSED_ACCOUNT_RETRY_MS = 60 * 60 * 1000;
  * normal `hyggloPollMode` + interval logic below, so a backup tick during a
  * healthy period is a cheap no-op rather than an unconditional full poll.
  *
- * ⚠️ NOT YET ACTIVE (2026-08-22). The task below still runs on the original
- * `HYGGLO_POLL_CRON` because the Convex poll clock cannot enqueue yet — see the
- * enable-checklist comment in `convex/crons.ts`. Deploying this backup cadence
- * while the clock is disabled would cut real polling from ~370/day to 12/day.
- * Swap `cron:` to this constant ONLY in the same change that enables the Convex
- * cron.
+ * Keep the two-hour Trigger.dev schedule as an independent fallback. The
+ * Convex clock owns normal polling and prevents the old billed no-op cadence.
+ * If shared trigger credentials are missing, the clock fails closed and the
+ * backup remains available without restoring the frequent schedule.
  */
 export const HYGGLO_POLL_BACKUP_CRON = "7 */2 * * *";
 
@@ -378,7 +376,7 @@ async function scrapeAccountViaCore(
 // build-stamp 2026-06-23T00:45Z — awaiting_owner_action batch-path fix (b68f826)
 export const pollHyggloInbox = schedules.task({
   id: "poll-hygglo-inbox",
-  cron: HYGGLO_POLL_CRON,
+  cron: HYGGLO_POLL_BACKUP_CRON,
   maxDuration: 120,
   retry: { maxAttempts: 2 },
   run: async (payload) => {
