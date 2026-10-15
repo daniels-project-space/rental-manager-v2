@@ -731,10 +731,72 @@ export function StatsGrid() {
     };
   }, [rawData, rentalsRow, scannerLive, verificationLosses, rentalHeadlines, expandedId, activeAccountSlug, catVolExpanded]);
 
-  if (!cards) return <StatsGridSkeleton />;
+  if (!cards) {
+    if (!rentalHeadlines) return <StatsGridSkeleton />;
+
+    // Keep the two live rental headlines visible while the broad dashboard
+    // snapshot loads. That snapshot reads many tables and must not gate these
+    // independently-fetched totals from reaching the page.
+    return (
+      <>
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-4 mt-4">
+          <div className="col-span-2">
+            <ExpandableStatCard
+              id="active"
+              label="Active Rentals"
+              value={rentalHeadlines.active.total}
+              valueColor="blue"
+              accentColor="blue"
+              hero
+              isExpanded={expandedId === "active"}
+              onToggle={() => setExpandedId((id) => id === "active" ? null : "active")}
+              subtitle={
+                <span className="inline-flex items-center gap-2 text-[11px]">
+                  <span>{rentalHeadlines.active.ongoing_count} ongoing</span>
+                  <span className="text-slate-600">+</span>
+                  <span>{rentalHeadlines.active.upcoming_count} upcoming</span>
+                </span>
+              }
+            >
+              <div className="space-y-2 text-xs text-slate-300">
+                {rentalHeadlines.active.rentals.map((rental) => (
+                  <div key={rental.calendar_reservation_id} className="flex justify-between gap-3">
+                    <span className="truncate">{rental.renter_name || rental.item_names_summary}</span>
+                    <span className="shrink-0 text-slate-500">{rental.start_date} · {rental.kind}</span>
+                  </div>
+                ))}
+              </div>
+            </ExpandableStatCard>
+          </div>
+          <div className="col-span-2">
+            <ExpandableStatCard
+              id="monthly"
+              label="Expected Monthly"
+              value={fmtGbpFull(rentalHeadlines.monthly.projected)}
+              valueColor="green"
+              accentColor="green"
+              isExpanded={expandedId === "monthly"}
+              onToggle={() => setExpandedId((id) => id === "monthly" ? null : "monthly")}
+              subtitle={`Confirmed: ${fmtGbpFull(rentalHeadlines.monthly.confirmed_revenue)}`}
+              headerExtra={
+                <div className="text-[11px] text-slate-400">
+                  {rentalHeadlines.monthly.pct_of_target}% of usual month · {fmtGbpFull(rentalHeadlines.monthly.expected_additional_gbp)} additional bookings expected
+                </div>
+              }
+            >
+              <div className="text-xs text-slate-400">
+                Live rental totals · {rentalHeadlines.monthly.days_remaining} days remaining this month
+              </div>
+            </ExpandableStatCard>
+          </div>
+        </div>
+        <StatsGridSkeleton />
+      </>
+    );
+  }
 
   const visibleIds = layout.statOrder.filter(
-    (id) => cards[id] && !isStatHidden(id),
+    (id) => cards[id] && (id === "active" || id === "monthly" || !isStatHidden(id)),
   );
 
   const handleDragEnd = (e: DragEndEvent) => {
