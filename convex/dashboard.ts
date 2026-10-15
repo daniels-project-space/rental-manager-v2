@@ -54,6 +54,48 @@ import {
 import { loadMonthlyVerificationLosses } from "./lib/monthly_verification";
 import { countPlatformFallout } from "./lib/platform_fallout";
 
+/** Apply the dashboard's logical-rental grouping and active-date rules in one place. */
+function groupActiveRentals<T extends ReservationRow>(rows: T[], today: string, time: string) {
+  const confirmedWithDates = rows.filter((r) => isConfirmedWithDates(r));
+  const groupId = logicalGroupIds(confirmedWithDates);
+  const groups = new Map<string, T[]>();
+  for (const row of dedupByLogicalRental(confirmedWithDates)) {
+    const id = groupId.get(row._id) ?? row._id;
+    const members = groups.get(id);
+    if (members) members.push(row);
+    else groups.set(id, [row]);
+  }
+
+  const merged = Array.from(groups.values()).map((members): T => {
+    const sorted = members.slice().sort((a, b) =>
+      displayPickupDate(a).localeCompare(displayPickupDate(b)),
+    );
+    const base = sorted[0];
+    let spanEnd = displayReturnDate(base);
+    let netSum = 0;
+    for (const member of sorted) {
+      const end = displayReturnDate(member);
+      if (end > spanEnd) spanEnd = end;
+      netSum += netOf(member);
+    }
+    const live = sorted.find((member) =>
+      displayPickupDate(member) <= today && displayReturnDate(member) >= today,
+    ) ?? base;
+    return {
+      ...base,
+      return_date: spanEnd,
+      net_to_owner_gbp: netSum,
+      order_step: live.order_step,
+    } as T;
+  });
+
+  const upcoming = (row: ReservationRow) =>
+    isConfirmedWithDates(row) && pickupIsUpcoming(row, today, time);
+  const upcomingRows = merged.filter(upcoming);
+  const ongoingRows = merged.filter((row) => isOngoing(row, today) && !upcoming(row));
+  return { ongoingRows, upcomingRows };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared item-tile builder (Phase 9 / FIX-DESIGN §4.5)
 // Lifted out of getStatsDrawerData / getNextRentals to eliminate the previous
@@ -673,47 +715,8 @@ export const getStatsDrawerData = query({
     // rental": counted once and listed once, spanning the whole period with the
     // members' £ summed. Earnings/revenue rollups elsewhere stay on RAW rows so
     // totals never change — only the rental COUNT collapses.
-    const activeGroupId = logicalGroupIds(confirmedWithDates as unknown as ReservationRow[]);
-    const activeGroups = new Map<string, ResRow[]>();
-    for (const r of dedupRes(confirmedWithDates)) {
-      const gid = activeGroupId.get(r._id) ?? r._id;
-      const arr = activeGroups.get(gid);
-      if (arr) arr.push(r);
-      else activeGroups.set(gid, [r]);
-    }
-    // One synthetic representative row per group: earliest member as the base
-    // (items / renter / image), effective return extended to the merged span end
-    // and net = Σ members (so the card shows the full period + total £); status
-    // reflects whichever member is live today.
-    const mergedActiveRows: ResRow[] = Array.from(activeGroups.values()).map((members) => {
-      const sorted = members
-        .slice()
-        .sort((a, b) =>
-          displayPickupDate(a as ReservationRow).localeCompare(displayPickupDate(b as ReservationRow)),
-        );
-      const base = sorted[0];
-      let spanEnd = displayReturnDate(base as ReservationRow);
-      let netSum = 0;
-      for (const m of sorted) {
-        const e = displayReturnDate(m as ReservationRow);
-        if (e > spanEnd) spanEnd = e;
-        netSum += netOf(m as ReservationRow);
-      }
-      const live =
-        sorted.find(
-          (m) =>
-            displayPickupDate(m as ReservationRow) <= activeToday &&
-            displayReturnDate(m as ReservationRow) >= activeToday,
-        ) ?? base;
-      return {
-        ...base,
-        return_date: spanEnd,
-        net_to_owner_gbp: netSum,
-        order_step: (live as { order_step?: string }).order_step,
-      } as ResRow;
-    });
-    const ongoingGroupRows = mergedActiveRows.filter((r) => isActiveOngoing(r as ResRow));
-    const upcomingGroupRows = mergedActiveRows.filter((r) => isActiveUpcoming(r as ResRow));
+    const { ongoingRows: ongoingGroupRows, upcomingRows: upcomingGroupRows } =
+      groupActiveRentals(confirmedWithDates, activeToday, activeTime);
 
     // Monthly confirmed bookings (deduped) — confirmed status only, used for the
     // "still going" segments (done-via-date / active / upcoming).
@@ -2813,4 +2816,76 @@ export const getMonthlyVerificationLosses = query({
 export const __service_getRentalVolumeByCategory = internalQueryOf(getRentalVolumeByCategory);
 
 // Privileged caller counterpart; shares the original handler and validators.
+/**
+ * Small, reactive source for the two rental headline metrics. The full stats
+ * drawer snapshot does broad reporting reads and can exceed Convex's query
+ * time limit; these values need only the confirmed date window and current
+ * booking month, so they stay live independently of that snapshot refresh.
+ */
+export const getRentalHeadlineStats = query({
+  args: { accountSlug: v.union(v.string(), v.null()) },
+  handler: async (ctx, { accountSlug }) => {
+    const now = new Date();
+    const today = londonToday();
+    const time = londonTime(now);
+    const dashCutoffDate = new Date(now);
+    dashCutoffDate.setDate(now.getDate() - 365);
+    const dashCutoff = dashCutoffDate.toISOString().slice(0, 10);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+    const monthKey = monthStart.slice(0, 7);
+
+    // Match the main dashboard's 365-day source window, but use the composite
+    // status/date index so cancelled, declined and completed history is not read.
+    const confirmedRows = await ctx.db
+      .query("reservations")
+      .withIndex("by_status_start_date", (q) =>
+        q.eq("status", "confirmed").gte("start_date", dashCutoff),
+      )
+      .collect();
+    const scopedConfirmed = accountSlug
+      ? confirmedRows.filter((row) => row.account_slug === accountSlug)
+      : confirmedRows;
+    const { ongoingRows, upcomingRows } = groupActiveRentals(
+      scopedConfirmed,
+      today,
+      time,
+    );
+
+    // Effective revenue date prefers pickup_date, otherwise start_date. Query
+    // both indexed date fields for this month, then use the canonical revenue
+    // helper for status, obsolete and logical-rental rules.
+    const [confirmedMonthRows, completedMonthRows, pickupMonthRows] = await Promise.all([
+      ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+        q.eq("status", "confirmed").gte("start_date", monthStart).lte("start_date", monthEnd),
+      ).collect(),
+      ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+        q.eq("status", "completed").gte("start_date", monthStart).lte("start_date", monthEnd),
+      ).collect(),
+      ctx.db.query("reservations").withIndex("by_pickup_date", (q) =>
+        q.gte("pickup_date", monthStart).lte("pickup_date", monthEnd),
+      ).collect(),
+    ]);
+    const monthRowsById = new Map<string, (typeof confirmedRows)[number]>();
+    for (const row of [...confirmedMonthRows, ...completedMonthRows, ...pickupMonthRows]) {
+      if (!accountSlug || row.account_slug === accountSlug) monthRowsById.set(row._id, row);
+    }
+    const monthly = realisedMonthRevenue(
+      Array.from(monthRowsById.values()) as unknown as ReservationRow[],
+      monthKey,
+      accountSlug,
+    );
+
+    return {
+      active: {
+        total: ongoingRows.length + upcomingRows.length,
+        ongoing_count: ongoingRows.length,
+        upcoming_count: upcomingRows.length,
+      },
+      monthly: { confirmed_revenue: monthly.netGbp },
+      generatedAt: now.getTime(),
+    };
+  },
+});
+
 export const __service_getStatsDrawerData = internalQueryOf(getStatsDrawerData);
