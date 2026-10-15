@@ -6,11 +6,11 @@ import { declaredLensIdentity } from "./declared_lens_identity";
 
 type Inventory = CountedMaster & { _id: unknown; name_canonical: string; kind?: string; qty?: number; aliases?: string[]; lens_mount?: string | null; status?: string; is_marketing_only?: boolean; track_independent_stock?: boolean };
 const mountTokens = new Set(["ef", "l", "rf", "e", "pl", "mount"]);
-const tokens = (text: string) => (text.toLowerCase().replace(/(\d+)\s*(?:wah|wh|watt[ -]?hours?)\b/g,"$1wh").replace(/ø/g,"o").replace(/\bg\s*-?\s*master\b/g, "gm").replace(/\bfx\s+(\d+)\b/g, "fx$1").replace(/\ba7\s*(s|r)?\s*(iii|iv|ii|v)\b/g, "a7$1$2").match(/[a-z0-9]+/g) ?? [])
+const tokens = (text: string) => (text.toLowerCase().replace(/(\d+)\s*(?:wah|wh|watt[ -]?hours?)\b/g,"$1wh").replace(/ø/g,"o").replace(/\bg\s*-?\s*master\b/g, "gm").replace(/\bfx\s+(\d+)\b/g, "fx$1").replace(/\ba\s+7\b/g, "a7").replace(/\ba7\s*(s|r)?\s*(iii|iv|ii|v)\b/g, "a7$1$2").match(/[a-z0-9]+/g) ?? [])
   .map(token => token.length > 3 && token.endsWith("s") ? token.slice(0, -1) : token);
 // Whole generic supplied hardware lines do not describe independent rentals.
 // Named or explicitly tracked matching pools still participate in coverage.
-const bundledHardware = /^(?:(?:mounting\s+)?(?:clamps?|clips?|brackets?)|antennas?|side\s+handles?|barn\s+doors?|soft\s+diffusion(?:\s+sheets?)?|power\s+adapters?|charging\s+cases?|fluid\s+head\s+handles?|rod rig systems?|manual follow focus wheels?|(?:DJI\s+)?(?:adapter|quick[- ]release|mounting)\s+plates?|sandbags?|gel\s+(?:kits?|sets?|sheets?))$/i;
+const bundledHardware = /^(?:(?:mounting\s+)?(?:clamps?|clips?|brackets?)|antennas?|side\s+handles?|barn\s+doors?|soft\s+diffusion(?:\s+sheets?)?|power\s+adapters?|charging\s+cases?|fluid\s+head\s+handles?|remote triggers? for off-camera control|nozzle attachments?(?: \([^)]*\))?|filled smoke chamber fillings(?: \([^)]*\))?|rod rig systems?|manual follow focus wheels?|(?:DJI\s+)?(?:adapter|quick[- ]release|mounting)\s+plates?|sandbags?|gel\s+(?:kits?|sets?|sheets?))$/i;
 const incidental = /\b(?:batter(?:y|ies)|chargers?|cables?|(?:carry|carrying|charging|charge)\s+(?:bags?|cases?)|uv\s+filters?|(?:camera )?cage|(?:sd|memory) cards?|(?:cfexpress|micro[- ]?sd|sdxc|sdhc)\b[^.;]{0,50}\bcards?|ssds?|\d+\s*(?:tb|gb)\s+(?:card|media))\b/i;
 const suppliedCaseObject=(name:string)=>/\b(?:carry|carrying|charging|charge)\s+(?:bags?|cases?)\b/i.test(name.split(/\b(?:with|including|includes|and|plus)\b|[,;+&]/i)[0]);
 
@@ -52,7 +52,11 @@ function componentIdentity(name:string,items:Inventory[],genericHardware:boolean
   // Inspect the requested object, before supplied accessories ("with battery").
   // Apply this before both alias matching and the fuzzy fallback.
   const candidates = items.filter(item => {
+    // A supplied card reader cannot consume a second memory card merely
+    // because its name contains the card's full model label.
+    if (["storage_card","media"].includes(item.kind??"") && /\breaders?\b/i.test(identityName)) return false;
     if (!matchesGimbalComponentRole(identityName, item)) return false;
+    if (item.kind === "smoke_fx" && /\bbattery grip\b|\bspare batter(?:y|ies)\b|\bnozzle\b|\bremote trigger\b/i.test(identityName) && !/\bbattery grip\b|\bnozzle\b|\bremote trigger\b/i.test(item.name_canonical)) return false;
     // A named device's supplied case is not another copy of that device.
     // A registered case may still match its own explicit inventory identity.
     const caseRequest=suppliedCaseObject(identityName);

@@ -48,7 +48,7 @@ export function extractComponents(desc: string): {
     // A standalone heading describes the set, not an extra quantity of it.
     // Remove presentation marks only for heading recognition; preserve inline contents.
     const heading = line.trim().replace(/^[^a-z0-9]+/i, "").replace(/\*\*/g, "");
-    return /^(?:included in (?:this|the)\b[^:•‣●]*\b(?:set|kit|rental|bundle|package)|in (?:this|the) (?:kit|rental|bundle|package)|what['’]?s included|contents)\s*:?$/i.test(heading)
+    return /^(?:included in (?:this|the)\b[^:•‣●]*\b(?:set|kit|rental|bundle|package)|in (?:this|the) (?:kit|rental|bundle|package)(?:,\s*(?:I include|you['’]ll find))?|what['’]?s included|contents)\s*:?$/i.test(heading)
       ? "Contents:" : line;
   });
   let contents = false, bullets = false, end = lines.length;
@@ -156,6 +156,9 @@ export function extractComponents(desc: string): {
     if (!q && /^(?:please\s+return\b|[([]\s*compatible\s+with\b)/i.test(p)) continue;
     const qty = q ? parseInt(q[1], 10) : 1;
     let name = (q ? q[2] : p).trim().replace(/[.,;]+$/, "");
+    // Duplicate 1× wrappers are arithmetically identical. Different nested
+    // counts remain ambiguous unless an existing reviewed allocation proves it.
+    if(qty===1)name=name.replace(/^1\s*x\s+/i,"");
     if (!usedBullets) {
       // Numeric-split fallback only: a name can otherwise run into the next
       // component, so cut at the next quantity marker.

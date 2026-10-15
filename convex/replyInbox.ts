@@ -55,6 +55,8 @@ import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
 import { currentDraftApproval, currentDraftReview, draftContextKey, sameDraftApproval } from "./lib/draft_review";
+import { replyStockWindow, type ReplyStockWindow } from "./lib/reply_stock_dates";
+import type { ResolvableRes } from "./lib/reservations/itemUnits";
 import { loadStockSources, resolveStockItem, stockForRentalItem } from "./lib/renter_stock";
 import { stockRequestForSeparateCheck, stockRequestForInquiryQuote, unsupportedStockClaims, type StockReceipt } from "./lib/stock_claims";
 import { reviewFlagValidator } from "./lib/draft_review_validator";
@@ -354,7 +356,8 @@ type ItemAvail = {
 type TileAvailability = {
   status: "available" | "conflict" | "unknown";
   include_pending: boolean;
-  stock_rules_version: 6;
+  stock_rules_version: 7;
+  window?: ReplyStockWindow;
   reason?: string;
   checked_at?: number;
   items: ItemAvail[];
@@ -434,7 +437,7 @@ async function loadAvailCtx(
 }
 
 /** Resolve requested listings before they are confirmed, without changing mappings. */
-export async function extendAvailabilityMappings(ctx:QueryCtx,av:AvailCtx,rentals:BotBooking[]) {
+export async function extendAvailabilityMappings(ctx:QueryCtx,av:AvailCtx,rentals:ResolvableRes[]) {
   if(!rentals.length)return;
   const seed=[...av.overrideMap].map(([key,components])=>{
     const separator=key.lastIndexOf("#");
@@ -467,14 +470,14 @@ export async function extendAvailabilityMappings(ctx:QueryCtx,av:AvailCtx,rental
   av.stockSources={...av.stockSources,overrides};
 }
 
-export function computeAvailability(reservation:BotBooking|null,av?:AvailCtx,requested?:RichItem[]):TileAvailability {
+export function computeAvailability(reservation:BotBooking|null,av?:AvailCtx,requested?:RichItem[],window?:ReplyStockWindow,accountSlug?:string):TileAvailability {
   const checked_at=Date.now(),include_pending=av?.includePending??false;
   const lines=requested??buildRichItems(reservation);
-  const start=reservation?.pickup_date??reservation?.start_date,end=reservation?.return_date??reservation?.end_date;
+  const start=window?.start_date??reservation?.pickup_date??reservation?.start_date,end=window?.end_date??reservation?.return_date??reservation?.end_date;
   const sources=av?{...av.stockSources,reservations:[...av.confirmed,...av.pending.filter(row=>!av.confirmed.some(other=>other._id===row._id))]}:null;
   const resolveLine=(line:RichItem)=>{
     if(!av||!Number.isSafeInteger(line.qty)||line.qty<1)return new Map<string,number>();
-    const slug=reservation?.account_slug??"";
+    const slug=reservation?.account_slug??accountSlug??"";
     const key=line.product_id!=null?`${slug}#${line.product_id}`:null;
     let units=new Map<string,number>();
     if(key&&(av.overrideMap.has(key)||av.productIndex.has(key))){
@@ -492,13 +495,13 @@ export function computeAvailability(reservation:BotBooking|null,av?:AvailCtx,req
   const checked=new Map<string,ReturnType<typeof stockForRentalItem>|null>();
   if(av&&sources&&start&&end)for(const [id,quantity] of demand){
     const item=av.itemRows.find(row=>String(row._id)===id);
-    checked.set(id,item?stockForRentalItem(sources,item,{item_name:item.name_canonical,start_date:start,end_date:end,quantity,thread_id:reservation?.hygglo_order_id,pickup_time:reservation?.pickup_time,return_time:reservation?.return_time}):null);
+    checked.set(id,item?stockForRentalItem(sources,item,{item_name:item.name_canonical,start_date:start,end_date:end,quantity,thread_id:reservation?.hygglo_order_id,pickup_time:window?.pickup_time??reservation?.pickup_time,return_time:window?.return_time??reservation?.return_time}):null);
   }
   const items:ItemAvail[]=lines.map((line,item_index)=>{
     const unknown=(reason:string):ItemAvail=>({name:line.name,requested:line.qty??1,total_units:0,booked:0,pending:0,free:0,available:null,reason,item_index});
     if(!av||!sources)return unknown("Inventory is loading");
     if(!Number.isSafeInteger(line.qty)||line.qty<1)return unknown("Not bookable · invalid requested quantity");
-    const listing=line.product_id!=null?av.listingQualification?.get(`${reservation?.account_slug??""}#${line.product_id}`):undefined;
+    const listing=line.product_id!=null?av.listingQualification?.get(`${reservation?.account_slug??accountSlug??""}#${line.product_id}`):undefined;
     if(listing?.marketingOnly)return {...unknown("Marketing-only listing · not stocked for hire"),available:false};
     if(listing?.owned===false)return {...unknown("Requested listing includes gear not available for hire"),available:false};
     if(!start||!end)return unknown("Dates needed to check stock");
@@ -515,7 +518,7 @@ export function computeAvailability(reservation:BotBooking|null,av?:AvailCtx,req
   });
   const conflict=items.some(item=>item.available===false);
   const complete=items.length>0&&items.every(item=>item.available===true);
-  return {status:conflict?"conflict":complete?"available":"unknown",stock_rules_version:6,include_pending,checked_at,items,...(!conflict&&!complete?{reason:items.find(item=>item.available===null)?.reason??"No requested gear to check"}:{})};
+  return {status:conflict?"conflict":complete?"available":"unknown",stock_rules_version:7,include_pending,checked_at,items,...(window?{window}:{}),...(!conflict&&!complete?{reason:items.find(item=>item.available===null)?.reason??"No requested gear to check"}:{})};
 }
 
 
@@ -657,7 +660,8 @@ export async function assembleTile(
     estimateGbp != null ? Math.round(estimateGbp * OWNER_SHARE) : null;
 
   // Double-booking check for dated reservations/requests (null otherwise).
-  const availability = computeAvailability(reservation, availCtx, richItems);
+  const stockWindow=replyStockWindow(reservation,mentionMessages,Date.now());
+  const availability = computeAvailability(reservation, availCtx, richItems, stockWindow,slug);
   const draftApproval = currentDraftApproval(conv,{message_id:latestMsg?.message_id,epoch:hub?.draftEpoch??0,context_key:draftContextKey(reservation,conv?.inquiry_items,simOrder)});
 
   return {
@@ -676,8 +680,8 @@ export async function assembleTile(
     renter_blacklisted: renter?.blacklisted ?? false,
     renter_flagged: renter?.flag_on_request ?? false,
     has_reservation: !!reservation,
-    start_date: simOrder?.start_date ?? reservation?.start_date ?? null,
-    end_date: simOrder?.end_date ?? reservation?.end_date ?? null,
+    start_date: simOrder?.start_date ?? reservation?.start_date ?? (stockWindow.source==="chat"?stockWindow.start_date:null),
+    end_date: simOrder?.end_date ?? reservation?.end_date ?? (stockWindow.source==="chat"?stockWindow.end_date:null),
     return_date: reservation?.return_date ?? null,
     pickup_method: reservation?.pickup_method ?? null,
     status: reservation?.status ?? null,
@@ -1019,8 +1023,12 @@ export const getReplyQueue = query({
     historical.forEach((reservation, index) => {
       if (reservation) resByOrderId.set(missingThreads[index], reservation);
     });
-    await extendAvailabilityMappings(ctx, availCtx, [...resByOrderId.values()].filter(r =>
-      !!r.hygglo_order_id && (convByThread.has(r.hygglo_order_id) || (r.created_at ?? r._creationTime) >= cutoff)));
+    await extendAvailabilityMappings(ctx, availCtx, [
+      ...[...resByOrderId.values()].filter(r => !!r.hygglo_order_id && (convByThread.has(r.hygglo_order_id) || (r.created_at ?? r._creationTime) >= cutoff)),
+      // Enquiries have no reservation, but their exact account/product identity
+      // still needs the same ownership and full-kit qualification.
+      ...windowConvos.filter(c=>!resByOrderId.has(c.thread_id)&&!!c.account_slug).map(c=>({account_slug:c.account_slug,hygglo_items:c.inquiry_items})),
+    ]);
     const resFor = async (
       threadId: string,
     ): Promise<Doc<"reservations"> | null> => {
@@ -1241,11 +1249,12 @@ export const getThreadById = query({
       .first();
     const reservation = await getBotBooking(ctx, thread_id);
     if (!conv && !reservation) return null;
+    const slug=reservation?.account_slug??conv?.account_slug??(conv?.account_id?(await ctx.db.get(conv.account_id))?.slug:undefined);
     const priceIndex = await loadPriceIndex(ctx);
     const settingsRow = await ctx.db.query("settings").first();
     const incPending = settingsRow?.availability_include_pending ?? false;
     const availCtx = await loadAvailCtx(ctx, incPending);
-    await extendAvailabilityMappings(ctx,availCtx,reservation?[reservation]:[]);
+    await extendAvailabilityMappings(ctx,availCtx,reservation?[reservation]:slug?[{account_slug:slug,hygglo_items:conv?.inquiry_items}]:[]);
     return await assembleTile(
       ctx,
       conv,
@@ -1378,6 +1387,7 @@ export const getThreadContext = internalQuery({
 
     const negotiationMsgs = await chronologicalThreadMessages(ctx, thread_id);
     const msgs = negotiationMsgs.slice(-40);
+    const stockWindow=replyStockWindow(reservation,msgs,Date.now());
     const recent = msgs.slice(-15).map((m) => ({
       role: m.sender === "owner" ? "owner" : "renter",
       content: m.body_text,
@@ -1475,7 +1485,7 @@ export const getThreadContext = internalQuery({
     // overrides and items for the entire draft-context build. Previously this
     // function collected the fat product-index and items tables again below.
     const availCtx = await loadAvailCtx(ctx, false);
-    await extendAvailabilityMappings(ctx,availCtx,reservation?[reservation]:[]);
+    await extendAvailabilityMappings(ctx,availCtx,reservation?[reservation]:slug?[{account_slug:slug,hygglo_items:conv?.inquiry_items}]:[]);
     if (slug && lineItems.some((li) => typeof li.product_id !== "number")) {
       const STOP = new Set(["the","and","for","with","plus","set","kit","bundle","combo"]);
       const toks = (str: string) =>
@@ -1572,13 +1582,14 @@ export const getThreadContext = internalQuery({
       const resolvedIds: string[] = [];
       const itemNameOf = new Map<string, string>();
       if (reservation) {
-        availability = computeAvailability(reservation, availCtx);
+        availability = computeAvailability(reservation, availCtx,undefined,stockWindow,slug);
         const units = reservationItemUnits(reservation, availCtx.productIndex, availCtx.overrideMap, availCtx.itemRows);
         for (const id of [...units.keys()].slice(0, 8)) {
           resolvedIds.push(id);
           itemNameOf.set(id, availCtx.itemName.get(id) ?? "item");
         }
       } else if (slug) {
+        availability=computeAvailability(null,availCtx,buildRichItems(null,conv),stockWindow,slug);
         for (const li of lineItems) {
           if (typeof li.product_id !== "number") continue;
           const key = `${slug}#${li.product_id}`;
@@ -1832,8 +1843,8 @@ export const getThreadContext = internalQuery({
         end_date: simOrder?.end_date ?? reservation.end_date,
       } : null, londonToday()),
       items: richItems.map((i) => (i.qty > 1 ? `${i.qty}× ${i.name}` : i.name)),
-      start_date: simOrder?.start_date ?? reservation?.start_date ?? null,
-      end_date: simOrder?.end_date ?? reservation?.end_date ?? null,
+      start_date: simOrder?.start_date ?? reservation?.start_date ?? (stockWindow.source==="chat"?stockWindow.start_date:null),
+      end_date: simOrder?.end_date ?? reservation?.end_date ?? (stockWindow.source==="chat"?stockWindow.end_date:null),
       return_date: reservation?.return_date ?? null,
       pickup_method: reservation?.pickup_method ?? null,
       status: reservation?.status ?? null,

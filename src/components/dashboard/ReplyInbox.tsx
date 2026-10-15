@@ -220,6 +220,7 @@ interface ItemAvail {
 interface TileAvailability {
   status: "available" | "conflict" | "unknown";
   include_pending: boolean;
+  window?: {start_date:string;end_date:string;source:"booking"|"chat"|"today";note?:string};
   reason?: string;
   checked_at?: number;
   items: ItemAvail[];
@@ -489,7 +490,7 @@ function decideState(t: ReplyTileData): {
   approved: boolean;
 } {
   const acceptanceOffered = t.can_accept ?? t.is_request;
-  const canApprove = t.availability?.status === "available" && acceptanceOffered;
+  const canApprove = t.availability?.status === "available" && (!t.availability.window || t.availability.window.source === "booking") && acceptanceOffered;
   const canDecline = t.can_deny ?? t.is_request;
   return { canApprove, canDecline, approved: !acceptanceOffered && canDecline };
 }
@@ -616,7 +617,7 @@ function StageBar({
 
 function QueueAvailability({ tile }: { tile: ReplyTileData }) {
   const status = tile.availability?.status ?? "unknown";
-  const label =
+  const baseLabel =
     status === "available"
       ? "Available"
       : status === "conflict"
@@ -624,19 +625,15 @@ function QueueAvailability({ tile }: { tile: ReplyTileData }) {
         : tile.availability?.reason?.startsWith("Dates")
           ? "Dates needed"
           : "Not bookable";
+  const label = tile.availability?.window?.source === "today" && status !== "unknown" ? `${baseLabel} today` : baseLabel;
   return (
     <span
       className={`${styles.availability} ${status === "available" ? styles.available : status === "conflict" ? styles.unavailable : styles.unknown}`}
-      title={
-        tile.availability?.reason ??
-        tile.availability?.items
-          .map(
-            (item) =>
-              `${item.name}: ${item.available === null ? (item.reason ?? "Not bookable") : `${item.free} free / ${item.requested} requested`}`,
-          )
-          .join("; ") ??
-        "Checking availability"
-      }
+      title={[
+        tile.availability?.window && `${tile.availability.window.start_date} – ${tile.availability.window.end_date}. ${tile.availability.window.note ?? ""}`,
+        tile.availability?.reason,
+        ...(tile.availability?.items ?? []).map(item=>`${item.name}: ${item.reason ?? `${item.free} free / ${item.requested} requested`}`),
+      ].filter(Boolean).join("; ") || "Checking availability"}
     >
       {label}
     </span>
@@ -666,9 +663,9 @@ function ItemAvailability({ tile }: { tile: ReplyTileData }) {
               }
             >
               {state === true
-                ? "Available"
+                ? (tile.availability?.window?.source === "today" ? "Available today" : "Available")
                 : state === false
-                  ? "Unavailable"
+                  ? (tile.availability?.window?.source === "today" ? "Unavailable today" : "Unavailable")
                   : (check?.reason ??
                     tile.availability?.reason ??
                     "Checking stock")}
@@ -788,7 +785,7 @@ function AvailabilityBadge({
 }) {
   if (a.status === "unknown")
     return (
-      <span className="inline-flex rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-[#a6adbb]">
+      <span title={a.reason} className="inline-flex rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-[#a6adbb]">
         {a.reason?.startsWith("Dates") ? "Dates needed" : "Not bookable"}
       </span>
     );
@@ -801,7 +798,7 @@ function AvailabilityBadge({
   const color = ok ? "#34d399" : "#f87171";
   const bg = ok ? "rgba(16,185,129,0.10)" : "rgba(239,68,68,0.12)";
   const border = ok ? "rgba(16,185,129,0.32)" : "rgba(239,68,68,0.38)";
-  const label = ok
+  const label = a.window?.source === "today" ? (ok ? "Available today" : "Unavailable today") : ok
     ? compact
       ? "Free for these dates"
       : "Available for the requested dates"
@@ -924,7 +921,7 @@ function daysOf(t: ReplyTileData): number | null {
 function DatePill({ tile }: { tile: ReplyTileData }) {
   const d = daysOf(tile);
   const start = fmtDate(tile.start_date);
-  const label = start
+  const label = tile.availability?.window?.source === "today" ? "Stock today" : start
     ? `${start}${tile.end_date && tile.end_date !== tile.start_date ? ` → ${fmtDate(tile.end_date)}` : ""}`
     : d != null
       ? `~${d} day${d === 1 ? "" : "s"}`
@@ -1255,7 +1252,7 @@ function ConversationHeader({tile,onReviews,onClose,headerRef,extras}: {
           </button>
           <AccountTag slug={tile.account_slug} source={tile.source}/>
         </div>
-        <div className={styles.identityDates}>{tile.start_date?`${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date??tile.start_date)}`:"Dates pending"}</div>
+        <div className={styles.identityDates} title={tile.availability?.window?.note}>{tile.start_date?`${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date??tile.start_date)}`:(tile.availability?.window?.source === "today" ? "Stock: today" : "Dates pending")}</div>
       </div>
     </div>
     {onClose&&<button type="button" onClick={onClose} aria-label="Close conversation" data-testid="quick-reply-close" className={styles.chatClose}><span>×</span><small>Close</small></button>}
@@ -1263,7 +1260,7 @@ function ConversationHeader({tile,onReviews,onClose,headerRef,extras}: {
       <RequestedItemStack items={tile.requested_items??tile.items} size={52} boundarySelector="[data-conversation-header]"/>
       <div className={styles.chatGearDetails}>
         <strong title={itemLineShort(tile)||"General inquiry"}>{tile.items.length>1?`${shortListing(tile.items[0].name)} + ${tile.items.length-1} items`:itemLineShort(tile)||"General inquiry"}</strong>
-        <div className={styles.chatDates}>{tile.start_date?`${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date??tile.start_date)}`:"Dates pending"}</div>
+        <div className={styles.chatDates} title={tile.availability?.window?.note}>{tile.start_date?`${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date??tile.start_date)}`:(tile.availability?.window?.source === "today" ? "Stock: today" : "Dates pending")}</div>
         <div className={styles.chatGearMeta}><span>{tile.net_to_owner_gbp!=null?"Owner earns":"Est. earn"} <b>{fmtMoney(tile.net_to_owner_gbp??tile.estimate_earnings_gbp)??"—"}</b></span><div className={styles.headerAvailability}><QueueAvailability tile={tile}/></div></div>
       </div>
     </div>
@@ -1455,14 +1452,14 @@ function ReplyCard({
           <span>{itemLineShort(tile) || "General inquiry"}</span>
         </div>
       </div>
-      <div className={styles.datesCell}>
+      <div className={styles.datesCell} title={tile.availability?.window?.note}>
         {tile.start_date ? (
           <>
             <span>{fmtDate(tile.start_date)}</span>
             <span>– {fmtDate(tile.end_date ?? tile.start_date)}</span>
           </>
         ) : (
-          <span>Dates pending</span>
+          <span>{tile.availability?.window?.source === "today" ? "Today’s stock" : "Dates pending"}</span>
         )}
       </div>
       <div className={styles.waitCell}>

@@ -4,11 +4,25 @@ import { isStandardAccessory } from "./reservations/itemUnits";
 import { coverReviewedSuppliedParts } from "./supplied_parts_coverage";
 import { resolveBundleMapping, declaredRentalBlockers, matchesGimbalComponentRole, type BundleMappingContext } from "./bundle_mapping";
 import { withDefaultAdapters } from "./default_adapter_units";
+import { repairReviewedBundle } from "./reviewed_bundle_repairs";
+import { declaredLensIdentity } from "./declared_lens_identity";
 
 type Component = { item_id: string; qty: number };
 export function resolveListingComponents(items: Doc<"items">[], override: Component[] | undefined, primaryId?: string, quantity = 1, description?: string, context?: BundleMappingContext, listingName?: string) {
   const validQuantity = Number.isInteger(quantity) && quantity >= 1 && quantity <= 20;
   let parsed = description ? resolveBundleMapping(description, items, context) : null;
+  if(parsed)parsed=repairReviewedBundle(parsed,items,override);
+  // A legacy single-model lens listing can state its pack count in one plain
+  // sentence rather than a contents heading. Both title and declared sentence
+  // must identify the same unique lens; multi-model kits cannot use this path.
+  if(parsed && !parsed.explicit && listingName && description){
+    const titleLens=declaredLensIdentity(listingName.replace(/\b\d{1,2}\s*[x×]\s*/gi,""),items).item;
+    const sentence=description.match(/(?:^|[.!?\n])\s*(\d{1,2})\s*[x×]\s+([^.!?\n]*?(?:lenses|lens))\s*(?:[.!?\n]|$)/i);
+    if(titleLens && sentence){
+      const pack=resolveBundleMapping(`Contents: • ${sentence[1]}x ${sentence[2]}`,items);
+      if(pack.components.length===1 && !pack.unmatched.length && pack.components[0].item_id===String(titleLens._id))parsed=pack;
+    }
+  }
   const declaredIds=new Set(parsed?.components.map(c=>c.item_id));
   const rules=items.flatMap(item=>(item.listing_stock_rules??[]).filter(rule=>
     String(item._id)===primaryId || rule.apply_to_declared_component===true && parsed?.explicit && parsed.structured && declaredIds.has(String(item._id)) && item.status==="active" && item.is_marketing_only===false && item.qty>0
@@ -17,11 +31,19 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
     try{return new RegExp(rule.title_pattern,"i").test(listingName);}catch{return false;}
   });
   const excluded=new Set(rules.flatMap(rule=>rule.excludes.map(String)));
+  // Owner-reviewed kit contents can repair corrupted generated descriptions
+  // without editing a provider listing or any existing rental document.
+  const reviewedDescriptions=[...new Set(rules.flatMap(rule=>rule.description_override?[rule.description_override]:[]))];
+  if(reviewedDescriptions.length===1)parsed=resolveBundleMapping(reviewedDescriptions[0],items,context);
   if(parsed && excluded.size)parsed={...parsed,components:parsed.components.filter(c=>!excluded.has(c.item_id))};
   // Reviewed, offering-specific supplied accessories do not invent a separate
   // stock pool. Only an exact recorded name and sufficient count cover a line.
   const partKey=(name:string)=>name.toLowerCase().replace(/\s+/g," ").trim();
   const suppliedPartsFromRules=rules.flatMap(rule=>rule.supplied_parts??[]);
+  const optionalParts=new Set(rules.flatMap(rule=>rule.optional_parts??[]).map(partKey));
+  if(parsed&&optionalParts.size)parsed={...parsed,unmatched:parsed.unmatched.filter(line=>{
+    const m=line.match(/^\d+x (.+)$/);return !m||!optionalParts.has(partKey(m[1]));
+  })};
   if(parsed && suppliedPartsFromRules.length)parsed={...parsed,unmatched:parsed.unmatched.filter(line=>{
     const m=line.match(/^(\d+)x (.+)$/);if(!m)return true;
     const matches=suppliedPartsFromRules.filter(p=>partKey(p.name)===partKey(m[2]) && Number.isSafeInteger(p.qty) && p.qty>0);
@@ -37,15 +59,17 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
   // Legacy lexical master links can point an entire gimbal at a spare battery.
   // An unresolved body must stay unresolved, without holding unrelated spares.
   const fallbackPrimary = primary && matchesGimbalComponentRole(listingName ?? "", primary) ? primaryId : undefined;
-  if (rawDeclared?.explicit && rawDeclared.structured && primary?.kind==="lighting" && primary.status==="active" && primary.is_marketing_only===false && primary.qty>0 && rawDeclared.components.some(c=>c.item_id===primaryId)) {
-    const partKey=(s:string)=>s.toLowerCase().replace(/^sturdy\s+/i,"").replace(/[^a-z0-9]+/g," ").trim().replace(/^(?:light )?stands?$/, "light stand");
-    const knownParts=(primary.compatibility?.included_with_rental??[]).flatMap(line=>{
+  if (rawDeclared?.explicit && rawDeclared.structured && ["lighting","dj_audio"].includes(primary?.kind??"") && primary!.status==="active" && primary!.is_marketing_only===false && primary!.qty>0 && (rawDeclared.components.some(c=>c.item_id===primaryId)||override?.some(c=>c.item_id===primaryId))) {
+    const partKey=(s:string)=>s.toLowerCase().replace(/^(?:sturdy|height[- ]adjustable)\s+/i,"").replace(/\s*\(height adjustable\)\s*$/i,"").replace(/[^a-z0-9]+/g," ").trim().replace(/^(?:light )?stands?$/, "light stand").replace(/^speaker stands?$/,"speaker stand");
+    const knownParts=(primary!.compatibility?.included_with_rental??[]).flatMap(line=>{
       const m=line.match(/^(\d+)\s*[x×]\s+(.+)$/i);
-      return m&&/^(?:(?:light )?stands?|sandbag|gel kit|reflector)$/i.test(m[2].trim())?[{key:partKey(m[2]),qty:Number(m[1])}]:[];
+      return m&&/^(?:(?:(?:light|speaker) )?stands?|sandbag|gel kit|reflector)$/i.test(m[2].trim())?[{key:partKey(m[2]),qty:Number(m[1])}]:[];
     });
     const components=rawDeclared.components.map(c=>({...c}));
+    const parentAllocation=override?.find(c=>c.item_id===primaryId);
+    if(!components.some(c=>c.item_id===primaryId)&&parentAllocation)components.push({item_id:primaryId!,name:primary!.name_canonical,kind:primary!.kind,qty:parentAllocation.qty});
     const unmatched=rawDeclared.unmatched.filter(line=>{
-      const m=line.match(/^(\d+)x (.+)$/i);if(!m)return true;
+      const m=line.match(/^(?:Ambiguous quantity: 1x )?(\d+)x (.+)$/i);if(!m)return true;
       const matches=knownParts.filter(p=>p.key===partKey(m[2]));if(matches.length!==1||matches[0].qty<1)return true;
       const parent=components.find(c=>c.item_id===primaryId)!;
       parent.qty=Math.max(parent.qty,Math.ceil(Number(m[1])/matches[0].qty));return false;
