@@ -1,4 +1,5 @@
 import { validIsoDate, shiftStockDate } from "./renter_stock";
+import { confirmedClock } from "./confirmed_schedule";
 
 export type ReplyStockWindow = {
   start_date: string;
@@ -105,9 +106,19 @@ export function replyDatesFromMessage(message: Message): ReplyStockWindow | null
   return {start_date:start,end_date:end,source:"chat",...clocks,...(message.message_id?{message_id:message.message_id}:{}),note:"Dates requested in chat; no booking has been changed"};
 }
 
-export function replyStockWindow(booking: { start_date?:string; end_date?:string; pickup_date?:string; return_date?:string } | null, messages: Message[], now: number): ReplyStockWindow {
-  if(booking?.start_date && booking.end_date && validIsoDate(booking.start_date) && validIsoDate(booking.end_date))
-    return {start_date:booking.pickup_date??booking.start_date,end_date:booking.return_date??booking.end_date,source:"booking"};
+export function replyStockWindow(booking: ({ start_date?:string; end_date?:string; pickup_date?:string; return_date?:string } & Parameters<typeof confirmedClock>[0]) | null, messages: Message[], now: number): ReplyStockWindow {
+  if(booking?.start_date && booking.end_date && validIsoDate(booking.start_date) && validIsoDate(booking.end_date)) {
+    const pickupDate=booking.pickup_date??booking.start_date,returnDate=booking.return_date??booking.end_date;
+    const pickup=confirmedClock(booking,"pickup",pickupDate),returned=confirmedClock(booking,"return",returnDate);
+    const start=pickup&&validIsoDate(pickupDate)?pickupDate:booking.start_date;
+    const end=returned&&validIsoDate(returnDate)?returnDate:booking.end_date;
+    // Unproven extracted clocks cannot narrow stock checks. Contradictory
+    // proven endpoints fall back to the entire provider-booked period, just
+    // as shared-stock occupancy does; the rental itself remains untouched.
+    if(end<start || (end===start&&pickup&&returned&&returned<=pickup))
+      return {start_date:booking.start_date,end_date:booking.end_date,source:"booking"};
+    return {start_date:start,end_date:end,source:"booking",...(pickup?{pickup_time:pickup}:{}),...(returned?{return_time:returned}:{})};
+  }
   for(const message of [...messages].sort((a,b)=>(b.hygglo_sent_at??0)-(a.hygglo_sent_at??0))){
     const dates=replyDatesFromMessage(message);if(dates)return dates;
     // A new but contradictory date proposal must not resurrect an older quote.

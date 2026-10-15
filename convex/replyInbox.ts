@@ -475,6 +475,7 @@ export async function extendAvailabilityMappings(ctx:QueryCtx,av:AvailCtx,rental
 export function computeAvailability(reservation:BotBooking|null,av?:AvailCtx,requested?:RichItem[],window?:ReplyStockWindow,accountSlug?:string):TileAvailability {
   const checked_at=Date.now(),include_pending=av?.includePending??false;
   const lines=requested??buildRichItems(reservation);
+  window=window??(reservation?.start_date&&reservation.end_date?replyStockWindow(reservation,[],checked_at):undefined);
   const start=window?.start_date??reservation?.pickup_date??reservation?.start_date,end=window?.end_date??reservation?.return_date??reservation?.end_date;
   if(av&&(!av.mergedStockSources||av.mergedStockSources.base!==av.stockSources||av.mergedStockSources.confirmed!==av.confirmed||av.mergedStockSources.pending!==av.pending)){
     av.mergedStockSources={base:av.stockSources,confirmed:av.confirmed,pending:av.pending,value:{...av.stockSources,reservations:[...av.confirmed,...av.pending.filter(row=>!av.confirmed.some(other=>other._id===row._id))],occupancyCache:{byItem:new Map()}}};
@@ -500,7 +501,7 @@ export function computeAvailability(reservation:BotBooking|null,av?:AvailCtx,req
   const checked=new Map<string,ReturnType<typeof stockForRentalItem>|null>();
   if(av&&sources&&start&&end)for(const [id,quantity] of demand){
     const item=av.itemRows.find(row=>String(row._id)===id);
-    checked.set(id,item?stockForRentalItem(sources,item,{item_name:item.name_canonical,start_date:start,end_date:end,quantity,thread_id:reservation?.hygglo_order_id,pickup_time:window?.pickup_time??reservation?.pickup_time,return_time:window?.return_time??reservation?.return_time}):null);
+    checked.set(id,item?stockForRentalItem(sources,item,{item_name:item.name_canonical,start_date:start,end_date:end,quantity,thread_id:reservation?.hygglo_order_id,pickup_time:window?.pickup_time,return_time:window?.return_time}):null);
   }
   const items:ItemAvail[]=lines.map((line,item_index)=>{
     const unknown=(reason:string):ItemAvail=>({name:line.name,requested:line.qty??1,total_units:0,booked:0,pending:0,free:0,available:null,reason,item_index});

@@ -43,3 +43,11 @@ it("does not reinterpret alternative dates or restore an older proposal after an
  expect(replyDatesFromMessage(message("Need 17 October or 19 October"))).toBeNull();
  expect(replyStockWindow(null,[message("Rent 17 October"),message("Actually need 29 October to 28 October","2026-10-14T12:00Z")],Date.parse("2026-10-15T20:00Z"))).toMatchObject({source:"today"});
 });
+
+
+it("uses booked dates when extracted handover dates lack clock provenance",()=>{
+ expect(replyStockWindow({start_date:"2026-10-15",end_date:"2026-10-16",pickup_date:"2026-10-17",return_date:"2026-10-14",pickup_time:"13:00",return_time:"13:00"},[],Date.now())).toEqual({source:"booking",start_date:"2026-10-15",end_date:"2026-10-16"});
+});
+it("retains immutable website handover clocks for valid stock intervals",()=>{
+ expect(replyStockWindow({account_slug:"dbcinema_web",start_date:"2026-10-15",end_date:"2026-10-15",pickup_time:"10:00",return_time:"17:00"},[],Date.now())).toEqual({source:"booking",start_date:"2026-10-15",end_date:"2026-10-15",pickup_time:"10:00",return_time:"17:00"});
+});
