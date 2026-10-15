@@ -756,6 +756,13 @@ const operationalSchema = defineSchema({
     // Live unmapped-listing alert: read only active status rows in its bounded
     // forward horizon, rather than every reservation sharing that date range.
     .index("by_status_start_date", ["status", "start_date"])
+    // Missed-revenue capacity checks are bounded to the dates of recent
+    // countable demand. Keep both source and negotiated date fields indexed:
+    // pickup/return dates override start/end when present, and older confirmed
+    // rentals can still overlap a current demand window.
+    .index("by_status_pickup_date", ["status", "pickup_date"])
+    .index("by_status_return_date", ["status", "return_date"])
+    .index("by_status_end_date", ["status", "end_date"])
     // Pass 8b (2026-05-31): the stats_drawer MV dirty-probe needs to detect ANY
     // reservation mutation cheaply. The poller bumps last_polled_at on every
     // touched row, so an indexed max(last_polled_at) lets the probe catch status
