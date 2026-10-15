@@ -12,6 +12,11 @@ describe('owner-confirmed availability and real catalogue regressions',()=>{
   const before=snapshot(),serialized=JSON.stringify(before);ownerAvailabilityReview(before.items,before.records.map((r:any)=>r.product));expect(JSON.stringify(before)).toBe(serialized);
   const {data,plan}=corrected();expect(plan.items).toHaveLength(8);expect(data.items.map((i:any)=>i.qty)).toEqual(before.items.map((i:any)=>i.qty));expect(ownerAvailabilityReview(data.items,data.records.map((r:any)=>r.product))).toEqual({items:[],products:[]});
  });
+ it('remains idempotent after database serialization reorders nested object keys',()=>{
+  const {data}=corrected();
+  const reorder=(value:any):any=>Array.isArray(value)?value.map(reorder):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).sort(([a],[b])=>b.localeCompare(a)).map(([key,entry])=>[key,reorder(entry)])):value;
+  const stored=reorder(data);expect(ownerAvailabilityReview(stored.items,stored.records.map((r:any)=>r.product))).toEqual({items:[],products:[]});
+ });
  it('qualifies all 44 previously unresolved enquiry/listing records from current stock or explicit non-ownership',()=>{
   const {data}=corrected();expect(data.records).toHaveLength(44);
   for(const r of data.records){const q=resolved(data,r.key.account,r.key.productId);expect((r.product.isMarketingOnlyOverride??r.product.isMarketingOnly)===true||q.owned===false||q.complete&&q.owned===true,`${r.key.account}#${r.key.productId}: ${JSON.stringify(q.coverage)}`).toBe(true);}

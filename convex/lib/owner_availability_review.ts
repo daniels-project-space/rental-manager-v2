@@ -3,6 +3,7 @@ import type { Doc } from "../_generated/dataModel";
 export const OWNER_AVAILABILITY_SOURCE = "Daniel confirmed stock identities and supplied parts, 15 October 2026";
 const unique=(values:string[])=>[...new Set(values)];
 const escape=(text:string)=>text.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+const stable=(value:unknown):unknown=>Array.isArray(value)?value.map(stable):value&&typeof value==="object"?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([key,entry])=>[key,stable(entry)])):value;
 
 /** Explicit owner answers, not model guesses. This plan never changes owned
  * quantities, rental records, provider descriptions, messages or payments. */
@@ -58,6 +59,6 @@ export function ownerAvailabilityReview(items: Doc<"items">[], products: Doc<"hy
     const absentKit=/\bAmaran\s*300\s*c\b|\bARLES\b|\bSenn?heiser\b[^|]*\bG\s*3\b/i.test(name);
     return absentGimbal||absentLens||absentKit;
   });
-  return {items:patches.filter(p=>Object.entries(p.patch).some(([key,value])=>JSON.stringify(items.find(i=>i._id===p.id)?.[key as keyof Doc<"items">])!==JSON.stringify(value))),
+  return {items:patches.filter(p=>Object.entries(p.patch).some(([key,value])=>JSON.stringify(stable(items.find(i=>i._id===p.id)?.[key as keyof Doc<"items">]))!==JSON.stringify(stable(value)))),
     products:notOwned.filter(p=>p.isMarketingOnlyOverride!==true||p.isMarketingOnly!==true).map(p=>({id:p._id,account:p.accountSlug,productId:p.productId,name:p.name,patch:{isMarketingOnly:true,isMarketingOnlyOverride:true}}))};
 }
