@@ -17,6 +17,6 @@ export const apply = internalMutation({
       for(const row of plan.items)await ctx.db.patch(row.id,{...row.patch,updated_at:Date.now()});
       for(const row of plan.products)await ctx.db.patch(row.id,{...row.patch,marketingOnlyUpdatedAt:Date.now()});
     }
-    return {dryRun,source:OWNER_AVAILABILITY_SOURCE,itemChanges:plan.items.map(p=>({name:p.name,fields:Object.keys(p.patch)})),listingChanges:plan.products.map(p=>({account:p.account,productId:p.productId,name:p.name})),rentalChanges:0,messagesSent:0};
+    return {dryRun,source:OWNER_AVAILABILITY_SOURCE,packingConfirmation:"16 October 2026: original GM, A7 V V90, paired Pyro S receiver",itemChanges:plan.items.map(p=>({name:p.name,fields:Object.keys(p.patch)})),listingChanges:plan.products.map(p=>({account:p.account,productId:p.productId,name:p.name})),rentalChanges:0,messagesSent:0};
   },
 });
