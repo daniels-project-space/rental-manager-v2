@@ -46,6 +46,7 @@ export function invalidateStockWhen(ctx: MutationCtx, changes: () => boolean | P
     await ctx.db.patch(state._id, { revision: state.revision + 1, updated_at: Date.now(),
       ...(queue ? { queued: true, job_token: token, attempts: 0, error: undefined } : {}) });
     reads.delete(ctx);
+    states.delete(ctx);
     if (queue) await ctx.scheduler.runAfter(0, anyApi.stock_input_cache_admin.refresh, { token });
     current.dirty = true;
   });
