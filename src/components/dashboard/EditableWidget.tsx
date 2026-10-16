@@ -62,7 +62,9 @@ export function EditableWidget({ id, kind, label, className, children }: Props) 
           </button>
         </>
       )}
-      {children}
+      <div data-packing-content className="flow-root" style={{ paddingTop: editMode ? 40 : undefined }}>
+        {children}
+      </div>
     </div>
   );
 }

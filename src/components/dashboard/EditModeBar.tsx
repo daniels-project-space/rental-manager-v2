@@ -26,7 +26,7 @@ export function EditModeBar() {
 
   return (
     <div
-      className="sticky top-14 z-30 flex flex-wrap items-center justify-between gap-2 px-4 md:px-6 py-2 border-b"
+      className="sticky top-[88px] sm:top-14 z-30 flex flex-wrap items-center justify-between gap-2 px-4 md:px-6 py-2 border-b"
       style={{
         background: "rgba(59,130,246,0.12)",
         borderColor: "rgba(59,130,246,0.35)",
