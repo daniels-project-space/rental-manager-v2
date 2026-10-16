@@ -900,8 +900,8 @@ export const getReplyQueue = query({
     // Set ONLY by mv/reply_queue.ts:refreshAll to run the live assembly below
     // instead of reading the cache (avoids a reader→MV→reader loop).
     _bypassMv: v.optional(v.boolean()),
-    // Internal MV producer cohort. Null keeps legacy/unassigned accounts.
-    _partitionSlug: v.optional(v.union(v.string(),v.null())),
+    // Internal MV producer cohort batch. Null keeps legacy/unassigned accounts.
+    _partitionSlugs: v.optional(v.array(v.union(v.string(),v.null()))),
   },
   handler: async (
     ctx,
@@ -914,7 +914,7 @@ export const getReplyQueue = query({
       messagesWithinDays = 30,
       includePending,
       _bypassMv,
-      _partitionSlug,
+      _partitionSlugs,
     },
   ) => {
     // ── MV fast path ────────────────────────────────────────────────────────
@@ -966,10 +966,17 @@ export const getReplyQueue = query({
       string,
       NonNullable<Awaited<ReturnType<typeof assembleTile>>>
     >();
-    const partitioned=_partitionSlug!==undefined;
-    const partitionAccounts=partitioned?await ctx.db.query("accounts").take(51):[];
-    if(partitionAccounts.length===51)throw Error("Reply queue account partition exceeds its audited bound");
-    const inPartition=(row:{account_slug?:string;account_id?:unknown})=>!partitioned||replyPartitionKey(row,partitionAccounts)===_partitionSlug;
+    const partitionSlugs = _partitionSlugs === undefined ? undefined : new Set(_partitionSlugs);
+    const partitioned = partitionSlugs !== undefined;
+    const partitionAccounts = partitioned
+      ? await ctx.db.query("accounts").take(51)
+      : [];
+    if (partitionAccounts.length === 51) {
+      throw Error("Reply queue account partition exceeds its audited bound");
+    }
+    const inPartition = (row: { account_slug?: string; account_id?: unknown }) =>
+      partitionSlugs === undefined ||
+      partitionSlugs.has(replyPartitionKey(row, partitionAccounts));
 
     // ── Shared reads (PERF, 2026-07-12) ─────────────────────────────────────
     // One windowed conversations collect serves BOTH Pass 1 and Pass 3 (on the
@@ -1008,9 +1015,13 @@ export const getReplyQueue = query({
         )
         .collect(),
     ]);
-    // No stock scan for an empty cohort. Every nonempty cohort still reads
-    // the entire shared fleet, including bookings from all other accounts.
-    if(partitioned&&!windowConvos.length&&![...byStep,...byAction].some(inPartition))return [];
+    // No stock scan for an empty cohort batch. Each batch reads the shared
+    // fleet once, including bookings from the other accounts in that batch.
+    if (
+      partitioned &&
+      !windowConvos.length &&
+      ![...byStep, ...byAction].some(inPartition)
+    ) return [];
     const [priceIndex,settingsRow,hub,display]=await Promise.all([loadPriceIndex(ctx),ctx.db.query("settings").first(),loadHubBook(ctx),listingDisplayCatalog(ctx)]);
     const incPending=includePending??settingsRow?.availability_include_pending??false;
     const availCtx=await loadAvailCtx(ctx,incPending);

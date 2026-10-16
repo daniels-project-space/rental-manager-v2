@@ -42,6 +42,7 @@ import {
 // changes (renter paid → confirmed, etc.) that arrive with no chat message still
 // reconcile. Bounds the worst-case staleness of the status badge.
 const REPLY_QUEUE_BACKSTOP_MS = 5 * 60 * 1000;
+const REPLY_QUEUE_PARTITION_BATCH_SIZE = 2;
 
 export const refresh = internalAction({
   // `force` bypasses skip-when-clean (used by the user-action kicks so a
@@ -94,16 +95,21 @@ export async function refreshAll(
     }
   }
 
-  // Run the live assembly once (accountSlug null → all tiles; high limit so the
-  // stored list is never truncated before the reader slices per-account).
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // Each cohort needs account-specific tile assembly, but the query also reads
+  // shared conversations, reservation indexes, availability and listing context.
+  // Batch two cohorts per execution so those global reads are not repeated once
+  // for every account while keeping each query's per-account tile work bounded.
   const partitions:Array<string|null>=await ctx.runQuery(anyApi.mv.reply_queue.partitionAccounts,{});
-  const parts=await Promise.all(partitions.map(_partitionSlug=>ctx.runQuery(internal.replyInbox.__service_getReplyQueue, {
+  const partitionGroups:Array<Array<string|null>>=[];
+  for(let i=0;i<partitions.length;i+=REPLY_QUEUE_PARTITION_BATCH_SIZE) {
+    partitionGroups.push(partitions.slice(i,i+REPLY_QUEUE_PARTITION_BATCH_SIZE));
+  }
+  const parts=await Promise.all(partitionGroups.map(_partitionSlugs=>ctx.runQuery(internal.replyInbox.__service_getReplyQueue, {
     limit:REPLY_MV_LIMIT,withinDays:REPLY_MV_WITHIN_DAYS,messagesWithinDays:REPLY_MV_MESSAGES_WITHIN_DAYS,
-    includeFinished:false,includeMessages:true,includePending:incPending,_bypassMv:true,_partitionSlug,
+    includeFinished:false,includeMessages:true,includePending:incPending,_bypassMv:true,_partitionSlugs,
   })));
   // Never publish a partial account result. Promise.all rejects on any failed
-  // cohort; global ordering, full coverage and thread identity are retained.
+  // cohort batch; global ordering, full coverage and thread identity are retained.
   const tiles=mergeReplyPartitions(parts,REPLY_MV_LIMIT);
   await ctx.runMutation(anyApi.mv.reply_queue.write, {
     account: key,
