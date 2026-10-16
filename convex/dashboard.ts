@@ -1,4 +1,5 @@
 import { websiteCaseView, type WebsiteCaseRow } from "./lib/websiteCases";
+import { loadHandoffReservations } from "./lib/handoff_reservations";
 import { listingDisplayName, shortItemName, shortListingTitle } from "./lib/item_display_name";
 import { query, type QueryCtx, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
@@ -2554,15 +2555,12 @@ export const getNextRentals = query({
       ? businessToday
       : new Date(Date.parse(`${businessToday}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
 
-    // Indexed read — only need rows whose start_date is within ~30 days
-    // of target. Drops ~1767 → ~30.
+    // Retain the existing 30-day source cutoff while reading only the target
+    // day's provider/agreed pickup and return indexes.
     const nextCutoff = (() => {
       return new Date(Date.parse(`${businessToday}T00:00:00Z`) - 30 * 86400000).toISOString().slice(0, 10);
     })();
-    let rows = await ctx.db.query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", nextCutoff))
-      .collect();
-    if (accountSlug) rows = rows.filter((r) => r.account_slug === accountSlug);
+    const rows = await loadHandoffReservations(ctx, targetDate, nextCutoff, accountSlug);
     const confirmed = rows.filter(
       (r) =>
         r.status === "confirmed" &&
@@ -2570,6 +2568,13 @@ export const getNextRentals = query({
         r.start_date !== undefined &&
         r.end_date !== undefined,
     );
+    const pickupRows = confirmed
+      .filter((r) => (r.pickup_date ?? r.start_date) === targetDate);
+    const returnRows = confirmed
+      .filter((r) => (r.return_date ?? r.end_date) === targetDate);
+    if (!pickupRows.length && !returnRows.length) {
+      return { targetDate, pickups: [], unpairedReturns: [] };
+    }
 
     // Build item-image lookup + shared-image blacklist once for this query.
     // Both feed the shared `buildItemTilesShared` helper (top of file).
@@ -2625,10 +2630,6 @@ export const getNextRentals = query({
       item_tiles: buildItemTilesLocal(r),
     });
 
-    const pickupRows = confirmed
-      .filter((r) => (r.pickup_date ?? r.start_date) === targetDate);
-    const returnRows = confirmed
-      .filter((r) => ((r as any).return_date ?? r.end_date) === targetDate);
     const displayProductKeys = new Map<string, { account: string; productId: number }>();
     for (const rental of [...pickupRows, ...returnRows]) {
       if (!rental.account_slug) continue;
