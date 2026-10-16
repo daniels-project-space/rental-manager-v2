@@ -22,7 +22,7 @@ describe("actual notification dispatcher with isolated transports",()=>{
  it("keeps the item and exact half income in the actual 50% phone payload",async()=>{
   const {calls}=await dispatch("booking_confirmed",{copy_data:{item_name:"Sony FX3",renter_name:"Fixture",net:81,gross:100,currency:"GBP"}});
   expect(calls).toHaveLength(3);
-  const share=JSON.parse(calls.find(c=>c[0].endpoint==="https://my_share.example.invalid")![1]!);
+  const share=JSON.parse(String(calls.find(c=>c[0].endpoint==="https://my_share.example.invalid")![1]!));
   expect(share).toMatchObject({title:"🎉 Wohoo, you made £40.50!",body:"Sony FX3 on Diogo · Your 50% share"});
  });
 });
