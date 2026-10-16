@@ -10,7 +10,7 @@ function resolved(data:any,account:string,id:number){const r=data.records.find((
 describe('owner-confirmed availability and real catalogue regressions',()=>{
  it('is pure, bounded in scope, and idempotent without changing owned quantities',()=>{
   const before=snapshot(),serialized=JSON.stringify(before);ownerAvailabilityReview(before.items,before.records.map((r:any)=>r.product));expect(JSON.stringify(before)).toBe(serialized);
-  const {data,plan}=corrected();expect(plan.items).toHaveLength(8);expect(data.items.map((i:any)=>i.qty)).toEqual(before.items.map((i:any)=>i.qty));expect(ownerAvailabilityReview(data.items,data.records.map((r:any)=>r.product))).toEqual({items:[],products:[]});
+  const {data,plan}=corrected();expect(plan.items).toHaveLength(10);expect(data.items.map((i:any)=>i.qty)).toEqual(before.items.map((i:any)=>i.qty));expect(ownerAvailabilityReview(data.items,data.records.map((r:any)=>r.product))).toEqual({items:[],products:[]});
  });
  it('remains idempotent after database serialization reorders nested object keys',()=>{
   const {data}=corrected();

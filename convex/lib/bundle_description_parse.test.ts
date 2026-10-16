@@ -513,3 +513,11 @@ The card is compatible with Sony FX6 and 2× A7SIII cameras.`).components).toEqu
     expect(resolved.components).toMatchObject([{item_id:"panel",units_per_listing:2}]);
   });
 });
+
+// Real nested seller headings are presentation, never extra equipment.
+it('ignores bold Carry headings while keeping the actual counted kit lines',()=>{
+ const parsed=extractComponents('In this kit:\n* **Camera:**\n  * 1x Sony A7 V camera\n* **Carry:**\n  * 1x Camera bag\n* **Media:**\n  * 1x 256GB SDXC V90 card');
+ expect(parsed.components.map(c=>c.name)).toContain('Sony A7 V camera');
+ expect(parsed.components.map(c=>c.name)).toContain('256GB SDXC V90 card');
+ expect(parsed.components.some(c=>/Carry:|[*]/.test(c.name))).toBe(false);
+});
