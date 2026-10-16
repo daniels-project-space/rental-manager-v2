@@ -2039,9 +2039,24 @@ export const getStatsDrawerData = query({
     // below (was a second identical full collect).
     const allDecisionRows = await ctx.db.query("ai_decision").collect();
     const allDecisions = allDecisionRows as unknown as AiDecisionLite[];
-    const allAudits = (await ctx.db
-      .query("ai_decision_audit")
-      .collect()) as unknown as AiDecisionAuditLite[];
+    // Audits only affect attribution for the current and prior three earned
+    // months. Keep the exact decision classification, but use the existing
+    // decisionId index instead of collecting the entire audit history on
+    // every drawer refresh.
+    const attributionReservationIds = new Set(
+      [...monthEarned, ...earnedPaid].map((r) => String(r._id)),
+    );
+    const attributionDecisions = allDecisionRows.filter((decision) =>
+      attributionReservationIds.has(String(decision.reservation_id)),
+    );
+    const allAudits = (await Promise.all(
+      attributionDecisions.map((decision) =>
+        ctx.db
+          .query("ai_decision_audit")
+          .withIndex("by_decisionId", (q) => q.eq("decisionId", decision._id))
+          .collect(),
+      ),
+    )).flat() as unknown as AiDecisionAuditLite[];
 
     // Current-month: tiered totals over `monthEarned` (the canonical
     // "earned in current month" slice — confirmed/completed, deduped,
@@ -2424,7 +2439,17 @@ export const getStatsDrawerData = query({
       reason: string | null;
     }> = [];
     {
-      const allRenters = await ctx.db.query("renters").collect();
+      const [newBlacklistRows, legacyBlacklistRows] = await Promise.all([
+        ctx.db.query("renters")
+          .withIndex("by_blacklisted", (q) => q.eq("blacklisted", true))
+          .collect(),
+        ctx.db.query("renters")
+          .withIndex("by_blacklist", (q) => q.eq("blacklist", true))
+          .collect(),
+      ]);
+      const allRenters = Array.from(new Map(
+        [...newBlacklistRows, ...legacyBlacklistRows].map((renter) => [String(renter._id), renter]),
+      ).values());
       const blByHuid = new Map<string, string | null>();
       const blByName = new Map<string, string | null>();
       const blById = new Map<string, string | null>();

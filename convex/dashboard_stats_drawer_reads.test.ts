@@ -8,6 +8,7 @@ type FilterSet = Record<string, Array<{ op: string; value: unknown }>>;
 
 function makeEmptyContext() {
   const reservationReads: Array<{ index: string; filters: FilterSet }> = [];
+  const collectedReads: Array<{ table: string; index: string; filters: FilterSet }> = [];
   const db = {
     query(table: string) {
       let index = "table_scan";
@@ -48,6 +49,7 @@ function makeEmptyContext() {
         filter() { return query; },
         order() { return query; },
         async collect() {
+          collectedReads.push({ table, index, filters: structuredClone(filters) });
           if (table === "reservations") reservationReads.push({ index, filters: structuredClone(filters) });
           return [];
         },
@@ -60,7 +62,7 @@ function makeEmptyContext() {
     },
     async get() { return null; },
   };
-  return { ctx: { db } as any, reservationReads };
+  return { ctx: { db } as any, reservationReads, collectedReads };
 }
 
 describe("getStatsDrawerData reservation read sharing", () => {
@@ -111,5 +113,24 @@ describe("getStatsDrawerData reservation read sharing", () => {
     expect(completedStartFallback).toHaveLength(1);
     expect(completedPickupWindow[0].filters.pickup_date).toContainEqual({ op: "lte", value: monthEnd });
     expect(completedStartFallback[0].filters.start_date).toContainEqual({ op: "lte", value: monthEnd });
+  });
+
+  it("uses blacklist indexes and avoids scanning the audit history", async () => {
+    const { ctx, collectedReads } = makeEmptyContext();
+
+    await (getStatsDrawerData as any)._handler(ctx, {
+      accountSlug: null,
+      _bypassMv: true,
+    });
+
+    const renterIndexes = collectedReads
+      .filter(({ table }) => table === "renters")
+      .map(({ index }) => index)
+      .sort();
+    expect(renterIndexes).toEqual(["by_blacklist", "by_blacklisted"]);
+
+    // No reservation in the four-month attribution window has a decision in
+    // this fixture, so no historical audit rows should be read at all.
+    expect(collectedReads.filter(({ table }) => table === "ai_decision_audit")).toEqual([]);
   });
 });
