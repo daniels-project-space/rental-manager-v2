@@ -1,3 +1,4 @@
+import { useReservationReadModel } from "./lib/reservation_read_queries";
 /**
  * Inquiry listing context (2026-06-27).
  *
@@ -124,6 +125,7 @@ export const resolveForThread = action({
 export const threadsNeedingListing = internalQuery({
   args: { limit: v.number() },
   handler: async (ctx, { limit }) => {
+    useReservationReadModel(ctx);
     const convs = await ctx.db
       .query("conversations")
       .withIndex("by_last_sender", (q) => q.eq("last_sender", "renter"))

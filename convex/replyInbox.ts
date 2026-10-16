@@ -1,3 +1,4 @@
+import { useReservationReadModel } from "./lib/reservation_read_queries";
 import { loadHubRows } from "./lib/account_hub_projection";
 import { loadPricingRows } from "./lib/pricing_input_cache";
 
@@ -945,6 +946,7 @@ export const getReplyQueue = query({
       _partitionSlugs,
     },
   ) => {
+    useReservationReadModel(ctx);
     // ── MV fast path ────────────────────────────────────────────────────────
     // For the canonical frontend config, read the precomputed tile list (one
     // indexed row) instead of running the full multi-pass assembly + N+1
@@ -1406,6 +1408,7 @@ export const dismissThread = mutation({
 export const getThreadById = query({
   args: { thread_id: v.string() },
   handler: async (ctx, { thread_id }) => {
+    useReservationReadModel(ctx);
     const conv = await ctx.db
       .query("conversations")
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
@@ -1447,6 +1450,7 @@ export const getThreadById = query({
 export const getThreadContext = internalQuery({
   args: { thread_id: v.string() },
   handler: async (ctx, { thread_id }) => {
+    useReservationReadModel(ctx);
     const conv = await ctx.db
       .query("conversations")
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
