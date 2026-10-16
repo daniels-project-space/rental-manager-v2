@@ -21,6 +21,13 @@ describe('owner confirmed packing on 16 October',()=>{
   }
   expect(pyro.qty).toBe(1);
  });
+ it('resolves every A7 V offer against its true body and SD allocation',()=>{
+  const {data}=corrected(),a7=data.items.find((i:any)=>i.name_canonical==='Sony A7 V');
+  for(const p of data.products.filter((p:any)=>/A7 V|Alpha 7 V/.test(p.name))){
+   const q=resolveListingComponents(data.items,undefined,p.masterItemId,1,p.description,undefined,p.name);
+   expect(q,`${p.accountSlug}#${p.productId}: ${JSON.stringify(q.coverage)}`).toMatchObject({complete:true,owned:true});
+  }
+ });
  it('records original GM generation, preserves every quantity and is idempotent',()=>{
   const {data}=corrected();expect(data.items.map((i:any)=>i.qty)).toEqual(fixture.items.map(i=>i.qty));expect(ownerAvailabilityReview(data.items,data.products)).toEqual({items:[],products:[]});
   expect(data.items.find((i:any)=>i.name_canonical==='Sony GM 70-200mm f2.8')).toMatchObject({qty:2,notes:expect.stringContaining('SEL70200GM')});

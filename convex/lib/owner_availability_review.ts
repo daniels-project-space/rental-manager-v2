@@ -46,6 +46,7 @@ export function ownerAvailabilityReview(items: Doc<"items">[], products: Doc<"hy
   const tele=item("Sony GM 70-200mm f2.8");
   add(tele,{aliases:unique([...(tele.aliases??[]),"Sony G series 70-200mm lens","Sony FE 70-200mm f2.8 GM OSS SEL70200GM","Sony FE 70-200mm f/2.8 GM OSS (original)"]),
     notes:unique([...(tele.notes??"").split("\n"),"Both owned lenses are original Sony FE 70–200mm f/2.8 GM OSS (SEL70200GM), not GM II; confirmed by Daniel 16 October 2026."]).filter(Boolean).join("\n"),
+    listing_stock_rules:[...(tele.listing_stock_rules??[]).filter(r=>r.source!=="Daniel confirmed original GM and attached collar, 16 October 2026"),{title_pattern:"Sony.*70[-–]200",components:[],excludes:[],source:"Daniel confirmed original GM and attached collar, 16 October 2026",apply_to_declared_component:true,supplied_parts:[{name:"Tripod collar attached",qty:1},{name:"Tripod collar (attached)",qty:1}]}],
     image_url:"https://pub-761e4d18b3b84542809dddc11936a8df.r2.dev/listings/1048172/0.jpg"});
   const zoom=item("Sony 28-70mm");
   add(zoom,{aliases:unique([...(zoom.aliases??[]),"Sony FE 28-70mm f3.5-5.6 OSS Zoom Lens","Sony FE 28-70mm f/3.5-5.6 OSS"])});
@@ -73,8 +74,10 @@ export function ownerAvailabilityReview(items: Doc<"items">[], products: Doc<"hy
     const absentKit=/\bAmaran\s*300\s*c\b|\bARLES\b|\bSenn?heiser\b[^|]*\bG\s*3\b/i.test(name);
     return absentGimbal||absentLens||absentKit;
   });
+  const repairedA7=products.filter(p=>/Sony.*(?:A7\s*V\b|Alpha\s*7\s*V\b)/i.test(p.name??"")&&p.masterItemId!==a7v._id)
+    .map(p=>({id:p._id,account:p.accountSlug,productId:p.productId,name:p.name,patch:{masterItemId:a7v._id}}));
   const repairedPyro=products.filter(p=>/Hollyland.*Pyro\s*S\b/i.test(p.name??"") && p.masterItemId!==pyro._id)
     .map(p=>({id:p._id,account:p.accountSlug,productId:p.productId,name:p.name,patch:{masterItemId:pyro._id}}));
   return {items:patches.filter(p=>Object.entries(p.patch).some(([key,value])=>JSON.stringify(stable(items.find(i=>i._id===p.id)?.[key as keyof Doc<"items">]))!==JSON.stringify(stable(value)))),
-    products:[...repairedPyro,...notOwned.filter(p=>p.isMarketingOnlyOverride!==true||p.isMarketingOnly!==true).map(p=>({id:p._id,account:p.accountSlug,productId:p.productId,name:p.name,patch:{isMarketingOnly:true,isMarketingOnlyOverride:true}}))]};
+    products:[...repairedA7,...repairedPyro,...notOwned.filter(p=>p.isMarketingOnlyOverride!==true||p.isMarketingOnly!==true).map(p=>({id:p._id,account:p.accountSlug,productId:p.productId,name:p.name,patch:{isMarketingOnly:true,isMarketingOnlyOverride:true}}))]};
 }
