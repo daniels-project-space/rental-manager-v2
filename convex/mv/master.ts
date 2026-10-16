@@ -409,9 +409,10 @@ export const refreshFast = internalAction({
     // inside refreshAll so quiet ticks short-circuit without running the
     // heavy live handler.
     results.push(await safeStep(ctx, "stats_drawer", async () => {
-      // Only the "all" default view here (hourly). Per-account rows refresh on a
-      // separate 6h cron ("mv_refresh_stats_accounts") — see crons.ts. Cuts the
-      // 5×/hour full-compute (once per slug) down to 1×/hour on the hot path.
+      // Only the "all" default view here; its large cross-account compute is
+      // attempt-throttled to 6h in stats_drawer.ts. Per-account rows refresh on
+      // a separate 6h cron ("mv_refresh_stats_accounts") — see crons.ts. The
+      // dashboard's active/monthly headline stays live from its small query.
       await refreshStatsDrawer(ctx, force ?? false, "all");
     }));
 

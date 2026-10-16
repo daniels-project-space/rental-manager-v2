@@ -7,8 +7,8 @@
  * row instead of re-running the 8-collect + 16-card compute on every
  * reservation mutation.
  *
- * Refreshed by master.refreshFast (hourly). Three rows total:
- * "all" (accountSlug=null), "dbcinema", "leo".
+ * Checked by master.refreshFast hourly; the cross-account "all" rebuild is
+ * throttled to one attempt every six hours. Per-account rows refresh separately.
  *
  * Cold-start fallback: the public getStatsDrawerData query in
  * convex/dashboard.ts falls back to the internal live compute for the
@@ -84,6 +84,38 @@ export const writeTaxYearSnapshot = internalMutation({
   },
 });
 
+const ALL_STATS_REFRESH_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * The all-account stats refresh is the only path that runs the large
+ * cross-account dashboard query. Keep it on the same six-hour freshness
+ * budget as the account drill-down snapshots, and persist the attempt before
+ * running the query so a read-limit failure cannot trigger another full scan
+ * on the next hourly master tick.
+ */
+export const tryStartAllRefresh = internalMutation({
+  args: {
+    account: v.string(),
+    now: v.number(),
+    force: v.boolean(),
+  },
+  handler: async (ctx, { account, now, force }) => {
+    const existing = await ctx.db
+      .query("mv_stats_drawer_refresh_state")
+      .withIndex("by_account", (q) => q.eq("account", account))
+      .first();
+    if (!force && existing && now - existing.lastAttemptAt < ALL_STATS_REFRESH_MIN_INTERVAL_MS) {
+      return false;
+    }
+    if (existing) {
+      await ctx.db.patch(existing._id, { lastAttemptAt: now });
+    } else {
+      await ctx.db.insert("mv_stats_drawer_refresh_state", { account, lastAttemptAt: now });
+    }
+    return true;
+  },
+});
+
 /**
  * Shared compute used by both the standalone refresh action and the master
  * refreshFast orchestrator. Calls the live getStatsDrawerData per account
@@ -126,6 +158,17 @@ export async function refreshAll(
       : scope === "all_and_account"
         ? allSlugs.filter((s) => s.key === ACCOUNT_ALL || s.key === accountSlug)
         : allSlugs;
+
+  if (scope === "all") {
+    const canRefresh = await ctx.runMutation(anyApi.mv.stats_drawer.tryStartAllRefresh, {
+      account: ACCOUNT_ALL,
+      now: startedAt,
+      force: force ?? false,
+    });
+    if (!canRefresh) {
+      return { ok: true, written: 0, skipped: slugs.length, durationMs: Date.now() - startedAt };
+    }
+  }
 
   // Read the prior generatedAt for each row. Use the lowest across accounts
   // as the staleness cutoff — if ANY account has stale data, we re-run.

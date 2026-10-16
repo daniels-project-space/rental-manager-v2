@@ -1393,12 +1393,20 @@ const operationalSchema = defineSchema({
   // (accountSlug) and stores the full payload as v.any(). Dashboard
   // subscriptions read a single indexed row instead of re-running the
   // 8-collect + 16-card compute on every reservation mutation.
-  // Refreshed by master.refreshFast (hourly). One row per slug; "all"
-  // represents accountSlug=null.
+  // Refreshed by master.refreshFast. One row per slug; "all" represents
+  // accountSlug=null and is throttled to one full rebuild every six hours.
   mv_stats_drawer: defineTable({
     account: v.string(),                  // "dbcinema" | "leo" | "all"
     generatedAt: v.number(),
     payload: v.any(),                     // trimmed StatsDrawerData JSON (no fat rentals arrays — see mv_stats_drawer_rentals)
+  }).index("by_account", ["account"]),
+
+  // Throttle the expensive all-account stats rebuild independently of the
+  // payload row. Failed attempts must still advance this timestamp, while
+  // successful content-identical refreshes must not notify dashboard readers.
+  mv_stats_drawer_refresh_state: defineTable({
+    account: v.string(),
+    lastAttemptAt: v.number(),
   }).index("by_account", ["account"]),
 
   // Pass 10b (2026-05-25) — drawer drill-down rentals split out of the
