@@ -823,6 +823,7 @@ const operationalSchema = defineSchema({
     // rentals can still overlap a current demand window.
     .index("by_status_pickup_date", ["status", "pickup_date", "start_date"])
     .index("by_status_return_date", ["status", "return_date"])
+    .index("by_status_return_end_date", ["status", "return_date", "end_date"])
     .index("by_status_end_date", ["status", "end_date"])
     // Hourly Return Hub refresh reads only physical-out states and legacy due
     // rows instead of collecting the confirmed reservation history.
