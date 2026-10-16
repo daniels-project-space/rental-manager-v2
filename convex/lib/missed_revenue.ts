@@ -112,6 +112,9 @@ export async function confirmedForDemandWindow(
   from: string,
   to: string,
 ): Promise<Doc<"reservations">[]> {
+  // Keep this capacity set cross-account: physical item rows can be listed
+  // through multiple rental accounts, so another account's confirmed booking
+  // can still occupy the same inventory unit.
   const [byStart, byPickup, byReturn, byEnd] = await Promise.all([
     // The start-date fallback only needs rows that lack a negotiated pickup
     // date. The pickup index has start_date as its third field, so this stays
@@ -213,17 +216,29 @@ export async function computeMissedRevenue(
     ? Promise.resolve(pre.reservations.rows.filter(
         (r) => typeof r.start_date === "string" && r.start_date >= cutoffStr,
       ))
-    : Promise.all([
-        ctx.db.query("reservations").withIndex("by_is_obsolete_start_date", (q) =>
-          q.eq("is_obsolete", true).gte("start_date", cutoffStr),
-        ).collect(),
-        ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
-          q.eq("status", "cancelled").gte("start_date", cutoffStr),
-        ).collect(),
-        ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
-          q.eq("status", "declined").gte("start_date", cutoffStr),
-        ).collect(),
-      ]).then((groups) => [...new Map(groups.flat().map((r) => [String(r._id), r])).values()]);
+    : accountPromise.then((account) => Promise.all(account
+        ? [
+            ctx.db.query("reservations").withIndex("by_account_obsolete_start", (q) =>
+              q.eq("account_slug", accountSlug!).eq("is_obsolete", true).gte("start_date", cutoffStr),
+            ).collect(),
+            ctx.db.query("reservations").withIndex("by_account_status_start_date", (q) =>
+              q.eq("account_slug", accountSlug!).eq("status", "cancelled").gte("start_date", cutoffStr),
+            ).collect(),
+            ctx.db.query("reservations").withIndex("by_account_status_start_date", (q) =>
+              q.eq("account_slug", accountSlug!).eq("status", "declined").gte("start_date", cutoffStr),
+            ).collect(),
+          ]
+        : [
+            ctx.db.query("reservations").withIndex("by_is_obsolete_start_date", (q) =>
+              q.eq("is_obsolete", true).gte("start_date", cutoffStr),
+            ).collect(),
+            ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+              q.eq("status", "cancelled").gte("start_date", cutoffStr),
+            ).collect(),
+            ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+              q.eq("status", "declined").gte("start_date", cutoffStr),
+            ).collect(),
+          ]).then((groups) => [...new Map(groups.flat().map((r) => [String(r._id), r])).values()]));
 
   const [account, denialRows, cancellationRows] = await Promise.all([
     accountPromise,
