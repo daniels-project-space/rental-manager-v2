@@ -2,6 +2,11 @@ import { providerReturnCompleted } from "../src/lib/provider-return-evidence";
 import {internalQueryOf} from "./owner_functions";
 import { mutation, query } from "./owner_functions";
 import type { MutationCtx } from "./_generated/server";
+import {
+  applyReservationEarningsChanges,
+  getEarningsContribution,
+  type EarningsContributionChange,
+} from "./mv/earnings_by_period";
 import { internal } from "./_generated/api";
 import { v, type Infer } from "convex/values";
 import { STEP_PRIORITY } from "./order_step_semantics";
@@ -790,6 +795,7 @@ type UpsertResult = {
 // that the batch handler uses but never exposes to callers.
 type UpsertImplResult = UpsertResult & {
   bankItems: BankItem[];
+  earningsChange?: EarningsContributionChange;
   transitionedToObsolete?: boolean;
   // Push-worthy transitions detected this upsert (confirmed booking / new
   // request). Collected by the batch handler → queueNotificationEvents.
@@ -1102,7 +1108,18 @@ async function upsertOrderImpl(
       console.info(
         `[hygglo] v1_rental_id ${existing.v1_rental_id}: net corrected £${storedNet.toFixed(2)} → £${incomingNet.toFixed(2)}`,
       );
-      return { action: "updated", bankItems: [] };
+      return {
+        action: "updated",
+        bankItems: [],
+        earningsChange: {
+          before: getEarningsContribution(existing),
+          after: getEarningsContribution({
+            ...existing,
+            net_to_owner_gbp: incomingNet,
+            ...(args.gross_paid_gbp !== undefined && { gross_paid_gbp: args.gross_paid_gbp }),
+          }),
+        },
+      };
     }
 
     const storedStep = (existing as { order_step?: string }).order_step ?? null;
@@ -1139,7 +1156,19 @@ async function upsertOrderImpl(
       await ctx.db.patch(existing._id, { image_hints: hintsRegression, hygglo_items: hyggloItemsRegression });
       await scheduleShortNameDerivation(ctx, args.account_slug, hyggloItemsRegression);
       // listing_info_pool: one-time fill at insert only — no re-derive on update.
-      return { action: "updated", bankItems: hyggloItemsRegression };
+      return {
+        action: "updated",
+        bankItems: hyggloItemsRegression,
+        earningsChange: {
+          before: getEarningsContribution(existing),
+          after: getEarningsContribution({
+            ...existing,
+            ...baseFields,
+            status: preserveLocalCompletion ? "completed" : incomingStatus,
+            ...obsoleteFields,
+          }),
+        },
+      };
     }
 
     // sourceFilter is authoritative — the poller fetches all four buckets each
@@ -1291,6 +1320,16 @@ async function upsertOrderImpl(
       ...(notifyUpdate.length > 0 && { notify: notifyUpdate }),
       // Realised revenue changed iff the picked-up state flipped (either way).
       ...(pickupStateChanged && { revenueRealized: true }),
+      earningsChange: {
+        before: getEarningsContribution(existing),
+        after: getEarningsContribution({
+          ...existing,
+          ...baseFields,
+          status: finalStatus,
+          ...(clearObsolete && { is_obsolete: false }),
+          ...obsoleteFields,
+        }),
+      },
     };
   }
 
@@ -1365,6 +1404,10 @@ async function upsertOrderImpl(
     action: "inserted",
     reservation_id: newId as unknown as string,
     bankItems: hyggloItemsInsert,
+    earningsChange: {
+      before: null,
+      after: getEarningsContribution({ ...baseFields, ...obsoleteFields }),
+    },
     ...(notifyInsert.length > 0 && { notify: notifyInsert }),
     // Pass 15a (2026-05-26): newly-inserted rows that come in already-obsolete
     // (renter cancelled before we ever saw it active) count as a transition
@@ -1415,9 +1458,10 @@ export const upsertOrdersAsReservationsBatch = mutation({
     // across the batch — queued once at the end so a busy poll fans out a
     // single dispatch rather than one per order.
     const allNotify: NotifEventInput[] = [];
+    const earningsChanges: EarningsContributionChange[] = [];
 
     for (const args of orders) {
-      const { action, reservation_id, bankItems, transitionedToObsolete, notify, revenueRealized } =
+      const { action, reservation_id, bankItems, transitionedToObsolete, notify, revenueRealized, earningsChange } =
         await upsertOrderImpl(ctx, args);
       results.push(reservation_id !== undefined ? { action, reservation_id } : { action });
       if (bankItems.length > 0) {
@@ -1428,6 +1472,7 @@ export const upsertOrdersAsReservationsBatch = mutation({
       if (transitionedToObsolete) anyTransitionedToObsolete = true;
       if (revenueRealized) anyRevenueRealized = true;
       if (notify && notify.length > 0) allNotify.push(...notify);
+      if (earningsChange) earningsChanges.push(earningsChange);
     }
 
     if (allNotify.length > 0) {
@@ -1448,6 +1493,12 @@ export const upsertOrdersAsReservationsBatch = mutation({
       });
     }
 
+    // Update the chart's compact bucket snapshot from each row's before/after
+    // contribution. The daily full rebuild remains the reconciliation path.
+    if (earningsChanges.length > 0) {
+      await applyReservationEarningsChanges(ctx, earningsChanges);
+    }
+
     // Core rental and monthly headlines are live. Keep the broad stats-drawer
     // snapshot on its hourly schedule: triggering it here is wasteful because
     // a read-limit failure leaves generatedAt unchanged and makes every later
@@ -1461,15 +1512,6 @@ export const upsertOrdersAsReservationsBatch = mutation({
         if (anyRevenueRealized) {
           await ctx.scheduler.runAfter(0, internal.mv.lifetime_revenue.refresh, {});
           await ctx.scheduler.runAfter(0, internal.mv.investment_scorecard.refresh, {});
-        }
-        // Monthly income chart (mv_earnings_by_period) sums gross_paid over all
-        // LIVE reservations by month, so BOTH a new confirmed booking
-        // (pendingChanged) AND a pickup (anyRevenueRealized) move the current
-        // bucket. Was daily-only → up to 24h stale; refresh on either change.
-        // (NOT on plain anyRowChanged — its refresher full-collects the
-        // reservations table, ~5MB, and mere field updates don't move months.)
-        if (pendingChanged || anyRevenueRealized) {
-          await ctx.scheduler.runAfter(0, internal.mv.earnings_by_period.refresh, {});
         }
       } catch (err) {
         console.warn("[hygglo.upsertOrdersAsReservationsBatch] MV refresh schedule failed", String(err));
