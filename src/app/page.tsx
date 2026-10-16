@@ -15,7 +15,7 @@ import {
   sortableKeyboardCoordinates,
   rectSortingStrategy,
 } from "@dnd-kit/sortable";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { HeaderBar } from "@/components/dashboard/HeaderBar";
 import { NotificationDeepLink } from "@/components/dashboard/NotificationDeepLink";
 import { EditModeBar } from "@/components/dashboard/EditModeBar";
@@ -79,25 +79,6 @@ const PANEL_SKELETON: Record<string, { height: string; rows: number }> = {
 export default function DashboardPage() {
   const { layout, reorderPanels, isPanelHidden } = useEditMode();
   const [notificationOpen, setNotificationOpen] = useState(false);
-  const [mobileView, setMobileView] = useState<"dashboard" | "rentals">("dashboard");
-  const selectMobileView = useCallback((view: "dashboard" | "rentals") => {
-    setMobileView(view);
-    try { window.sessionStorage.setItem("rm-mobile-dashboard-view", view); } catch {}
-  }, []);
-  useEffect(() => {
-    const desktop = window.matchMedia("(min-width: 768px)");
-    const restoreDashboard = () => { if (desktop.matches) selectMobileView("dashboard"); };
-    const showThread = () => selectMobileView("dashboard");
-    if (!desktop.matches && !new URL(window.location.href).searchParams.has("thread")) {
-      try { if (window.sessionStorage.getItem("rm-mobile-dashboard-view") === "rentals") setMobileView("rentals"); } catch {}
-    }
-    desktop.addEventListener("change", restoreDashboard);
-    window.addEventListener("rm-open-thread", showThread);
-    return () => {
-      desktop.removeEventListener("change", restoreDashboard);
-      window.removeEventListener("rm-open-thread", showThread);
-    };
-  }, [selectMobileView]);
   useEffect(() => {
     const syncUrl = () => setNotificationOpen(new URL(window.location.href).searchParams.has("thread"));
     const open = () => setNotificationOpen(true);
@@ -145,23 +126,11 @@ export default function DashboardPage() {
     <DashboardHydrationProvider>
       <CalendarOverlayProvider>
         <div style={{ background: "#070910", minHeight: "100dvh" }}>
-        <div className="sticky top-0 z-40 bg-[#070910]">
         <HeaderBar />
         <Suspense fallback={null}>
           <NotificationDeepLink />
         </Suspense>
-        <nav className="flex gap-2 border-b border-white/10 px-4 py-2 md:hidden" aria-label="Mobile dashboard views">
-          {(["dashboard", "rentals"] as const).map(view => (
-            <button key={view} type="button" aria-pressed={mobileView === view}
-              aria-controls={mobileView === view ? (view === "rentals" ? "mobile-rentals-view" : "dashboard-view") : undefined}
-              onClick={() => selectMobileView(view)}
-              className={`min-h-11 flex-1 rounded-full border px-4 text-sm font-semibold transition-colors ${mobileView === view ? "border-blue-400/50 bg-blue-500/15 text-blue-200" : "border-white/10 bg-white/[0.03] text-slate-400"}`}>
-              {view === "rentals" ? "Rentals" : "Dashboard"}
-            </button>
-          ))}
-        </nav>
-        </div>
-        {mobileView === "dashboard" && <EditModeBar />}
+        <EditModeBar />
         <main
           className="mx-auto px-4 md:px-6 py-5"
           style={{ maxWidth: "1440px" }}
@@ -171,11 +140,14 @@ export default function DashboardPage() {
               <RentalHeadlinePanel />
             </WidgetErrorBoundary>
           </div>
-          {mobileView === "rentals" ? (
-            <section id="mobile-rentals-view" aria-label="Rental tiles" className="min-w-0">
-              <WidgetErrorBoundary label="Rentals"><CalendarStrip /></WidgetErrorBoundary>
+          {!visiblePanels.some(panel => panel.id === "calendar-strip") && (
+            <section aria-label="Rental tiles" className="mb-4 min-w-0 md:hidden">
+              <WidgetErrorBoundary label="Rentals">
+                <DeferredMount placeholderHeight="360px"><CalendarStrip /></DeferredMount>
+              </WidgetErrorBoundary>
             </section>
-          ) : <div id="dashboard-view">
+          )}
+          <div id="dashboard-view">
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
@@ -209,7 +181,7 @@ export default function DashboardPage() {
               </AutoPackingGrid>
             </SortableContext>
           </DndContext>
-          </div>}
+          </div>
         </main>
         <AddWidgetDrawer />
         </div>
