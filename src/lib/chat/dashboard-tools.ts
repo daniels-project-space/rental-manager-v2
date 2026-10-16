@@ -865,9 +865,10 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
         "single lowest-utilization item. Don't re-rank; report in the order given.",
       inputSchema: z.object({}),
       execute: async () => {
-        const rows = (await cached("util:ranking", () =>
-          convex.query(api.dashboard_insights.getItemUtilizationRanking, { accountSlug: null }),
-        )) as unknown as Array<{
+        const bundle = await cached("dashboard:insights", () =>
+          convex.query(api.dashboard_insights.getDashboardInsightBundle, { accountSlug: null }),
+        );
+        const rows = bundle.itemUtilizationRanking as Array<{
           name?: string;
           utilization?: number;
           idle_cost_per_week?: number;
@@ -917,16 +918,10 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
         "month' or 'last 30 days'. All other counts are the true dashboard figures.",
       inputSchema: z.object({}),
       execute: async () => {
-        const [d, capacityGaps, belowMin, voluntaryDeny] = await Promise.all([
+        const [d, insights] = await Promise.all([
           fetchDrawer(convex),
-          cached("cap:gap", () =>
-            convex.query(api.dashboard_insights.getCapacityGapAlert, { accountSlug: null }),
-          ),
-          cached("below:min", () =>
-            convex.query(api.dashboard_insights.getBelowMinimumCounter, { accountSlug: null }),
-          ),
-          cached("vol:deny", () =>
-            convex.query(api.dashboard_insights.getVoluntaryDenyHotList, { accountSlug: null }),
+          cached("dashboard:insights", () =>
+            convex.query(api.dashboard_insights.getDashboardInsightBundle, { accountSlug: null }),
           ),
         ]);
         const conflicts = Array.isArray(d.conflicts) ? d.conflicts : [];
@@ -939,9 +934,9 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
           denied_revenue_gbp: d.denied_revenue?.total_gbp,
           open_insurance_claims: d.insurance?.open_count,
           open_insurance_amount_gbp: d.insurance?.open_amount_gbp,
-          capacity_gap_count: Array.isArray(capacityGaps) ? capacityGaps.length : capacityGaps,
-          below_minimum: belowMin,
-          voluntary_deny_count: Array.isArray(voluntaryDeny) ? voluntaryDeny.length : voluntaryDeny,
+          capacity_gap_count: insights.capacityGapAlert.length,
+          below_minimum: insights.belowMinimumCounter,
+          voluntary_deny_count: insights.voluntaryDenyHotList.length,
         };
       },
     }),
@@ -1172,9 +1167,10 @@ export function buildDashboardTools(convex: ConvexHttpClient): Record<string, To
         "{ week_start, net_gbp }. Use for 'how is revenue trending / weekly revenue / the last few weeks'.",
       inputSchema: z.object({}),
       execute: async () => {
-        const rows = (await cached("spark:weekly", () =>
-          convex.query(api.dashboard_insights.getWeeklyRevenueSparkline, { accountSlug: null }),
-        )) as unknown as Array<{ week_start?: string; revenue_net_gbp?: number }>;
+        const insights = await cached("dashboard:insights", () =>
+          convex.query(api.dashboard_insights.getDashboardInsightBundle, { accountSlug: null }),
+        );
+        const rows = insights.weeklyRevenueSparkline as Array<{ week_start?: string; revenue_net_gbp?: number }>;
         return {
           weeks: (Array.isArray(rows) ? rows : []).map((r) => ({
             week_start: r.week_start,
