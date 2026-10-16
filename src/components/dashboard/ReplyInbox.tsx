@@ -4707,15 +4707,15 @@ export function ReplyInbox() {
   // spoke last), which used to unmount the modal = the "auto-close on send" bug.
   // Cache the last-known row and fall back to it, so the overlay stays open
   // until YOU close it (× ) or tap a notification. (Daniel, 2026-07-03)
+  const openFromQueue = openId
+    ? (rawRows.find((t) => t.thread_id === openId) ?? null)
+    : null;
   const openFromCheck = useQuery(
     api.replyInbox.getThreadById,
-    openId && !openId.startsWith("dbcinema:") ? { thread_id: openId } : "skip",
+    openId && !openId.startsWith("dbcinema:") && !openFromQueue
+      ? { thread_id: openId }
+      : "skip",
   ) as ReplyTileData | null | undefined;
-  const openFromQueue = openId
-    ? (rawRows.find(
-        (t) => t.thread_id === openId,
-      ) ?? null)
-    : null;
   if (openFromQueue) openCacheRef.current = openFromQueue;
   const open = openId
     ? (openFromQueue ??
