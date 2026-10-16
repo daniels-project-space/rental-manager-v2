@@ -492,11 +492,10 @@ export const getStatsDrawerData = query({
     // and computeMissedRevenue each read their own bounded obsolete/cancelled
     // indexes only when needed below.
     //
-    // Confirmed and pending rows keep the rolling 365-day window so long-running
-    // rentals and existing pending bookings retain their current classification.
-    // Completed rows only feed this year's tax total and this month plus the
-    // previous three completed months used by the projection baseline. Reading
-    // older completed rows on each refresh adds no value to those calculations.
+    // Active and revenue views do not need a rolling year of rich confirmed
+    // reservation documents. Read only the four-month revenue/projection window
+    // and use the date indexes for currently ongoing/upcoming rentals. The
+    // pending-review card keeps its existing 365-day source window.
     const dashCutoff = (() => {
       const d = new Date();
       d.setDate(d.getDate() - 365);
@@ -505,20 +504,90 @@ export const getStatsDrawerData = query({
     const currentYearStart = `${now.getFullYear()}-01-01`;
     const projectionStart = new Date(now.getFullYear(), now.getMonth() - 3, 1)
       .toISOString().slice(0, 10);
-    const completedCutoff = currentYearStart < projectionStart ? currentYearStart : projectionStart;
-    const reservationsByStatusAndStartDate = (status: string, cutoff = dashCutoff) => accountSlug
-      ? ctx.db.query("reservations").withIndex("by_account_status_start_date", (q) =>
-          q.eq("account_slug", accountSlug).eq("status", status).gte("start_date", cutoff),
-        ).collect()
-      : ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
-          q.eq("status", status).gte("start_date", cutoff),
-        ).collect();
-    const [confirmedRows, completedRows, pendingReviewRows] = await Promise.all([
-      reservationsByStatusAndStartDate("confirmed"),
-      reservationsByStatusAndStartDate("completed", completedCutoff),
-      reservationsByStatusAndStartDate("pending_review"),
+    const reservationsByStatusAndStartDate = (
+      status: string,
+      from: string,
+      through?: string,
+    ) => accountSlug
+      ? ctx.db.query("reservations").withIndex("by_account_status_start_date", (q) => {
+          const range = q.eq("account_slug", accountSlug).eq("status", status).gte("start_date", from);
+          return through === undefined ? range : range.lte("start_date", through);
+        }).collect()
+      : ctx.db.query("reservations").withIndex("by_status_start_date", (q) => {
+          const range = q.eq("status", status).gte("start_date", from);
+          return through === undefined ? range : range.lte("start_date", through);
+        }).collect();
+    const reservationsByStatusAndPickupDate = (
+      status: string,
+      from: string,
+      through?: string,
+    ) => ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) => {
+      const range = q.eq("status", status).gte("pickup_date", from);
+      return through === undefined ? range : range.lte("pickup_date", through);
+    }).collect();
+
+    // Effective revenue uses pickup_date when present, so include both indexed
+    // windows. Future active rentals come from the four active-date indexes
+    // below; a second unbounded future-start/pickup scan would read those same
+    // bookings again without feeding any other card.
+    const [
+      confirmedStartWindow,
+      confirmedPickupWindow,
+      completedStartWindow,
+      completedPickupWindow,
+      pendingReviewRows,
+      activeByEndDate,
+      activeByReturnDate,
+    ] = await Promise.all([
+      reservationsByStatusAndStartDate("confirmed", projectionStart, monthEnd),
+      reservationsByStatusAndPickupDate("confirmed", projectionStart, monthEnd),
+      reservationsByStatusAndStartDate("completed", projectionStart, monthEnd),
+      reservationsByStatusAndPickupDate("completed", projectionStart, monthEnd),
+      ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+        q.eq("status", "pending_review").gte("start_date", dashCutoff),
+      ).collect(),
+      ctx.db.query("reservations").withIndex("by_status_end_date", (q) =>
+        q.eq("status", "confirmed").gte("end_date", activeToday),
+      ).collect(),
+      ctx.db.query("reservations").withIndex("by_status_return_date", (q) =>
+        q.eq("status", "confirmed").gte("return_date", activeToday),
+      ).collect(),
     ]);
-    const allResRaw = [...confirmedRows, ...completedRows, ...pendingReviewRows]
+    // `isOngoing` uses displayReturnDate (return_date ?? end_date), while
+    // `isUpcoming` uses displayPickupDate (pickup_date ?? start_date). These
+    // unions cover the same live rows as the old 365-day scan, but only read
+    // date-index candidates and retain its original start-date cutoff.
+    const activeCandidates = await Promise.all([
+      ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
+        q.eq("status", "confirmed").gte("pickup_date", activeToday),
+      ).collect(),
+      ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+        q.eq("status", "confirmed").gte("start_date", activeToday),
+      ).collect(),
+    ]);
+    const activeConfirmedById = new Map<string, (typeof confirmedStartWindow)[number]>();
+    for (const row of [
+      ...activeByEndDate,
+      ...activeByReturnDate,
+      ...activeCandidates.flat(),
+    ]) {
+      if (row.start_date && row.start_date >= dashCutoff) {
+        activeConfirmedById.set(String(row._id), row);
+      }
+    }
+    const activeConfirmedRows = [...activeConfirmedById.values()];
+    const allResById = new Map<string, (typeof confirmedStartWindow)[number]>();
+    for (const row of [
+      ...confirmedStartWindow,
+      ...confirmedPickupWindow,
+      ...completedStartWindow,
+      ...completedPickupWindow,
+      ...pendingReviewRows,
+      ...activeConfirmedRows,
+    ]) {
+      allResById.set(String(row._id), row);
+    }
+    const allResRaw = [...allResById.values()]
       .sort((a, b) => (a.start_date ?? "").localeCompare(b.start_date ?? "") || a._creationTime - b._creationTime);
     // Account-scoped view for per-card numbers (active, earnings, monthly, etc.)
     let allRes = allResRaw;
@@ -526,44 +595,9 @@ export const getStatsDrawerData = query({
       allRes = allResRaw.filter((r) => r.account_slug === accountSlug);
     }
     // The account page still needs a cross-account set for conflict detection,
-    // but only active/forward reservations can conflict. Do not reload a year
-    // of completed history from every account just to filter it back out below.
-    let allResCrossAccount = allResRaw;
-    if (accountSlug) {
-      const [confirmedByStart, confirmedByPickup, confirmedByEnd, confirmedByReturn, pendingAcrossAccounts] = await Promise.all([
-        ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
-          q.eq("status", "confirmed").gte("start_date", activeToday),
-        ).collect(),
-        ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
-          q.eq("status", "confirmed").gte("pickup_date", activeToday),
-        ).collect(),
-        ctx.db.query("reservations").withIndex("by_status_end_date", (q) =>
-          q.eq("status", "confirmed").gte("end_date", activeToday),
-        ).collect(),
-        ctx.db.query("reservations").withIndex("by_status_return_date", (q) =>
-          q.eq("status", "confirmed").gte("return_date", activeToday),
-        ).collect(),
-        ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
-          q.eq("status", "pending_review").gte("start_date", dashCutoff),
-        ).collect(),
-      ]);
-      const activeAcrossAccounts = new Map<string, (typeof confirmedByStart)[number]>();
-      for (const row of [
-        ...confirmedByStart,
-        ...confirmedByPickup,
-        ...confirmedByEnd,
-        ...confirmedByReturn,
-        ...pendingAcrossAccounts,
-      ]) {
-        // Match the original 365-day source window. The active-date indexes
-        // intentionally start at effective dates, so retain this guard for
-        // rentals whose pickup/return fields extend beyond an old start date.
-        if (row.start_date && row.start_date >= dashCutoff) {
-          activeAcrossAccounts.set(String(row._id), row);
-        }
-      }
-      allResCrossAccount = [...activeAcrossAccounts.values()];
-    }
+    // and only active/pending rows can conflict. Reuse the same narrow indexed
+    // candidate set rather than rescanning the 365-day reservation history.
+    const allResCrossAccount = [...activeConfirmedRows, ...pendingReviewRows];
 
     // ── COLLECT 2: items ─────────────────────────────────────────
     let allItems = await ctx.db.query("items").collect();
@@ -2192,7 +2226,9 @@ export const getStatsDrawerData = query({
 
     // ── card: tax ─────────────────────────────────────────────────
     // Aggregate historical_revenue by calendar year + estimate tax at 20% flat.
-    // Also folds in current-year earnings from reservations.
+    // Current-year earnings are copied from the daily MV refresh, which already
+    // reads the full reservations table for other slow aggregates. The prior
+    // stats row is the cold-start fallback for deployments before that refresh.
     const histRows = await ctx.db.query("historical_revenue").collect();
     const taxByYear = new Map<number, number>();
     for (const h of histRows) {
@@ -2201,14 +2237,34 @@ export const getStatsDrawerData = query({
         taxByYear.set(yr, (taxByYear.get(yr) ?? 0) + (h.total_overall_made_gbp ?? 0));
       }
     }
-    // Add current-year live earnings from reservations
-    const currentYear = new Date().getFullYear();
-    const currentYearEarnings = allRes
-      .filter((r) => {
-        const yr = parseInt((r.start_date as string ?? "").slice(0, 4), 10);
-        return yr === currentYear && (r.status === "confirmed" || r.status === "completed");
-      })
-      .reduce((s, r) => s + (r.gross_paid_gbp ?? 0), 0);
+    const currentYear = now.getFullYear();
+    const currentYearEnd = `${currentYear}-12-31`;
+    const cachedTax = (priorStats?.payload as any)?.tax as
+      | { snapshot_year?: number; current_year_earnings_gbp?: number; generated_at?: number; years?: Array<{ year: number; gross: number }> }
+      | undefined;
+    const cachedTaxYear = priorStats?.generatedAt
+      ? new Date(priorStats.generatedAt).getFullYear()
+      : 0;
+    const cachedGrossForYear = cachedTax?.years?.find((row) => row.year === currentYear)?.gross;
+    const historicalCurrentYear = taxByYear.get(currentYear) ?? 0;
+    let currentYearEarnings =
+      cachedTax?.snapshot_year === currentYear &&
+      typeof cachedTax.current_year_earnings_gbp === "number"
+        ? cachedTax.current_year_earnings_gbp
+        : cachedTaxYear === currentYear && typeof cachedGrossForYear === "number"
+          // Legacy stats snapshots stored the rounded combined gross. This
+          // recovers the displayed current-year amount until the daily MV
+          // refresh writes the exact source total.
+          ? Math.max(0, cachedGrossForYear - historicalCurrentYear)
+          : NaN;
+    if (!Number.isFinite(currentYearEarnings)) {
+      const [currentYearConfirmedRows, currentYearCompletedRows] = await Promise.all([
+        reservationsByStatusAndStartDate("confirmed", currentYearStart, currentYearEnd),
+        reservationsByStatusAndStartDate("completed", currentYearStart, currentYearEnd),
+      ]);
+      currentYearEarnings = [...currentYearConfirmedRows, ...currentYearCompletedRows]
+        .reduce((sum, row) => sum + (row.gross_paid_gbp ?? 0), 0);
+    }
     if (currentYearEarnings > 0) {
       taxByYear.set(currentYear, (taxByYear.get(currentYear) ?? 0) + currentYearEarnings);
     }
@@ -2222,6 +2278,11 @@ export const getStatsDrawerData = query({
           gross: Math.round(gross),
           estimated_tax: Math.round(gross * TAX_RATE),
         })),
+      snapshot_year: currentYear,
+      current_year_earnings_gbp: currentYearEarnings,
+      generated_at: cachedTax?.snapshot_year === currentYear
+        ? cachedTax.generated_at ?? now.getTime()
+        : now.getTime(),
     };
 
     // ── card: business_intel ──────────────────────────────────────
