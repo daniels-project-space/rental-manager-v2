@@ -436,6 +436,7 @@ const operationalSchema = defineSchema({
     .index("by_email", ["email"])
     .index("by_v1_renter_profile_id", ["v1_renter_profile_id"])
     .index("by_blacklisted", ["blacklisted"])
+    .index("by_blacklist", ["blacklist"])
     .index("by_total_spend", ["total_spend_gbp"])
     .index("by_display_name", ["display_name"]),
 
