@@ -17,7 +17,16 @@ describe("owner rental schedule alerts", () => {
   expect(pickupReminderEvent(rental,now-1)).toBeNull();expect(pickupReminderEvent(rental,now+60_000)).toBeNull();
  });
  it("does not remind for unknown clocks, requests, cancelled, returned or collected rentals", () => {
-  for(const patch of [{pickup_time_provenance:undefined},{pickup_time:undefined},{pickup_time:"25:00"},{order_step:"REQUEST"},{is_obsolete:true},{status:"cancelled"},{status:"completed"},{order_step:"DELIVERED"},{order_step:"RETURNED"}])expect(pickupReminderEvent({...rental,...patch},now)).toBeNull();
+  for(const patch of [{pickup_time_provenance:undefined},{pickup_time:undefined},{pickup_time:"25:00"},{order_step:"REQUEST"},{is_obsolete:true},{status:"cancelled"},{status:"completed"},{order_step:"RETURNED"}])expect(pickupReminderEvent({...rental,...patch},now)).toBeNull();
+ });
+ it("uses the actual next-to-do Hygglo semantics rather than interpreting DELIVERED as past handover",()=>{
+  expect(pickupReminderEvent({...rental,order_step:"DELIVERED"},now)).not.toBeNull();
+  expect(pickupReminderEvent({...rental,account_slug:"dbcinema_web",order_step:"DELIVERED"},now)).toBeNull();
+  expect(rentalTimeChangedEvent({...rental,order_step:"RETURNED"},{...rental,order_step:"RETURNED",return_time:"18:00",return_time_provenance:{source:"agreed_chat",date:"2035-07-02",time:"18:00",confirmedAt:2}},now)?.body).toContain("Return:");
+ });
+ it("keeps a large basket within a phone notification payload",()=>{
+  const event=pickupReminderEvent({...rental,items:Array.from({length:20},()=>({item_name:"Camera 📷".repeat(50),qty:1}))},now)!;
+  expect(Buffer.byteLength(JSON.stringify(event))).toBeLessThan(2000);expect(event.body).toContain("18 more");
  });
  it("uses negotiated dates, website links, winter time and midnight", () => {
   expect(pickupReminderEvent({...rental,account_slug:"dbcinema_web",start_date:"2035-06-29",pickup_date:"2035-07-01"},now)?.thread_id).toBe("dbcinema:fixture");

@@ -3,6 +3,7 @@ import type { MutationCtx } from "../_generated/server";
 import type { NotifEventInput } from "../notifications";
 import { accountWord, isGenuinelyConfirmedBooking } from "./notification_events";
 import { confirmedClock, londonStockInstant, londonStockLabel } from "./confirmed_schedule";
+import { isGearOut } from "../order_step_semantics";
 
 type Rental = Partial<Doc<"reservations">>;
 const date = (value?: string | null) => value && /^\d{4}-\d\d-\d\d$/.test(value) ? value : undefined;
@@ -10,19 +11,22 @@ const endpoint = (r: Rental, kind: "pickup" | "return") => {
   const day=date(kind === "pickup" ? r.pickup_date ?? r.start_date : r.return_date ?? r.end_date);
   return {date:day,time:day?confirmedClock(r,kind,day):undefined};
 };
-const active = (r: Rental) => !!r.hygglo_order_id && !r.is_obsolete && !["cancelled", "completed"].includes(r.status ?? "") && !["CANCELED", "RETURNED", "REVIEWED", "VERIFICATION_FAILED"].includes(r.order_step ?? "");
+const active = (r: Rental) => !!r.hygglo_order_id && !r.is_obsolete && !["cancelled", "completed"].includes(r.status ?? "") && !["CANCELED", "REVIEWED", "VERIFICATION_FAILED"].includes(r.order_step ?? "");
 const label = (s: ReturnType<typeof endpoint>) => [s.date, s.time].filter(Boolean).join(" · ");
 function eventBase(r: Rental) {
   const thread = r.account_slug === "dbcinema_web" ? `dbcinema:${r.hygglo_order_id}` : r.hygglo_order_id!;
-  const item = (r.items ?? []).map(i => i.item_name).filter(Boolean).join(" + ") || "Rental";
+  const names = (r.items ?? []).map(i => i.item_name).filter(Boolean);
+  const item = names.slice(0, 2).map(name => name.slice(0, 100)).join(" + ") + (names.length > 2 ? ` + ${names.length - 2} more` : "") || "Rental";
   return { thread_id: thread, account_slug: r.account_slug,
-    body: [item, r.renter_name, accountWord(r.account_slug)].filter(Boolean).join(" · "),
+    body: [item, r.renter_name?.slice(0, 80), accountWord(r.account_slug).slice(0, 40)].filter(Boolean).join(" · "),
     url: `/?thread=${encodeURIComponent(thread)}${r.account_slug ? `&account=${encodeURIComponent(r.account_slug)}` : ""}` };
 }
 
 /** Persisted rental clocks only: no midnight/default clock invented for missing times. */
 export function pickupReminderSchedule(r: Rental): { local: string; at: number } | null {
-  if (!active(r) || r.order_step === "DELIVERED" || !isGenuinelyConfirmedBooking(r.order_step, r.status)) return null;
+  // Hygglo stores the NEXT-to-do step: DELIVERED is awaiting handover;
+  // RETURNED is awaiting return. The website explicitly maps active -> DELIVERED.
+  if (!active(r) || isGearOut(r.order_step) || r.account_slug === "dbcinema_web" && r.order_step === "DELIVERED" || !isGenuinelyConfirmedBooking(r.order_step, r.status)) return null;
   const s = endpoint(r, "pickup");
   if (!s.date || !s.time) return null;
   const local = `${s.date}T${s.time}`;
