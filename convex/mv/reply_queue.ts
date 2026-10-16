@@ -32,6 +32,8 @@ import { internal } from "../_generated/api";
 import { anyApi } from "convex/server";
 import { refreshHandoffsWidget } from "./widgets";
 import {currentQuickReplyCache} from "../lib/quick_reply_cache";
+import { readReplyQueueRow, storeReplyQueueTiles } from "../lib/reply_queue_storage";
+import { canonicalCacheJson, cacheValueDigest } from "../lib/lossless_cache_codec";
 import {
   REPLY_MV_WITHIN_DAYS,
   REPLY_MV_MESSAGES_WITHIN_DAYS,
@@ -142,13 +144,19 @@ export const write = internalMutation({
       // Content-skip: a no-op patch still re-pushes the full (~200 KB) tiles row
       // to every subscribed dashboard tab (Convex reactivity fires on any write).
       // Only rewrite when the visible tile list actually changed. `existing` is
-      // already read for the patch-vs-insert branch, so this costs nothing extra.
-      if (JSON.stringify(existing.tiles) === JSON.stringify(tiles)) {
+      // already read for the patch-vs-insert branch; decoding it needs no extra
+      // database read. Encoding-only migration preserves its generation time.
+      const logical = await readReplyQueueRow(existing);
+      if (logical && canonicalCacheJson(logical.tiles) === canonicalCacheJson(tiles)) {
+        if (existing.tiles !== null) {
+          const packed = await storeReplyQueueTiles(account, existing.generatedAt, tiles);
+          if (packed.tiles_gzip) await ctx.db.patch(existing._id, packed);
+        }
         return { ok: true, skipped: true };
       }
-      await ctx.db.patch(existing._id, { tiles, generatedAt });
+      await ctx.db.patch(existing._id, { ...await storeReplyQueueTiles(account, generatedAt, tiles), generatedAt });
     } else {
-      await ctx.db.insert("mv_reply_queue", { account, tiles, generatedAt });
+      await ctx.db.insert("mv_reply_queue", { account, ...await storeReplyQueueTiles(account, generatedAt, tiles), generatedAt });
     }
     return { ok: true };
   },
@@ -159,12 +167,27 @@ export const get = query({
   args: { account: v.optional(v.string()) },
   handler: async (ctx, { account }) => {
     const key = account ?? "all";
-    return await ctx.db
+    return await readReplyQueueRow(await ctx.db
       .query("mv_reply_queue")
       .withIndex("by_account", (q) => q.eq("account", key))
-      .first();
+      .first());
   },
 });
+
+/** Encoding-only migration: preserve the exact cached values and generation
+ * time, and audit the complete logical row before changing its storage. */
+export const repack = internalMutation({ args: { account: v.string() }, handler: async (ctx, { account }) => {
+  const row = await ctx.db.query("mv_reply_queue").withIndex("by_account", q => q.eq("account", account)).first();
+  const logical = await readReplyQueueRow(row);
+  if (!row || !logical) return { packed: false, reason: "missing or invalid cache" };
+  const packed = await storeReplyQueueTiles(account, row.generatedAt, logical.tiles);
+  if (!packed.tiles_gzip) return { packed: false, reason: "legacy capacity fallback" };
+  const decoded = await readReplyQueueRow({ ...row, ...packed });
+  if (canonicalCacheJson(logical) !== canonicalCacheJson(decoded)) throw Error("Queue encoding audit failed");
+  if (row.tiles !== null) await ctx.db.patch(row._id, packed);
+  return { packed: true, bytes: row.tiles === null ? row.tiles_gzip!.byteLength : packed.tiles_gzip.byteLength, tiles: Array.isArray(logical.tiles) ? logical.tiles.length : 0,
+    generatedAt: row.generatedAt, before_sha256: await cacheValueDigest(logical), after_sha256: await cacheValueDigest(decoded) };
+} });
 
 /**
  * Skip-when-clean probe. True if any reply-relevant table changed since the MV

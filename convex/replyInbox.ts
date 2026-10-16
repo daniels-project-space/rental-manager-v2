@@ -2,6 +2,7 @@
 import { patchRevenueReservation } from "./lib/reservation_revenue";
 import {orderedReplyMessages} from "./lib/reply_message_order";
 import { readOnlineListing } from "./lib/online_listing_read";
+import { readReplyQueueRow } from "./lib/reply_queue_storage";
 import { renterMessageWatermark } from "./lib/renter_message_watermark";
 import {requestedImageItems} from "./lib/quick_reply_requested_items";
 import {currentQuickReplyCache} from "./lib/quick_reply_cache";
@@ -958,12 +959,12 @@ export const getReplyQueue = query({
       const settingsRow0 = await ctx.db.query("settings").first();
       const incPending0 =
         includePending ?? settingsRow0?.availability_include_pending ?? false;
-      const mvRow = await ctx.db
+      const mvRow = await readReplyQueueRow(await ctx.db
         .query("mv_reply_queue")
         .withIndex("by_account", (q) =>
           q.eq("account", incPending0 ? "all:pending" : "all"),
         )
-        .first();
+        .first());
       if (mvRow && currentQuickReplyCache(mvRow.tiles)) {
         let tiles = mvRow.tiles as Array<
           NonNullable<Awaited<ReturnType<typeof assembleTile>>>

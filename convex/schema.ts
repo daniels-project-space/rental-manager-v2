@@ -1562,6 +1562,9 @@ const operationalSchema = defineSchema({
     account: v.string(),                  // "all" | "all:pending"
     generatedAt: v.number(),
     tiles: v.any(),                       // full sorted getReplyQueue tile array (pre account-filter / limit)
+    tiles_gzip: v.optional(v.bytes()),
+    tiles_sha256: v.optional(v.string()),
+    tiles_codec_version: v.optional(v.literal(1)),
   }).index("by_account", ["account"]),
 
   // 2026-07-09 — wrap-and-cache the DEFAULT (current-week / today) views of
