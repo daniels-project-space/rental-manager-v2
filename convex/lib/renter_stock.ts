@@ -61,6 +61,7 @@ export async function loadReservationsForStockWindow(
   ctx: QueryCtx,
   status: string,
   window?: StockDateWindow,
+  includeWebsiteTimestampRows = true,
 ): Promise<Doc<"reservations">[]> {
   if (!window) {
     return await ctx.db
@@ -79,10 +80,12 @@ export async function loadReservationsForStockWindow(
       .query("reservations")
       .withIndex("by_status_return_date", (q) => q.eq("status", status).gte("return_date", earliestRelevantReturn))
       .collect(),
-    ctx.db
-      .query("reservations")
-      .withIndex("by_account_status", (q) => q.eq("account_slug", "dbcinema_web").eq("status", status))
-      .collect(),
+    includeWebsiteTimestampRows
+      ? ctx.db
+          .query("reservations")
+          .withIndex("by_account_status", (q) => q.eq("account_slug", "dbcinema_web").eq("status", status))
+          .collect()
+      : Promise.resolve([] as Doc<"reservations">[]),
   ]);
   const candidates = [...new Map([
     ...ending,

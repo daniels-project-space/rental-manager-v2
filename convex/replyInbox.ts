@@ -399,7 +399,9 @@ async function loadAvailCtx(
   const confirmedRaw=stockSources.reservations;
   const confirmed=confirmedRaw.filter(r=>!r.is_obsolete&&r.order_step!=="REVIEWED"&&r.status!=="completed");
   const pendingRaw = includePending
-    ? await loadReservationsForStockWindow(ctx, "pending_review", window)
+    // Website pending rows are already part of stockSources.reservations via
+    // its account/status-indexed stock-hold read.
+    ? await loadReservationsForStockWindow(ctx, "pending_review", window, false)
     : [];
   const pending = pendingRaw.filter(
     (r) => r.order_step === "VERIFIED" && !r.is_obsolete,
