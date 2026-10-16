@@ -34,6 +34,19 @@ function signalRows(ctx: QueryCtx, signal: Signal, start: number, end: number) {
   ]);
 }
 
+function failedStepRows(ctx: QueryCtx, start: number, end: number) {
+  return Promise.all([
+    ctx.db.query("reservations").withIndex("by_order_step_fallout_dates", (q) =>
+      q.eq("order_step", "VERIFICATION_FAILED").gte("obsolete_at", start).lt("obsolete_at", end)).collect(),
+    ctx.db.query("reservations").withIndex("by_order_step_fallout_dates", (q) =>
+      q.eq("order_step", "VERIFICATION_FAILED").eq("obsolete_at", undefined)
+        .gte("v1_updated_at", start).lt("v1_updated_at", end)).collect(),
+    ctx.db.query("reservations").withIndex("by_order_step_fallout_dates", (q) =>
+      q.eq("order_step", "VERIFICATION_FAILED").eq("obsolete_at", undefined).eq("v1_updated_at", undefined)
+        .gte("_creationTime", start).lt("_creationTime", end)).collect(),
+  ]);
+}
+
 function obsoleteSignalRows(ctx: QueryCtx, signal: Signal, start: number, end: number) {
   return Promise.all([
     ctx.db.query("reservations").withIndex("by_signal_obsolete_fallout_dates", (q) =>
@@ -79,6 +92,7 @@ async function monthlyVerificationRows(ctx: QueryCtx, start: number, end: number
   const legacySignals: Signal[] = [undefined, "none", "approved"];
   const groups = await Promise.all([
     signalRows(ctx, "verification_failed", start, end),
+    failedStepRows(ctx, start, end),
     ...legacySignals.flatMap((signal) => [
       obsoleteSignalRows(ctx, signal, start, end),
       ...["cancelled", "declined"].flatMap((status) => [
@@ -90,7 +104,8 @@ async function monthlyVerificationRows(ctx: QueryCtx, start: number, end: number
   const inReport = (row: Reservation) => {
     const date = row.obsolete_at ?? row.v1_updated_at ?? row._creationTime;
     return date >= start && date < end && (!account || row.account_slug === account) &&
-      (row.is_obsolete === true || row.status === "cancelled" || row.status === "declined");
+      (row.is_obsolete === true || row.status === "cancelled" || row.status === "declined" ||
+        row.order_step === "VERIFICATION_FAILED");
   };
   const candidates = groups.flat(2).filter((row) => inReport(row) &&
     countPlatformFallout([row]).failed_security_checks_count > 0);
@@ -141,6 +156,6 @@ export async function loadMonthlyVerificationLosses(
     unvalued_count: unvalued,
     scheduled_month: month,
     checked_at: Date.now(),
-    metric_version: 3,
+    metric_version: 4,
   };
 }

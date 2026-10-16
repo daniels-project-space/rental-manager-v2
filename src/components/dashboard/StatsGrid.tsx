@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState, type ReactElement } from "react";
+import { useEffect, useMemo, useState, type ReactElement } from "react";
 import { useReportingMonth } from "@/lib/dashboard/use-reporting-month";
 import { useStableQuery } from "@/lib/dashboard/use-stable-query";
 import {
@@ -57,6 +57,9 @@ import { UtilityBar } from "./UtilityBar";
 import { StatPackingGrid } from "./StatPackingGrid";
 import { WidgetErrorBoundary } from "./WidgetErrorBoundary";
 import WallE from "./WallE/WallE";
+import { londonTime, londonToday } from "../../../convex/lib/effectiveDates";
+import { isOpenPendingReviewBooking } from "../../../convex/lib/pending_review_queue";
+import { compareQuickReplies } from "../../../convex/lib/quick_reply_sort";
 
 // Live poller freshness (2026-07-12). getStatsDrawerData no longer overlays
 // sync_state (severed so the megaquery stops re-running for every tab on every
@@ -172,27 +175,66 @@ function StatsGridSkeleton() {
 
 function PendingReviewPanel({ rentals, otherAccountNewBookingCount }: { rentals: Array<{
   reservation_id: string;
+  thread_id: string;
   created_at: number;
   account_slug: string;
   renter_name?: string | null;
   item_names_summary?: string | null;
   start_date?: string | null;
+  end_date?: string | null;
+  return_date?: string | null;
+  return_time?: string | null;
   net_gbp?: number | null;
+  order_step?: string | null;
+  last_renter_msg_at: number;
 }>; otherAccountNewBookingCount: number }) {
   const { activeAccountSlug, setActiveAccountSlug } = useAccount();
   const [showAll, setShowAll] = useState(false);
-  const previewLimit = 8;
-  const visibleRentals = showAll ? rentals : rentals.slice(0, previewLimit);
+  const [now, setNow] = useState(() => new Date());
+  const threadIds = rentals.map((rental) => rental.thread_id);
+  const availabilityRows = useQuery(api.replyInbox.getPendingReviewAvailability,
+    threadIds.length ? { thread_ids: threadIds } : "skip") as Array<{
+      thread_id: string;
+      availability: { status: "available" | "conflict" | "unknown"; items: Array<{ name: string; requested: number; total_units: number; free: number; available: boolean | null }> } | null;
+    }> | undefined;
+  const availabilityPending = threadIds.length > 0 && availabilityRows === undefined;
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const availabilityByThread = new Map((availabilityRows ?? []).map((row) => [row.thread_id, row.availability]));
+  const prioritizedRentals = rentals.map((rental) => ({
+    ...rental,
+    availability: availabilityByThread.get(rental.thread_id) ?? null,
+  })).sort((a, b) => compareQuickReplies(
+    { thread_id: a.thread_id, last_sender: "renter", last_renter_msg_at: a.last_renter_msg_at,
+      last_activity_at: a.last_renter_msg_at, request_created_at: a.created_at,
+      net_to_owner_gbp: a.net_gbp ?? null, estimate_earnings_gbp: null, availability: a.availability },
+    { thread_id: b.thread_id, last_sender: "renter", last_renter_msg_at: b.last_renter_msg_at,
+      last_activity_at: b.last_renter_msg_at, request_created_at: b.created_at,
+      net_to_owner_gbp: b.net_gbp ?? null, estimate_earnings_gbp: null, availability: b.availability },
+    "priority", now.getTime(),
+  ));
+  const openRentals = prioritizedRentals.filter((rental) => isOpenPendingReviewBooking({
+    status: "pending_review",
+    order_step: rental.order_step,
+    end_date: rental.end_date,
+    return_date: rental.return_date,
+    return_time: rental.return_time,
+  }, londonToday(), londonTime(now)));
+  const availablePreview = openRentals.filter((rental) => rental.availability?.status === "available").slice(0, 2);
+  const visibleRentals = showAll ? openRentals : availablePreview;
+  const hasHiddenRentals = openRentals.length > visibleRentals.length;
 
   return (
-    <section className="rounded-xl border border-sky-500/20 bg-sky-500/[0.04] p-4" aria-label="Bookings awaiting confirmation">
-      <div className="mb-3 flex items-center justify-between gap-3">
+    <section className="rounded-xl border border-sky-500/20 bg-sky-500/[0.04] p-2" aria-label="Bookings awaiting confirmation">
+      <div className="mb-2 flex items-center justify-between gap-3">
           <h2 className="text-xs font-bold uppercase tracking-wider text-sky-300">Bookings awaiting confirmation</h2>
-          <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[11px] font-semibold text-sky-300">{rentals.length}</span>
+          <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[11px] font-semibold text-sky-300">{openRentals.length}</span>
       </div>
-      {!rentals.length && !otherAccountNewBookingCount && <p className="text-xs text-slate-400">No bookings awaiting confirmation</p>}
+      {!openRentals.length && !otherAccountNewBookingCount && <p className="text-xs text-slate-400">No bookings awaiting confirmation</p>}
       {activeAccountSlug && otherAccountNewBookingCount > 0 && (
-        <div className={`flex items-center justify-between gap-3 text-xs text-sky-100 ${rentals.length ? "mb-3 border-b border-sky-500/10 pb-3" : ""}`} role="status">
+        <div className={`flex items-center justify-between gap-3 text-xs text-sky-100 ${openRentals.length ? "mb-2 border-b border-sky-500/10 pb-2" : ""}`} role="status">
           <span>{otherAccountNewBookingCount} new booking{otherAccountNewBookingCount === 1 ? "" : "s"} arrived in other accounts in the last 24 hours.</span>
           <button
             type="button"
@@ -203,35 +245,42 @@ function PendingReviewPanel({ rentals, otherAccountNewBookingCount }: { rentals:
           </button>
         </div>
       )}
-      {rentals.length > 0 && <div className="space-y-2">
+      {!showAll && availabilityPending && <p className="text-[10px] text-slate-500">Checking live availability…</p>}
+      {!showAll && !availabilityPending && !availablePreview.length && openRentals.length > 0 && <p className="text-[10px] text-slate-500">No confirmed available bookings need a reply right now.</p>}
+      {visibleRentals.length > 0 && <div className="space-y-1">
         {visibleRentals.map((rental) => (
-          <div key={rental.reservation_id} className="flex min-w-0 items-center justify-between gap-3 text-xs">
+          <button key={rental.thread_id} type="button" onClick={() => window.dispatchEvent(new CustomEvent("rm-open-thread", { detail: rental.thread_id }))}
+            className="flex w-full min-w-0 items-center justify-between gap-3 rounded-lg border border-white/5 bg-slate-950/30 px-2 py-1.5 text-left text-xs hover:border-sky-400/30 hover:bg-slate-900/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400">
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-2">
                 <span className="truncate text-slate-200">{rental.renter_name || rental.item_names_summary || "New booking"}</span>
-                {Date.now() - rental.created_at < 24 * 60 * 60 * 1000 && (
+                {now.getTime() - rental.created_at < 24 * 60 * 60 * 1000 && (
                   <span className="shrink-0 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-300">
                     New · {new Date(rental.created_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
                   </span>
                 )}
               </div>
               <div className="truncate text-[10px] text-slate-500">
-                {rental.account_slug.replaceAll("_", " ")} · {rental.item_names_summary || "Items pending"} · {rental.start_date || "Date pending"}
+                {rental.account_slug.replaceAll("_", " ")} · {rental.item_names_summary || "Items pending"} · {rental.start_date || "Date pending"}{rental.end_date && rental.end_date !== rental.start_date ? `–${rental.end_date}` : ""}
               </div>
+              {showAll && <div className={`truncate text-[10px] ${rental.availability?.status === "available" ? "text-emerald-300" : rental.availability?.status === "conflict" ? "text-rose-300" : "text-amber-300"}`}>
+                {rental.availability?.status === "available" ? "Available" : rental.availability?.status === "conflict" ? "Stock conflict" : "Availability unknown"}
+                {(rental.availability?.items.length ?? 0) > 0 && ` · ${rental.availability!.items.map((item) => `${item.name} ${item.free}/${item.total_units} free`).join(", ")}`}
+              </div>}
             </div>
             {rental.net_gbp != null && <span className="shrink-0 text-sky-300">{fmtGbpFull(rental.net_gbp)}</span>}
-          </div>
+          </button>
         ))}
       </div>}
-      {rentals.length > previewLimit && (
-        <div className="mt-3 border-t border-sky-500/10 pt-2 text-right">
+      {hasHiddenRentals && (
+        <div className="mt-2 border-t border-sky-500/10 pt-1.5 text-right">
           <button
             type="button"
             aria-expanded={showAll}
             className="text-[11px] font-semibold text-sky-300 hover:text-sky-200"
             onClick={() => setShowAll((expanded) => !expanded)}
           >
-            {showAll ? "Show fewer bookings" : `Show all ${rentals.length} bookings`}
+            {showAll ? "Show top available bookings" : `Show all ${openRentals.length} bookings`}
           </button>
         </div>
       )}
@@ -308,9 +357,6 @@ function StatsGridDetails() {
 
       const active = {
         ...rentalHeadlines.active,
-        pending_review_count: rentalPendingReview?.count ?? 0,
-        pending_review_value_gbp: rentalPendingReview?.value_gbp ?? 0,
-        pending_review_rentals: rentalPendingReview?.rentals ?? [],
         pending_count: 0,
         pending_next_month_count: 0,
       };
@@ -338,10 +384,6 @@ function StatsGridDetails() {
                 <span className="inline-flex items-center gap-1 text-amber-300"><Dot color="#f59e0b" />{active.ongoing_count} ongoing</span>
                 <span className="text-slate-600">+</span>
                 <span className="inline-flex items-center gap-1 text-violet-300"><Dot color="#a78bfa" />{active.upcoming_count} upcoming</span>
-                {active.pending_review_count > 0 && <>
-                  <span className="text-slate-600">+</span>
-                  <span className="inline-flex items-center gap-1 text-sky-300"><Dot color="#38bdf8" />{active.pending_review_count} awaiting confirmation</span>
-                </>}
               </span>
             )}
             headerExtra={<SegmentedBar ongoing={active.ongoing_count} upcoming={active.upcoming_count} pending={0} />}
@@ -399,7 +441,8 @@ function StatsGridDetails() {
       if (Array.isArray(rawAsAny?.[card]?.rentals)) return rawAsAny[card].rentals;
       return [];
     };
-    const snapshotActiveRentals = pickRentals("active") as Array<Record<string, any> & { reservation_id?: string; kind?: string }>;
+    const snapshotActiveRentals = (pickRentals("active") as Array<Record<string, any> & { reservation_id?: string; kind?: string }>)
+      .filter((row) => row.kind !== "review");
     const liveActiveRentals = rentalHeadlines?.active.rentals;
     const livePendingReviewRentals = rentalPendingReview?.rentals ?? [];
     const cachedActiveById = new Map(
@@ -423,10 +466,8 @@ function StatsGridDetails() {
           ...(displayedLiveActiveRentals ?? []),
           ...snapshotActiveRentals.filter((row) =>
             row.kind === "pending" &&
-            !liveActiveRentals.some((live) => live.reservation_id === row.reservation_id) &&
-            !livePendingReviewRentals.some((live) => live.reservation_id === row.reservation_id),
+            !liveActiveRentals.some((live) => live.reservation_id === row.reservation_id),
           ),
-          ...livePendingReviewRentals,
         ]
       : snapshotActiveRentals;
     const data = {
@@ -441,8 +482,6 @@ function StatsGridDetails() {
       active: {
         ...rawAsAny.active,
         ...(rentalHeadlines?.active ?? {}),
-        pending_review_count: rentalPendingReview?.count ?? 0,
-        pending_review_value_gbp: rentalPendingReview?.value_gbp ?? 0,
         rentals: activeRentals,
       },
       ongoing: { ...rawAsAny.ongoing, rentals: pickRentals("ongoing") },
@@ -499,15 +538,6 @@ function StatsGridDetails() {
                       <span className="inline-flex items-center gap-1 text-pink-300">
                         <Dot color="#ec4899" />
                         <span className="font-semibold">{data.active.pending_count}</span> pending
-                      </span>
-                    </>
-                  )}
-                  {(data.active.pending_review_count ?? 0) > 0 && (
-                    <>
-                      <span className="text-slate-600">+</span>
-                      <span className="inline-flex items-center gap-1 text-sky-300">
-                        <Dot color="#38bdf8" />
-                        <span className="font-semibold">{data.active.pending_review_count}</span> awaiting confirmation
                       </span>
                     </>
                   )}

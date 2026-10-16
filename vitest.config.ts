@@ -171,6 +171,8 @@ export default defineConfig({
       "convex/lib/effectiveDates.test.ts",
       "convex/lib/item_name_match.test.ts",
       "convex/lib/platform_fallout.test.ts",
+      "convex/lib/hygglo_order_status.test.ts",
+      "convex/lib/pending_review_queue.test.ts",
       "convex/lib/bundle_description_parse.test.ts",
       "convex/lib/gimbal_battery_identity.test.ts",
       "convex/lib/power_listing_identity.test.ts",

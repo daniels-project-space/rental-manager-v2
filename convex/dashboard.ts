@@ -30,6 +30,8 @@ import {
 } from "./lib/month_projection";
 import { passesNameSanityCheck } from "./lib/reservations/itemResolution";
 import { londonToday, londonTime, pickupIsUpcoming } from "./lib/effectiveDates";
+import { isOpenPendingReviewBooking, needsOwnerReply } from "./lib/pending_review_queue";
+import { compareQuickReplies } from "./lib/quick_reply_sort";
 import { ACCOUNT_SLUGS } from "./lib/reservations/accounts";
 import {
   resolveImageForReservationItem,
@@ -3062,7 +3064,6 @@ type PendingReviewHeadlineStats = {
   month_value_gbp: number;
   rentals: Array<{
     reservation_id: string;
-    calendar_reservation_id: string;
     created_at: number;
     renter_name: string | null;
     account_slug: string;
@@ -3077,8 +3078,8 @@ type PendingReviewHeadlineStats = {
     duration_days: number | null;
     net_gbp: number | null;
     order_step: string | null;
-    kind: "review";
-    is_ongoing: false;
+    thread_id: string;
+    last_renter_msg_at: number;
   }>;
   other_account_new_booking_count: number;
 };
@@ -3112,17 +3113,26 @@ async function loadPendingReviewHeadlineStats(
         q.eq("status", "pending_review").gte("start_date", dashCutoff)
           .lte("start_date", pendingHorizon)).collect()
     : pendingReviewRows;
+  const time = londonTime(now);
   const otherAccountNewBookingCount = accountSlug
     ? dedupByLogicalRental(pendingRowsForArrivalNotice.filter((row) =>
-        !row.is_obsolete && row.account_slug !== accountSlug &&
+        isOpenPendingReviewBooking(row, today, time) && row.account_slug !== accountSlug &&
         row._creationTime >= now.getTime() - 24 * 60 * 60 * 1000,
       )).length
     : 0;
   const scopedPendingReview = dedupByLogicalRental(pendingReviewRows.filter((row) =>
-    !row.is_obsolete && (!accountSlug || row.account_slug === accountSlug),
+    isOpenPendingReviewBooking(row, today, time) && (!accountSlug || row.account_slug === accountSlug),
   ));
-  const rentals = scopedPendingReview
-    .map((row) => {
+  const withConversations = await Promise.all(scopedPendingReview.map(async (row) => {
+    const threadId = row.hygglo_order_id;
+    if (!threadId) return null;
+    const conversation = await ctx.db.query("conversations")
+      .withIndex("by_thread", (q) => q.eq("thread_id", threadId)).first();
+    if (!needsOwnerReply(conversation)) return null;
+    return { row, threadId, conversation };
+  }));
+  const actionRows = withConversations.filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null);
+  const rentals = actionRows.map(({ row, threadId, conversation }) => {
       const rowAny = row as typeof row & { hygglo_items?: Array<{ name?: string; qty?: number }> };
       const names = Array.isArray(rowAny.hygglo_items)
         ? rowAny.hygglo_items.filter((item) => item?.name && !/insurance/i.test(item.name)).map((item) =>
@@ -3130,7 +3140,6 @@ async function loadPendingReviewHeadlineStats(
         : ((row.items ?? []).map((item) => item.item_name).filter(Boolean));
       return {
         reservation_id: row.v1_rental_id ?? row.hygglo_order_id ?? row._id,
-        calendar_reservation_id: row._id,
         created_at: row._creationTime,
         renter_name: row.renter_name ?? null,
         account_slug: row.account_slug ?? "",
@@ -3145,19 +3154,26 @@ async function loadPendingReviewHeadlineStats(
         duration_days: row.duration_days ?? (row.start_date && row.end_date ? inclusiveRentalDays(row.start_date, row.end_date) : null),
         net_gbp: row.net_to_owner_gbp ?? null,
         order_step: row.order_step ?? null,
-        kind: "review" as const,
-        is_ongoing: false as const,
+        thread_id: threadId,
+        last_renter_msg_at: conversation?.last_renter_msg_at ?? 0,
       };
     })
-    .sort((a, b) => b.created_at - a.created_at)
-    .slice(0, 30);
+    .sort((a, b) => compareQuickReplies(
+      { thread_id: a.thread_id, last_sender: "renter", last_renter_msg_at: a.last_renter_msg_at,
+        last_activity_at: a.last_renter_msg_at, request_created_at: a.created_at,
+        net_to_owner_gbp: a.net_gbp, estimate_earnings_gbp: null, availability: null },
+      { thread_id: b.thread_id, last_sender: "renter", last_renter_msg_at: b.last_renter_msg_at,
+        last_activity_at: b.last_renter_msg_at, request_created_at: b.created_at,
+        net_to_owner_gbp: b.net_gbp, estimate_earnings_gbp: null, availability: null },
+      "priority", now.getTime(),
+    ));
   const value = scopedPendingReview.reduce((sum, row) => sum + netOf(row), 0);
   const monthValue = scopedPendingReview
     .filter((row) => effectiveDate(row)?.slice(0, 7) === monthKey)
     .reduce((sum, row) => sum + netOf(row), 0);
 
   return {
-    count: scopedPendingReview.length,
+    count: rentals.length,
     value_gbp: Math.round(value * 100) / 100,
     month_value_gbp: Math.round(monthValue * 100) / 100,
     rentals,

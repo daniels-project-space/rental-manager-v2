@@ -10,7 +10,7 @@ import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { useCalendarOverlay } from "@/lib/dashboard/calendar-overlay-context";
 
-export type Kind = "ongoing" | "upcoming" | "pending" | "review";
+export type Kind = "ongoing" | "upcoming" | "pending";
 
 export interface Rental {
   site_verification?: Pick<WebsiteVerification, "approved" | "documentsApproved" | "status"> | null;
@@ -63,7 +63,6 @@ interface Props {
     upcoming_count: number;
     pending_count: number;
     pending_value_gbp?: number;
-    pending_review_count?: number;
     rentals: Rental[];
   };
 }
@@ -79,7 +78,6 @@ export const SECTION: Record<Kind, { label: string; color: string; bg: string; b
   ongoing:  { label: "ONGOING",  color: "#f59e0b", bg: "bg-amber-500/5",  border: "border-amber-500/20",  ring: "shadow-[inset_3px_0_0_#f59e0b]" },
   upcoming: { label: "UPCOMING", color: "#a78bfa", bg: "bg-violet-500/5", border: "border-violet-500/20", ring: "shadow-[inset_3px_0_0_#a78bfa]" },
   pending:  { label: "PENDING",  color: "#ec4899", bg: "bg-pink-500/5",   border: "border-pink-500/20",   ring: "shadow-[inset_3px_0_0_#ec4899]" },
-  review:   { label: "AWAITING CONFIRMATION", color: "#38bdf8", bg: "bg-sky-500/5", border: "border-sky-500/20", ring: "shadow-[inset_3px_0_0_#38bdf8]" },
 };
 
 export const fmtDate = (d: string) =>
@@ -496,7 +494,7 @@ export function RentalRow({ r }: { r: Rental }) {
   // calendar: confirmed rentals alone reserve inventory there. Every other
   // Active Rentals row has a stable Convex ID that lets the overlay find the
   // exact source booking, including a grouped calendar row.
-  const canOpenCalendar = r.kind !== "pending" && r.kind !== "review" && !!r.calendar_reservation_id;
+  const canOpenCalendar = r.kind !== "pending" && !!r.calendar_reservation_id;
   const openInCalendar = () => {
     if (!canOpenCalendar) return;
     openCalendar({
@@ -753,7 +751,7 @@ export function RentalRow({ r }: { r: Rental }) {
 }
 
 export default function ActiveDrawer({ data }: Props) {
-  const groups: Record<Kind, Rental[]> = { ongoing: [], upcoming: [], pending: [], review: [] };
+  const groups: Record<Kind, Rental[]> = { ongoing: [], upcoming: [], pending: [] };
   for (const r of data.rentals) {
     const k: Kind = r.kind ?? (r.is_ongoing ? "ongoing" : "upcoming");
     groups[k].push(r);
@@ -771,7 +769,6 @@ export default function ActiveDrawer({ data }: Props) {
     { kind: "ongoing", count: data.ongoing_count },
     { kind: "upcoming", count: data.upcoming_count },
     { kind: "pending", count: data.pending_count },
-    { kind: "review", count: data.pending_review_count ?? 0 },
   ];
 
   const anyRows = data.rentals.length > 0;

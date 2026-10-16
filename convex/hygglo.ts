@@ -28,6 +28,7 @@ import {
   type NotifEventInput,
   type NotifType,
 } from "./notifications";
+import { deriveStatusFromStep, obsoleteReasonForOrder, shouldRetainTerminalOrderStep } from "./lib/hygglo_order_status";
 
 // ── order_step helpers ────────────────────────────────────────
 
@@ -123,53 +124,6 @@ const messageArgs = v.array(
 );
 
 // ── Status derivation helper ──────────────────────────────────
-
-/**
- * Derives canonical status from order_step (primary) or sourceFilter (fallback).
- * Fixes the v2 bug where Hygglo's filter=pending contains PAID orders with future
- * start dates — those must be "confirmed", not "pending_review".
- */
-function deriveStatusFromStep(
-  step: string | null | undefined,
-  sourceFilter: string | null | undefined
-): "confirmed" | "pending_review" | "completed" | "cancelled" {
-  // Hygglo's API filter is THE ground-truth bucket — verified by direct
-  // /v4/my/orders inspection. filter=pending always includes any unpaid step
-  // (REQUEST, APPROVED, and FUNDS_RESERVED — Stripe pre-auth is NOT capture).
-  // Mapping the step locally was wrong: it disagreed with Hygglo whenever a
-  // FUNDS_RESERVED row was awaiting verification.
-  if (sourceFilter === "obsolete") return "cancelled";
-  if (sourceFilter === "pending") return "pending_review";
-  if (sourceFilter === "current") {
-    // Per order_step_semantics: RETURNED is the renter's NEXT-TO-DO step,
-    // meaning gear is still with the renter and the rental is ongoing.
-    // Only REVIEWED truly signals "rental wrapped up, awaiting review". The
-    // previous mapping eagerly marked RETURNED as completed, which hid
-    // in-window rentals from the active widget when their owner hadn't yet
-    // ticked the return on Hygglo (2026-05-21 fix).
-    return step === "REVIEWED" ? "completed" : "confirmed";
-  }
-  if (sourceFilter === "future") return "confirmed";
-  // Unknown source — fall back to step-based heuristic.
-  switch (step) {
-    case "REQUEST":
-    case "APPROVED":
-    case "FUNDS_RESERVED":
-      return "pending_review";
-    case "VERIFIED":
-    case "BOOKED_AFTER_VERIFIED":
-    case "DELIVERED":
-    case "RETURNED":
-      return "confirmed";
-    case "REVIEWED":
-      return "completed";
-    case "CANCELED":
-    case "VERIFICATION_FAILED":
-      return "cancelled";
-    default:
-      return "pending_review";
-  }
-}
 
 // ── Mutations ─────────────────────────────────────────────────
 
@@ -1004,28 +958,25 @@ async function upsertOrderImpl(
         | undefined);
     })();
 
+  const existingStep = (existing as { order_step?: string } | null)?.order_step;
+  const effectiveStep = incomingStep ?? existingStep;
   let obsoleteFields: {
     is_obsolete?: boolean;
     obsolete_reason?: "owner_denied" | "renter_cancelled" | "verification_failed" | "other";
+    obsolete_at?: number;
   } = {};
-  if (args.sourceFilter === "obsolete") {
-    let reason: "owner_denied" | "renter_cancelled" | "verification_failed" | "other";
-    if (incomingStep === "REQUEST") {
-      reason = "owner_denied";
-    } else if (incomingStep === "CANCELED") {
-      reason = "renter_cancelled";
-    } else if (
-      incomingStep === "VERIFIED" ||
-      incomingStep === "FUNDS_RESERVED"
-    ) {
-      reason = "verification_failed";
-    } else {
-      reason = "other";
-    }
-    obsoleteFields = { is_obsolete: true, obsolete_reason: reason };
+  const obsoleteReason = obsoleteReasonForOrder(effectiveStep, args.sourceFilter);
+  if (obsoleteReason) {
+    obsoleteFields = {
+      is_obsolete: true,
+      obsolete_reason: obsoleteReason,
+      obsolete_at: existing?.obsolete_at ?? now,
+    };
   }
 
-  const incomingStatus = deriveStatusFromStep(incomingStep, args.sourceFilter);
+  // Retain the last known provider step when a poll omits it. In particular,
+  // a stale `pending` bucket cannot reopen a booking already recorded as failed.
+  const incomingStatus = deriveStatusFromStep(effectiveStep, args.sourceFilter);
 
   // ── renter linkage (2026-05-19) ────────────────────────────
   // Resolve renter_id via hygglo_user_id (indexed). Falls back to undefined
@@ -1129,7 +1080,22 @@ async function upsertOrderImpl(
     }
 
     const storedStep = (existing as { order_step?: string }).order_step ?? null;
-    const isObsoleteUpsert = args.sourceFilter === "obsolete";
+    const isObsoleteUpsert = args.sourceFilter === "obsolete" ||
+      effectiveStep === "CANCELED" || effectiveStep === "VERIFICATION_FAILED";
+    const regressesStoredTerminalStep = shouldRetainTerminalOrderStep(storedStep, incomingStep);
+    const preservedTerminalFields = regressesStoredTerminalStep
+      ? {
+          order_step: storedStep!,
+          status: storedStep === "REVIEWED" ? "completed" as const : "cancelled" as const,
+          ...(storedStep === "CANCELED" || storedStep === "VERIFICATION_FAILED"
+            ? {
+                is_obsolete: true,
+                obsolete_reason: storedStep === "CANCELED" ? "renter_cancelled" as const : "verification_failed" as const,
+                obsolete_at: existing.obsolete_at ?? now,
+              }
+            : {}),
+        }
+      : {};
 
     // Completion-durability guard (2026-06-15). Never let a re-poll of a still-
     // active Hygglo order revert an operator's LOCAL completion back to
@@ -1146,17 +1112,15 @@ async function upsertOrderImpl(
     const preserveLocalCompletion =
       existing.status === "completed" && incomingStatus === "confirmed";
 
-    if (
-      !isObsoleteUpsert &&
-      incomingStep !== undefined &&
-      isStepRegression(storedStep, incomingStep)
-    ) {
+    if (regressesStoredTerminalStep || (
+      !isObsoleteUpsert && incomingStep !== undefined && isStepRegression(storedStep, incomingStep)
+    )) {
       // Stale filter response — preserve order_step but apply non-step fields.
       console.info(
         `[hygglo] Step regression skipped for order ${args.hygglo_order_id}: ` +
           `stored="${storedStep}" incoming="${incomingStep}"`
       );
-      await patchRevenueReservation(ctx, existing._id, { ...baseFields, ...(preserveLocalCompletion ? { status: "completed" as const } : {}), ...obsoleteFields });
+      await patchRevenueReservation(ctx, existing._id, { ...baseFields, ...(preserveLocalCompletion ? { status: "completed" as const } : {}), ...obsoleteFields, ...preservedTerminalFields });
       const hintsRegression = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
       const hyggloItemsRegression = buildHyggloItems(args.items);
       await patchRevenueReservation(ctx, existing._id, { image_hints: hintsRegression, hygglo_items: hyggloItemsRegression });
@@ -1172,6 +1136,7 @@ async function upsertOrderImpl(
             ...baseFields,
             status: preserveLocalCompletion ? "completed" : incomingStatus,
             ...obsoleteFields,
+            ...preservedTerminalFields,
           }),
         },
       };
