@@ -11,10 +11,10 @@ function fmtGbp(n: number): string {
 }
 
 export function WeeklyRevenueSparkline({ accountSlug }: { accountSlug: string | null }) {
-  const data = useQuery(api.dashboard_insights.getWeeklyRevenueSparkline, {
+  const bundle = useQuery(api.dashboard_insights.getDashboardInsightBundle, {
     accountSlug,
-    weeks: 8,
   });
+  const data = bundle?.weeklyRevenueSparkline;
 
   const series = data ?? [];
   const latest = series.length > 0 ? series[series.length - 1].revenue_attributed_gbp : 0;

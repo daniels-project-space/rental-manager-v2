@@ -17,6 +17,7 @@ import {
 } from "./lib/reservations/predicates";
 import { OWNER_SHARE } from "./mv/constants";
 import { ACCOUNT_SLUGS } from "./lib/reservations/accounts";
+import type { QueryCtx } from "./_generated/server";
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -43,10 +44,12 @@ async function fetchWindow(
 ): Promise<Row[]> {
   const cutoff = isoDaysAgo(args.days);
 
-  // weekly_metrics is small (< few thousand rows). Scan + filter in-memory.
-  // The composite index `by_week_account_granularity` requires a leading
-  // week_start; since we want an open-ended window we just scan.
-  const all = (await ctx.db.query("weekly_metrics").collect()) as Row[];
+  // Bound the scan at the leading week_start field, then filter the smaller
+  // account/granularity slice in memory. Older history is not needed by these
+  // recent dashboard widgets.
+  const all = (await ctx.db.query("weekly_metrics")
+    .withIndex("by_week_account_granularity", (q: any) => q.gte("week_start", cutoff))
+    .collect()) as Row[];
   return all.filter(
     (r) =>
       r.granularity === args.granularity &&
@@ -54,6 +57,138 @@ async function fetchWindow(
       (args.accountSlug === null || r.account_slug === args.accountSlug),
   );
 }
+
+type DenialCountField = "voluntary_denied_count" | "capacity_denied_count";
+type DenialGbpField = "voluntary_denied_estimated_gbp" | "capacity_denied_estimated_gbp";
+
+function aggregateDenials(rows: Row[], countField: DenialCountField, gbpField: DenialGbpField) {
+  const agg = new Map<string, { item_id: Id<"items">; name: string; count: number; gbp: number }>();
+  for (const row of rows) {
+    const count = row[countField] ?? 0;
+    const gbp = row[gbpField] ?? 0;
+    if (count === 0 && gbp === 0) continue;
+    if (!row.item_id) continue;
+    const key = row.item_id as string;
+    const current = agg.get(key);
+    if (current) {
+      current.count += count;
+      current.gbp += gbp;
+    } else {
+      agg.set(key, {
+        item_id: row.item_id,
+        name: row.item_name_canonical ?? "(unknown)",
+        count,
+        gbp,
+      });
+    }
+  }
+  return Array.from(agg.values()).sort((a, b) => b.gbp - a.gbp).slice(0, 5);
+}
+
+async function utilizationRanking(ctx: Pick<QueryCtx, "db">, rows: Row[]) {
+  const agg = new Map<string, { item_id: Id<"items">; name: string; util_sum: number; util_n: number }>();
+  for (const row of rows) {
+    if (!row.item_id || row.utilization_rate === undefined || row.utilization_rate === null) continue;
+    const key = row.item_id as string;
+    const current = agg.get(key);
+    if (current) {
+      current.util_sum += row.utilization_rate;
+      current.util_n += 1;
+    } else {
+      agg.set(key, {
+        item_id: row.item_id,
+        name: row.item_name_canonical ?? "(unknown)",
+        util_sum: row.utilization_rate,
+        util_n: 1,
+      });
+    }
+  }
+  type UtilOut = {
+    item_id: Id<"items">;
+    name: string;
+    utilization: number;
+    replacement_cost_gbp: number;
+    idle_cost_per_week: number;
+  };
+  const entries = Array.from(agg.values());
+  const itemDocs = await Promise.all(entries.map((entry) => ctx.db.get(entry.item_id)));
+  const out: UtilOut[] = [];
+  entries.forEach((entry, index) => {
+    const item = itemDocs[index];
+    if (!item) return;
+    const cost = item.replacement_cost_gbp ?? 0;
+    if (cost === 0) return;
+    const utilization = entry.util_sum / entry.util_n;
+    out.push({
+      item_id: entry.item_id,
+      name: entry.name || item.name_canonical,
+      utilization,
+      replacement_cost_gbp: cost,
+      idle_cost_per_week: cost * (1 - utilization) / 52,
+    });
+  });
+  return out.sort((a, b) => b.idle_cost_per_week - a.idle_cost_per_week).slice(0, 5);
+}
+
+function belowMinimumCounter(rows: Row[], days: number) {
+  let count = 0;
+  let gbp = 0;
+  for (const row of rows) {
+    count += row.below_minimum_threshold_denied_count ?? 0;
+    gbp += row.below_minimum_threshold_denied_estimated_gbp ?? 0;
+  }
+  return { count, gbp, days };
+}
+
+function weeklyRevenueSparkline(rows: Row[], weeks: number) {
+  const byWeek = new Map<string, { gross: number; attributed: number; net: number }>();
+  for (const row of rows) {
+    const current = byWeek.get(row.week_start) ?? { gross: 0, attributed: 0, net: 0 };
+    current.gross += row.revenue_gross_gbp ?? 0;
+    current.attributed += row.revenue_attributed_gbp ?? 0;
+    current.net += row.revenue_net_gbp ?? 0;
+    byWeek.set(row.week_start, current);
+  }
+  return Array.from(byWeek.entries())
+    .map(([week_start, values]) => ({
+      week_start,
+      revenue_gross_gbp: values.gross,
+      revenue_attributed_gbp: values.attributed,
+      revenue_net_gbp: values.net,
+    }))
+    .sort((a, b) => a.week_start.localeCompare(b.week_start))
+    .slice(-weeks);
+}
+
+/** One subscription shares the weekly_metrics read across the five dashboard
+ * insight cards. Identical account arguments are deduplicated by Convex's
+ * client, so showing all five cards no longer runs five full-table reads. */
+export const getDashboardInsightBundle = query({
+  args: { accountSlug: v.union(v.string(), v.null()) },
+  handler: async (ctx, { accountSlug }) => {
+    const rows = (await ctx.db.query("weekly_metrics")
+      .withIndex("by_week_account_granularity", (q) => q.gte("week_start", isoDaysAgo(90)))
+      .collect()) as Row[];
+    const scoped = rows.filter((row) => accountSlug === null || row.account_slug === accountSlug);
+    const itemRows = scoped.filter((row) => row.granularity === "item");
+    const globalRows = scoped.filter((row) => row.granularity === "global");
+    const utilizationCutoff = isoDaysAgo(4 * 7);
+    const revenueCutoff = isoDaysAgo(8 * 7 + 7);
+    const [utilization, voluntaryDenyHotList] = await Promise.all([
+      utilizationRanking(ctx, itemRows.filter((row) => row.week_start >= utilizationCutoff)),
+      Promise.resolve(aggregateDenials(itemRows, "voluntary_denied_count", "voluntary_denied_estimated_gbp")),
+    ]);
+    return {
+      voluntaryDenyHotList,
+      capacityGapAlert: aggregateDenials(itemRows, "capacity_denied_count", "capacity_denied_estimated_gbp"),
+      itemUtilizationRanking: utilization,
+      belowMinimumCounter: belowMinimumCounter(globalRows, 90),
+      weeklyRevenueSparkline: weeklyRevenueSparkline(
+        globalRows.filter((row) => row.week_start >= revenueCutoff), 8,
+      ),
+    };
+  },
+});
 
 // ── 1. Voluntary Deny Hot List ────────────────────────────────────────
 
@@ -64,29 +199,7 @@ export const getVoluntaryDenyHotList = query({
   },
   handler: async (ctx, { accountSlug, days = 90 }) => {
     const rows = await fetchWindow(ctx, { accountSlug, days, granularity: "item" });
-    const agg = new Map<string, { item_id: Id<"items">; name: string; count: number; gbp: number }>();
-    for (const r of rows) {
-      const c = r.voluntary_denied_count ?? 0;
-      const g = r.voluntary_denied_estimated_gbp ?? 0;
-      if (c === 0 && g === 0) continue;
-      if (!r.item_id) continue;
-      const key = r.item_id as string;
-      const cur = agg.get(key);
-      if (cur) {
-        cur.count += c;
-        cur.gbp += g;
-      } else {
-        agg.set(key, {
-          item_id: r.item_id,
-          name: r.item_name_canonical ?? "(unknown)",
-          count: c,
-          gbp: g,
-        });
-      }
-    }
-    return Array.from(agg.values())
-      .sort((a, b) => b.gbp - a.gbp)
-      .slice(0, 5);
+    return aggregateDenials(rows, "voluntary_denied_count", "voluntary_denied_estimated_gbp");
   },
 });
 
@@ -99,29 +212,7 @@ export const getCapacityGapAlert = query({
   },
   handler: async (ctx, { accountSlug, days = 90 }) => {
     const rows = await fetchWindow(ctx, { accountSlug, days, granularity: "item" });
-    const agg = new Map<string, { item_id: Id<"items">; name: string; count: number; gbp: number }>();
-    for (const r of rows) {
-      const c = r.capacity_denied_count ?? 0;
-      const g = r.capacity_denied_estimated_gbp ?? 0;
-      if (c === 0 && g === 0) continue;
-      if (!r.item_id) continue;
-      const key = r.item_id as string;
-      const cur = agg.get(key);
-      if (cur) {
-        cur.count += c;
-        cur.gbp += g;
-      } else {
-        agg.set(key, {
-          item_id: r.item_id,
-          name: r.item_name_canonical ?? "(unknown)",
-          count: c,
-          gbp: g,
-        });
-      }
-    }
-    return Array.from(agg.values())
-      .sort((a, b) => b.gbp - a.gbp)
-      .slice(0, 5);
+    return aggregateDenials(rows, "capacity_denied_count", "capacity_denied_estimated_gbp");
   },
 });
 
@@ -137,59 +228,7 @@ export const getItemUtilizationRanking = query({
   handler: async (ctx, { accountSlug, weeks = 4 }) => {
     const days = weeks * 7;
     const rows = await fetchWindow(ctx, { accountSlug, days, granularity: "item" });
-    const agg = new Map<string, { item_id: Id<"items">; name: string; util_sum: number; util_n: number }>();
-    for (const r of rows) {
-      if (!r.item_id) continue;
-      const u = r.utilization_rate;
-      if (u === undefined || u === null) continue;
-      const key = r.item_id as string;
-      const cur = agg.get(key);
-      if (cur) {
-        cur.util_sum += u;
-        cur.util_n += 1;
-      } else {
-        agg.set(key, {
-          item_id: r.item_id,
-          name: r.item_name_canonical ?? "(unknown)",
-          util_sum: u,
-          util_n: 1,
-        });
-      }
-    }
-    // Need replacement_cost_gbp from items table.
-    // 2026-08 cost audit: this is subscribed live by ItemUtilizationRanking.tsx
-    // and previously did a sequential `await ctx.db.get()` per item — N
-    // round-trips in series. Batched via Promise.all (same doc reads, run in
-    // parallel instead of serially).
-    type UtilOut = {
-      item_id: Id<"items">;
-      name: string;
-      utilization: number;
-      replacement_cost_gbp: number;
-      idle_cost_per_week: number;
-    };
-    const aggEntries = Array.from(agg.values());
-    const itemDocs = await Promise.all(aggEntries.map((v) => ctx.db.get(v.item_id)));
-    const out: UtilOut[] = [];
-    aggEntries.forEach((v, i) => {
-      const item = itemDocs[i];
-      if (!item) return;
-      const cost = item.replacement_cost_gbp ?? 0;
-      if (cost === 0) return;
-      const util = v.util_sum / v.util_n;
-      const idle = cost * (1 - util);
-      // Crude weekly idle £ proxy: replacement cost × idle ratio × (1/52)
-      // — keeps units sensible (~weekly opportunity cost).
-      const idle_per_week = idle / 52;
-      out.push({
-        item_id: v.item_id,
-        name: v.name || item.name_canonical,
-        utilization: util,
-        replacement_cost_gbp: cost,
-        idle_cost_per_week: idle_per_week,
-      });
-    });
-    return out.sort((a, b) => b.idle_cost_per_week - a.idle_cost_per_week).slice(0, 5);
+    return utilizationRanking(ctx, rows);
   },
 });
 
@@ -202,13 +241,7 @@ export const getBelowMinimumCounter = query({
   },
   handler: async (ctx, { accountSlug, days = 90 }) => {
     const rows = await fetchWindow(ctx, { accountSlug, days, granularity: "global" });
-    let count = 0;
-    let gbp = 0;
-    for (const r of rows) {
-      count += r.below_minimum_threshold_denied_count ?? 0;
-      gbp += r.below_minimum_threshold_denied_estimated_gbp ?? 0;
-    }
-    return { count, gbp, days };
+    return belowMinimumCounter(rows, days);
   },
 });
 
@@ -222,24 +255,7 @@ export const getWeeklyRevenueSparkline = query({
   handler: async (ctx, { accountSlug, weeks = 8 }) => {
     const days = weeks * 7 + 7; // slight pad for boundary weeks
     const rows = await fetchWindow(ctx, { accountSlug, days, granularity: "global" });
-    // Group by week_start. When accountSlug is null we sum both accounts.
-    const byWeek = new Map<string, { gross: number; attributed: number; net: number }>();
-    for (const r of rows) {
-      const cur = byWeek.get(r.week_start) ?? { gross: 0, attributed: 0, net: 0 };
-      cur.gross += r.revenue_gross_gbp ?? 0;
-      cur.attributed += r.revenue_attributed_gbp ?? 0;
-      cur.net += r.revenue_net_gbp ?? 0;
-      byWeek.set(r.week_start, cur);
-    }
-    return Array.from(byWeek.entries())
-      .map(([week_start, v]) => ({
-        week_start,
-        revenue_gross_gbp: v.gross,
-        revenue_attributed_gbp: v.attributed,
-        revenue_net_gbp: v.net,
-      }))
-      .sort((a, b) => a.week_start.localeCompare(b.week_start))
-      .slice(-weeks);
+    return weeklyRevenueSparkline(rows, weeks);
   },
 });
 

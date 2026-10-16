@@ -10,10 +10,10 @@ function fmtGbp(n: number): string {
 }
 
 export function VoluntaryDenyHotList({ accountSlug }: { accountSlug: string | null }) {
-  const data = useQuery(api.dashboard_insights.getVoluntaryDenyHotList, {
+  const bundle = useQuery(api.dashboard_insights.getDashboardInsightBundle, {
     accountSlug,
-    days: 90,
   });
+  const data = bundle?.voluntaryDenyHotList;
 
   return (
     <div

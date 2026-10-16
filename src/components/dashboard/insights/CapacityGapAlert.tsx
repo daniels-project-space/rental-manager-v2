@@ -10,10 +10,10 @@ function fmtGbp(n: number): string {
 }
 
 export function CapacityGapAlert({ accountSlug }: { accountSlug: string | null }) {
-  const data = useQuery(api.dashboard_insights.getCapacityGapAlert, {
+  const bundle = useQuery(api.dashboard_insights.getDashboardInsightBundle, {
     accountSlug,
-    days: 90,
   });
+  const data = bundle?.capacityGapAlert;
 
   return (
     <div

@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import type { QueryCtx } from "./_generated/server";
+import { getDashboardInsightBundle } from "./dashboard_insights";
 import { liveReservationsEndingSince } from "./lib/live_reservation_window";
 
 // Inclusive day-count (Hygglo convention) — must match overlapDays used in
@@ -97,6 +98,65 @@ describe("dashboard_insights — revenue MTD day-range clamp", () => {
 
   it("does not clamp when prev month has enough days", () => {
     expect(clampPrevDay(15, 2026, 0)).toBe(15); // Jan 2026
+  });
+});
+
+describe("dashboard_insights — batched recent widget reads", () => {
+  it("reads one bounded metrics window and preserves each card's account-scoped values", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-16T12:00:00.000Z"));
+    vi.stubEnv("OWNER_AUTH_REQUIRED", "false");
+    const rows = [
+      { account_slug: "dbcinema", granularity: "item", week_start: "2026-10-05", item_id: "item-a", item_name_canonical: "A", utilization_rate: 0.5, voluntary_denied_count: 1, voluntary_denied_estimated_gbp: 50, capacity_denied_count: 0, capacity_denied_estimated_gbp: 0 },
+      { account_slug: "dbcinema", granularity: "item", week_start: "2026-10-12", item_id: "item-a", item_name_canonical: "A", utilization_rate: 0.75, voluntary_denied_count: 0, voluntary_denied_estimated_gbp: 0, capacity_denied_count: 2, capacity_denied_estimated_gbp: 100 },
+      { account_slug: "dbcinema", granularity: "item", week_start: "2026-08-01", item_id: "item-b", item_name_canonical: "B", utilization_rate: 0.2, voluntary_denied_count: 2, voluntary_denied_estimated_gbp: 250, capacity_denied_count: 1, capacity_denied_estimated_gbp: 25 },
+      { account_slug: "other", granularity: "item", week_start: "2026-10-12", item_id: "item-c", item_name_canonical: "C", utilization_rate: 0, voluntary_denied_count: 20, voluntary_denied_estimated_gbp: 2000, capacity_denied_count: 20, capacity_denied_estimated_gbp: 2000 },
+      { account_slug: "dbcinema", granularity: "global", week_start: "2026-10-05", below_minimum_threshold_denied_count: 2, below_minimum_threshold_denied_estimated_gbp: 200, revenue_gross_gbp: 100, revenue_attributed_gbp: 90, revenue_net_gbp: 80 },
+      { account_slug: "dbcinema", granularity: "global", week_start: "2026-10-12", below_minimum_threshold_denied_count: 3, below_minimum_threshold_denied_estimated_gbp: 300, revenue_gross_gbp: 200, revenue_attributed_gbp: 180, revenue_net_gbp: 160 },
+      { account_slug: "dbcinema", granularity: "global", week_start: "2026-08-01", below_minimum_threshold_denied_count: 4, below_minimum_threshold_denied_estimated_gbp: 400, revenue_gross_gbp: 400, revenue_attributed_gbp: 360, revenue_net_gbp: 320 },
+      { account_slug: "dbcinema", granularity: "global", week_start: "2026-07-01", below_minimum_threshold_denied_count: 100, below_minimum_threshold_denied_estimated_gbp: 10000, revenue_gross_gbp: 10000, revenue_attributed_gbp: 9000, revenue_net_gbp: 8000 },
+    ];
+    const indexReads: Array<{ index: string; gte?: [string, string] }> = [];
+    const idReads: string[] = [];
+    const db = {
+      query: vi.fn((table: string) => ({
+        withIndex: (index: string, select: (q: any) => unknown) => {
+          const bounds: { gte?: [string, string] } = {};
+          const q = { gte: (field: string, value: string) => { bounds.gte = [field, value]; return q; } };
+          select(q);
+          indexReads.push({ index, ...bounds });
+          return {
+            collect: async () => rows.filter((row) => !bounds.gte || (row as any)[bounds.gte[0]] >= bounds.gte[1]),
+          };
+        },
+      })),
+      get: vi.fn(async (id: string) => {
+        idReads.push(id);
+        return id === "item-a" ? { _id: id, name_canonical: "A", replacement_cost_gbp: 5200 } : null;
+      }),
+    };
+
+    try {
+      const result = await (getDashboardInsightBundle as any)._handler(
+        { db } as unknown as QueryCtx,
+        { accountSlug: "dbcinema" },
+      );
+
+      expect(indexReads).toEqual([{ index: "by_week_account_granularity", gte: ["week_start", "2026-07-18"] }]);
+      expect(db.query).toHaveBeenCalledTimes(1);
+      expect(idReads).toEqual(["item-a"]);
+      expect(result.voluntaryDenyHotList[0]).toMatchObject({ item_id: "item-b", count: 2, gbp: 250 });
+      expect(result.capacityGapAlert[0]).toMatchObject({ item_id: "item-a", count: 2, gbp: 100 });
+      expect(result.itemUtilizationRanking[0]).toMatchObject({ item_id: "item-a", utilization: 0.625, idle_cost_per_week: 37.5 });
+      expect(result.belowMinimumCounter).toEqual({ count: 9, gbp: 900, days: 90 });
+      expect(result.weeklyRevenueSparkline).toEqual([
+        { week_start: "2026-10-05", revenue_gross_gbp: 100, revenue_attributed_gbp: 90, revenue_net_gbp: 80 },
+        { week_start: "2026-10-12", revenue_gross_gbp: 200, revenue_attributed_gbp: 180, revenue_net_gbp: 160 },
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.useRealTimers();
+    }
   });
 });
 

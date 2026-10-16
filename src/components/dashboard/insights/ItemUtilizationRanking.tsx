@@ -10,10 +10,10 @@ function fmtGbp(n: number): string {
 }
 
 export function ItemUtilizationRanking({ accountSlug }: { accountSlug: string | null }) {
-  const data = useQuery(api.dashboard_insights.getItemUtilizationRanking, {
+  const bundle = useQuery(api.dashboard_insights.getDashboardInsightBundle, {
     accountSlug,
-    weeks: 4,
   });
+  const data = bundle?.itemUtilizationRanking;
 
   return (
     <div
