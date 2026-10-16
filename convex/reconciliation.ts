@@ -3,7 +3,6 @@ import { query } from "./owner_functions";
 import type { Doc } from "./_generated/dataModel";
 import { DEAD_ORDER_STEPS } from "./order_step_semantics";
 
-const deadSteps = new Set<string>(DEAD_ORDER_STEPS);
 function project(row: Doc<"reservations">) {
   return {
     _id: row._id, hygglo_order_id: row.hygglo_order_id, account_slug: row.account_slug,
@@ -19,42 +18,31 @@ export const listBatch = query({
   handler: async (ctx, { account_slugs }) => {
     const accounts = [...new Set(account_slugs)];
     if (accounts.length > 8) throw new Error("Reconciliation supports up to eight accounts per batch");
-    if (!accounts.length) return { strategy: "held-index" as const, groups: [] };
+    if (!accounts.length) return { strategy: "reservation-index" as const, groups: [] };
     const today = new Date();
     const lookback = new Date(today); lookback.setUTCDate(lookback.getUTCDate() - 400);
     const cutoff = lookback.toISOString().slice(0, 10);
     const past = new Date(today); past.setUTCDate(past.getUTCDate() - 30);
     const pastCutoff = past.toISOString().slice(0, 10);
-    const held = await ctx.db.query("calendar_holds").take(4001);
-    const ids = [...new Set(held.map(h => h.reservation_id).filter(id => id !== undefined))];
-    // Never silently truncate. Larger deployments retain the original exact
-    // history scan until their hold-reference index can be normalized safely.
-    if (held.length > 4000 || ids.length > 1000) {
-      const groups = [];
-      for (const account_slug of accounts) {
-        const rows = await ctx.db.query("reservations").withIndex("by_account_start", q =>
-          q.eq("account_slug", account_slug).gte("start_date", cutoff)).collect();
-        groups.push({ account_slug, reservations: rows.map(project) });
-      }
-      return { strategy: "history-fallback" as const, groups };
-    }
-    // The reservation owns the account identity. Historic holds sometimes
-    // carry another account's slug; do not trust that denormalized field for
-    // cleanup. Read each held reservation once across the entire poll cycle.
-    const terminal: Doc<"reservations">[] = [];
-    for (let offset = 0; offset < ids.length; offset += 32) {
-      const rows = await Promise.all(ids.slice(offset, offset + 32).map(id => ctx.db.get(id)));
-      for (const row of rows) {
-        if (row && row.account_slug && accounts.includes(row.account_slug) &&
-          typeof row.start_date === "string" && row.start_date >= cutoff &&
-          (row.is_obsolete || (row.order_step && deadSteps.has(row.order_step)))) terminal.push(row);
-      }
-    }
+    // Candidate bookings are derived from reservation date indexes below.
+    // Scanning calendar_holds to find reservation IDs made this refresh grow
+    // with every item/day row, then fell back to collecting 400 days of fat
+    // reservation documents once either threshold was crossed. The indexed
+    // candidate set already covers the 30-day past window and all later end or
+    // return dates; terminal rows are loaded directly from bounded indexes.
     const groups = [];
     for (const account_slug of accounts) {
-      const candidates: Doc<"reservations">[] = terminal.filter(row => row.account_slug === account_slug);
-      // Exclude obsolete history in the index, before reading its documents.
-      // Legacy missing flags remain eligible exactly like explicit false.
+      const candidates: Doc<"reservations">[] = [];
+      const obsolete = await ctx.db.query("reservations").withIndex("by_account_obsolete_start", q =>
+        q.eq("account_slug", account_slug).eq("is_obsolete", true).gte("start_date", cutoff)).collect();
+      candidates.push(...obsolete);
+      for (const step of DEAD_ORDER_STEPS) {
+        const dead = await ctx.db.query("reservations").withIndex("by_account_order_step_start", q =>
+          q.eq("account_slug", account_slug).eq("order_step", step).gte("start_date", cutoff)).collect();
+        candidates.push(...dead);
+      }
+      // Exclude obsolete history from the active date indexes before reading
+      // documents. Legacy missing flags remain eligible exactly like false.
       for (const obsolete of [false, undefined] as const) {
         const [ending, extended] = await Promise.all([
           ctx.db.query("reservations").withIndex("by_account_obsolete_end", q =>
@@ -69,6 +57,6 @@ export const listBatch = query({
         .sort((a, b) => (a.start_date ?? "").localeCompare(b.start_date ?? "") || a._creationTime - b._creationTime);
       groups.push({ account_slug, reservations: rows.map(project) });
     }
-    return { strategy: "held-index" as const, groups };
+    return { strategy: "reservation-index" as const, groups };
   },
 });

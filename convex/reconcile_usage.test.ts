@@ -82,13 +82,13 @@ describe("indexed hold reconciliation candidates", () => {
     } finally { vi.useRealTimers(); }
   });
 
-  it("falls back to complete history rather than truncating a large hold index", async () => {
+  it("uses reservation indexes rather than scanning a large hold index", async () => {
     vi.stubEnv("OWNER_AUTH_REQUIRED", "false");
     const rows=[{_id:"booking",_creationTime:1,account_slug:"leo",start_date:"2099-01-01",end_date:"2099-01-02",status:"confirmed"}];
     const holds=Array.from({length:4001},(_,i)=>({_id:`hold-${i}`,reservation_id:`reservation-${i}`}));
     const {ctx}=context(rows,holds);
     const batch=await (listBatch as any)._handler(ctx,{account_slugs:["leo","leo"]});
-    expect(batch.strategy).toBe("history-fallback");
+    expect(batch.strategy).toBe("reservation-index");
     expect(batch.groups).toHaveLength(1);
     expect(batch.groups[0].reservations.map((r:any)=>r._id)).toEqual(["booking"]);
   });

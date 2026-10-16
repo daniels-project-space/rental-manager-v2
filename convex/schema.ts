@@ -760,6 +760,11 @@ const operationalSchema = defineSchema({
     // not read every account's full reservation documents before filtering.
     .index("by_account_status_start_date", ["account_slug", "status", "start_date"])
     .index("by_account_pickup_date", ["account_slug", "pickup_date"])
+    // Reconciliation can load terminal reservations by the same bounded
+    // account/date window as active candidates, without scanning calendar_holds
+    // or falling back to the full 400-day account history.
+    .index("by_account_obsolete_start", ["account_slug", "is_obsolete", "start_date"])
+    .index("by_account_order_step_start", ["account_slug", "order_step", "start_date"])
     // Missed-revenue capacity checks are bounded to the dates of recent
     // countable demand. Keep both source and negotiated date fields indexed:
     // pickup/return dates override start/end when present, and older confirmed
