@@ -102,9 +102,7 @@ function rollup(rows: { name: string; value: number }[]): MissedItem[] {
 /**
  * Read only confirmed rentals that can overlap the demand date envelope.
  * Starts inside the envelope are found through the start/pickup indexes;
- * older long rentals are found through return/end indexes. Account-specific
- * calls use account-leading variants of those indexes to avoid reading other
- * owners' reservations. The latter range
+ * older long rentals are found through return/end indexes. The latter range
  * is intentionally open-ended: a booking that began years ago can still
  * overlap a requested date. Effective dates are rechecked with the exact same
  * pickup/return fallbacks as bookedUnitsOnDate before a row is retained.
@@ -113,48 +111,30 @@ export async function confirmedForDemandWindow(
   ctx: QueryCtx,
   from: string,
   to: string,
-  accountSlug?: string,
 ): Promise<Doc<"reservations">[]> {
-  const accountScoped = accountSlug !== undefined;
+  // Keep this capacity set cross-account: physical item rows can be listed
+  // through multiple rental accounts, so another account's confirmed booking
+  // can still occupy the same inventory unit.
   const [byStart, byPickup, byReturn, byEnd] = await Promise.all([
     // The start-date fallback only needs rows that lack a negotiated pickup
     // date. The pickup index has start_date as its third field, so this stays
     // bounded without rereading the rows handled by byPickup.
-    accountScoped
-      ? ctx.db.query("reservations").withIndex("by_account_status_pickup_date", (q) =>
-          q.eq("account_slug", accountSlug).eq("status", "confirmed")
-            .eq("pickup_date", undefined).gte("start_date", from).lte("start_date", to),
-        ).collect()
-      : ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
-          q.eq("status", "confirmed").eq("pickup_date", undefined)
-            .gte("start_date", from).lte("start_date", to),
-        ).collect(),
-    accountScoped
-      ? ctx.db.query("reservations").withIndex("by_account_status_pickup_date", (q) =>
-          q.eq("account_slug", accountSlug).eq("status", "confirmed")
-            .gte("pickup_date", from).lte("pickup_date", to),
-        ).collect()
-      : ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
-          q.eq("status", "confirmed").gte("pickup_date", from).lte("pickup_date", to),
-        ).collect(),
-    accountScoped
-      ? ctx.db.query("reservations").withIndex("by_account_status_return_date", (q) =>
-          q.eq("account_slug", accountSlug).eq("status", "confirmed").gte("return_date", from),
-        ).collect()
-      : ctx.db.query("reservations").withIndex("by_status_return_date", (q) =>
-          q.eq("status", "confirmed").gte("return_date", from),
-        ).collect(),
+    ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
+      q.eq("status", "confirmed").eq("pickup_date", undefined)
+        .gte("start_date", from).lte("start_date", to),
+    ).collect(),
+    ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
+      q.eq("status", "confirmed").gte("pickup_date", from).lte("pickup_date", to),
+    ).collect(),
+    ctx.db.query("reservations").withIndex("by_status_return_date", (q) =>
+      q.eq("status", "confirmed").gte("return_date", from),
+    ).collect(),
     // Same rule for the legacy return-date fallback: query end_date only when
     // return_date is absent. This avoids reading the same reservation through
     // both indexes while retaining older long-term rentals in the overlap set.
-    accountScoped
-      ? ctx.db.query("reservations").withIndex("by_account_status_return_end_date", (q) =>
-          q.eq("account_slug", accountSlug).eq("status", "confirmed")
-            .eq("return_date", undefined).gte("end_date", from),
-        ).collect()
-      : ctx.db.query("reservations").withIndex("by_status_return_end_date", (q) =>
-          q.eq("status", "confirmed").eq("return_date", undefined).gte("end_date", from),
-        ).collect(),
+    ctx.db.query("reservations").withIndex("by_status_return_end_date", (q) =>
+      q.eq("status", "confirmed").eq("return_date", undefined).gte("end_date", from),
+    ).collect(),
   ]);
 
   const rows = new Map<string, Doc<"reservations">>();
@@ -346,12 +326,7 @@ export async function computeMissedRevenue(
     pre?.productIndexRows ?? ctx.db.query("hygglo_product_index").collect(),
     pre?.overrideRows ?? ctx.db.query("listing_resolution_override").collect(),
     capacityFrom && capacityTo
-      ? confirmedForDemandWindow(
-          ctx,
-          capacityFrom,
-          capacityTo,
-          account ? accountSlug ?? undefined : undefined,
-        )
+      ? confirmedForDemandWindow(ctx, capacityFrom, capacityTo)
       : Promise.resolve([] as Doc<"reservations">[]),
   ]);
   const itemById = new Map(items.map((i) => [String(i._id), i]));
