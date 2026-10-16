@@ -1,6 +1,6 @@
 import {londonStockInstant,londonStockLabel,bufferedStockEnd,TURNAROUND_BUFFER_MS,TURNAROUND_BUFFER_MINUTES} from "../confirmed_schedule";
 import type { Id } from "../../_generated/dataModel";
-import { withDefaultAdapters, type AdapterInventoryItem } from "../default_adapter_units";
+import { withDefaultAdapters, type AdapterInventoryItem, type DefaultAdapterIndex } from "../default_adapter_units";
 
 type XItem = { item_id?: Id<"items"> | string | null; item_name_canonical?: string; qty?: number };
 type HItem = { name?: string; product_id?: number; qty?: number };
@@ -68,6 +68,7 @@ export function reservationItemUnits(
   overrideMap?: OverrideMap,
   inventory: AdapterInventoryItem[] = [],
   date?: string,
+  adapterIndex?: DefaultAdapterIndex,
 ): Map<string, number> {
   const listingQty = (h: HItem) => {
     const qty = h.qty ?? 1;
@@ -76,7 +77,7 @@ export function reservationItemUnits(
   };
   const auditedComponents = (components: Array<{item_id: string; qty: number}>) => {
     if (components.some(c => !c.item_id || !Number.isSafeInteger(c.qty) || c.qty < 1)) throw Error("Invalid audited kit quantity");
-    return withDefaultAdapters(components, inventory).components;
+    return withDefaultAdapters(components, inventory, adapterIndex).components;
   };
   const addUnits = (map: Map<string, number>, id: string, qty: number) => {
     const total = (map.get(id) ?? 0) + qty;
@@ -135,7 +136,7 @@ export function reservationItemUnits(
     }
     for (const [id, qty] of audited) m.set(id, qty);
   }
-  return new Map(withDefaultAdapters([...m].map(([item_id,qty]) => ({item_id,qty})),inventory).components.map(c=>[c.item_id,c.qty]));
+  return new Map(withDefaultAdapters([...m].map(([item_id,qty]) => ({item_id,qty})),inventory,adapterIndex).components.map(c=>[c.item_id,c.qty]));
 }
 
 

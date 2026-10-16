@@ -7,6 +7,14 @@ export type AdapterInventoryItem = {
   compatibility?: { included_with_rental?: string[] };
 };
 export type PhysicalUnit = { item_id: string; qty: number };
+export type DefaultAdapterIndex = ReadonlyMap<string, ReturnType<typeof defaultAdapterUnits>>;
+
+/** Build the inventory-dependent accessory expansion once for a stock snapshot.
+ * Reservation processing can then reuse it instead of repeatedly fuzzy-matching
+ * every camera's included adapters against the whole catalogue. */
+export function createDefaultAdapterIndex(inventory: AdapterInventoryItem[]): DefaultAdapterIndex {
+  return new Map(inventory.map((item) => [String(item._id), defaultAdapterUnits(item, inventory)]));
+}
 
 /** Only explicitly recorded supplied adapters, never mount compatibility or
  * customary accessories. Counted supplied pools require explicit item IDs and units;
@@ -45,7 +53,11 @@ export function defaultAdapterUnits(item: AdapterInventoryItem, inventory: Adapt
 
 /** Expand EACH logical listing before basket aggregation. Explicitly mapped
  * supplied components overlap defaults; a separate extra line adds its own units. */
-export function withDefaultAdapters(units: PhysicalUnit[], inventory: AdapterInventoryItem[]) {
+export function withDefaultAdapters(
+  units: PhysicalUnit[],
+  inventory: AdapterInventoryItem[],
+  adapterIndex?: DefaultAdapterIndex,
+) {
   const quantities = new Map<string, number>();
   for (const c of units) quantities.set(c.item_id, (quantities.get(c.item_id) ?? 0) + c.qty);
   const defaults = new Map<string, number>();
@@ -53,7 +65,7 @@ export function withDefaultAdapters(units: PhysicalUnit[], inventory: AdapterInv
   for (const [id, qty] of quantities) {
     const item = inventory.find(i => String(i._id) === id);
     if (!item) continue;
-    const included = defaultAdapterUnits(item, inventory);
+    const included = adapterIndex?.get(id) ?? defaultAdapterUnits(item, inventory);
     unresolved.push(...included.unresolved);
     for (const c of included.components) defaults.set(c.item_id, (defaults.get(c.item_id) ?? 0) + c.qty * qty);
   }
