@@ -1,6 +1,7 @@
 
 import { patchRevenueReservation } from "./lib/reservation_revenue";
 import {orderedReplyMessages} from "./lib/reply_message_order";
+import { readOnlineListing } from "./lib/online_listing_read";
 import { renterMessageWatermark } from "./lib/renter_message_watermark";
 import {requestedImageItems} from "./lib/quick_reply_requested_items";
 import {currentQuickReplyCache} from "./lib/quick_reply_cache";
@@ -457,7 +458,7 @@ export async function extendAvailabilityMappings(ctx:QueryCtx,av:AvailCtx,rental
   const keys=reservedListingKeys(rentals);
   const [products,listings]=await Promise.all([
     Promise.all(keys.map(key=>loadProductContext(ctx,key.account,key.productId,av.stockSources.productContextCache??=new Map()))),
-    Promise.all(keys.map(key=>ctx.db.query("online_listings").withIndex("by_account_product",q=>q.eq("account_slug",key.account).eq("product_id",key.productId)).first())),
+    Promise.all(keys.map(key=>readOnlineListing(ctx,key.account,key.productId))),
   ]);
   const productRows=products.filter((row):row is NonNullable<typeof row>=>row!==null).map(row=>({accountSlug:row.account_slug,productId:row.product_id,name:row.name,description:row.description,masterItemId:row.master_item_id})),listingRows=listings.filter((row):row is Doc<"online_listings">=>row!==null);
   const overrides=canonicalListingAllocation(av.itemRows,seed,productRows,listingRows);
@@ -552,12 +553,17 @@ export function computeAvailability(reservation:BotBooking|null,av?:AvailCtx,req
  * the renter-last pass and the always-include REQUEST pass so both emit an
  * identical shape (item thumbnails, booking/request context, urgency driver).
  */
-async function loadReplyTileMessages(ctx: QueryCtx, threadId: string) {
-  const messagePages = await Promise.all([
-    ctx.db.query("hygglo_messages").withIndex("by_thread_and_sent_at", q => q.eq("thread_id", threadId)).order("desc").take(40),
-    // Include recently ingested messages missing a provider timestamp.
-    ctx.db.query("hygglo_messages").withIndex("by_thread", q => q.eq("thread_id", threadId)).order("desc").take(40),
-  ]);
+export async function loadReplyTileMessages(ctx: QueryCtx, threadId: string) {
+  // Optional sent_at values are still in this index. A short page therefore
+  // contains the whole thread, so the creation-time index cannot add records.
+  const timed = await ctx.db.query("hygglo_messages").withIndex("by_thread_and_sent_at", q => q.eq("thread_id", threadId)).order("desc").take(40);
+  // Duplicate provider IDs need the original creation-order winner as well.
+  const complete = timed.length < 40 && new Set(timed.map(message => message.message_id)).size === timed.length;
+  const messagePages = complete ? [timed] : [timed,
+    // A full page may hide recently ingested messages missing a provider
+    // timestamp. Keep the original second index and union for long threads.
+    await ctx.db.query("hygglo_messages").withIndex("by_thread", q => q.eq("thread_id", threadId)).order("desc").take(40),
+  ];
   return orderedReplyMessages([...new Map(messagePages.flat().map(message => [message.message_id, message])).values()]).slice(0, 40);
 }
 
