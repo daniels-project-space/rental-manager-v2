@@ -111,16 +111,53 @@ type DateBlock = { start_date: string; end_date: string };
 
 /** Half-open occupancy windows; check the peak, never the sum of disjoint hires. */
 export function stockWindowPeak(occupancy: Occupancy[], start: string, end: string): number {
-  const instants = new Set([start, ...occupancy.map((r) => r.start).filter((t) => t >= start && t < end)]);
-  let peak = 0;
-  for (const at of instants) {
-    const extensions = new Map<string, number>();
-    let independent = 0;
-    for (const row of occupancy.filter((r) => r.start <= at && r.end > at)) {
-      if (!row.extension_key) independent += row.qty;
-      else extensions.set(row.extension_key, Math.max(extensions.get(row.extension_key) ?? 0, row.qty));
+  if (end <= start || occupancy.length === 0) return 0;
+  const extensionCounts = new Map<string, Map<number, number>>();
+  let independent = 0;
+  let extensionTotal = 0;
+  const update = (row: Occupancy, delta: 1 | -1) => {
+    if (!row.extension_key) {
+      independent += delta * row.qty;
+      return;
     }
-    peak = Math.max(peak, independent + [...extensions.values()].reduce((sum, qty) => sum + qty, 0));
+    let counts = extensionCounts.get(row.extension_key);
+    if (!counts) {
+      counts = new Map();
+      extensionCounts.set(row.extension_key, counts);
+    }
+    const oldMaximum = Math.max(0, ...counts.keys());
+    const nextCount = (counts.get(row.qty) ?? 0) + delta;
+    if (nextCount > 0) counts.set(row.qty, nextCount);
+    else counts.delete(row.qty);
+    const newMaximum = Math.max(0, ...counts.keys());
+    extensionTotal += newMaximum - oldMaximum;
+    if (counts.size === 0) extensionCounts.delete(row.extension_key);
+  };
+
+  const events = new Map<string, { starts: Occupancy[]; ends: Occupancy[] }>();
+  const eventAt = (at: string) => {
+    let event = events.get(at);
+    if (!event) {
+      event = { starts: [], ends: [] };
+      events.set(at, event);
+    }
+    return event;
+  };
+  for (const row of occupancy) {
+    if (row.end <= row.start || row.end <= start || row.start >= end) continue;
+    if (row.start <= start) update(row, 1);
+    else eventAt(row.start).starts.push(row);
+    if (row.end < end) eventAt(row.end).ends.push(row);
+  }
+
+  let peak = independent + extensionTotal;
+  for (const at of [...events.keys()].sort()) {
+    const event = events.get(at)!;
+    // Half-open ranges release stock before another reservation starts at the
+    // same instant, matching the prior `row.end > at` predicate.
+    for (const row of event.ends) update(row, -1);
+    for (const row of event.starts) update(row, 1);
+    peak = Math.max(peak, independent + extensionTotal);
   }
   return peak;
 }
@@ -133,7 +170,7 @@ export function evaluateStockWindow(args: {
   occupancy: Occupancy[];
   blackouts: DateBlock[];
   vacations: DateBlock[];
-}) {
+}, includeDetails = true) {
   const { request: r, owned, total, repair, occupancy, blackouts, vacations } = args;
   const quantity = r.quantity ?? 1;
   const validTime = (time?: string) => !time || /^([01]\d|2[0-3]):[0-5]\d$/.test(time);
@@ -148,6 +185,19 @@ export function evaluateStockWindow(args: {
   const intersects = (b: DateBlock) => b.start_date <= r.end_date && b.end_date >= r.start_date;
   const vacation = vacations.some(intersects);
   const blackout = blackouts.some(intersects);
+  if (!includeDetails) {
+    const booked = stockWindowPeak(occupancy, start, end);
+    const free = !owned || vacation || blackout ? 0 : Math.max(0, total - repair - booked);
+    return {
+      available: owned && free >= quantity,
+      reason: !owned ? "not_rentable" : vacation ? "owner_away" : blackout ? "owner_blocked" : free < quantity ? "insufficient_units" : "available",
+      total_units: total,
+      requested_units: quantity,
+      free_units: free,
+      per_day: [],
+      conflicts: [],
+    };
+  }
   const perDay = Array.from({ length: days }, (_, i) => {
     const date = shiftStockDate(r.start_date, i);
     const dayStart = i === 0 ? start : `${date}T00:00`;
@@ -280,7 +330,7 @@ export function stockOccupancyForItem(sources: Awaited<ReturnType<typeof loadSto
   return occupancy;
 }
 
-export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources>>, item: Doc<"items">, request: StockRequest) {
+export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources>>, item: Doc<"items">, request: StockRequest, includeDetails = true) {
   // Project physical custody once per immutable query snapshot and item. A
   // different conversation/date only changes exclusion and window evaluation.
   // There is no cross-query cache or weaker stock freshness.
@@ -295,7 +345,7 @@ export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources
     occupancy=request.thread_id?all.filter(row=>row.order_id!==request.thread_id&&row.order_id!==`checkout:${request.thread_id}`):all;
   }else occupancy=stockOccupancyForItem(sources,item,request);
   const repair = sources.claims.filter(claimHoldsStock).reduce((n, c) => n + (c.repair_item_ids ?? []).filter((id) => id === item._id).length, 0);
-  const result = evaluateStockWindow({ request, owned: item.status === "active" && !item.is_marketing_only && item.qty > 0, total: item.qty, repair, occupancy, blackouts: sources.blackouts.filter((b) => b.item_id === item._id), vacations: sources.vacations });
+  const result = evaluateStockWindow({ request, owned: item.status === "active" && !item.is_marketing_only && item.qty > 0, total: item.qty, repair, occupancy, blackouts: sources.blackouts.filter((b) => b.item_id === item._id), vacations: sources.vacations }, includeDetails);
   return { ...result, ...(item.quantity_basis ? { quantity_basis: item.quantity_basis } : {}), item_name: item.name_canonical, item_id: item._id, kind: item.kind, owned: item.status === "active" && !item.is_marketing_only && item.qty > 0, is_marketing_only: item.is_marketing_only === true, buffer_minutes: TURNAROUND_BUFFER_MINUTES, source: "shared_inventory_confirmed_rentals", checked_at: Date.now() };
 }
 
@@ -310,14 +360,14 @@ export async function checkRentalStock(ctx: QueryCtx, request: StockRequest) {
 
 /** Rentable camera offering includes its recorded supplied adapters. Keep
  * stockForItem physical-only for component receipts and basket aggregation. */
-export function stockForRentalItem(sources:Awaited<ReturnType<typeof loadStockSources>>,item:Doc<"items">,request:StockRequest) {
-  const primary=stockForItem(sources,item,request);
+export function stockForRentalItem(sources:Awaited<ReturnType<typeof loadStockSources>>,item:Doc<"items">,request:StockRequest,includeDetails = true) {
+  const primary=stockForItem(sources,item,request,includeDetails);
   if (primary.reason === "invalid_request") return primary;
   const defaults=defaultAdapterUnits(item,sources.items);
   if (!defaults.components.length && !defaults.unresolved.length) return primary;
   const components=[{...primary,units_per_item:1},...defaults.components.map(c=>{
     const adapter=sources.items.find(i=>String(i._id)===c.item_id)!;
-    return {...stockForItem(sources,adapter,{...request,item_name:adapter.name_canonical,quantity:c.qty*(request.quantity??1)}),units_per_item:c.qty};
+    return {...stockForItem(sources,adapter,{...request,item_name:adapter.name_canonical,quantity:c.qty*(request.quantity??1)},includeDetails),units_per_item:c.qty};
   })];
   const negative=components.some(c=>c.available===false);
   const available=negative?false:defaults.unresolved.length?null:components.every(c=>c.available===true)?true:null;

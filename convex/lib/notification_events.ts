@@ -113,7 +113,7 @@ export const MY_SHARE_FRACTION = 0.5;
  */
 const ACCOUNT_WORD: Record<string, string> = {
   dbcinema: "Daniel",
-  dbcinema_web: "Daniel",
+  dbcinema_web: "DB Cinema Web",
   leo: "Leo",
   diogo: "Diogo",
 };

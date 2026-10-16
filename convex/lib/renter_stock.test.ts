@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { evaluateStockWindow, reservationOverlapsStockDateWindow, stockForItem, stockWindowPeak, validIsoDate } from "./renter_stock";
+import { evaluateStockWindow, reservationOverlapsStockDateWindow, stockForItem, stockWindowPeak, validIsoDate, type Occupancy } from "./renter_stock";
 
 const request = { item_name: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04" };
 const evaluate = (overrides: Partial<Parameters<typeof evaluateStockWindow>[0]> = {}) => evaluateStockWindow({ request, owned: true, total: 4, repair: 0, occupancy: [], blackouts: [], vacations: [], ...overrides });
@@ -69,6 +69,76 @@ describe("renter stock verdicts", () => {
   });
   it("does not merge unnamed renters", () => {
     expect(stockWindowPeak([{ ...hire(1), renter_name: undefined }, { ...hire(1), renter_name: undefined }], "2026-10-02T00:00", "2026-10-03T00:00")).toBe(2);
+  });
+});
+
+describe("stock-window sweep equivalence", () => {
+  const referencePeak = (occupancy: Occupancy[], start: string, end: string) => {
+    const instants = new Set([start, ...occupancy.map((row) => row.start).filter((at) => at >= start && at < end)]);
+    let peak = 0;
+    for (const at of instants) {
+      const extensions = new Map<string, number>();
+      let independent = 0;
+      for (const row of occupancy.filter((candidate) => candidate.start <= at && candidate.end > at)) {
+        if (!row.extension_key) independent += row.qty;
+        else extensions.set(row.extension_key, Math.max(extensions.get(row.extension_key) ?? 0, row.qty));
+      }
+      peak = Math.max(peak, independent + [...extensions.values()].reduce((sum, qty) => sum + qty, 0));
+    }
+    return peak;
+  };
+
+  it("matches the prior half-open peak calculation across randomized overlapping and extended rentals", () => {
+    let seed = 17;
+    const random = (max: number) => {
+      seed = (seed * 48271) % 2147483647;
+      return seed % max;
+    };
+    const instant = (hours: number) => new Date(Date.parse("2026-10-01T00:00:00Z") + hours * 3600000).toISOString().slice(0, 16);
+    for (let sample = 0; sample < 250; sample++) {
+      const rows: Occupancy[] = Array.from({ length: 1 + random(24) }, (_, index) => {
+        const startHour = random(144) - 48;
+        return {
+          start: instant(startHour),
+          end: instant(startHour + 1 + random(48)),
+          qty: 1 + random(8),
+          ...(random(4) === 0 ? {} : { extension_key: `basket-${random(4)}` }),
+          order_id: `order-${sample}-${index}`,
+        };
+      });
+      const startHour = random(96) - 24;
+      const start = instant(startHour);
+      const end = instant(startHour + 1 + random(96));
+      expect(stockWindowPeak(rows, start, end)).toBe(referencePeak(rows, start, end));
+    }
+  });
+
+  it("treats a return and a new pickup at the same instant as non-overlapping", () => {
+    const adjacent: Occupancy[] = [
+      { start: "2026-10-02T00:00", end: "2026-10-03T00:00", qty: 2 },
+      { start: "2026-10-03T00:00", end: "2026-10-04T00:00", qty: 3 },
+    ];
+    expect(stockWindowPeak(adjacent, "2026-10-02T00:00", "2026-10-04T00:00")).toBe(3);
+  });
+
+  it("preserves verdicts while skipping per-day detail for summary-only callers", () => {
+    const cases = [
+      { occupancy: [hire(2)], request: { ...request, quantity: 2 } },
+      { occupancy: [hire(3), { ...hire(1), start: "2026-10-03T10:00", end: "2026-10-03T11:00" }] },
+      { blackouts: [{ start_date: "2026-10-03", end_date: "2026-10-03" }] },
+      { vacations: [{ start_date: "2026-10-04", end_date: "2026-10-06" }] },
+      { owned: false, repair: 1, occupancy: [hire(1)] },
+    ];
+    for (const overrides of cases) {
+      const args = { request, owned: true, total: 4, repair: 0, occupancy: [], blackouts: [], vacations: [], ...overrides };
+      const detailed = evaluateStockWindow(args);
+      const summary = evaluateStockWindow(args, false);
+      expect(summary.available).toBe(detailed.available);
+      expect(summary.reason).toBe(detailed.reason);
+      expect(summary.free_units).toBe(detailed.free_units);
+      expect(summary.total_units).toBe(detailed.total_units);
+      expect(summary.per_day).toEqual([]);
+    }
   });
 });
 
