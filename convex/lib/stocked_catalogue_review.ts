@@ -8,6 +8,7 @@ export const STOCKED_CATALOGUE_KEYS = [
   ["leo",1172491], ["leo",1172476], ["leo",1172472], ["leo",1172467],
   ["leo",1114664], ["leo",1114627], ["leo",1114634], ["leo",1114621],
   ["dbcinema",1025970], ["diogo",1173651],
+  ["dbcinema",1048236], ["diogo",1173532],
 ] as const;
 const allowed = new Set(STOCKED_CATALOGUE_KEYS.map(([account,id])=>`${account}#${id}`));
 const stable=(value:unknown):unknown=>Array.isArray(value)?value.map(stable):value&&typeof value==="object"?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>[k,stable(v)])):value;
@@ -23,7 +24,7 @@ export function stockedCatalogueReview(items:Doc<"items">[],products:Doc<"hygglo
     if(matches.length!==1||matches[0].status!=="active"||matches[0].is_marketing_only||matches[0].qty<=0)throw Error(`Owned inventory identity changed: ${name}`);
     return matches[0];
   };
-  const wide=item("Sony GM 16-35mm f2.8"),zoom=item("Sony GM 24-70mm f2.8"),tele=item("Sony GM 70-200mm f2.8"),vespid=item("DZOFilm Vespid 3-Lens Set"),gopro=item("GoPro 12 Hero"),cups=item("Suction cups"),a7v=item("Sony A7 V"),flash=item("Camera flash");
+  const wide=item("Sony GM 16-35mm f2.8"),zoom=item("Sony GM 24-70mm f2.8"),tele=item("Sony GM 70-200mm f2.8"),nd=item("ND filter"),vespid=item("DZOFilm Vespid 3-Lens Set"),gopro=item("GoPro 12 Hero"),cups=item("Suction cups"),a7v=item("Sony A7 V"),flash=item("Camera flash");
   if(vespid.lens_mount!=="PL"||!["25mm T2.1 lens","50mm T2.1 lens","75mm T2.1 lens"].every(s=>vespid.compatibility?.included_with_rental?.includes(s)))throw Error("The recorded Vespid set changed");
   if(!gopro.compatibility?.included_with_rental?.includes("2x GoPro Enduro battery")||!gopro.compatibility.included_with_rental.includes("1x suction mount")||cups.qty<2)throw Error("The recorded GoPro kit changed");
   if(!flash.compatibility?.included_with_rental?.includes("1x Yongnuo YN560 IV speedlight"))throw Error("The recorded flash identity changed");
@@ -33,6 +34,19 @@ export function stockedCatalogueReview(items:Doc<"items">[],products:Doc<"hygglo
   };
   original(wide,"Sony FE 16–35mm f/2.8 GM (original)","SEL1635GM");
   original(zoom,"Sony FE 24–70mm f/2.8 GM (original)","SEL2470GM");
+  // Reuse reviewed same-project assets. Only the documented mismatched old
+  // image is replaced; a later owner-selected photo is preserved.
+  const photos=[
+    [wide,"eddd827d-b517-49f6-80a4-dfe40d8b4118.jpg","catalogue-reviewed/2026-10-16/997641-f57897402df21ec5.png"],
+    [zoom,"869696_sony-fx3-","listings/973616/0.jpg"],
+    [items.find(i=>i.name_canonical==="Softbox 85cm"),"e68d63_2x-sony-fx3-","listings/881269/0.jpg"],
+    [items.find(i=>i.name_canonical==="Rode Wireless Mic Pro set"),"sony-a7ii-kit-mirorless-camera--dji-lav-kit-","listings/852890/0.jpg"],
+  ] as const;
+  for(const [row,oldAsset,key]of photos){
+    if(!row||row.status!=="active"||row.is_marketing_only||row.qty<=0)continue;
+    const url=`https://pub-761e4d18b3b84542809dddc11936a8df.r2.dev/${key}`;
+    if(row.image_url?.includes(oldAsset)||row.image_url===url)patches.set(String(row._id),{...patches.get(String(row._id)),image_url:url});
+  }
   const rules=new Map<string,NonNullable<Doc<"items">["listing_stock_rules"]>>();
   const productPatches:Array<{id:Doc<"hygglo_products">["_id"];patch:Partial<Doc<"hygglo_products">>}>=[];
   const reviewedProducts:string[]=[];
@@ -41,7 +55,10 @@ export function stockedCatalogueReview(items:Doc<"items">[],products:Doc<"hygglo
     if((product.isMarketingOnlyOverride??product.isMarketingOnly)===true)continue;
     const title=product.name;if(!title)throw Error("Reviewed listing needs its current title");
     let parent:Doc<"items">|undefined,description:string|undefined,components:Array<{item_id:Doc<"items">["_id"];qty:number}>=[];
-    if([1025970,1173651].includes(product.productId)){
+    if([1048236,1173532].includes(product.productId)){
+      if(product.masterItemId!==wide._id||!/16[–-]35.*(?:GM|G.?Master)/i.test(title))throw Error("Wide lens and ND listing changed");
+      parent=wide;description="Contents: • 1x Sony GM 16-35mm f2.8 • 1x ND filter";
+    }else if([1025970,1173651].includes(product.productId)){
       if(!/16[–-]35.*24[–-]70.*70[–-]200/.test(title))throw Error("Sony zoom trio identity changed");
       parent=wide;description="Contents: • 1x Sony GM 16-35mm f2.8 • 1x Sony GM 24-70mm f2.8 • 1x Sony GM 70-200mm f2.8";
       if(product.masterItemId!==wide._id||product.stockIdentityOverride?.itemId!==wide._id||product.stockIdentityOverride.title!==title){
