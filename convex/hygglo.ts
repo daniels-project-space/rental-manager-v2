@@ -3,6 +3,7 @@ import {internalQueryOf} from "./owner_functions";
 import { mutation, query } from "./owner_functions";
 import type { MutationCtx } from "./_generated/server";
 import { rentalTimeChangedEvent, syncPickupReminder } from "./lib/rental_timing_notifications";
+import type { Id } from "./_generated/dataModel";
 import {
   applyReservationEarningsChanges,
   getEarningsContribution,
@@ -11,6 +12,7 @@ import {
 import { internal } from "./_generated/api";
 import { v, type Infer } from "convex/values";
 import { STEP_PRIORITY } from "./order_step_semantics";
+import { markReservationDirty } from "./lib/reconciliation_dirty";
 import { isMatchingOptimisticOwnerMessage } from "./lib/message_reconciliation";
 import {
   bookingBecameConfirmed,
@@ -1472,6 +1474,9 @@ export const upsertOrdersAsReservationsBatch = mutation({
       const { action, reservation_id, bankItems, transitionedToObsolete, notify, revenueRealized, earningsChange } =
         await upsertOrderImpl(ctx, args);
       results.push(reservation_id !== undefined ? { action, reservation_id } : { action });
+      if (reservation_id && action !== "skipped") {
+        await markReservationDirty(ctx, reservation_id as Id<"reservations">, args.account_slug);
+      }
       if (bankItems.length > 0) {
         const bucket = perAccountBank.get(args.account_slug);
         if (bucket) bucket.push(...bankItems);

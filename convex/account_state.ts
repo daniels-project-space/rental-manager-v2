@@ -79,3 +79,46 @@ export const upsert = mutation({
     }
   },
 });
+
+const FULL_RECONCILIATION_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Atomically rate-limit the expensive full reservation/hold reconciliation.
+ * Poll cycles still reconcile changed reservation IDs immediately; this
+ * durable marker bounds the broad repair scan to one attempt per account per
+ * six hours, including failed attempts.
+ */
+export const tryClaimFullReconciliation = mutation({
+  args: {
+    accounts: v.array(v.string()),
+    now: v.number(),
+    forceAccounts: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, { accounts, now, forceAccounts = [] }) => {
+    const force = new Set(forceAccounts);
+    const claimed: string[] = [];
+    for (const account of new Set(accounts)) {
+      const existing = await ctx.db
+        .query("account_state")
+        .withIndex("by_account", (q) => q.eq("account", account))
+        .first();
+      const canRun = force.has(account) || existing?.lastFullReconciliationAttemptAt == null ||
+        now - existing.lastFullReconciliationAttemptAt >= FULL_RECONCILIATION_MIN_INTERVAL_MS;
+      if (!canRun) continue;
+      if (existing) {
+        await ctx.db.patch(existing._id, { lastFullReconciliationAttemptAt: now });
+      } else {
+        await ctx.db.insert("account_state", {
+          account,
+          lastSuccessfulPollAt: 0,
+          consecutiveFailures: 0,
+          mode: "active",
+          modeChangedAt: now,
+          lastFullReconciliationAttemptAt: now,
+        });
+      }
+      claimed.push(account);
+    }
+    return claimed;
+  },
+});

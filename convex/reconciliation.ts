@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query } from "./owner_functions";
+import { mutation, query } from "./owner_functions";
 import type { Doc } from "./_generated/dataModel";
 import { DEAD_ORDER_STEPS } from "./order_step_semantics";
 
@@ -12,7 +12,7 @@ function project(row: Doc<"reservations">) {
   };
 }
 
-/** One fresh snapshot after all account upserts, retaining actual hold cleanup. */
+/** Periodic full repair snapshot, retaining actual hold cleanup. */
 export const listBatch = query({
   args: { account_slugs: v.array(v.string()) },
   handler: async (ctx, { account_slugs }) => {
@@ -58,5 +58,54 @@ export const listBatch = query({
       groups.push({ account_slug, reservations: rows.map(project) });
     }
     return { strategy: "reservation-index" as const, groups };
+  },
+});
+
+/** Read the compact dirty queue and the matching reservation rows. */
+export const listDirtyBatch = query({
+  args: {
+    account_slugs: v.array(v.string()),
+  },
+  handler: async (ctx, { account_slugs }) => {
+    const accounts = [...new Set(account_slugs)];
+    if (accounts.length > 8) throw new Error("Reconciliation supports up to eight accounts per batch");
+    const groups = [];
+    for (const account_slug of accounts) {
+      const markers = await ctx.db
+        .query("reservation_reconcile_dirty")
+        .withIndex("by_account_version", (q) => q.eq("account_slug", account_slug).gt("version", 0))
+        .take(500);
+      const rows = await Promise.all(markers.map((marker) => ctx.db.get(marker.reservation_id)));
+      groups.push({
+        account_slug,
+        reservations: rows
+          .filter((row): row is Doc<"reservations"> => row !== null && row.account_slug === account_slug)
+          .map(project),
+        markers: markers.map((marker) => ({
+          id: marker._id,
+          reservation_id: marker.reservation_id,
+          version: marker.version,
+          missingReservation: !rows.some((row) => row?._id === marker.reservation_id),
+        })),
+      });
+    }
+    return { groups };
+  },
+});
+
+/** Acknowledge only queue versions that were actually processed. */
+export const ackDirty = mutation({
+  args: {
+    markers: v.array(v.object({ id: v.id("reservation_reconcile_dirty"), version: v.number() })),
+  },
+  handler: async (ctx, { markers }) => {
+    let deleted = 0;
+    for (const marker of markers) {
+      const current = await ctx.db.get(marker.id);
+      if (!current || current.version !== marker.version) continue;
+      await ctx.db.delete(marker.id);
+      deleted += 1;
+    }
+    return { deleted };
   },
 });

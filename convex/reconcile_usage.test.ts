@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("./auth", () => ({ authComponent: { safeGetAuthUser: vi.fn() } }));
-import { listBatch } from "./reconciliation";
+import { ackDirty, listBatch, listDirtyBatch } from "./reconciliation";
+import { tryClaimFullReconciliation } from "./account_state";
+import { markReservationDirty } from "./lib/reconciliation_dirty";
 import { computeHoldsForReservations } from "../src/lib/reconcile-holds";
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
 
 function context(rows: any[], holds: any[]) {
   const reads: any[] = [];
@@ -23,6 +25,37 @@ function context(rows: any[], holds: any[]) {
     return chain;
   } } };
   return { ctx, reads };
+}
+
+function mutableContext() {
+  const state = new Map<string, any>();
+  let nextId = 0;
+  const ctx: any = { db: {
+    query(table: string) {
+      let values = [...state.values()].filter((row) => row._table === table);
+      const chain: any = {
+        withIndex(_index: string, build: (q: any) => void) {
+          const range: any = {
+            eq(key: string, value: unknown) { values = values.filter((row) => row[key] === value); return range; },
+            gt(key: string, value: number) { values = values.filter((row) => row[key] > value); return range; },
+          };
+          build(range); return chain;
+        },
+        first: async () => values[0] ?? null,
+        take: async (limit: number) => values.slice(0, limit),
+      };
+      return chain;
+    },
+    get: async (id: string) => state.get(id) ?? null,
+    insert: async (table: string, doc: any) => {
+      const id = `${table}-${++nextId}`;
+      state.set(id, { _id: id, _table: table, ...doc });
+      return id;
+    },
+    patch: async (id: string, patch: any) => { state.set(id, { ...state.get(id), ...patch }); },
+    delete: async (id: string) => { state.delete(id); },
+  } };
+  return { ctx, state };
 }
 
 function engine(rows: any[], today: Date) {
@@ -91,5 +124,46 @@ describe("indexed hold reconciliation candidates", () => {
     expect(batch.strategy).toBe("reservation-index");
     expect(batch.groups).toHaveLength(1);
     expect(batch.groups[0].reservations.map((r:any)=>r._id)).toEqual(["booking"]);
+  });
+});
+
+describe("durable dirty-row reconciliation", () => {
+  it("coalesces repeated changes and protects newer queue versions from stale acknowledgements", async () => {
+    const { ctx, state } = mutableContext();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-16T11:00:00Z"));
+    const reservationId = "reservations-1" as any;
+    await markReservationDirty(ctx, reservationId, "leo");
+    await markReservationDirty(ctx, reservationId, "leo");
+    const markers = [...state.values()].filter((row) => row._table === "reservation_reconcile_dirty");
+    expect(markers).toHaveLength(1);
+    expect(markers[0].version).toBe(Date.now() + 1);
+
+    const id = markers[0]._id;
+    const result = await (ackDirty as any)._handler(ctx, { markers: [{ id, version: Date.now() }] });
+    expect(result.deleted).toBe(0);
+    expect(state.has(id)).toBe(true);
+  });
+
+  it("projects account-scoped dirty rows and keeps deleted IDs for stale-hold cleanup", async () => {
+    const { ctx, state } = mutableContext();
+    state.set("reservations-1", { _id: "reservations-1", _table: "reservations", account_slug: "leo", start_date: "2026-10-20", end_date: "2026-10-21", items: [{ item_name: "Camera" }] });
+    state.set("reservation_reconcile_dirty-1", { _id: "reservation_reconcile_dirty-1", _table: "reservation_reconcile_dirty", reservation_id: "reservations-1", account_slug: "leo", version: 10 });
+    state.set("reservation_reconcile_dirty-2", { _id: "reservation_reconcile_dirty-2", _table: "reservation_reconcile_dirty", reservation_id: "reservations-deleted", account_slug: "leo", version: 11 });
+    const result = await (listDirtyBatch as any)._handler(ctx, { account_slugs: ["leo"] });
+    expect(result.groups[0].reservations.map((row: any) => row._id)).toEqual(["reservations-1"]);
+    expect(result.groups[0].markers.map((marker: any) => marker.missingReservation)).toEqual([false, true]);
+  });
+
+  it("rate-limits broad repair per account and can force repair for queue backlog", async () => {
+    const { ctx, state } = mutableContext();
+    expect(await (tryClaimFullReconciliation as any)._handler(ctx, { accounts: ["leo", "leo"], now: 1_000_000 })).toEqual(["leo"]);
+    expect(await (tryClaimFullReconciliation as any)._handler(ctx, { accounts: ["leo"], now: 1_001_000 })).toEqual([]);
+    expect(await (tryClaimFullReconciliation as any)._handler(ctx, { accounts: ["leo"], forceAccounts: ["leo"], now: 1_002_000 })).toEqual(["leo"]);
+    expect(await (tryClaimFullReconciliation as any)._handler(ctx, { accounts: ["leo"], now: 1_003_000 })).toEqual([]);
+    const nextRepair = 1_002_000 + 6 * 60 * 60 * 1000;
+    expect(await (tryClaimFullReconciliation as any)._handler(ctx, { accounts: ["leo"], now: nextRepair })).toEqual(["leo"]);
+    const account = [...state.values()].find((row) => row._table === "account_state");
+    expect(account.lastFullReconciliationAttemptAt).toBe(nextRepair);
   });
 });
