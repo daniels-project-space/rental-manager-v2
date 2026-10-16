@@ -106,11 +106,8 @@ export function shiftIsoDate(ymd: string, deltaDays: number): string {
  * objects), so one bag can safely feed many computes in one execution.
  */
 export type CalendarComputePreload = {
-  /** Calendar reservation candidates over [from, to] INCLUSIVE, ordered like
-   *  by_start_date (start_date asc, then _creationTime asc). A status-scoped
-   *  preload must contain all rows that can survive the calendar predicate and
-   *  cover both the padded window scan and 120-day lookback when
-   *  from <= anchor-120d and to >= scanEnd. */
+  /** Start-window rows come first, followed by older end-date overlaps. Each
+   *  group is ordered by start_date then _creationTime, matching its old scans. */
   reservationsWindow?: { from: string; to: string; rows: Doc<"reservations">[] };
   /** calendar_holds collected via by_date over [from, to] INCLUSIVE, in index
    *  order (date asc, then _creationTime asc). */
@@ -124,6 +121,87 @@ export type CalendarComputePreload = {
   /** Product/listing mapping resolved once for every refreshed view. */
   listingAllocation?: Awaited<ReturnType<typeof loadCanonicalListingAllocation>>;
 };
+
+/**
+ * Load only inventory-committed candidates for a calendar span. Reservations
+ * starting in the span use status/date indexes. Older overlapping bookings use
+ * the existing status/end-date indexes, so this does not scan months of ended
+ * reservations just to find the few that are still out.
+ */
+export async function loadCalendarReservationCandidates(
+  ctx: QueryCtx,
+  { from, to }: { from: string; to: string },
+  accountSlug: string | null = null,
+): Promise<Doc<"reservations">[]> {
+  const scope = accountSlug || null;
+  const readStarts = (status: "confirmed" | "pending_review", slug: string | null) =>
+    slug === null
+      ? ctx.db
+          .query("reservations")
+          .withIndex("by_status_start_date", (q) =>
+            q.eq("status", status).gte("start_date", from).lte("start_date", to),
+          )
+          .collect()
+      : ctx.db
+          .query("reservations")
+          .withIndex("by_account_status_start_date", (q) =>
+            q
+              .eq("account_slug", slug)
+              .eq("status", status)
+              .gte("start_date", from)
+              .lte("start_date", to),
+          )
+          .collect();
+  const readOverlaps = (status: "confirmed" | "pending_review", slug: string | null) =>
+    slug === null
+      ? ctx.db
+          .query("reservations")
+          .withIndex("by_status_end_date", (q) =>
+            q.eq("status", status).gte("end_date", from),
+          )
+          .collect()
+      : ctx.db
+          .query("reservations")
+          .withIndex("by_account_status_end_date", (q) =>
+            q
+              .eq("account_slug", slug)
+              .eq("status", status)
+              .gte("end_date", from),
+          )
+          .collect();
+
+  // The calendar predicate accepts confirmed rentals everywhere and only
+  // verified pending commitments for the dbcinema_web account.
+  const startScopes: Array<["confirmed" | "pending_review", string | null]> = [
+    ["confirmed", scope],
+    ...(scope === null || scope === "dbcinema_web"
+      ? [["pending_review", "dbcinema_web"] as ["pending_review", string]]
+      : []),
+  ];
+  const [starts, overlaps] = await Promise.all([
+    Promise.all(startScopes.map(([status, slug]) => readStarts(status, slug))),
+    Promise.all(startScopes.map(([status, slug]) => readOverlaps(status, slug))),
+  ]);
+  const byId = new Map<string, Doc<"reservations">>();
+  for (const row of starts.flat()) byId.set(String(row._id), row);
+  for (const row of overlaps.flat()) {
+    if (row.start_date !== undefined && row.start_date < from) {
+      byId.set(String(row._id), row);
+    }
+  }
+
+  const compare = (a: Doc<"reservations">, b: Doc<"reservations">) =>
+    (a.start_date ?? "").localeCompare(b.start_date ?? "") ||
+    a._creationTime - b._creationTime;
+  const unique = [...byId.values()];
+  const startRows = unique
+    .filter((row) => row.start_date !== undefined && row.start_date >= from && row.start_date <= to)
+    .sort(compare);
+  const overlapRows = unique
+    .filter((row) => row.start_date !== undefined && row.start_date < from)
+    .sort(compare);
+  return [...startRows, ...overlapRows];
+}
 
 /** Load only canonical listing images that the supplied reservations can use.
  * The account/product index preserves the same per-key creation order as the
@@ -334,74 +412,27 @@ export async function computeStripLive(
     // gets fetched, then bucketed by effective dates below (FIX 4).
     const scanStart = shiftIsoDate(startDate, -CALENDAR_FETCH_PAD_DAYS);
     const scanEnd = shiftIsoDate(endDate, CALENDAR_FETCH_PAD_DAYS);
-    // Unified 120-day lookback lower bound (hoisted from the W1a block below —
-    // also needed for the preload containment check).
-    const lookbackStart = shiftIsoDate(startDate, -CALENDAR_LOOKBACK_DAYS);
-    // Preloaded reservations are usable ONLY when their by_start_date-equivalent
-    // range provably contains BOTH indexed scans below: [lookbackStart, scanEnd]
-    // ⊆ [pre.from, pre.to] (lookbackStart < scanStart < scanEnd always, so one
-    // check covers the window scan AND the lookback scan). The in-memory slices
-    // replicate index-range semantics exactly: string compare on start_date,
-    // rows with undefined start_date excluded (undefined sorts below every
-    // string, so `.gte(<string>)` never returns them), and index order is
-    // preserved (the shared status/date preload is sorted back into
-    // by_start_date order before filtering).
+    // The preload contains starts in this padded window plus older rows selected by end_date.
     const preRes =
       pre?.reservationsWindow &&
-      pre.reservationsWindow.from <= lookbackStart &&
+      pre.reservationsWindow.from <= scanStart &&
       pre.reservationsWindow.to >= scanEnd
         ? pre.reservationsWindow.rows
         : null;
-
-    // Reservations overlapping the (padded) date range
-    // OPEN_INDEX_NEED: index by (start_date, end_date) range for efficient overlap scan.
-    let reservations = preRes
-      ? preRes.filter(
-          (r) =>
-            r.start_date !== undefined &&
-            r.start_date >= scanStart &&
-            r.start_date <= scanEnd,
-        )
-      : await ctx.db
-          .query("reservations")
-          // PERF: bound the scan to the padded window (was `.gte` only → read the
-          // whole forward reservation tail on every reactive re-run). The `.lte`
-          // reproduces the JS `start_date <= scanEnd` filter below exactly, so the
-          // row set is identical; kept the filter as a cheap guard.
-          .withIndex("by_start_date", (q) =>
-            q.gte("start_date", scanStart).lte("start_date", scanEnd))
-          .collect();
-    reservations = reservations.filter(
-      (r) => r.start_date !== undefined && r.start_date <= scanEnd
+    const candidates = preRes ?? await loadCalendarReservationCandidates(
+      ctx,
+      { from: scanStart, to: scanEnd },
+      accountSlug,
     );
-    // Also include reservations that started before the range but end inside / after it.
-    // V1 parity: a rental shows on every day between pickup and return ("away" days).
-    {
-      // W1a: indexed scan — reservations whose start_date is BEFORE the padded
-      // window, bounded by the unified 120-day lookback (was unbounded here,
-      // 90d in weekly/gantt — FIX 4 unifies them). Residual end_date>=scanStart
-      // filter retained (not in index).
-      const allRes = preRes
-        ? preRes.filter(
-            (r) =>
-              r.start_date !== undefined &&
-              r.start_date >= lookbackStart &&
-              r.start_date < scanStart,
-          )
-        : await ctx.db
-            .query("reservations")
-            .withIndex("by_start_date", (q) =>
-              q.gte("start_date", lookbackStart).lt("start_date", scanStart))
-            .collect();
-      for (const r of allRes) {
-        if (
-          r.end_date !== undefined &&
-          r.end_date >= scanStart
-        ) {
-          if (!reservations.find((x) => x._id === r._id)) reservations.push(r);
-        }
-      }
-    }
+    let reservations = [
+      ...candidates.filter(
+        (r) => r.start_date !== undefined && r.start_date >= scanStart && r.start_date <= scanEnd,
+      ),
+      ...candidates.filter(
+        (r) => r.start_date !== undefined && r.start_date < scanStart &&
+          r.end_date !== undefined && r.end_date >= scanStart,
+      ),
+    ];
     if (accountSlug) {
       // FUTURE(perf): per-account calls could scan by_account_start instead of
       // post-filtering the cross-account window, but that reorders the row set
@@ -1171,75 +1202,27 @@ export async function computeWeeklyLive(
     // tolerance) are always fetched, then bucketed by effective dates (FIX 4).
     const scanStart = shiftIsoDate(weekStartDate, -CALENDAR_FETCH_PAD_DAYS);
     const scanEnd = shiftIsoDate(weekEnd, CALENDAR_FETCH_PAD_DAYS);
-    // Unified 120-day lookback lower bound (hoisted from below the window scan —
-    // also needed for the preload containment check).
-    const overlapStart = shiftIsoDate(weekStartDate, -CALENDAR_LOOKBACK_DAYS);
-    // Preloaded reservations are usable ONLY when their by_start_date-equivalent
-    // range provably contains BOTH indexed scans below: [overlapStart, scanEnd]
-    // ⊆ [pre.from, pre.to] (overlapStart < scanStart < scanEnd always, so one
-    // check covers the window scan AND the lookback scan). The in-memory slices
-    // replicate index-range semantics exactly: string compare on start_date,
-    // rows with undefined start_date excluded (undefined sorts below every
-    // string, so `.gte(<string>)` never returns them), and index order is
-    // preserved (the shared status/date preload is sorted back into
-    // by_start_date order before filtering).
+    // The preload contains starts in this padded window plus older rows selected by end_date.
     const preRes =
       pre?.reservationsWindow &&
-      pre.reservationsWindow.from <= overlapStart &&
+      pre.reservationsWindow.from <= scanStart &&
       pre.reservationsWindow.to >= scanEnd
         ? pre.reservationsWindow.rows
         : null;
-
-    // Reservations starting within the (padded) week
-    let reservations = preRes
-      ? preRes.filter(
-          (r) =>
-            r.start_date !== undefined &&
-            r.start_date >= scanStart &&
-            r.start_date <= scanEnd,
-        )
-      : await ctx.db
-          .query("reservations")
-          // PERF: bound the scan to the padded window (was `.gte` only → read the
-          // whole forward reservation tail on every reactive re-run). The `.lte`
-          // reproduces the JS `start_date <= scanEnd` filter below exactly, so the
-          // row set is identical; kept the filter as a cheap guard.
-          .withIndex("by_start_date", (q) =>
-            q.gte("start_date", scanStart).lte("start_date", scanEnd))
-          .collect();
-    reservations = reservations.filter(
-      (r) => r.start_date !== undefined && r.start_date <= scanEnd
+    const candidates = preRes ?? await loadCalendarReservationCandidates(
+      ctx,
+      { from: scanStart, to: scanEnd },
+      accountSlug,
     );
-
-    // Also include reservations that started before weekStart but end during/after it.
-    // No end_date index, so use the unified 120-day start_date lookback (FIX 4 —
-    // was 90d here, unbounded in the strip). Long rentals exceeding 120 days are
-    // vanishingly rare on Hygglo; the bounded scan stays cheap. (overlapStart is
-    // hoisted above for the preload containment check.)
-    const priorRes = preRes
-      ? preRes.filter(
-          (r) =>
-            r.start_date !== undefined &&
-            r.start_date >= overlapStart &&
-            r.start_date < scanStart,
-        )
-      : await ctx.db
-          .query("reservations")
-          .withIndex("by_start_date", (q) =>
-            q.gte("start_date", overlapStart).lt("start_date", scanStart),
-          )
-          .collect();
-    for (const r of priorRes) {
-      if (
-        r.end_date !== undefined &&
-        r.end_date >= scanStart
-      ) {
-        if (!reservations.find((x) => x._id === r._id)) {
-          reservations.push(r);
-        }
-      }
-    }
-
+    let reservations = [
+      ...candidates.filter(
+        (r) => r.start_date !== undefined && r.start_date >= scanStart && r.start_date <= scanEnd,
+      ),
+      ...candidates.filter(
+        (r) => r.start_date !== undefined && r.start_date < scanStart &&
+          r.end_date !== undefined && r.end_date >= scanStart,
+      ),
+    ];
     if (accountSlug) {
       // FUTURE(perf): per-account calls could scan by_account_start instead of
       // post-filtering the cross-account window, but that reorders the row set
@@ -1513,67 +1496,13 @@ export const getGanttWeek = query({
     // tolerance) are always fetched, then bucketed by effective dates (FIX 4).
     const scanStart = shiftIsoDate(weekStart!, -CALENDAR_FETCH_PAD_DAYS);
     const scanEnd = shiftIsoDate(weekEnd, CALENDAR_FETCH_PAD_DAYS);
-    // Reservations beginning before the padded window can still overlap it.
-    const overlapStart = shiftIsoDate(weekStart!, -CALENDAR_LOOKBACK_DAYS);
-
-    // The only inventory commitments rendered here are confirmed rentals and
-    // verified dbcinema_web bookings (see isInventoryCommittedWithDates).
-    // Read those status slices through a bounded status/date index instead of
-    // loading cancelled, declined, completed and other non-committing rows.
-    // When an account is selected, use the account-prefixed index as well so
-    // its Gantt subscription does not read the other accounts' reservations.
-    const candidateStatuses = ["confirmed", "pending_review"] as const;
-    const readStatusRange = (
-      status: typeof candidateStatuses[number],
-      from: string,
-      to: string,
-      exclusiveTo = false,
-    ) => {
-      if (accountSlug) {
-        return ctx.db
-          .query("reservations")
-          .withIndex("by_account_status_start_date", (q) => {
-            const range = q
-              .eq("account_slug", accountSlug)
-              .eq("status", status)
-              .gte("start_date", from);
-            return exclusiveTo ? range.lt("start_date", to) : range.lte("start_date", to);
-          })
-          .collect();
-      }
-      return ctx.db
-        .query("reservations")
-        .withIndex("by_status_start_date", (q) => {
-          const range = q.eq("status", status).gte("start_date", from);
-          return exclusiveTo ? range.lt("start_date", to) : range.lte("start_date", to);
-        })
-        .collect();
-    };
-    const sortByStartAndCreation = <T extends { start_date?: string; _creationTime: number }>(rows: T[]) =>
-      rows.sort((a, b) =>
-        (a.start_date ?? "").localeCompare(b.start_date ?? "") ||
-        a._creationTime - b._creationTime,
-      );
-    const [mainStatusRows, priorStatusRows] = await Promise.all([
-      Promise.all(candidateStatuses.map((status) =>
-        readStatusRange(status, scanStart, scanEnd),
-      )),
-      Promise.all(candidateStatuses.map((status) =>
-        readStatusRange(status, overlapStart, scanStart, true),
-      )),
-    ]);
-    let reservations = sortByStartAndCreation(mainStatusRows.flat());
-    // Reservations starting before weekStart but ending inside / after it.
-    // Unified 120-day lookback (FIX 4 — see getCalendarStrip / getWeeklyCalendar).
-    const priorRes = sortByStartAndCreation(priorStatusRows.flat());
-    for (const r of priorRes) {
-      if (
-        r.end_date !== undefined &&
-        r.end_date >= scanStart
-      ) {
-        if (!reservations.find((x) => x._id === r._id)) reservations.push(r);
-      }
-    }
+    // Reuse the status-scoped start window and end-date overlap reader used by
+    // the cached calendar, including the account-prefixed indexes when filtered.
+    let reservations = await loadCalendarReservationCandidates(
+      ctx,
+      { from: scanStart, to: scanEnd },
+      accountSlug ?? null,
+    );
     // Calendar commitments include paid website verification, keeping the
     // physical reservation visible without counting it as confirmed revenue.
     // This surface displays reported clocks; stock queries keep the strict
@@ -1935,29 +1864,11 @@ export const searchCalendarInventory = query({
     // can never represent >1 unit out (the bug: 3 FX3 booked showed as 1). ---
     const scanStart = shiftIsoDate(weekStart!, -CALENDAR_FETCH_PAD_DAYS);
     const scanEnd = shiftIsoDate(weekEnd, CALENDAR_FETCH_PAD_DAYS);
-    let reservations = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (qb) => qb.gte("start_date", scanStart))
-      .collect();
-    reservations = reservations.filter(
-      (r) => r.start_date !== undefined && r.start_date <= scanEnd,
+    let reservations = await loadCalendarReservationCandidates(
+      ctx,
+      { from: scanStart, to: scanEnd },
+      accountSlug ?? null,
     );
-    const overlapStart = shiftIsoDate(weekStart!, -CALENDAR_LOOKBACK_DAYS);
-    const priorRes = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (qb) =>
-        qb.gte("start_date", overlapStart).lt("start_date", scanStart),
-      )
-      .collect();
-    for (const r of priorRes) {
-      if (
-        r.end_date !== undefined &&
-        r.end_date >= scanStart &&
-        !reservations.find((x) => x._id === r._id)
-      ) {
-        reservations.push(r);
-      }
-    }
     if (accountSlug) {
       reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
@@ -2204,25 +2115,13 @@ export const getItemAvailabilityForChat = query({
     if (matched.length === 0) return { query: rawQuery, today, horizon_days: horizon, match_count: 0, items: [] };
     const matchedById = new Map(matched.map((it) => [String(it._id), it]));
 
-    // ── Confirmed reservations overlapping [today, lastDate] ──
+    // Keep only confirmed and verified website bookings inside the requested
+    // horizon, plus any older reservation whose indexed end_date still overlaps.
     const scanStart = shiftIsoDate(today, -CALENDAR_LOOKBACK_DAYS);
-    // Load confirmed rows by status and paid website pending rows by the
-    // existing account/status index below. Avoid cancelled/completed history;
-    // preserve the same in-memory date bounds for both commitment sets.
-    let reservations = (
-      await ctx.db
-        .query("reservations")
-        .withIndex("by_status", (qb) => qb.eq("status", "confirmed"))
-        .collect()
-    ).filter(
-      (r) =>
-        r.start_date !== undefined &&
-        r.start_date >= scanStart &&
-        r.start_date <= lastDate,
-    );
-    const websitePending = await ctx.db.query("reservations")
-      .withIndex("by_account_status", q => q.eq("account_slug", "dbcinema_web").eq("status", "pending_review")).collect();
-    reservations.push(...websitePending.filter(r => !!r.start_date && r.start_date >= scanStart && r.start_date <= lastDate));
+    const reservations = await loadCalendarReservationCandidates(ctx, {
+      from: scanStart,
+      to: lastDate,
+    });
     // accountSlug intentionally NOT used to filter reservations. DANIEL RULE 2
     // — Cross-Account Stock (priority 10): "Items are listed multiple times
     // across accounts BUT share the same physical pool... only the master
@@ -2250,10 +2149,11 @@ export const getItemAvailabilityForChat = query({
       const effPick = displayPickupDate(r as ReservationRow) || r.start_date;
       const effRet = (r.return_date ?? r.end_date) ?? effPick;
       if (!effPick || !effRet) continue;
-      // Skip fully-PAST rentals. The scan reaches back CALENDAR_LOOKBACK_DAYS to
-      // catch rentals that started earlier but are still out (return >= today);
-      // a rental that already ended must never appear as a current/upcoming
-      // booking — that's exactly the "booked with Cian Duignan until June 4"
+      // Skip fully-PAST rentals. The start window reaches back
+      // CALENDAR_LOOKBACK_DAYS, while the end-date index also catches older
+      // rentals that are still out. A rental that already ended must never
+      // appear as a current/upcoming booking — that's exactly the
+      // "booked with Cian Duignan until June 4"
       // (3 weeks ago) bug the chat had.
       if (effRet < today) continue;
       const lines = Array.from(reservationItemUnits(r, productIndex, overrideMap, allItems))

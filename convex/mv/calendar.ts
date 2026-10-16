@@ -62,7 +62,7 @@ import { londonToday } from "../lib/effectiveDates";
 import { loadCanonicalListingAllocation } from "../lib/canonical_listing_allocation";
 import {
   CALENDAR_FETCH_PAD_DAYS,
-  CALENDAR_LOOKBACK_DAYS,
+  loadCalendarReservationCandidates,
   loadCalendarListingImages,
   computeStripLive,
   computeWeeklyLive,
@@ -403,14 +403,13 @@ export const computeViews = internalQuery({
     const maxS = (a: string, b: string) => (a >= b ? a : b);
     // Union coverage across both view shapes. Weekly spans
     // [weekAnchor, weekAnchor+6], strip [stripAnchor, stripAnchor+days-1];
-    // each compute scans its span padded ±CALENDAR_FETCH_PAD_DAYS plus a
-    // CALENDAR_LOOKBACK_DAYS lookback below the anchor — both contiguous with
-    // the window, so one [from, to] range covers every scan.
+    // each compute scans only its padded start window. Older overlapping
+    // reservations are selected with the existing end-date indexes.
     const weekEnd = shiftIsoDate(weekAnchor, 6);
     const stripEnd = shiftIsoDate(stripAnchor, stripDays - 1);
     const resFrom = minS(
-      shiftIsoDate(weekAnchor, -CALENDAR_LOOKBACK_DAYS),
-      shiftIsoDate(stripAnchor, -CALENDAR_LOOKBACK_DAYS),
+      shiftIsoDate(weekAnchor, -CALENDAR_FETCH_PAD_DAYS),
+      shiftIsoDate(stripAnchor, -CALENDAR_FETCH_PAD_DAYS),
     );
     const resTo = maxS(
       shiftIsoDate(weekEnd, CALENDAR_FETCH_PAD_DAYS),
@@ -420,36 +419,10 @@ export const computeViews = internalQuery({
     const holdsFrom = minS(weekAnchor, stripAnchor);
     const holdsTo = maxS(weekEnd, stripEnd);
 
-    // The calendar's existing commitment predicate keeps confirmed rentals and
-    // verified dbcinema_web website bookings only. Cancelled, obsolete, completed,
-    // and other pending rows are discarded later. Read only the two candidate
-    // statuses through the bounded composite index, then restore by_start_date
-    // order so deduplication and stable calendar ordering remain unchanged.
-    const [confirmedRows, pendingReviewRows] = await Promise.all([
-      ctx.db
-        .query("reservations")
-        .withIndex("by_status_start_date", (q) =>
-          q
-            .eq("status", "confirmed")
-            .gte("start_date", resFrom)
-            .lte("start_date", resTo),
-        )
-        .collect(),
-      ctx.db
-        .query("reservations")
-        .withIndex("by_status_start_date", (q) =>
-          q
-            .eq("status", "pending_review")
-            .gte("start_date", resFrom)
-            .lte("start_date", resTo),
-        )
-        .collect(),
-    ]);
-    const reservationWindowRows = [...confirmedRows, ...pendingReviewRows].sort(
-      (a, b) =>
-        (a.start_date ?? "").localeCompare(b.start_date ?? "") ||
-        a._creationTime - b._creationTime,
-    );
+    const reservationWindowRows = await loadCalendarReservationCandidates(ctx, {
+      from: resFrom,
+      to: resTo,
+    });
 
     const [holdsRows, items, listingImages, productIndexRows, overrideRows] = await Promise.all([
       ctx.db
