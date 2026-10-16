@@ -327,8 +327,9 @@ export const __service_catalogueForStorefront = internalQuery({
       const complete = resolved.complete && components.length > 0 && components.every(c => Number.isSafeInteger(c.qty) && c.qty > 0);
       const primary = listingKitItem(resolved, inventory);
       const kit = canonicalKitContents(resolved.components, inventory, primary?.compatibility?.included_with_rental ?? []);
-      const inventoryFacts = {version:1 as const,contents:kit.contents,optionalContents:kit.optional_contents,
-        reviewRequired:kit.unreconciled_contents.length>0,owned:classifiedMarketing?false:resolved.owned};
+      const verifiedContents = complete && resolved.owned===true && !classifiedMarketing;
+      const inventoryFacts = {version:1 as const,contents:verifiedContents?kit.contents:[],optionalContents:verifiedContents?kit.optional_contents:[],
+        reviewRequired:!verifiedContents || kit.unreconciled_contents.length>0,owned:classifiedMarketing?false:resolved.owned};
       // Match the public bridge projection here, before serializing rich private descriptions.
       const {productId,name,isPublished,isMarketingOnly,valuation,minimumRentalDays,prices,images,unavailableDates,listings,masterItemId}=product;
       // Copy identity follows actual seller wording, not repaired stock links.

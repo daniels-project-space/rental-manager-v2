@@ -12,6 +12,15 @@ function fixture(){
  const reads:string[]=[];const operations:string[]=[];const db:any={query:(table:string)=>{reads.push(table);let values=tables[table]??[];const q:any={withIndex:(_:string,fn:any)=>{const s:any={eq:(k:string,v:any)=>{values=values.filter((r:any)=>r[k]===v);return s},gte:(k:string,v:any)=>{values=values.filter((r:any)=>r[k]>=v);return s}};fn(s);return q},collect:async()=>{operations.push(table+":collect");return values},first:async()=>{operations.push(table+":first");return values[0]??null}};return q},insert:async(table:string,row:any)=>{const id=`${table}:${tables[table].length}`;tables[table].push({...row,_id:id});operations.push(table+":insert");return id}};return {tables,db,reads,operations};
 }
 afterEach(()=>{vi.unstubAllEnvs();vi.useRealTimers()});
+it("does not publish partial or unowned fallbacks as confirmed packing",async()=>{
+ const f=fixture();f.tables.listing_resolution_override=[];
+ f.tables.online_listings=[];f.tables.hygglo_products[0].name="Unresolved kit";
+ let [row]=await (__service_catalogueForStorefront as any)._handler({db:f.db},{accountSlug:"dbcinema"});
+ expect(row.stockMapping.inventoryFacts).toMatchObject({contents:[],optionalContents:[],reviewRequired:true});
+ f.tables.listing_resolution_override=[{account_slug:"dbcinema",product_id:10,components:[]}];
+ [row]=await (__service_catalogueForStorefront as any)._handler({db:f.db},{accountSlug:"dbcinema"});
+ expect(row.stockMapping.inventoryFacts).toMatchObject({contents:[],optionalContents:[],reviewRequired:true,owned:false});
+});
 describe("actual canonical website kit snapshot and stock feed",()=>{
  it("uses current provider contents in both manager and website coverage checks",async()=>{
   const f=fixture();f.tables.hygglo_products[0].description="Included in this rental: • 3x Sony FX3 • 2x Sony GM 24-70mm f2.8 • 5x NP-FZ100 batteries";
