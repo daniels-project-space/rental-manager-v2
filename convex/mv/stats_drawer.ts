@@ -43,6 +43,48 @@ export const refresh = internalAction({
 });
 
 /**
+ * Copy the current-year tax total into the existing stats snapshots. The slow
+ * MV batch already collects the full reservations source for other aggregates,
+ * so this projection adds only a few bounded writes and removes that annual
+ * document set from every hourly stats refresh.
+ */
+export const writeTaxYearSnapshot = internalMutation({
+  args: {
+    year: v.number(),
+    generatedAt: v.number(),
+    currentYearEarnings: v.array(v.object({ account: v.string(), grossGbp: v.number() })),
+  },
+  handler: async (ctx, { year, generatedAt, currentYearEarnings }) => {
+    const totals = new Map(currentYearEarnings.map(({ account, grossGbp }) => [account, grossGbp]));
+    let updated = 0;
+    for (const account of [ACCOUNT_ALL, ...ACCOUNTS]) {
+      const row = await ctx.db
+        .query("mv_stats_drawer")
+        .withIndex("by_account", (q) => q.eq("account", account))
+        .first();
+      if (!row) continue;
+      const payload = (row.payload ?? {}) as Record<string, unknown>;
+      const priorTax = payload.tax && typeof payload.tax === "object"
+        ? payload.tax as Record<string, unknown>
+        : {};
+      await ctx.db.patch(row._id, {
+        payload: {
+          ...payload,
+          tax: {
+            ...priorTax,
+            snapshot_year: year,
+            current_year_earnings_gbp: totals.get(account) ?? 0,
+            generated_at: generatedAt,
+          },
+        },
+      });
+      updated += 1;
+    }
+    return { updated, year };
+  },
+});
+
+/**
  * Shared compute used by both the standalone refresh action and the master
  * refreshFast orchestrator. Calls the live getStatsDrawerData per account
  * and writes the payloads in a single mutation per account.

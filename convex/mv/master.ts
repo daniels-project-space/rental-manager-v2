@@ -73,6 +73,7 @@ import { refreshAll as refreshRentalVolumeByCategory } from "./rental_volume_by_
 import { refreshAll as refreshWalleSignals } from "./walle_signals";
 import { refreshAll as refreshDueReturns } from "./due_returns";
 import { refreshAll as refreshAiInsights } from "./ai_insights";
+import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
 import { refreshFastWidgets, refreshSlowWidgets } from "./widgets";
 
 // ──────────────────────────────────────────────────────────────
@@ -499,6 +500,36 @@ export const refreshSlow = internalAction({
         generatedAt: startedAt,
       });
       await ctx.runMutation(internal.mv.master.writeChurnRisk, { rows });
+    }));
+
+    // Tax needs only a current-year gross total. Reuse the full reservations
+    // collect already held for churn/ROI/earnings and refresh the existing
+    // stats snapshots once per slow batch; the hourly drawer compute then reads
+    // this cached value instead of re-reading every current-year reservation.
+    results.push(await safeStep(ctx, "stats_drawer_tax_snapshot", async () => {
+      const year = new Date(startedAt).getFullYear();
+      const byAccount = new Map<string, number>(ACCOUNTS.map((slug) => [slug, 0]));
+      let allGross = 0;
+      for (const row of allReservations) {
+        if (
+          row.start_date?.slice(0, 4) !== String(year) ||
+          (row.status !== "confirmed" && row.status !== "completed")
+        ) continue;
+        const gross = row.gross_paid_gbp ?? 0;
+        allGross += gross;
+        if (row.account_slug && byAccount.has(row.account_slug)) {
+          byAccount.set(row.account_slug, (byAccount.get(row.account_slug) ?? 0) + gross);
+        }
+      }
+      const currentYearEarnings = [
+        { account: ACCOUNT_ALL, grossGbp: allGross },
+        ...Array.from(byAccount, ([account, grossGbp]) => ({ account, grossGbp })),
+      ];
+      await ctx.runMutation(internal.mv.stats_drawer.writeTaxYearSnapshot, {
+        year,
+        generatedAt: startedAt,
+        currentYearEarnings,
+      });
     }));
 
     results.push(await safeStep(ctx, "purchase_signals", async () => {
