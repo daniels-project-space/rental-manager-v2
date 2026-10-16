@@ -172,35 +172,61 @@ function StatsGridSkeleton() {
 // Tailwind safelist: keep col-span-2 / row-span-2 reachable so JIT emits them.
 // (used as string literals below: "col-span-2", "row-span-2")
 
-function PendingReviewPanel({ rentals }: { rentals: Array<{
+function PendingReviewPanel({ rentals, otherAccountNewBookingCount }: { rentals: Array<{
   reservation_id: string;
+  created_at: number;
+  account_slug: string;
   renter_name?: string | null;
   item_names_summary?: string | null;
   start_date?: string | null;
   net_gbp?: number | null;
-}> }) {
+}>; otherAccountNewBookingCount: number }) {
+  const { activeAccountSlug, setActiveAccountSlug } = useAccount();
   const [showAll, setShowAll] = useState(false);
-  if (!rentals.length) return null;
+  if (!rentals.length && (!activeAccountSlug || otherAccountNewBookingCount === 0)) return null;
   const previewLimit = 8;
   const visibleRentals = showAll ? rentals : rentals.slice(0, previewLimit);
 
   return (
     <section className="mt-4 rounded-xl border border-sky-500/20 bg-sky-500/[0.04] p-4" aria-label="Bookings awaiting confirmation">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="text-xs font-bold uppercase tracking-wider text-sky-300">Bookings awaiting confirmation</h2>
-        <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[11px] font-semibold text-sky-300">{rentals.length}</span>
-      </div>
-      <div className="space-y-2">
+      {rentals.length > 0 && (
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="text-xs font-bold uppercase tracking-wider text-sky-300">Bookings awaiting confirmation</h2>
+          <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[11px] font-semibold text-sky-300">{rentals.length}</span>
+        </div>
+      )}
+      {activeAccountSlug && otherAccountNewBookingCount > 0 && (
+        <div className={`flex items-center justify-between gap-3 text-xs text-sky-100 ${rentals.length ? "mb-3 border-b border-sky-500/10 pb-3" : ""}`} role="status">
+          <span>{otherAccountNewBookingCount} new booking{otherAccountNewBookingCount === 1 ? "" : "s"} arrived in other accounts in the last 24 hours.</span>
+          <button
+            type="button"
+            className="shrink-0 font-semibold text-sky-300 underline underline-offset-2 hover:text-sky-200"
+            onClick={() => setActiveAccountSlug(null)}
+          >
+            View all accounts
+          </button>
+        </div>
+      )}
+      {rentals.length > 0 && <div className="space-y-2">
         {visibleRentals.map((rental) => (
           <div key={rental.reservation_id} className="flex min-w-0 items-center justify-between gap-3 text-xs">
             <div className="min-w-0">
-              <div className="truncate text-slate-200">{rental.renter_name || rental.item_names_summary || "New booking"}</div>
-              <div className="truncate text-[10px] text-slate-500">{rental.item_names_summary || "Items pending"} · {rental.start_date || "Date pending"}</div>
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-slate-200">{rental.renter_name || rental.item_names_summary || "New booking"}</span>
+                {Date.now() - rental.created_at < 24 * 60 * 60 * 1000 && (
+                  <span className="shrink-0 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-300">
+                    New · {new Date(rental.created_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                )}
+              </div>
+              <div className="truncate text-[10px] text-slate-500">
+                {rental.account_slug.replaceAll("_", " ")} · {rental.item_names_summary || "Items pending"} · {rental.start_date || "Date pending"}
+              </div>
             </div>
             {rental.net_gbp != null && <span className="shrink-0 text-sky-300">{fmtGbpFull(rental.net_gbp)}</span>}
           </div>
         ))}
-      </div>
+      </div>}
       {rentals.length > previewLimit && (
         <div className="mt-3 border-t border-sky-500/10 pt-2 text-right">
           <button
@@ -298,7 +324,10 @@ function RentalHeadlineCards({ data }: { data: RentalHeadlineStats | undefined }
           </div>
         </ExpandableStatCard>
       </div>
-      <PendingReviewPanel rentals={data.active.pending_review_rentals ?? []} />
+      <PendingReviewPanel
+        rentals={data.active.pending_review_rentals ?? []}
+        otherAccountNewBookingCount={data.active.other_account_new_booking_count ?? 0}
+      />
     </>
   );
 }
