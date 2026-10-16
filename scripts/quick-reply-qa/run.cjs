@@ -30,19 +30,19 @@ let browser, server;
       .readFileSync(repo + "/src/app/globals.css", "utf8")
       .replace(
         '@import "tailwindcss";',
-        '@import "tailwindcss" source(none);\n@source "../components/dashboard/ReplyInbox.tsx";\n@source "../components/ui";',
+        '@import "tailwindcss" source(none);\n@source "../components/dashboard/ReplyInbox.tsx";\n@source "../components/dashboard/NotificationBell.tsx";\n@source "../components/ui";',
       ),
     { from: repo + "/src/app/globals.css" },
   );
   fs.writeFileSync(publicDir + "/tailwind.css", css.css);
   await esbuild.build({
-    entryPoints: [__dirname + "/harness.tsx"],
+    entryPoints: [__dirname + (process.env.RM_QA_NOTIFICATIONS_ONLY ? "/notification-harness.tsx" : "/harness.tsx")],
     bundle: true,
     external: ["/fonts/*"],
     outfile: publicDir + "/bundle.js",
     loader: { ".tsx": "tsx", ".ts": "ts", ".module.css": "local-css" },
     jsx: "automatic",
-    alias: { "convex/react": __dirname + "/transport.tsx", "@": repo + "/src" },
+    alias: { "convex/react": __dirname + (process.env.RM_QA_NOTIFICATIONS_ONLY ? "/notification-transport.tsx" : "/transport.tsx"), ...(process.env.RM_QA_NOTIFICATIONS_ONLY ? {"next/navigation": __dirname + "/notification-navigation.tsx"} : {}), "@": repo + "/src" },
     nodePaths: [repo + "/node_modules"],
     define: { "process.env.NODE_ENV": '"development"' },
   });
@@ -141,7 +141,9 @@ let browser, server;
   console.log(
     "Testing Quick Reply with fixture-only transport and external DNS disabled.",
   );
-  if(process.env.RM_QA_AVAILABILITY_ONLY) {
+  if(process.env.RM_QA_NOTIFICATIONS_ONLY) {
+    await child(process.execPath,[__dirname+"/notifications.cjs"],{env});
+  } else if(process.env.RM_QA_AVAILABILITY_ONLY) {
     await child(process.execPath,[__dirname+"/availability.cjs"],{env});
   } else if(process.env.RM_QA_HANDOFF_ONLY) {
     await child(process.execPath,[__dirname+"/handoffs.cjs"],{env});

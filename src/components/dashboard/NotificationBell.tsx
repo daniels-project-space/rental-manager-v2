@@ -299,6 +299,10 @@ export function NotificationBell() {
     if (typeof window !== "undefined")
       window.dispatchEvent(new CustomEvent("rm-deeplink"));
     router.push(url, { scroll: false });
+    // A rapid close/reopen can retain the same Next search-param snapshot.
+    // Wake the inbox explicitly, as the mobile push bridge already does.
+    const thread = new URL(url, window.location.href).searchParams.get("thread");
+    if (thread) window.dispatchEvent(new CustomEvent("rm-open-thread", { detail: thread }));
   }
 
   const unread = recent?.unread ?? 0;

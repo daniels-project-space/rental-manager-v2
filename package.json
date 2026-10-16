@@ -19,7 +19,8 @@
     "test:watch": "vitest",
     "prepare": "husky",
     "test:dashboard-ui": "node scripts/dashboard-layout-qa/run.cjs",
-    "test:quick-reply-ui": "node scripts/quick-reply-qa/run.cjs"
+    "test:quick-reply-ui": "node scripts/quick-reply-qa/run.cjs",
+    "test:notification-links": "RM_QA_NOTIFICATIONS_ONLY=1 node scripts/quick-reply-qa/run.cjs"
   },
   "dependencies": {
     "@ai-sdk/react": "^3.0.193",

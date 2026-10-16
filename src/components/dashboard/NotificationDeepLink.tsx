@@ -19,7 +19,7 @@ export function NotificationDeepLink() {
       if (data?.type !== "deep-link" || typeof data.url !== "string") return;
       const url = new URL(data.url, window.location.href);
       if (url.origin !== window.location.origin) return;
-      router.replace(url.pathname + url.search, { scroll: false });
+      router.replace(url.pathname + url.search + url.hash, { scroll: false });
       const thread = url.searchParams.get("thread");
       if (thread) window.dispatchEvent(new CustomEvent("rm-open-thread", { detail: thread }));
     };
