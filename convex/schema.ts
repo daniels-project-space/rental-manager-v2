@@ -818,6 +818,7 @@ const operationalSchema = defineSchema({
     .index("by_account_status_start_date", ["account_slug", "status", "start_date"])
     .index("by_account_status_end_date", ["account_slug", "status", "end_date"])
     .index("by_account_status_return_date", ["account_slug", "status", "return_date"])
+    .index("by_account_status_return_end_date", ["account_slug", "status", "return_date", "end_date"])
     .index("by_account_pickup_date", ["account_slug", "pickup_date"])
     .index("by_account_status_pickup_date", ["account_slug", "status", "pickup_date", "start_date"])
     // Reconciliation can load terminal reservations by the same bounded
