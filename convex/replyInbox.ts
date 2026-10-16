@@ -1229,20 +1229,41 @@ export const getReplyQueue = query({
     // by the stamp skew, and such a tile is already dropped today by the hard
     // last_activity_at guard below, since its genuine newest message is older
     // than the window.)
-    for (const conv of convos) {
-      const recencyTs = conv.last_renter_msg_at ?? conv.last_msg_at;
-      if (recencyTs < cutoff) continue;
-      const reservation = await resFor(conv.thread_id);
-      const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex, availCtx, hub, display, messagesByThread.get(conv.thread_id));
-      if (accountOk(tile.account_slug)) byThread.set(conv.thread_id, tile);
+    const assembleBatch = async (
+      rows: Array<{ conv: Doc<"conversations"> | null; reservation: Doc<"reservations"> | null; threadId: string }>,
+    ) => {
+      const tiles = await Promise.all(rows.map(async ({ conv, reservation, threadId }) =>
+        await assembleTile(ctx, conv, reservation, threadId, priceIndex, availCtx, hub, display, messagesByThread.get(threadId)),
+      ));
+      for (const tile of tiles) {
+        if (accountOk(tile.account_slug)) byThread.set(tile.thread_id, tile);
+      }
+    };
+    // Keep the expensive per-tile reads concurrent but bounded. In particular,
+    // assembleTile reads renter context and image mappings; awaiting each tile
+    // serially made the full MV query exceed Convex's one-second query budget
+    // even though the shared queue, message and stock reads were already batched.
+    const TILE_ASSEMBLY_BATCH_SIZE = 8;
+    const pass1 = convos.filter((conv) =>
+      (conv.last_renter_msg_at ?? conv.last_msg_at) >= cutoff,
+    );
+    for (let offset = 0; offset < pass1.length; offset += TILE_ASSEMBLY_BATCH_SIZE) {
+      const rows = await Promise.all(pass1.slice(offset, offset + TILE_ASSEMBLY_BATCH_SIZE).map(async (conv) => ({
+        conv,
+        reservation: await resFor(conv.thread_id),
+        threadId: conv.thread_id,
+      })));
+      await assembleBatch(rows);
     }
 
     // Pass 2 — ALWAYS surface rental REQUESTs awaiting my approve/decline, even
     // if I spoke last or it's outside the recency window. This is what makes the
     // Approve / Decline buttons reliably reachable. (Collects hoisted above.)
+    const seenRequestThreads = new Set<string>();
+    const requestRows: Array<{ conv: Doc<"conversations"> | null; reservation: Doc<"reservations">; threadId: string }> = [];
     for (const r of requests) {
       const threadId = r.hygglo_order_id;
-      if (!threadId || byThread.has(threadId)) continue;
+      if (!threadId || byThread.has(threadId) || seenRequestThreads.has(threadId)) continue;
       const conv = requestConversationByThread.get(threadId) ?? convByThread.get(threadId) ?? null;
       // Respect the recency window even for requests. A request with no activity
       // in `withinDays` (no recent message AND created long ago) is stale —
@@ -1257,8 +1278,11 @@ export const getReplyQueue = query({
         r._creationTime ?? 0,
       );
       if (reqTs && reqTs < cutoff) continue;
-      const tile = await assembleTile(ctx, conv, r, threadId, priceIndex, availCtx, hub, display, messagesByThread.get(threadId));
-      if (accountOk(tile.account_slug)) byThread.set(threadId, tile);
+      seenRequestThreads.add(threadId);
+      requestRows.push({ conv, reservation: r, threadId });
+    }
+    for (let offset = 0; offset < requestRows.length; offset += TILE_ASSEMBLY_BATCH_SIZE) {
+      await assembleBatch(requestRows.slice(offset, offset + TILE_ASSEMBLY_BATCH_SIZE));
     }
 
     // Pass 3 — NORMAL MESSAGES: every other recent conversation (owner spoke
@@ -1270,11 +1294,12 @@ export const getReplyQueue = query({
       // msgCutoff by construction; iteration order is the same index order).
       // last_msg_at is non-optional, so the per-row `recencyTs < msgCutoff` guard
       // below (kept) trims any wider window → identical result set.
+      const messageRows: Array<{ conv: Doc<"conversations">; reservation: Doc<"reservations"> | null; threadId: string }> = [];
       for (const conv of windowConvos) {
         if (byThread.has(conv.thread_id)) continue;
         const recencyTs = conv.last_msg_at ?? conv.last_renter_msg_at ?? 0;
         if (recencyTs < msgCutoff) continue;
-        const reservation = await resFor(conv.thread_id);
+        const reservation = conversationReservationByThread.get(conv.thread_id) ?? null;
         // Drop finished rentals from the wide (30-day) browse pass. Recent
         // renter-last threads on finished orders are already caught by Pass 1's
         // 5-day window; surfacing the FULL 30-day finished backlog here floods
@@ -1286,8 +1311,10 @@ export const getReplyQueue = query({
           if ((st && FINISHED_STATUS.has(st)) || (step && FINISHED_STEP.has(step)))
             continue;
         }
-        const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex, availCtx, hub, display, messagesByThread.get(conv.thread_id));
-        if (accountOk(tile.account_slug)) byThread.set(conv.thread_id, tile);
+        messageRows.push({ conv, reservation, threadId: conv.thread_id });
+      }
+      for (let offset = 0; offset < messageRows.length; offset += TILE_ASSEMBLY_BATCH_SIZE) {
+        await assembleBatch(messageRows.slice(offset, offset + TILE_ASSEMBLY_BATCH_SIZE));
       }
     }
 
