@@ -58,13 +58,32 @@ export function reservedListingKeys(rentals: ResolvableRes[]): Array<{account:st
 
 export async function loadCanonicalListingAllocation(ctx: QueryCtx, inventory?: Doc<"items">[], overrideRows?: Override[], rentals?: ResolvableRes[]): Promise<OverrideMap> {
   const keys=rentals===undefined?undefined:reservedListingKeys(rentals);
-  const [items,overrides,products,listings]=await Promise.all([
+  const [items,overrides,contextRows,listings]=await Promise.all([
     inventory??ctx.db.query("items").collect(),
     overrideRows??ctx.db.query("listing_resolution_override").collect(),
-    keys===undefined?ctx.db.query("hygglo_products").collect():Promise.all(keys.map(k=>ctx.db.query("hygglo_products")
-      .withIndex("by_account_product",q=>q.eq("accountSlug",k.account).eq("productId",k.productId)).first())).then(rows=>rows.filter((r):r is Doc<"hygglo_products">=>r!==null)),
+    keys===undefined?Promise.resolve([]):Promise.all(keys.map(k=>ctx.db.query("hygglo_product_context")
+      .withIndex("by_account_product",q=>q.eq("account_slug",k.account).eq("product_id",k.productId)).first())).then(rows=>rows.filter((r):r is Doc<"hygglo_product_context">=>r!==null)),
     keys===undefined?ctx.db.query("online_listings").collect():Promise.all(keys.map(k=>ctx.db.query("online_listings")
       .withIndex("by_account_product",q=>q.eq("account_slug",k.account).eq("product_id",k.productId)).first())).then(rows=>rows.filter((r):r is Doc<"online_listings">=>r!==null)),
   ]);
+  let products: Product[];
+  if(keys===undefined){
+    // Preserve the existing unbounded-catalog behavior for callers that do
+    // not provide a reservation set. Every production caller currently passes
+    // its bounded rentals, so the expensive path is the compact lookup below.
+    products=await ctx.db.query("hygglo_products").collect();
+  }else{
+    const found=new Set(contextRows.map(r=>`${r.account_slug}#${r.product_id}`));
+    const missing=keys.filter(k=>!found.has(`${k.account}#${k.productId}`));
+    // During rollout/backfill, fall back only for missing projection rows. This
+    // preserves old results until the compact mirror is complete, and a missing
+    // product remains a harmless indexed miss after backfill.
+    const fallback=missing.length?await Promise.all(missing.map(k=>ctx.db.query("hygglo_products")
+      .withIndex("by_account_product",q=>q.eq("accountSlug",k.account).eq("productId",k.productId)).first())):[];
+    products=[
+      ...contextRows.map(r=>({accountSlug:r.account_slug,productId:r.product_id,name:r.name,description:r.description,masterItemId:r.master_item_id})),
+      ...fallback.filter((r):r is Doc<"hygglo_products">=>r!==null),
+    ];
+  }
   return canonicalListingAllocation(items,overrides,products,listings);
 }

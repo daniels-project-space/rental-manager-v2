@@ -18,7 +18,9 @@ import { createBundleMappingContext } from "./lib/bundle_mapping";
  */
 
 import { paginationOptsValidator } from "convex/server";
+import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
+import type { MutationCtx } from "./_generated/server";
 import { action, mutation, query, internalAction, internalMutation, internalQuery, internalQueryOf, requireOwner } from "./owner_functions";
 import { v } from "convex/values";
 import { resolveListingComponents } from "./lib/listing_inventory";
@@ -66,6 +68,110 @@ const productArg = v.object({
   masterItemId: v.optional(v.id("items")),
   isMarketingOnly: v.boolean(),
   matchScore: v.optional(v.number()),
+});
+
+const productContextArg = v.object({
+  account_slug: v.string(),
+  product_id: v.number(),
+  name: v.optional(v.string()),
+  description: v.optional(v.string()),
+  master_item_id: v.optional(v.id("items")),
+  source_last_synced_at: v.number(),
+});
+
+async function upsertProductContext(
+  ctx: MutationCtx,
+  row: { account_slug: string; product_id: number; name?: string; description?: string; master_item_id?: Id<"items">; source_last_synced_at: number },
+): Promise<"inserted" | "updated" | "unchanged"> {
+  const existing = await ctx.db
+    .query("hygglo_product_context")
+    .withIndex("by_account_product", (q) =>
+      q.eq("account_slug", row.account_slug).eq("product_id", row.product_id),
+    )
+    .first();
+  if (!existing) {
+    await ctx.db.insert("hygglo_product_context", row);
+    return "inserted";
+  }
+  // A backfill page can race the daily catalog sync. Never let a source row it
+  // read earlier overwrite a newer compact projection committed by that sync.
+  if (existing.source_last_synced_at > row.source_last_synced_at) return "unchanged";
+  if (
+    existing.name === row.name &&
+    existing.description === row.description &&
+    existing.master_item_id === row.master_item_id &&
+    existing.source_last_synced_at === row.source_last_synced_at
+  ) return "unchanged";
+  await ctx.db.patch(existing._id, {
+    name: row.name,
+    description: row.description,
+    master_item_id: row.master_item_id,
+    source_last_synced_at: row.source_last_synced_at,
+  });
+  return "updated";
+}
+
+/** Page the rich source table for the bounded one-time projection backfill. */
+export const __productContextBackfillPage = internalQuery({
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, { paginationOpts }) =>
+    await ctx.db.query("hygglo_products").paginate(paginationOpts),
+});
+
+/** Idempotent compact-row writer shared by catalog sync and the backfill. */
+export const __upsertProductContextRows = internalMutation({
+  args: { rows: v.array(productContextArg) },
+  handler: async (ctx, { rows }) => {
+    let inserted = 0;
+    let updated = 0;
+    let unchanged = 0;
+    for (const row of rows) {
+      const result = await upsertProductContext(ctx, row);
+      if (result === "inserted") inserted++;
+      else if (result === "updated") updated++;
+      else unchanged++;
+    }
+    return { inserted, updated, unchanged };
+  },
+});
+
+/** One-shot, restart-safe backfill for existing catalog products. */
+export const __backfillProductContext = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    type ProductContextBackfillPage = {
+      page: Doc<"hygglo_products">[];
+      continueCursor: string;
+      isDone: boolean;
+    };
+    let cursor: string | null = null;
+    let pages = 0;
+    let scanned = 0;
+    let inserted = 0;
+    let updated = 0;
+    do {
+      const page: ProductContextBackfillPage = await ctx.runQuery(internal.hygglo_products.__productContextBackfillPage, {
+        paginationOpts: { cursor, numItems: 50 },
+      });
+      const result = await ctx.runMutation(internal.hygglo_products.__upsertProductContextRows, {
+        rows: page.page.map((product: Doc<"hygglo_products">) => ({
+          account_slug: product.accountSlug,
+          product_id: product.productId,
+          name: product.name,
+          description: product.description,
+          master_item_id: product.masterItemId,
+          source_last_synced_at: product.lastSyncedAt,
+        })),
+      });
+      pages++;
+      scanned += page.page.length;
+      inserted += result.inserted;
+      updated += result.updated;
+      cursor = page.continueCursor;
+      if (page.isDone) break;
+    } while (true);
+    return { pages, scanned, inserted, updated };
+  },
 });
 
 // ── Mutations ─────────────────────────────────────────────────────────────
@@ -125,6 +231,18 @@ export const upsertProductsBatch = mutation({
         await ctx.db.insert("hygglo_products", row);
         inserted++;
       }
+
+      // Keep the compact allocation projection in the same transaction as its
+      // source row. If a provider detail response omits description, retain the
+      // prior verified description exactly as the full-row upsert does.
+      await upsertProductContext(ctx, {
+        account_slug: p.accountSlug,
+        product_id: p.productId,
+        name: p.name,
+        description: p.description !== undefined ? p.description : existing?.description,
+        master_item_id: p.masterItemId,
+        source_last_synced_at: now,
+      });
     }
 
     return { inserted, updated };
