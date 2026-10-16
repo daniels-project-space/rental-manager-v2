@@ -166,16 +166,16 @@ export default function DashboardPage() {
           className="mx-auto px-4 md:px-6 py-5"
           style={{ maxWidth: "1440px" }}
         >
-          {mobileView === "rentals" ? (
-            <section id="mobile-rentals-view" aria-label="Rental tiles" className="min-w-0">
-              <WidgetErrorBoundary label="Rentals"><CalendarStrip /></WidgetErrorBoundary>
-            </section>
-          ) : <div id="dashboard-view">
           <div className="mb-4">
             <WidgetErrorBoundary label="Live rental totals">
               <RentalHeadlinePanel />
             </WidgetErrorBoundary>
           </div>
+          {mobileView === "rentals" ? (
+            <section id="mobile-rentals-view" aria-label="Rental tiles" className="min-w-0">
+              <WidgetErrorBoundary label="Rentals"><CalendarStrip /></WidgetErrorBoundary>
+            </section>
+          ) : <div id="dashboard-view">
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
