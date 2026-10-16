@@ -773,6 +773,9 @@ const operationalSchema = defineSchema({
     .index("by_status_pickup_date", ["status", "pickup_date"])
     .index("by_status_return_date", ["status", "return_date"])
     .index("by_status_end_date", ["status", "end_date"])
+    // Hourly Return Hub refresh reads only physical-out states and legacy due
+    // rows instead of collecting the confirmed reservation history.
+    .index("by_status_order_step_end_date", ["status", "order_step", "end_date"])
     // Pass 8b (2026-05-31): the stats_drawer MV dirty-probe needs to detect ANY
     // reservation mutation cheaply. The poller bumps last_polled_at on every
     // touched row, so an indexed max(last_polled_at) lets the probe catch status

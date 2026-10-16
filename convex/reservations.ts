@@ -69,6 +69,7 @@ import {
   isOutstandingReturnState,
   isPlatformClosePending,
 } from "./lib/return_presence";
+import { loadConfirmedReturnCandidates } from "./lib/due_return_candidates";
 
 export const getDueReturns = query({
   args: {
@@ -184,17 +185,7 @@ export const getDueReturns = query({
         }
       }
     }
-    const confirmed = accountSlug
-      ? await ctx.db
-          .query("reservations")
-          .withIndex("by_account_status", (q) =>
-            q.eq("account_slug", accountSlug).eq("status", "confirmed"),
-          )
-          .collect()
-      : await ctx.db
-          .query("reservations")
-          .withIndex("by_status", (q) => q.eq("status", "confirmed"))
-          .collect();
+    const confirmed = await loadConfirmedReturnCandidates(ctx, accountSlug, today);
     type CandRow = (typeof confirmed)[number];
 
     // Gear that is OUT per Hygglo: DELIVERED (picked up) or RETURNED (with the
