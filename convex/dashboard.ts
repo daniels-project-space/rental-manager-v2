@@ -21,6 +21,7 @@ import {
 } from "./lib/reservations/predicates";
 import { realisedMonthRevenue, rentalMonthProjectionInputs } from "./lib/reservations/monthRevenue";
 import { loadCompletedMonthlyRows } from "./lib/monthly_revenue_rows";
+import { confirmedHeadlineOrder } from "./lib/confirmed_headline_order";
 import {
   pctOfTarget,
   projectCurrentMonth,
@@ -3088,7 +3089,7 @@ export const getRentalHeadlineStats = query({
     // member can determine the group's identity, span and value. The status
     // index currently contains 31 rows (~81 KB, 16 Oct 2026), and one read
     // avoids four overlapping date scans without reading completed history.
-    const [confirmedRows, pendingReviewRows] = await Promise.all([
+    const [allConfirmedRows, pendingReviewRows] = await Promise.all([
       accountSlug
         ? ctx.db.query("reservations").withIndex("by_account_status_start_date", (q) =>
             q.eq("account_slug", accountSlug).eq("status", "confirmed")).collect()
@@ -3096,6 +3097,20 @@ export const getRentalHeadlineStats = query({
             q.eq("status", "confirmed")).collect(),
       statusDateWindow("pending_review", dashCutoff, pendingHorizon),
     ]);
+    let confirmedRows = confirmedHeadlineOrder(allConfirmedRows, today);
+    if (confirmedRows === null) {
+      // A fully tied index key is rare. Retain exact database ordering then.
+      const groups = await Promise.all([
+        ctx.db.query("reservations").withIndex("by_status_end_date", (q) => q.eq("status", "confirmed").gte("end_date", today)).collect(),
+        ctx.db.query("reservations").withIndex("by_status_return_date", (q) => q.eq("status", "confirmed").gte("return_date", today)).collect(),
+        ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) => q.eq("status", "confirmed").gte("pickup_date", today)).collect(),
+        ctx.db.query("reservations").withIndex("by_status_start_date", (q) => q.eq("status", "confirmed").gte("start_date", today)).collect(),
+      ]);
+      const ordered = new Map<string, (typeof allConfirmedRows)[number]>();
+      for (const row of groups.flat()) if (!accountSlug || row.account_slug === accountSlug) ordered.set(String(row._id), row);
+      for (const row of allConfirmedRows) if (!ordered.has(String(row._id))) ordered.set(String(row._id), row);
+      confirmedRows = [...ordered.values()];
+    }
     // Account filtering can otherwise hide a just-arrived booking from the
     // owner's dashboard with no indication why. When scoped to one account,
     // do one bounded indexed read of the small pending-review set so the page
