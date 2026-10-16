@@ -200,6 +200,7 @@ export const upsertProductsBatch = mutation({
         )
         .first();
 
+      const confirmedIdentity=existing?.stockIdentityOverride;
       const row = {
         accountSlug: p.accountSlug,
         productId: p.productId,
@@ -215,10 +216,10 @@ export const upsertProductsBatch = mutation({
         unavailableDates: p.unavailableDates,
         listings: p.listings,
         publicUrl: p.publicUrl,
-        masterItemId: existing?.stockIdentityOverride?.title === p.name ? existing.stockIdentityOverride.itemId : p.masterItemId,
+        masterItemId: confirmedIdentity && confirmedIdentity.title === p.name ? confirmedIdentity.itemId : p.masterItemId,
         // A confirmed physical identity survives fuzzy re-imports of the same
         // offer, but cannot migrate to a renamed/replaced configuration.
-        stockIdentityOverride: existing?.stockIdentityOverride?.title === p.name ? existing.stockIdentityOverride : undefined,
+        stockIdentityOverride: confirmedIdentity && confirmedIdentity.title === p.name ? confirmedIdentity : undefined,
         isMarketingOnly: p.isMarketingOnly,
         // Keep a manual choice stable when the Hygglo catalogue refreshes.
         isMarketingOnlyOverride: existing?.isMarketingOnlyOverride,
