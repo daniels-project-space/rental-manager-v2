@@ -19,7 +19,7 @@ describe("actual storefront master-stock projection", () => {
     expect(result[3]).not.toHaveProperty("private_notes");
   });
   it("preserves the real owner boundary when enforcement is enabled", async () => {
-    vi.stubEnv("OWNER_AUTH_REQUIRED", "true");
+    vi.stubEnv("OWNER_AUTH_REQUIRED", "true");vi.stubEnv("RENTAL_MANAGER_ACCESS","owner");
     const read=vi.fn();
     await expect((listForReconcile as any)._handler({auth:{getUserIdentity:async()=>null},db:{query:read}},{})).rejects.toThrow("OWNER_AUTH_REQUIRED");
     expect(read).not.toHaveBeenCalled();

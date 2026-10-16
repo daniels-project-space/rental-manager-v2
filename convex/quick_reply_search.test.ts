@@ -89,7 +89,7 @@ describe("read-only complete message history", () => {
     ).rejects.toThrow("32 search words");
   });
   it("rejects nonowners before querying history", async () => {
-    vi.stubEnv("OWNER_AUTH_REQUIRED", "true");
+    vi.stubEnv("OWNER_AUTH_REQUIRED", "true");vi.stubEnv("RENTAL_MANAGER_ACCESS","owner");
     vi.stubEnv("CONVEX_SITE_URL", "https://fixture.convex.site");
     const runQuery = vi.fn();
     await expect(

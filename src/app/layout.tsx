@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Providers } from "./providers";
-import { ownerEnforcementRequired } from "../../convex/lib/owner_authorization";
+import { managerSessionRequired } from "../../convex/lib/owner_authorization";
 
 export const metadata: Metadata = {
   title: "Rental Manager v2",
@@ -38,7 +38,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <Providers enforceOwner={ownerEnforcementRequired(process.env.OWNER_AUTH_REQUIRED)}>{children}</Providers>
+        <Providers enforceOwner={managerSessionRequired(process.env.RENTAL_MANAGER_ACCESS)}>{children}</Providers>
       </body>
     </html>
   );

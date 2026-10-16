@@ -4,12 +4,12 @@ import { internal } from "./_generated/api";
 import type { GenericCtx } from "@convex-dev/better-auth";
 import type { DataModel } from "./_generated/dataModel";
 import { authComponent } from "./auth";
-import { authorizeOwner, ownerEnforcementRequired } from "./lib/owner_authorization";
+import { authorizeOwner, managerSessionRequired } from "./lib/owner_authorization";
 
 export * from "./_generated/server";
 
 export async function requireOwner(ctx: GenericCtx<DataModel>, enforce = false) {
-  if (!enforce && !ownerEnforcementRequired(process.env.OWNER_AUTH_REQUIRED)) return;
+  if (!enforce && !managerSessionRequired(process.env.RENTAL_MANAGER_ACCESS)) return;
   await authorizeOwner(
     await ctx.auth.getUserIdentity(),
     process.env.CONVEX_SITE_URL,

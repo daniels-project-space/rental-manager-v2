@@ -4,7 +4,7 @@ import { usePathname } from "next/navigation";
 import { useConvexAuth, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { authClient } from "@/lib/auth-client";
-import { ownerLoginHref } from "@/lib/owner-navigation";
+import { ownerLoginHref, ownerReturnTo } from "@/lib/owner-navigation";
 
 class AccessFailure extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -56,9 +56,17 @@ function OwnerSession({ enforce, children }: { enforce: boolean; children: React
   </>;
 }
 
-/** Login must mount only authentication, before any operational provider queries. */
+function DirectDashboard() {
+  useEffect(() => {
+    window.location.replace(ownerReturnTo(new URLSearchParams(window.location.search).get("returnTo")));
+  }, []);
+  return <main className="flex min-h-screen items-center justify-center bg-[#070910] text-white"><p role="status">Opening Rental Manager…</p></main>;
+}
+
+/** Direct access never mounts the optional session gate or sign-up form. */
 export function OwnerAccessGate({ enforce, children, login }: { enforce: boolean; children: ReactNode; login: ReactNode }) {
   const pathname = usePathname();
+  if (!enforce) return pathname === "/login" || pathname === "/login/" ? <DirectDashboard /> : children;
   if (pathname === "/login" || pathname === "/login/") return login;
   return <AccessFailure><OwnerSession enforce={enforce}>{children}</OwnerSession></AccessFailure>;
 }

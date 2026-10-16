@@ -4,6 +4,13 @@ export const OWNER_SERVICE_SUBJECT = "rental-manager-service";
 export interface OwnerIdentity { issuer: string; subject: string }
 export interface OwnerBinding { auth_user_id: string }
 
+/** Daniel's dashboard opens directly. A session gate requires a separate, explicit opt-in. */
+export function managerSessionRequired(value: string | undefined): boolean {
+  if (value === undefined || value === "open") return false;
+  if (value === "owner") return true;
+  throw new Error("Invalid RENTAL_MANAGER_ACCESS configuration");
+}
+
 /** Only deployment-key admin transport can assign the reserved service issuer. */
 export async function authorizeOwner(
   identity: OwnerIdentity | null,

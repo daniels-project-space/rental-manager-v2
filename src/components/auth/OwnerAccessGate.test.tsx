@@ -17,7 +17,7 @@ function render(enforce = true) { return renderToStaticMarkup(<Providers enforce
 beforeEach(() => { state.pathname = "/"; state.auth = { isLoading: false, isAuthenticated: false }; state.owner = undefined; state.queries = []; });
 describe("real owner provider boundary", () => {
   it("login never mounts private operational providers, regardless of rollout", () => {
-    for (const enforce of [true, false]) {
+    for (const enforce of [true]) {
       state.pathname = "/login"; expect(render(enforce)).toContain("PRIVATE_OR_ROUTE_CONTENT"); expect(state.queries).toEqual([]);
     }
   });
@@ -37,7 +37,9 @@ describe("real owner provider boundary", () => {
     state.auth = { isLoading: false, isAuthenticated: true }; state.owner = { authenticated: true, isOwner: true };
     const html = render(); expect(html).toContain("PRIVATE_OR_ROUTE_CONTENT"); expect(html).toContain("Sign out"); expect(state.queries).toEqual(["auth:state", "dashboardLayout:getLayout"]);
   });
-  it("preserves the existing rollout until owner onboarding is completed", () => {
-    expect(render(false)).toContain("PRIVATE_OR_ROUTE_CONTENT"); expect(state.queries).toContain("dashboardLayout:getLayout");
+  it("opens directly without consulting optional owner sessions", () => {
+    expect(render(false)).toContain("PRIVATE_OR_ROUTE_CONTENT"); expect(state.queries).toContain("dashboardLayout:getLayout"); expect(state.queries).not.toContain("auth:state");
   });
 });
+
+it("replaces old login URLs with direct dashboard navigation without a signup form",()=>{state.pathname="/login";const html=render(false);expect(html).toContain("Opening Rental Manager");expect(html).not.toContain("PRIVATE_OR_ROUTE_CONTENT");expect(state.queries).toEqual([]);});

@@ -165,7 +165,7 @@ describe("owner website rental controls bridge", () => {
   }
   it("denies anonymous controls before contacting the website", async () => {
     const f = await setup({});
-    vi.stubEnv("OWNER_AUTH_REQUIRED", "true");
+    vi.stubEnv("OWNER_AUTH_REQUIRED", "true");vi.stubEnv("RENTAL_MANAGER_ACCESS","owner");
     await expect(
       (f.module.rentalControls as any)._handler(
         { auth: { getUserIdentity: async () => null }, runQuery: vi.fn() },
@@ -407,7 +407,7 @@ describe("inline website equipment controls", () => {
   });
   it("rejects anonymous equipment operations before any provider call", async () => {
     const f = await setup();
-    vi.stubEnv("OWNER_AUTH_REQUIRED", "true");
+    vi.stubEnv("OWNER_AUTH_REQUIRED", "true");vi.stubEnv("RENTAL_MANAGER_ACCESS","owner");
     const ctx = {
       auth: { getUserIdentity: async () => null },
       runQuery: vi.fn(),
