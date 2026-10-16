@@ -14,7 +14,7 @@ export type PushNotificationType =
   | "renter_message"
   | "low_response_rate"
   | "human_request" | "booking_cancelled" | "email_notification" | "booking_update"
-  | "pickup_reminder" | "rental_time_changed";
+  | "pickup_reminder" | "return_reminder" | "rental_time_changed";
 
 /**
  * A device moving from a money-only mode to "all" may have just missed a

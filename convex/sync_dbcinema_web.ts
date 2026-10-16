@@ -33,7 +33,7 @@ import { computePollHash } from "./hygglo";
 import { queueNotificationEvents } from "./notifications";
 import { websiteWindowUnits } from "./lib/reservations/itemUnits";
 import { buildConfirmedBookingNotificationCopy } from "./lib/notification_events";
-import { rentalTimeChangedEvent, syncPickupReminder } from "./lib/rental_timing_notifications";
+import { rentalTimeChangedEvent, syncRentalReminders } from "./lib/rental_timing_notifications";
 
 const upsertBatchRef = internal.sync_dbcinema_web.upsertSiteBookingsBatch;
 
@@ -439,7 +439,7 @@ export const upsertSiteBookingsBatch = internalMutation({
         } as never);
       }
       await syncWebsiteCases(ctx, b, reservationId, itemById);
-      await syncPickupReminder(ctx, { ...mine, ...fields, _id: reservationId! });
+      await syncRentalReminders(ctx, { ...mine, ...fields, _id: reservationId! });
       if (mine) {
         const event = rentalTimeChangedEvent(mine, { ...mine, ...fields }, Date.now());
         if (event) await queueNotificationEvents(ctx, [event]);

@@ -7,7 +7,7 @@ import { v } from "convex/values";
 import { internalQuery, internalMutation, internalMutationOf, query, mutation } from "./owner_functions";
 import { internal } from "./_generated/api";
 import { queueNotificationEvents } from "./notifications";
-import { rentalTimeChangedEvent, syncPickupReminder } from "./lib/rental_timing_notifications";
+import { rentalTimeChangedEvent, syncRentalReminders } from "./lib/rental_timing_notifications";
 import { confirmedChatClock, recoverConfirmedChatClock } from "../src/lib/booking-schedule-evidence";
 import { hashBookingTimeTranscript } from "../src/lib/booking-time-transcript";
 import type { MutationCtx } from "./_generated/server";
@@ -43,7 +43,7 @@ async function persistTimes(ctx:MutationCtx,id:Id<"reservations">,hash:string,pa
  const confirmedNext={...next,pickup_time_provenance:pickup,return_time_provenance:returned};
  const event=rentalTimeChangedEvent(row,confirmedNext,Date.now(),true);
  if(event)await queueNotificationEvents(ctx,[event]);
- await syncPickupReminder(ctx,confirmedNext);
+ await syncRentalReminders(ctx,confirmedNext);
  const changesHoldWindow = (["pickup_time", "return_time", "pickup_date", "return_date"] as const)
   .some((field) => patch[field] !== undefined && row[field] !== patch[field]);
  if (changesHoldWindow && row.account_slug) {

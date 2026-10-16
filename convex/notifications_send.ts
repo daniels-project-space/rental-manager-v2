@@ -173,7 +173,7 @@ export const dispatchPending = internalAction({
                   }),
                   // Do not store a fifteen-minute reminder for hours while a
                   // phone is offline. Other notification retention is unchanged.
-                  e.type === "pickup_reminder" ? { TTL: 60, urgency: "high" } : undefined,
+                  (e.type === "pickup_reminder" || e.type === "return_reminder") ? { TTL: 60, urgency: "high" } : undefined,
                 );
                 pushed++;
                 eventPushed++;

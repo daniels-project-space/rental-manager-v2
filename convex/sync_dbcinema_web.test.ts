@@ -17,7 +17,7 @@ function database() {
   patch: async (id:string,value:any) => { rows.set(id,{...rows.get(id),...value}) },
   query: (table:string) => {
    const equalities: Array<[string,any]>=[];
-   const q:any={withIndex: (_:string, select:any) => {const selector:any={eq:(k:string,v:any)=>{equalities.push([k,v]);return selector}};select(selector);return q}, collect:async()=>[...rows.values()].filter(r=>r.table===table && equalities.every(([k,v])=>r[k]===v)),first:async()=>(await q.collect())[0]??null};return q;
+   const q:any={withIndex: (_:string, select:any) => {const selector:any={eq:(k:string,v:any)=>{equalities.push([k,v]);return selector}};select(selector);return q}, collect:async()=>[...rows.values()].filter(r=>r.table===table && equalities.every(([k,v])=>r[k]===v)),take:async(n:number)=>(await q.collect()).slice(0,n),first:async()=>(await q.collect())[0]??null};return q;
   },
  };
  return {ctx:{db,scheduler:{runAfter:vi.fn()}},rows};
@@ -29,7 +29,7 @@ describe('real website reservation sync handlers',()=>{
   const {ctx}=database();await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking()],reconcile:false});vi.clearAllMocks();
   const revised=booking({revision:2,pickupTime:'11:30',returnTime:'18:00'});
   await invoke(upsertSiteBookingsBatch,ctx,{bookings:[revised],reconcile:false});
-  expect(queueNotificationEvents).toHaveBeenCalledTimes(1);expect(vi.mocked(queueNotificationEvents).mock.calls[0][1][0]).toMatchObject({type:'rental_time_changed',thread_id:'dbcinema:web-rental-1',title:'Your rental changed its time to 11:30'});
+  expect(queueNotificationEvents).toHaveBeenCalledTimes(1);expect(vi.mocked(queueNotificationEvents).mock.calls[0][1][0]).toMatchObject({type:'rental_time_changed',thread_id:'dbcinema:web-rental-1',title:'Alex has changed their rental times to pickup 11:30 · return 18:00'});
   await invoke(upsertSiteBookingsBatch,ctx,{bookings:[revised],reconcile:false});expect(queueNotificationEvents).toHaveBeenCalledTimes(1);
  });
  it('emits one upcoming confirmation and preserves times, then ignores repeat and stale updates',async()=>{

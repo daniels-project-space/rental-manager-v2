@@ -2550,8 +2550,9 @@ const operationalSchema = defineSchema({
   // `delivered_at` gates the dispatcher (send-once); `read_at` drives the
   // bell's unread badge. `url` deep-links to the chat thread.
   rental_pickup_reminders: defineTable({
-    reservation_id: v.id("reservations"), pickup_at: v.number(), due_at: v.number(),
-    schedule_key: v.string(), active: v.boolean(),
+    reservation_id: v.id("reservations"), pickup_at: v.optional(v.number()), due_at: v.number(),
+    kind: v.optional(v.union(v.literal("pickup"), v.literal("return"))), scheduled_at: v.optional(v.number()),
+    schedule_key: v.string(), active: v.boolean(), fired_schedule_key: v.optional(v.string()),
   }).index("by_reservation", ["reservation_id"]).index("by_active_due", ["active", "due_at"]),
   notification_events: defineTable({
     type: v.union(
@@ -2564,6 +2565,7 @@ const operationalSchema = defineSchema({
       v.literal("email_notification"),
       v.literal("booking_update"),
       v.literal("pickup_reminder"),
+      v.literal("return_reminder"),
       v.literal("rental_time_changed"),
     ),
     thread_id: v.string(),                   // hygglo_order_id → deep-link target
