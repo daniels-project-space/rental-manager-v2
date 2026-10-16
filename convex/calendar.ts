@@ -96,19 +96,20 @@ export function shiftIsoDate(ymd: string, deltaDays: number): string {
  * across executions, so convex/mv/calendar.ts:computeViews now collects each
  * input ONCE and hands them to every compute via this bag.
  *
- * Contract per input: the preload must provably CONTAIN what the compute's own
- * indexed query would return. Each compute verifies that (range containment on
- * from/to) and otherwise falls back to its own ctx.db read, so a caller can
- * never make a compute silently drop rows. Ranged preloads must be collected
- * from the SAME index the computes use (by_start_date / by_date) so that
- * in-memory slices preserve index order — dedup/merge output depends on row
- * order. All docs are treated as immutable (every compute path only builds new
+ * Contract per input: the preload must provably contain every row that can
+ * survive the compute's existing predicates. Each compute verifies range
+ * containment on from/to and otherwise falls back to its own ctx.db read, so a
+ * caller can never make a compute silently drop rows. A shared preload may union
+ * narrower status/date ranges when excluded rows are rejected by those
+ * predicates, but it must restore the original index order — dedup/merge output
+ * depends on row order. All docs are treated as immutable (every compute path only builds new
  * objects), so one bag can safely feed many computes in one execution.
  */
 export type CalendarComputePreload = {
-  /** reservations collected via by_start_date over [from, to] INCLUSIVE, in
-   *  index order (start_date asc, then _creationTime asc). Covers both the
-   *  padded window scan and the 120-day lookback scan when
+  /** Calendar reservation candidates over [from, to] INCLUSIVE, ordered like
+   *  by_start_date (start_date asc, then _creationTime asc). A status-scoped
+   *  preload must contain all rows that can survive the calendar predicate and
+   *  cover both the padded window scan and 120-day lookback when
    *  from <= anchor-120d and to >= scanEnd. */
   reservationsWindow?: { from: string; to: string; rows: Doc<"reservations">[] };
   /** calendar_holds collected via by_date over [from, to] INCLUSIVE, in index
@@ -304,15 +305,15 @@ export async function computeStripLive(
     // Unified 120-day lookback lower bound (hoisted from the W1a block below —
     // also needed for the preload containment check).
     const lookbackStart = shiftIsoDate(startDate, -CALENDAR_LOOKBACK_DAYS);
-    // Preloaded reservations are usable ONLY when their collected by_start_date
+    // Preloaded reservations are usable ONLY when their by_start_date-equivalent
     // range provably contains BOTH indexed scans below: [lookbackStart, scanEnd]
     // ⊆ [pre.from, pre.to] (lookbackStart < scanStart < scanEnd always, so one
     // check covers the window scan AND the lookback scan). The in-memory slices
     // replicate index-range semantics exactly: string compare on start_date,
     // rows with undefined start_date excluded (undefined sorts below every
     // string, so `.gte(<string>)` never returns them), and index order is
-    // preserved (pre rows come from the same by_start_date index; filter keeps
-    // relative order).
+    // preserved (the shared status/date preload is sorted back into
+    // by_start_date order before filtering).
     const preRes =
       pre?.reservationsWindow &&
       pre.reservationsWindow.from <= lookbackStart &&
@@ -1140,15 +1141,15 @@ export async function computeWeeklyLive(
     // Unified 120-day lookback lower bound (hoisted from below the window scan —
     // also needed for the preload containment check).
     const overlapStart = shiftIsoDate(weekStartDate, -CALENDAR_LOOKBACK_DAYS);
-    // Preloaded reservations are usable ONLY when their collected by_start_date
+    // Preloaded reservations are usable ONLY when their by_start_date-equivalent
     // range provably contains BOTH indexed scans below: [overlapStart, scanEnd]
     // ⊆ [pre.from, pre.to] (overlapStart < scanStart < scanEnd always, so one
     // check covers the window scan AND the lookback scan). The in-memory slices
     // replicate index-range semantics exactly: string compare on start_date,
     // rows with undefined start_date excluded (undefined sorts below every
     // string, so `.gte(<string>)` never returns them), and index order is
-    // preserved (pre rows come from the same by_start_date index; filter keeps
-    // relative order).
+    // preserved (the shared status/date preload is sorted back into
+    // by_start_date order before filtering).
     const preRes =
       pre?.reservationsWindow &&
       pre.reservationsWindow.from <= overlapStart &&
