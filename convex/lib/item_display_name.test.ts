@@ -39,7 +39,7 @@ describe("shared item presentation identity", () => {
 
 import { listingDisplayCatalog } from "./listing_display_catalog";
 describe("exact requested item image fallbacks", () => {
- it("keeps saved thumbnail and full-size URLs scoped to the account listing and caches reads", async () => {
+ it.each([false,true])("keeps image order/account scope and caches reads (compact=%s)", async (compact) => {
   const reads:string[]=[];
   const ctx:any={db:{query:(table:string)=>{
    const filters:Record<string,unknown>={};
@@ -49,6 +49,7 @@ describe("exact requested item image fallbacks", () => {
     expect(filters[table==="hygglo_products"?"accountSlug":"account_slug"]).toBe("leo");
     if(table==="online_listings")return {image:"/saved.png"};
     if(table==="listing_images")return {image_url:"/backup.png"};
+    if(table==="hygglo_product_context")return compact?{projection_version:2,source_product_id:"product",account_slug:"leo",product_id:77,source_last_synced_at:1,image_urls:["/thumb.png","/full.png"]}:null;
     return {images:[{thumbnailUrl:"/thumb.png",fullSizeUrl:"/full.png"},{thumbnailUrl:"/thumb.png"}]};
    }};return q;
   }}};
@@ -56,6 +57,7 @@ describe("exact requested item image fallbacks", () => {
   const urls=(await display.imageChoicesFor("leo",[77])).get(77);
   expect(urls).toEqual(["/saved.png","/backup.png","/thumb.png","/full.png"]);
   await display.imageChoicesFor("leo",[77]);
-  expect(reads).toHaveLength(3);
+  expect(reads).toHaveLength(compact?3:4);
+  expect(reads.includes("hygglo_products")).toBe(!compact);
  });
 });

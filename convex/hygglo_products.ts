@@ -24,6 +24,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import type { MutationCtx } from "./_generated/server";
 import { action, mutation, query, internalAction, internalMutation, internalQuery, internalQueryOf, requireOwner } from "./owner_functions";
+import { insertProduct, patchProduct, refreshProductContext } from "./lib/product_context";
 import { v } from "convex/values";
 import { resolveListingComponents } from "./lib/listing_inventory";
 
@@ -85,32 +86,9 @@ export async function upsertProductContext(
   ctx: MutationCtx,
   row: { account_slug: string; product_id: number; name?: string; description?: string; master_item_id?: Id<"items">; source_last_synced_at: number },
 ): Promise<"inserted" | "updated" | "unchanged"> {
-  const existing = await ctx.db
-    .query("hygglo_product_context")
-    .withIndex("by_account_product", (q) =>
-      q.eq("account_slug", row.account_slug).eq("product_id", row.product_id),
-    )
-    .first();
-  if (!existing) {
-    await ctx.db.insert("hygglo_product_context", row);
-    return "inserted";
-  }
-  // A backfill page can race the daily catalog sync. Never let a source row it
-  // read earlier overwrite a newer compact projection committed by that sync.
-  if (existing.source_last_synced_at > row.source_last_synced_at) return "unchanged";
-  if (
-    existing.name === row.name &&
-    existing.description === row.description &&
-    existing.master_item_id === row.master_item_id &&
-    existing.source_last_synced_at === row.source_last_synced_at
-  ) return "unchanged";
-  await ctx.db.patch(existing._id, {
-    name: row.name,
-    description: row.description,
-    master_item_id: row.master_item_id,
-    source_last_synced_at: row.source_last_synced_at,
-  });
-  return "updated";
+  // A page may be stale or describe a later duplicate. Read the actual indexed
+  // .first() source in this mutation instead of trusting its payload.
+  return refreshProductContext(ctx, row.account_slug, row.product_id);
 }
 
 /** Page the rich source table for the bounded one-time projection backfill. */
@@ -231,24 +209,12 @@ export const upsertProductsBatch = mutation({
       };
 
       if (existing) {
-        await ctx.db.patch(existing._id, row);
+        await patchProduct(ctx, existing._id, row, existing);
         updated++;
       } else {
-        await ctx.db.insert("hygglo_products", row);
+        await insertProduct(ctx, row);
         inserted++;
       }
-
-      // Keep the compact allocation projection in the same transaction as its
-      // source row. If a provider detail response omits description, retain the
-      // prior verified description exactly as the full-row upsert does.
-      await upsertProductContext(ctx, {
-        account_slug: p.accountSlug,
-        product_id: p.productId,
-        name: p.name,
-        description: p.description !== undefined ? p.description : existing?.description,
-        master_item_id: row.masterItemId,
-        source_last_synced_at: now,
-      });
     }
 
     return { inserted, updated };
@@ -417,10 +383,10 @@ export const __saveMarketingOverrides = internalMutation({
     }));
     const at = rows.reduce((value, row) => Math.max(value, (row.product.marketingOnlyUpdatedAt ?? 0) + 1), Date.now());
     for (const { product, change } of rows) {
-      await ctx.db.patch(product._id, {
+      await patchProduct(ctx, product._id, {
         isMarketingOnlyOverride: change.marketingOnly === null ? undefined : change.marketingOnly,
         marketingOnlyUpdatedAt: at,
-      });
+      }, product);
     }
     // Existing caches must not retain an Available badge after an operator changes a tag.
     if(rows.length)for(const account of ["all","all:pending"]){
