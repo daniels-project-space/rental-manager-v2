@@ -1,3 +1,4 @@
+import { loadPricingRows } from "../lib/pricing_input_cache";
 /**
  * 2026-07-12 cost audit — generic widget MV refreshers (table `mv_widgets`,
  * reader helpers in convex/lib/widget_mv.ts).
@@ -174,7 +175,7 @@ export const computeFast = internalQuery({
 
     // ── Health issue scan ──
     const photos = await ctx.db.query("listing_photos").collect();
-    const pricing = await ctx.db.query("pricing_catalog").collect();
+    const pricing = await loadPricingRows(ctx);
     const cutoff365 = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
     const confirmed365 = confirmed.filter((r) => (r.start_date ?? "") >= cutoff365);
     const health: Record<string, { issues: HealthIssue[] }> = {};

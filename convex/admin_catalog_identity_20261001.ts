@@ -1,4 +1,5 @@
 import { patchStockInput } from "./lib/stock_input_writes";
+import { patchPricingInput } from "./lib/pricing_input_cache";
 import { internalMutation } from "./_generated/server";
 import { shortItemName } from "./lib/item_display_name";
 
@@ -19,7 +20,7 @@ export const run = internalMutation({ args: {}, handler: async ctx => {
         description: "Sony FE 90mm F2.8 Macro G OSS (SEL90M28G): Sony G-series E-mount full-frame macro lens, not a G Master model. Up to 1:1 magnification, minimum focus distance 0.28m, Optical SteadyShot, 62mm filter diameter and 602g weight. Manufacturer box contents do not establish rental inclusions.",
         specs_long: "", source: "manufacturer-verified", source_url: "https://www.sony.co.uk/electronics/camera-lenses/sel90m28g", verified_model: "SEL90M28G", verified_at: Date.now() });
       const prices = await ctx.db.query("pricing_catalog").withIndex("by_name", q => q.eq("item_name_canonical", item.name_canonical)).collect();
-      for (const p of prices) await ctx.db.patch(p._id, { item_name_canonical: name });
+      for (const p of prices) await patchPricingInput(ctx, p._id, { item_name_canonical: name }, p);
       changed.push({ item_id: item._id, before: item.name_canonical, after: name, previous_spec: spec.description, previous_image: item.image_url });
     }
   }

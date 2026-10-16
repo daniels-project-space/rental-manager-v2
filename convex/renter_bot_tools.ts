@@ -1,3 +1,4 @@
+import { loadPricingRows } from "./lib/pricing_input_cache";
 import { listingReplacementCandidates } from "./lib/listing_replacement_candidates";
 import { ownedItemHirePriceReader } from "./lib/owned_item_hire_price";
 import { listingKitContext, listingKitItem } from "./lib/listing_kit_context";
@@ -1158,7 +1159,7 @@ export const lookup_pricing = query({
         did_you_mean: nearMisses,
         message: "No verified rentable identity for this price request",
       };
-    const catalog = await ctx.db.query("pricing_catalog").collect();
+    const catalog = await loadPricingRows(ctx);
     const rows = catalog.filter(
       (r) =>
         !r.marketing_only &&
@@ -2967,7 +2968,7 @@ export const get_mount_adapters = query({
       .collect();
     const idxAll = await ctx.db.query("hygglo_product_index").collect();
     const listingByPid = new Map(listings.map((l) => [l.product_id, l]));
-    const catalog = await ctx.db.query("pricing_catalog").collect();
+    const catalog = await loadPricingRows(ctx);
     const catalogPrice = new Map<string, number>();
     for (const row of catalog) {
       const k = row.item_name_canonical.toLowerCase().trim();

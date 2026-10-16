@@ -1,3 +1,4 @@
+import { loadPricingRows, patchPricingInput, insertPricingInput } from "./lib/pricing_input_cache";
 import { mutation, query } from "./owner_functions";
 import { v } from "convex/values";
 
@@ -25,10 +26,10 @@ export const applyRecommendation = mutation({
     for (const row of rows) {
       // Keep price_max >= price_min; if new rate > existing max, bump max too
       const newMax = Math.max(row.daily_price_max, newDailyRate);
-      await ctx.db.patch(row._id, {
+      await patchPricingInput(ctx, row._id, {
         daily_price_min: newDailyRate,
         daily_price_max: newMax,
-      });
+      }, row);
     }
 
     // Remove any existing dismissal for this item (applying overrides dismiss)
@@ -98,15 +99,15 @@ export const upsertPricingRow = mutation({
       .withIndex("by_name", (q) => q.eq("item_name_canonical", args.item_name_canonical))
       .first();
     if (existing) {
-      await ctx.db.patch(existing._id, {
+      await patchPricingInput(ctx, existing._id, {
         daily_price_min: args.daily_price_min,
         daily_price_max: args.daily_price_max,
         ...(args.is_bundle !== undefined ? { is_bundle: args.is_bundle } : {}),
         ...(args.marketing_only !== undefined ? { marketing_only: args.marketing_only } : {}),
-      });
+      }, existing);
       return { action: "updated", id: existing._id };
     }
-    const id = await ctx.db.insert("pricing_catalog", {
+    const id = await insertPricingInput(ctx, {
       item_name_canonical: args.item_name_canonical,
       daily_price_min: args.daily_price_min,
       daily_price_max: args.daily_price_max,
@@ -136,7 +137,7 @@ export const lookup = query({
     const exactRowsCI =
       exactRows.length > 0
         ? exactRows
-        : (await ctx.db.query("pricing_catalog").collect()).filter(
+        : (await loadPricingRows(ctx)).filter(
             (r) => !r.is_bundle && !r.marketing_only && r.item_name_canonical.toLowerCase() === lower,
           );
     if (exactRowsCI.length > 0) return exactRowsCI.slice(0, 5);
@@ -187,7 +188,7 @@ export const lookup = query({
     if (filtered.length > 0) return filtered.slice(0, 5);
 
     // Fallback: substring match on all pricing_catalog rows
-    const allRows = await ctx.db.query("pricing_catalog").collect();
+    const allRows = await loadPricingRows(ctx);
     const lq = lower.replace(/[^a-z0-9]/g, "");
     // First try non-bundle rows only
     const scoreRows = (rows: typeof allRows) =>

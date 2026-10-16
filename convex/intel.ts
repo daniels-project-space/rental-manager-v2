@@ -1,3 +1,4 @@
+import { loadPricingRows } from "./lib/pricing_input_cache";
 /**
  * ──────────────────────────────────────────────────────────────────────────
  *  Business intelligence queries — the long-tail analytics the chat
@@ -247,7 +248,7 @@ export const getSmartBuyRanking = query({
       }
     }
 
-    const pricingRows = await ctx.db.query("pricing_catalog").collect();
+    const pricingRows = await loadPricingRows(ctx);
     const pricingByKey = new Map<string, number>();
     for (const p of pricingRows) {
       const rate = (p.daily_price_min + (p.daily_price_max ?? p.daily_price_min)) / 2;

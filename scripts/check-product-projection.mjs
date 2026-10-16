@@ -17,6 +17,7 @@ const projectionOwners = new Map([
   ["hygglo_products", "convex/lib/product_context.ts"],
   ["reservations", "convex/lib/reservation_revenue.ts"],
   ["weekly_metrics", "convex/lib/weekly_input_cache.ts"],
+  ["pricing_catalog", "convex/lib/pricing_input_cache.ts"],
   ...["items", "hygglo_product_index", "listing_resolution_override", "insurance_claims", "owner_unavailability", "vacation_periods"]
     .map((table) => [table, "convex/lib/stock_input_writes.ts"]),
 ]);

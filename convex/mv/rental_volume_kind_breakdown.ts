@@ -1,3 +1,4 @@
+import { loadPricingRows } from "../lib/pricing_input_cache";
 /**
  * MV: mv_rental_volume_kind_breakdown
  *
@@ -43,7 +44,7 @@ export const collectInputs = internalQuery({
         .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
         .collect(),
       ctx.db.query("items").collect(),
-      ctx.db.query("pricing_catalog").collect(),
+      loadPricingRows(ctx),
       ctx.db.query("listing_resolution_override").collect(),
     ]);
     return { reservations, items, pricing, overrideRows };

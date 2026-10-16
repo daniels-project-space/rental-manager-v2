@@ -1,3 +1,4 @@
+import { loadPricingRows } from "../lib/pricing_input_cache";
 /**
  * Pure compute core for getMissedAndDeniedByCategory (read-reduction refactor,
  * 2026-06-02).
@@ -149,7 +150,7 @@ export async function fetchMissedDeniedData(
   now: number,
 ): Promise<RecomputeData> {
   const allItems = await ctx.db.query("items").collect();
-  const pricingRows = await ctx.db.query("pricing_catalog").collect();
+  const pricingRows = await loadPricingRows(ctx);
   // ALL obsolete rows (no cutoff, no account) — the per-cell window/account
   // predicates are applied in-memory. ~50 rows.
   const obsoleteAll = await ctx.db
