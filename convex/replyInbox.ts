@@ -507,7 +507,10 @@ export function computeAvailability(reservation:BotBooking|null,av?:AvailCtx,req
   const checked=new Map<string,ReturnType<typeof stockForRentalItem>|null>();
   if(av&&sources&&start&&end)for(const [id,quantity] of demand){
     const item=av.itemRows.find(row=>String(row._id)===id);
-    checked.set(id,item?stockForRentalItem(sources,item,{item_name:item.name_canonical,start_date:start,end_date:end,quantity,thread_id:reservation?.hygglo_order_id,pickup_time:window?.pickup_time,return_time:window?.return_time}):null);
+    // The collapsed inbox needs only the per-item verdict and free/total count.
+    // Full per-day traces remain available to detailed stock callers, but are
+    // discarded here and used to repeat a peak-occupancy scan for every day.
+    checked.set(id,item?stockForRentalItem(sources,item,{item_name:item.name_canonical,start_date:start,end_date:end,quantity,thread_id:reservation?.hygglo_order_id,pickup_time:window?.pickup_time,return_time:window?.return_time},false):null);
   }
   const items:ItemAvail[]=lines.map((line,item_index)=>{
     const unknown=(reason:string):ItemAvail=>({name:line.name,requested:line.qty??1,total_units:0,booked:0,pending:0,free:0,available:null,reason,item_index});
