@@ -8,6 +8,7 @@ import { effStart } from "./double_booking";
 import { dedupByLogicalRental } from "./reservations/predicates";
 import { buildProductIndexMap, reservationItemUnits, type OverrideMap } from "./reservations/itemUnits";
 import { defaultAdapterUnits } from "./default_adapter_units";
+import type { ProductContextCache } from "./product_context";
 
 export type StockRequest = {
   item_name: string;
@@ -219,6 +220,7 @@ export function evaluateStockWindow(args: {
 
 type StockSources = { items:Doc<"items">[]; reservations:Doc<"reservations">[]; productIndex:Map<string,string>;overrides:OverrideMap;
   rawOverrides?: Doc<"listing_resolution_override">[];
+  productContextCache?: ProductContextCache;
   claims:Doc<"insurance_claims">[];blackouts:Doc<"owner_unavailability">[];vacations:Doc<"vacation_periods">[];
   checkoutHolds?:Doc<"storefront_checkout_stock">["rows"];reservationUnits?:Map<string,Map<string,number>>;
   occupancyCache?:{signature?:unknown[];byItem:Map<string,Occupancy[]>} };
@@ -237,13 +239,14 @@ export async function loadStockSources(ctx: QueryCtx, window?: StockDateWindow):
   ]);
   if(process.env.REQUIRE_WEBSITE_STOCK_HOLDS_SYNC==="true" && (!checkoutStock || Date.now()-checkoutStock.receivedAt>180000))throw Error("Website checkout stock snapshot needs refresh; availability cannot be confirmed.");
   const reservations=dedupByLogicalRental([...confirmed,...ongoing,...websitePending.filter(r=>r.order_step==="VERIFIED")].filter(r=>!r.is_obsolete&&!r.hygglo_order_id?.startsWith("__probe__")));
-  const productIndex=buildProductIndexMap(index),allocation=await loadCanonicalListingAllocation(ctx,items,overrides,reservations);
+  const productContextCache: ProductContextCache=new Map();
+  const productIndex=buildProductIndexMap(index),allocation=await loadCanonicalListingAllocation(ctx,items,overrides,reservations,productContextCache);
   const reservationUnits=new Map<string,Map<string,number>>();
   for(const r of reservations)if(r.start_date && r.end_date && r.order_step!=="REVIEWED" && r.status!=="completed" && !(r.account_slug==="dbcinema_web"&&r.site_item_windows!==undefined))
     reservationUnits.set(String(r._id),reservationItemUnits(r,productIndex,allocation,items));
   const paidWebsite=new Set(reservations.filter(r=>r.account_slug==="dbcinema_web").map(r=>r.hygglo_order_id?.replace(/^dbcinema[_:-]/,"")));
   const checkoutHolds=(checkoutStock?.rows??[]).filter(h=>h.expiresAt>Date.now()&&!paidWebsite.has(h.bookingId));
-  return {checkoutHolds,items,reservations,productIndex,overrides:allocation,rawOverrides:overrides,claims,blackouts,vacations,reservationUnits,occupancyCache:{byItem:new Map()}};
+  return {checkoutHolds,items,reservations,productIndex,overrides:allocation,rawOverrides:overrides,productContextCache,claims,blackouts,vacations,reservationUnits,occupancyCache:{byItem:new Map()}};
 }
 
 export function resolveStockItem(name: string, items: Doc<"items">[]) {

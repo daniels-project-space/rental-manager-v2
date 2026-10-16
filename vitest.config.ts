@@ -138,6 +138,7 @@ export default defineConfig({
       "src/lib/push-service-worker.test.ts",
       "convex/lib/lab_lifecycle.test.ts",
       "convex/lib/item_display_name.test.ts",
+      "convex/lib/product_context.test.ts",
       "convex/lib/reservations/itemUnits.test.ts",
       "convex/lib/rental_stage.test.ts",
       "convex/lib/booking_reply_claims.test.ts",

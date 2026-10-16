@@ -8,6 +8,7 @@ import type { FunctionReference } from "convex/server";
 import { mutation, query, requireOwner } from "./owner_functions";
 import { normalizeItemName } from "./lib/item_matcher";
 import { validIsoDate, loadStockSources } from "./lib/renter_stock";
+import { patchProduct } from "./lib/product_context";
 
 const formValidator = v.object({
   name: v.string(), exact_model: v.string(), kind: v.string(), quantity: v.string(),
@@ -370,7 +371,7 @@ export const registerListing = mutation({
       throw Error("Listing ID already maps to another physical item");
     const now = Date.now();
     if (mirror.masterItemId !== args.item_id || mirror.isMarketingOnly !== !owned)
-      await ctx.db.patch(mirror._id, { masterItemId: args.item_id, isMarketingOnly: !owned });
+      await patchProduct(ctx, mirror._id, { masterItemId: args.item_id, isMarketingOnly: !owned }, mirror);
     if (override) {
       if (!override.public_url || !override.stock_item_id)
         await ctx.db.patch(override._id, {

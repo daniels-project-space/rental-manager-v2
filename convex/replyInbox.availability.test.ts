@@ -86,7 +86,7 @@ describe("Quick Reply full-basket shared stock checks", () => {
       ]).status,
     ).toBe("available");
   });
-  it("loads pending kit contents from indexed catalogue records without writes", async () => {
+  it.each([false,true])("loads pending kit contents without writes (compact=%s)", async (compact) => {
     const items = [
       { ...gear("camera", "Sony FX3"), is_marketing_only: false },
       {
@@ -109,7 +109,10 @@ describe("Quick Reply full-basket shared stock checks", () => {
           const q = {
             withIndex: () => q,
             first: async () =>
-              table === "hygglo_products"
+              table === "hygglo_product_context" && compact
+                ? { account_slug:"fixture",product_id:7,projection_version:2,source_product_id:"product",source_last_synced_at:1,image_urls:[],master_item_id:"camera",
+                    description:"Included in this rental: • 1x Sony FX3 • 1x Sony GM 24-70mm f2.8" }
+                : table === "hygglo_products"
                 ? {
                     accountSlug: "fixture",
                     productId: 7,
@@ -135,7 +138,7 @@ describe("Quick Reply full-basket shared stock checks", () => {
     const result = computeAvailability(rental, av, [
       { ...line("FX3 camera and lens kit"), product_id: 7 },
     ]);
-    expect(reads).toEqual(["hygglo_products", "online_listings"]);
+    expect(reads).toEqual(compact?["hygglo_product_context","online_listings"]:["hygglo_product_context","online_listings","hygglo_products"]);
     expect(
       av.overrideMap
         .get("fixture#7")

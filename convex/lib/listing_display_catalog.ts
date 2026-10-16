@@ -2,6 +2,7 @@ import { requestedDisplayMatch } from "./quick_reply_requested_items";
 import type { QueryCtx } from "../_generated/server";
 import type { Doc } from "../_generated/dataModel";
 import { listingDisplayName } from "./item_display_name";
+import { loadProductContext, type ProductContextCache } from "./product_context";
 
 /** One shared catalog per query; never an N-per-card database lookup. */
 /** A bundle may supply a photograph of its exact mapped model. This is display
@@ -36,7 +37,7 @@ export function displayImageMappings<
 export async function listingDisplayCatalog(
   ctx: QueryCtx,
   account?: string,
-  preloaded?: { items?: Doc<"items">[]; mappings?: Doc<"listing_resolution_override">[] },
+  preloaded?: { items?: Doc<"items">[]; mappings?: Doc<"listing_resolution_override">[]; productContextCache?: ProductContextCache },
 ) {
   const [items, mappings, names] = await Promise.all([
     preloaded?.items ?? ctx.db.query("items").collect(),
@@ -69,6 +70,7 @@ export async function listingDisplayCatalog(
       .map((n) => [`${n.account_slug}#${n.product_id}`, n.short_name]),
   );
   const imageReads = new Map<string, Promise<string[]>>();
+  const productContextCache = preloaded?.productContextCache ?? new Map();
   const readImages = (slug: string, pid: number) => {
     const key = `${slug}#${pid}`;
     if (!imageReads.has(key))
@@ -87,16 +89,11 @@ export async function listingDisplayCatalog(
               q.eq("account_slug", slug).eq("product_id", pid),
             )
             .first(),
-          ctx.db
-            .query("hygglo_products")
-            .withIndex("by_account_product", (q) =>
-              q.eq("accountSlug", slug).eq("productId", pid),
-            )
-            .first(),
+          loadProductContext(ctx, slug, pid, productContextCache),
         ]).then(([listing, bank, product]) => [
           ...new Set(
             [listing?.image, bank?.image_url,
-              ...(product?.images ?? []).slice(0, 6).flatMap((image) => [image.thumbnailUrl, image.fullSizeUrl]),
+              ...(product?.image_urls ?? []),
             ].filter(
               (url): url is string => typeof url === "string" && !!url,
             ),

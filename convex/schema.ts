@@ -2184,6 +2184,11 @@ const operationalSchema = defineSchema({
     description: v.optional(v.string()),
     master_item_id: v.optional(v.id("items")),
     source_last_synced_at: v.number(),
+    source_product_id: v.optional(v.id("hygglo_products")),
+    projection_version: v.optional(v.literal(2)),
+    is_marketing_only: v.optional(v.boolean()),
+    is_marketing_only_override: v.optional(v.boolean()),
+    image_urls: v.optional(v.array(v.string())),
   }).index("by_account_product", ["account_slug", "product_id"]),
 
   // ===========================================================================

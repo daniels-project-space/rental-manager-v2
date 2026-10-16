@@ -31,6 +31,7 @@ import { persistOwnerChecks } from "./renter_bot_owner_checks";
 import {recordSentRentalRequest,validateRentalRequest} from "./lib/sent_rental_request";
 import { sentBookingProposals } from "./lib/renter_sent_proposal";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
+import { loadProductContext } from "./lib/product_context";
 import { shortListingTitle, shortItemName } from "./lib/item_display_name";
 import { verifiedItemSpec } from "./lib/verified_item_spec";
 import { getBotBooking, getLabOrder, requestedListingContext, type BotBooking } from "./lib/renter_booking";
@@ -453,16 +454,16 @@ export async function extendAvailabilityMappings(ctx:QueryCtx,av:AvailCtx,rental
   });
   const keys=reservedListingKeys(rentals);
   const [products,listings]=await Promise.all([
-    Promise.all(keys.map(key=>ctx.db.query("hygglo_products").withIndex("by_account_product",q=>q.eq("accountSlug",key.account).eq("productId",key.productId)).first())),
+    Promise.all(keys.map(key=>loadProductContext(ctx,key.account,key.productId,av.stockSources.productContextCache??=new Map()))),
     Promise.all(keys.map(key=>ctx.db.query("online_listings").withIndex("by_account_product",q=>q.eq("account_slug",key.account).eq("product_id",key.productId)).first())),
   ]);
-  const productRows=products.filter((row):row is Doc<"hygglo_products">=>row!==null),listingRows=listings.filter((row):row is Doc<"online_listings">=>row!==null);
+  const productRows=products.filter((row):row is NonNullable<typeof row>=>row!==null).map(row=>({accountSlug:row.account_slug,productId:row.product_id,name:row.name,description:row.description,masterItemId:row.master_item_id})),listingRows=listings.filter((row):row is Doc<"online_listings">=>row!==null);
   const overrides=canonicalListingAllocation(av.itemRows,seed,productRows,listingRows);
   const qualification=av.listingQualification??new Map<string,{complete:boolean;owned:boolean|null;marketingOnly?:boolean;reason?:string}>(),context=createBundleMappingContext(av.itemRows);
   keys.forEach((key,index)=>{
     const id=`${key.account}#${key.productId}`,product=products[index],listing=listings[index];
-    const resolved=resolveListingComponents(av.itemRows,av.overrideMap.get(id),product?.masterItemId?String(product.masterItemId):undefined,1,product?.description??listing?.description,context,product?.name??listing?.name);
-    const marketingOnly=(product?.isMarketingOnlyOverride ?? product?.isMarketingOnly)===true;
+    const resolved=resolveListingComponents(av.itemRows,av.overrideMap.get(id),product?.master_item_id?String(product.master_item_id):undefined,1,product?.description??listing?.description,context,product?.name??listing?.name);
+    const marketingOnly=(product?.is_marketing_only_override ?? product?.is_marketing_only)===true;
     const unresolved = [
       ...(resolved.coverage?.unresolved ?? []),
       ...(resolved.coverage?.missing ?? []).map(c=>`${c.qty}× ${c.name ?? "unmapped component"}`),
@@ -1155,6 +1156,7 @@ export const getReplyQueue = query({
     const display = await listingDisplayCatalog(ctx, accountSlug, {
       items: availCtx.stockSources.items,
       mappings: availCtx.stockSources.rawOverrides,
+      productContextCache: availCtx.stockSources.productContextCache,
     });
     // Reservation-by-order-id cache: loadAvailCtx's confirmed/pending rows plus
     // the request rows above — every reservation already read this execution.
@@ -1412,6 +1414,7 @@ export const getThreadById = query({
       listingDisplayCatalog(ctx, slug, {
         items: availCtx.stockSources.items,
         mappings: availCtx.stockSources.rawOverrides,
+        productContextCache: availCtx.stockSources.productContextCache,
       }),
     ]);
     return await assembleTile(
