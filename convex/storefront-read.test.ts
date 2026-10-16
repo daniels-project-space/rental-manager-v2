@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("./auth", () => ({authComponent:{registerRoutes:vi.fn(),safeGetAuthUser:vi.fn()},createAuth:vi.fn()}));
 import http, { storefrontRead } from "./http";
 import { __service_listForStorefront as itemsService, listForReconcile as itemsPublic } from "./items";
-import { __pushMarketingOverrides, __service_listForStorefront as productsService } from "./hygglo_products";
+import { upsertProductsBatch, __pushMarketingOverrides, __service_listForStorefront as productsService } from "./hygglo_products";
 import { __service_listActiveForStorefront as activeService, __service_listDemandForStorefront as demandService } from "./reservations";
 import { getFunctionName } from "convex/server";
 const secret="fixture-read-service";
@@ -64,5 +64,19 @@ describe("registered private storefront read transport",()=>{
   const fetchMock=vi.fn();vi.stubGlobal("fetch",fetchMock);
   await expect((__pushMarketingOverrides as any)._handler({}, {changes:[{productId:31,marketingOnly:true,mode:"manual",updatedAt:123}]})).rejects.toThrow("URL is invalid");
   expect(fetchMock).not.toHaveBeenCalled();
+ });
+});
+
+
+describe('owner-confirmed physical identities during later catalogue imports',()=>{
+ it('preserves a reviewed link in both full and compact rows, and clears it when the offer title changes',async()=>{
+  const title='Hollyland Pyro S Kit';
+  const rows:any={hygglo_products:[{_id:'product',accountSlug:'diogo',productId:1173775,name:title,masterItemId:'pyro',stockIdentityOverride:{itemId:'pyro',title,source:'Owner confirmation'}}],hygglo_product_context:[]};
+  const db:any={query:(table:string)=>{let values=rows[table]??[];const q:any={withIndex:(_:string,fn:any)=>{const selector:any={eq:(k:string,v:any)=>{values=values.filter((r:any)=>r[k]===v);return selector}};fn(selector);return q},first:async()=>values[0]??null};return q},patch:async(id:string,patch:any)=>{const row=Object.values(rows).flat().find((r:any)=>r._id===id) as any;Object.assign(row,patch)},insert:async(table:string,value:any)=>{const row={_id:table+'-new',...value};(rows[table]??=[]).push(row);return row._id}};
+  const incoming={accountSlug:'diogo',productId:1173775,name:title,masterItemId:'mars',isMarketingOnly:true,isPublished:true,prices:[],images:[],listings:[],unavailableDates:[]};
+  await (upsertProductsBatch as any)._handler({db},{products:[incoming]});
+  expect(rows.hygglo_products[0].masterItemId).toBe('pyro');expect(rows.hygglo_product_context[0].master_item_id).toBe('pyro');
+  await (upsertProductsBatch as any)._handler({db},{products:[{...incoming,name:'Different replacement offer'}]});
+  expect(rows.hygglo_products[0].masterItemId).toBe('mars');expect(rows.hygglo_products[0].stockIdentityOverride).toBeUndefined();expect(rows.hygglo_product_context[0].master_item_id).toBe('mars');
  });
 });

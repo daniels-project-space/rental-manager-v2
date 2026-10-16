@@ -1,4 +1,5 @@
 import { internalMutation } from "../_generated/server";
+import { upsertProductContext } from "../hygglo_products";
 import { v } from "convex/values";
 import { ownerAvailabilityReview, OWNER_AVAILABILITY_SOURCE } from "../lib/owner_availability_review";
 
@@ -15,7 +16,15 @@ export const apply = internalMutation({
     const plan=ownerAvailabilityReview(items,products.filter((p):p is NonNullable<typeof p>=>p!==null));
     if(!dryRun){
       for(const row of plan.items)await ctx.db.patch(row.id,{...row.patch,updated_at:Date.now()});
-      for(const row of plan.products)await ctx.db.patch(row.id,{...row.patch,marketingOnlyUpdatedAt:Date.now()});
+      for(const row of plan.products){
+        const at=Date.now();
+        await ctx.db.patch(row.id,{...row.patch,marketingOnlyUpdatedAt:at});
+        if("masterItemId" in row.patch){
+          const original=products.find(p=>p?._id===row.id)!;
+          await upsertProductContext(ctx,{account_slug:original.accountSlug,product_id:original.productId,
+            name:original.name,description:original.description,master_item_id:row.patch.masterItemId,source_last_synced_at:at});
+        }
+      }
     }
     return {dryRun,source:OWNER_AVAILABILITY_SOURCE,packingConfirmation:"16 October 2026: original GM, A7 V V90, paired Pyro S receiver",itemChanges:plan.items.map(p=>({name:p.name,fields:Object.keys(p.patch)})),listingChanges:plan.products.map(p=>({account:p.account,productId:p.productId,name:p.name})),rentalChanges:0,messagesSent:0};
   },

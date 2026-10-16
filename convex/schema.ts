@@ -2121,6 +2121,7 @@ const operationalSchema = defineSchema({
     publicUrl: v.optional(v.string()),
     // Resolved master-inventory link (fuzzy match). Absent ⇒ marketing-only.
     masterItemId: v.optional(v.id("items")),
+    stockIdentityOverride: v.optional(v.object({itemId:v.id("items"),title:v.string(),source:v.string()})),
     isMarketingOnly: v.boolean(),
     // Owner-controlled per-listing override. Provider catalogue sync must not
     // overwrite this choice; absent means use the automatic provider match.

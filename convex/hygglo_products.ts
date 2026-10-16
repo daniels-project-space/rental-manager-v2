@@ -79,7 +79,7 @@ const productContextArg = v.object({
   source_last_synced_at: v.number(),
 });
 
-async function upsertProductContext(
+export async function upsertProductContext(
   ctx: MutationCtx,
   row: { account_slug: string; product_id: number; name?: string; description?: string; master_item_id?: Id<"items">; source_last_synced_at: number },
 ): Promise<"inserted" | "updated" | "unchanged"> {
@@ -215,7 +215,10 @@ export const upsertProductsBatch = mutation({
         unavailableDates: p.unavailableDates,
         listings: p.listings,
         publicUrl: p.publicUrl,
-        masterItemId: p.masterItemId,
+        masterItemId: existing?.stockIdentityOverride?.title === p.name ? existing.stockIdentityOverride.itemId : p.masterItemId,
+        // A confirmed physical identity survives fuzzy re-imports of the same
+        // offer, but cannot migrate to a renamed/replaced configuration.
+        stockIdentityOverride: existing?.stockIdentityOverride?.title === p.name ? existing.stockIdentityOverride : undefined,
         isMarketingOnly: p.isMarketingOnly,
         // Keep a manual choice stable when the Hygglo catalogue refreshes.
         isMarketingOnlyOverride: existing?.isMarketingOnlyOverride,
@@ -240,7 +243,7 @@ export const upsertProductsBatch = mutation({
         product_id: p.productId,
         name: p.name,
         description: p.description !== undefined ? p.description : existing?.description,
-        master_item_id: p.masterItemId,
+        master_item_id: row.masterItemId,
         source_last_synced_at: now,
       });
     }
