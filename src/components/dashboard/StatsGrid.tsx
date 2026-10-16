@@ -334,18 +334,13 @@ function RentalHeadlineCards({ data }: { data: RentalHeadlineStats | undefined }
 
 export function StatsGrid() {
   return (
-    <>
-      <WidgetErrorBoundary label="Live rental totals">
-        <RentalHeadlinePanel />
-      </WidgetErrorBoundary>
-      <WidgetErrorBoundary label="Other dashboard stats">
-        <StatsGridDetails />
-      </WidgetErrorBoundary>
-    </>
+    <WidgetErrorBoundary label="Other dashboard stats">
+      <StatsGridDetails />
+    </WidgetErrorBoundary>
   );
 }
 
-function RentalHeadlinePanel() {
+export function RentalHeadlinePanel() {
   const { activeAccountSlug } = useAccount();
   const rentalHeadlines = useQuery(api.dashboard.getRentalHeadlineStats, {
     accountSlug: activeAccountSlug,

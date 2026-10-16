@@ -22,17 +22,16 @@ import { EditModeBar } from "@/components/dashboard/EditModeBar";
 import { AddWidgetDrawer } from "@/components/dashboard/AddWidgetDrawer";
 import { EditableWidget } from "@/components/dashboard/EditableWidget";
 import { WidgetErrorBoundary } from "@/components/dashboard/WidgetErrorBoundary";
+import { RentalHeadlinePanel } from "@/components/dashboard/StatsGrid";
 import { PANEL_WIDGETS, panelLayoutClass } from "@/lib/dashboard/widget-registry";
 import { useEditMode } from "@/lib/dashboard/edit-mode-context";
 import { DeferredMount } from "@/lib/dashboard/deferred-mount";
 import { DashboardHydrationProvider } from "@/lib/dashboard/hydration-context";
 import { CalendarOverlayProvider } from "@/lib/dashboard/calendar-overlay-context";
 
-// CRITICAL above-the-fold panels — mount eagerly so they paint in the
-// first frame. These are the operational surfaces the user needs instantly:
-// the KPI stat grid, the calendar strip, and the next-rentals / due-returns
-// lists. StatsGrid carries its own internal skeleton while getStatsDrawerData
-// resolves, so the page never shows a blank hero.
+// CRITICAL panels — mount eagerly so they paint in the first frame. The live
+// rental KPIs render above this configurable grid; these panels contain the
+// operational stats, calendar strip, and next-rentals / due-returns lists.
 //
 // Everything else (revenue charts, AI assistant, analytics / intel / rankings)
 // is SECONDARY: it is deferred behind an IntersectionObserver and shows a
@@ -93,9 +92,8 @@ export default function DashboardPage() {
     };
   }, []);
   // Core dashboard panels must survive layouts saved by older releases.
-  // Stats Grid contains the live Active Rentals and Monthly KPIs, so restore
-  // it at the top when a saved layout predates the panel. Keep the existing
-  // placement when the user already has it in their layout.
+  // Restore Stats Grid when a saved layout predates the panel, and keep its
+  // existing placement when it is already in the saved layout.
   const compatiblePanelOrder = layout.panelOrder.includes("stats-grid")
     ? layout.panelOrder
     : ["stats-grid", ...layout.panelOrder];
@@ -136,6 +134,11 @@ export default function DashboardPage() {
           className="mx-auto px-4 md:px-6 py-5"
           style={{ maxWidth: "1440px" }}
         >
+          <div className="mb-4">
+            <WidgetErrorBoundary label="Live rental totals">
+              <RentalHeadlinePanel />
+            </WidgetErrorBoundary>
+          </div>
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
