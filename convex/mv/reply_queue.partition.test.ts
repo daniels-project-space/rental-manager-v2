@@ -21,12 +21,12 @@ describe('bounded account cohorts with global shared stock',()=>{
   const before=row('same',10),after={...row('same',20),availability:{status:'conflict'}};
   expect(mergeReplyPartitions([[before],[after]],10)).toEqual([after]);
  });
- it('publishes once only after every account is complete, with shared pending-stock policy retained',async()=>{
-  const calls:any[]=[],writes:any[]=[];const ctx:any={runQuery:async(ref:any,args:any)=>{const name=getFunctionName(ref);if(name.endsWith(':currentIncludePending'))return true;if(name.endsWith(':partitionAccounts'))return ['dbcinema','leo',null];if(name.endsWith(':__service_getReplyQueue')){calls.push(args);return args._partitionSlug==='leo'?[row('leo',10)]:args._partitionSlug==='dbcinema'?[row('db',20)]:[];}throw Error(name);},runMutation:async(ref:any,args:any)=>{writes.push({name:getFunctionName(ref),args});}};
-  expect(await refreshAll(ctx,true)).toMatchObject({ok:true,written:1});expect(calls.map(c=>c._partitionSlug)).toEqual(['dbcinema','leo',null]);expect(calls.every(c=>c.includePending===true&&c._bypassMv===true&&!c.accountSlug)).toBe(true);expect(writes).toHaveLength(1);expect(writes[0].args.tiles.map((r:any)=>r.thread_id)).toEqual(['leo','db']);
+ it('reads shared context once across all account cohorts and publishes the merged queue',async()=>{
+  const calls:any[]=[],writes:any[]=[];const ctx:any={runQuery:async(ref:any,args:any)=>{const name=getFunctionName(ref);if(name.endsWith(':currentIncludePending'))return true;if(name.endsWith(':partitionAccounts'))return ['dbcinema','leo',null];if(name.endsWith(':__service_getReplyQueue')){calls.push(args);return [row('leo',10),row('db',20)];}throw Error(name);},runMutation:async(ref:any,args:any)=>{writes.push({name:getFunctionName(ref),args});}};
+  expect(await refreshAll(ctx,true)).toMatchObject({ok:true,written:1});expect(calls).toHaveLength(1);expect(calls[0]._partitionSlugs).toEqual(['dbcinema','leo',null]);expect(calls[0].includePending).toBe(true);expect(calls[0]._bypassMv).toBe(true);expect(calls[0].accountSlug).toBeUndefined();expect(writes).toHaveLength(1);expect(writes[0].args.tiles.map((r:any)=>r.thread_id)).toEqual(['leo','db']);
  });
- it('never publishes a partial account result after any cohort fails',async()=>{
-  const write=vi.fn();const ctx:any={runQuery:async(ref:any,args:any)=>{const name=getFunctionName(ref);if(name.endsWith(':currentIncludePending'))return true;if(name.endsWith(':partitionAccounts'))return ['dbcinema','leo'];if(args._partitionSlug==='leo')throw Error('Cohort failed');return [row('db',10)];},runMutation:write};
+ it('does not publish a queue when the combined account query fails',async()=>{
+  const write=vi.fn();const ctx:any={runQuery:async(ref:any,args:any)=>{const name=getFunctionName(ref);if(name.endsWith(':currentIncludePending'))return true;if(name.endsWith(':partitionAccounts'))return ['dbcinema','leo'];if(name.endsWith(':__service_getReplyQueue'))throw Error('Cohort failed');throw Error(name);},runMutation:write};
   await expect(refreshAll(ctx,true)).rejects.toThrow('Cohort failed');expect(write).not.toHaveBeenCalled();
  });
 });
