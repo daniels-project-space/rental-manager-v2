@@ -1,4 +1,5 @@
 import { insertStockInput } from "../lib/stock_input_writes";
+import { insertPricingInput } from "../lib/pricing_input_cache";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { v } from "convex/values";
 
@@ -290,7 +291,7 @@ export const seedPricingCatalog = internalMutation({
         .first();
       const accountIds = r.account_slug ? [accBySlug[r.account_slug]] : Object.values(accBySlug);
       for (const aid of accountIds) {
-        await ctx.db.insert("pricing_catalog", {
+        await insertPricingInput(ctx, {
           item_id: item?._id,
           item_name_canonical: r.item_name_canonical,
           account_id: aid,

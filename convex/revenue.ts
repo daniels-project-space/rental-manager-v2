@@ -1,3 +1,4 @@
+import { loadPricingRows } from "./lib/pricing_input_cache";
 import { query, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
 import { SLOW_WIDGET_MAX_AGE_MS } from "./lib/widget_mv";
@@ -987,7 +988,7 @@ export const getMissedKindBreakdown = query({
       }
     }
 
-    const pricingRows = await ctx.db.query("pricing_catalog").collect();
+    const pricingRows = await loadPricingRows(ctx);
     const priceByName = new Map(
       pricingRows.map((p) => [p.item_name_canonical, p.daily_price_min]),
     );
@@ -1338,7 +1339,7 @@ export const getTopRentalsForItem = query({
       const nm = (it as { name_canonical?: string }).name_canonical;
       if (nm) itemByCanonical.set(nm, it);
     }
-    const pricingRows = await ctx.db.query("pricing_catalog").collect();
+    const pricingRows = await loadPricingRows(ctx);
     const priceByName = new Map(
       pricingRows.map((p) => [p.item_name_canonical, p.daily_price_min]),
     );

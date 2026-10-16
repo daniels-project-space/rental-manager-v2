@@ -1,3 +1,4 @@
+import { loadPricingRows } from "../lib/pricing_input_cache";
 /**
  * MV: purchase_signals
  *
@@ -158,7 +159,7 @@ export const refreshOne = internalMutation({
     const startedAt = Date.now();
     const denials = await ctx.db.query("denial_records").collect();
     const items = await ctx.db.query("items").collect();
-    const pricing = await ctx.db.query("pricing_catalog").collect();
+    const pricing = await loadPricingRows(ctx);
     const accounts = await ctx.db.query("accounts").collect();
 
     const computed = computePurchaseSignals({

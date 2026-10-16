@@ -1,4 +1,5 @@
 import { patchStockInput } from "./lib/stock_input_writes";
+import { patchPricingInput } from "./lib/pricing_input_cache";
 import { internalMutation } from "./_generated/server";
 
 /** Owner confirmed model/mount; manufacturer facts replace the mixed Sony spec. */
@@ -20,7 +21,7 @@ export const run = internalMutation({ args: {}, handler: async ctx => {
     source_url: "https://www.ttartisan.co.za/product/ttartisan-11mm-f2-8-manual-focus-lens-fisheye-lens-full-frame-black/",
     verified_model: "TTArtisan 11mm F2.8 Fisheye (Sony E)", verified_at: Date.now() });
   const prices = await ctx.db.query("pricing_catalog").withIndex("by_name", q => q.eq("item_name_canonical", oldName)).collect();
-  for (const p of prices) await ctx.db.patch(p._id, { item_name_canonical: name });
+  for (const p of prices) await patchPricingInput(ctx, p._id, { item_name_canonical: name }, p);
   const compatibilityChanges = [];
   for (const camera of items) {
     if (!camera.compatibility?.lenses?.includes(oldName)) continue;

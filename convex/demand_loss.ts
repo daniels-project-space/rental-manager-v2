@@ -1,3 +1,4 @@
+import { loadPricingRows } from "./lib/pricing_input_cache";
 
 import { patchRevenueReservation } from "./lib/reservation_revenue";
 /**
@@ -133,7 +134,7 @@ export const classifyObsoleteReservations = internalMutation({
 
     // 2. Build a median daily-rate fallback from pricing_catalog. Used only for
     //    genuine_demand rows whose primary item isn't in the catalog.
-    const catalog = await ctx.db.query("pricing_catalog").collect();
+    const catalog = await loadPricingRows(ctx);
     const rateByName = new Map<string, number>();
     const allMins: number[] = [];
     for (const p of catalog) {

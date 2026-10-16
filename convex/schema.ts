@@ -440,6 +440,13 @@ const operationalSchema = defineSchema({
     .index("by_total_spend", ["total_spend_gbp"])
     .index("by_display_name", ["display_name"]),
 
+  pricing_input_cache_state: defineTable({
+    key: v.literal("all:v1"), revision: v.number(), ready_revision: v.optional(v.number()),
+    enabled: v.boolean(), queued: v.boolean(), job_token: v.number(), attempts: v.number(), error: v.optional(v.string()), updated_at: v.number(),
+  }).index("by_key", ["key"]),
+  pricing_input_cache_blobs: defineTable({
+    key: v.literal("all:v1"), version: v.literal(1), revision: v.number(), data: v.bytes(), sha256: v.string(), packed_sha256: v.string(),
+  }).index("by_key", ["key"]),
   weekly_input_cache_state: defineTable({
     key: v.literal("recent:v1"), revision: v.number(), ready_revision: v.optional(v.number()), covered_from: v.optional(v.string()),
     enabled: v.boolean(), queued: v.boolean(), job_token: v.number(), attempts: v.number(), error: v.optional(v.string()), updated_at: v.number(),
