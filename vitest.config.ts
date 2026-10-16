@@ -198,6 +198,7 @@ export default defineConfig({
       "convex/lib/poller_window.test.ts",
       "convex/lib/response_rate_alerts.test.ts",
       "convex/dashboard_insights.spec.ts",
+      "convex/dashboard_stats_drawer_reads.test.ts",
       "convex/dashboard_chat.walle.spec.ts",
       "src/lib/dashboard/edit-mode-context.spec.ts",
       "src/trigger/catalog-sync.map.test.ts",

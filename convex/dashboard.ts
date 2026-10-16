@@ -528,9 +528,9 @@ export const getStatsDrawerData = query({
     }).collect();
 
     // Effective revenue uses pickup_date when present, so include both indexed
-    // windows. Future active rentals come from the four active-date indexes
-    // below; a second unbounded future-start/pickup scan would read those same
-    // bookings again without feeding any other card.
+    // windows. Extend these confirmed ranges forward and reuse them for upcoming
+    // active rentals; clip them to monthEnd when building monthly revenue inputs
+    // below. This avoids a second start/pickup read of the same confirmed rows.
     const [
       confirmedStartWindow,
       confirmedPickupWindow,
@@ -540,8 +540,8 @@ export const getStatsDrawerData = query({
       activeByEndDate,
       activeByReturnDate,
     ] = await Promise.all([
-      reservationsByStatusAndStartDate("confirmed", projectionStart, monthEnd),
-      reservationsByStatusAndPickupDate("confirmed", projectionStart, monthEnd),
+      reservationsByStatusAndStartDate("confirmed", projectionStart),
+      reservationsByStatusAndPickupDate("confirmed", projectionStart),
       reservationsByStatusAndStartDate("completed", projectionStart, monthEnd),
       reservationsByStatusAndPickupDate("completed", projectionStart, monthEnd),
       ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
@@ -558,19 +558,21 @@ export const getStatsDrawerData = query({
     // `isUpcoming` uses displayPickupDate (pickup_date ?? start_date). These
     // unions cover the same live rows as the old 365-day scan, but only read
     // date-index candidates and retain its original start-date cutoff.
-    const activeCandidates = await Promise.all([
-      ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
-        q.eq("status", "confirmed").gte("pickup_date", activeToday),
-      ).collect(),
-      ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
-        q.eq("status", "confirmed").gte("start_date", activeToday),
-      ).collect(),
-    ]);
+    // projectionStart is always earlier than activeToday. Reuse the forward
+    // confirmed start/pickup ranges collected above instead of issuing duplicate
+    // activeCandidates scans against those same indexes.
+    const confirmedActiveByPickup = confirmedPickupWindow.filter((row) =>
+      row.pickup_date && row.pickup_date >= activeToday,
+    );
+    const confirmedActiveByStart = confirmedStartWindow.filter((row) =>
+      row.start_date && row.start_date >= activeToday,
+    );
     const activeConfirmedById = new Map<string, (typeof confirmedStartWindow)[number]>();
     for (const row of [
       ...activeByEndDate,
       ...activeByReturnDate,
-      ...activeCandidates.flat(),
+      ...confirmedActiveByPickup,
+      ...confirmedActiveByStart,
     ]) {
       if (row.start_date && row.start_date >= dashCutoff) {
         activeConfirmedById.set(String(row._id), row);
@@ -579,8 +581,8 @@ export const getStatsDrawerData = query({
     const activeConfirmedRows = [...activeConfirmedById.values()];
     const allResById = new Map<string, (typeof confirmedStartWindow)[number]>();
     for (const row of [
-      ...confirmedStartWindow,
-      ...confirmedPickupWindow,
+      ...confirmedStartWindow.filter((row) => row.start_date && row.start_date <= monthEnd),
+      ...confirmedPickupWindow.filter((row) => row.pickup_date && row.pickup_date <= monthEnd),
       ...completedStartWindow,
       ...completedPickupWindow,
       ...pendingReviewRows,
