@@ -19,3 +19,12 @@ export function powerListingPrimary(name:string,items:any[]) {
  const matches=items.filter(i=>i.kind==="power" && /v[ -]?mount/i.test(i.name_canonical) && i.name_canonical.match(/(\d+)\s*(?:wh|wah)\b/i)?.[1]===capacity);
  return matches.length===1?String(matches[0]._id):undefined;
 }
+
+/** A lexical link cannot substitute a different camera-battery family. */
+export function matchesBatteryListingRole(name:string,item:{name_canonical:string;kind?:string;aliases?:string[]}) {
+  if(item.kind!=="power")return true;
+  const family=(text:string)=>text.toUpperCase().replace(/[^A-Z0-9]/g,"").match(/NP?(?:FZ100|FW50|F970|F750|F570)/)?.[0].replace(/^NP?/,"NP");
+  const requested=family(name);
+  if(!requested)return true;
+  return [item.name_canonical,...(item.aliases??[])].some(label=>family(label)===requested);
+}

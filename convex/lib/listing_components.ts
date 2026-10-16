@@ -1,4 +1,4 @@
-import { powerListingPrimary } from "./power_listing_identity";
+import { powerListingPrimary, matchesBatteryListingRole } from "./power_listing_identity";
 import type { Doc } from "../_generated/dataModel";
 import { isStandardAccessory } from "./reservations/itemUnits";
 import { coverReviewedSuppliedParts } from "./supplied_parts_coverage";
@@ -58,7 +58,7 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
   const primary=items.find(i=>String(i._id)===primaryId);
   // Legacy lexical master links can point an entire gimbal at a spare battery.
   // An unresolved body must stay unresolved, without holding unrelated spares.
-  const fallbackPrimary = primary && matchesGimbalComponentRole(listingName ?? "", primary) ? primaryId : undefined;
+  const fallbackPrimary = primary && matchesGimbalComponentRole(listingName ?? "", primary) && matchesBatteryListingRole(listingName ?? "",primary) ? primaryId : undefined;
   if (rawDeclared?.explicit && rawDeclared.structured && ["lighting","dj_audio"].includes(primary?.kind??"") && primary!.status==="active" && primary!.is_marketing_only===false && primary!.qty>0 && (rawDeclared.components.some(c=>c.item_id===primaryId)||override?.some(c=>c.item_id===primaryId))) {
     const partKey=(s:string)=>s.toLowerCase().replace(/^(?:sturdy|height[- ]adjustable)\s+/i,"").replace(/\s*\(height adjustable\)\s*$/i,"").replace(/[^a-z0-9]+/g," ").trim().replace(/^(?:light )?stands?$/, "light stand").replace(/^speaker stands?$/,"speaker stand");
     const knownParts=(primary!.compatibility?.included_with_rental??[]).flatMap(line=>{
