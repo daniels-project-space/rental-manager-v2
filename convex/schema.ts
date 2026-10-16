@@ -771,7 +771,7 @@ const operationalSchema = defineSchema({
     .index("by_account_status_end_date", ["account_slug", "status", "end_date"])
     .index("by_account_status_return_date", ["account_slug", "status", "return_date"])
     .index("by_account_pickup_date", ["account_slug", "pickup_date"])
-    .index("by_account_status_pickup_date", ["account_slug", "status", "pickup_date"])
+    .index("by_account_status_pickup_date", ["account_slug", "status", "pickup_date", "start_date"])
     // Reconciliation can load terminal reservations by the same bounded
     // account/date window as active candidates, without scanning calendar_holds
     // or falling back to the full 400-day account history.
@@ -781,7 +781,7 @@ const operationalSchema = defineSchema({
     // countable demand. Keep both source and negotiated date fields indexed:
     // pickup/return dates override start/end when present, and older confirmed
     // rentals can still overlap a current demand window.
-    .index("by_status_pickup_date", ["status", "pickup_date"])
+    .index("by_status_pickup_date", ["status", "pickup_date", "start_date"])
     .index("by_status_return_date", ["status", "return_date"])
     .index("by_status_end_date", ["status", "end_date"])
     // Hourly Return Hub refresh reads only physical-out states and legacy due
