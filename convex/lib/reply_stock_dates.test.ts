@@ -1,5 +1,5 @@
 import { describe,it,expect } from "vitest";
-import {replyDatesFromMessage,replyStockWindow} from "./reply_stock_dates";
+import {replyDatesFromMessage,replyStockWindow,replyStockWindowEnvelope} from "./reply_stock_dates";
 const message=(body_text:string,at="2026-10-13T18:00:00Z")=>({sender:"renter",body_text,hygglo_sent_at:Date.parse(at),message_id:"fixture"});
 describe("rental dates recovered without changing bookings",()=>{
   it.each([
@@ -50,4 +50,12 @@ it("uses booked dates when extracted handover dates lack clock provenance",()=>{
 });
 it("retains immutable website handover clocks for valid stock intervals",()=>{
  expect(replyStockWindow({account_slug:"dbcinema_web",start_date:"2026-10-15",end_date:"2026-10-15",pickup_time:"10:00",return_time:"17:00"},[],Date.now())).toEqual({source:"booking",start_date:"2026-10-15",end_date:"2026-10-15",pickup_time:"10:00",return_time:"17:00"});
+});
+
+it("builds one inclusive stock-date envelope for a reply-queue batch",()=>{
+ expect(replyStockWindowEnvelope([
+  {source:"booking",start_date:"2026-10-21",end_date:"2026-10-22"},
+  {source:"chat",start_date:"2026-10-18",end_date:"2026-10-19"},
+ ])).toEqual({start_date:"2026-10-18",end_date:"2026-10-22"});
+ expect(replyStockWindowEnvelope([])).toBeUndefined();
 });
