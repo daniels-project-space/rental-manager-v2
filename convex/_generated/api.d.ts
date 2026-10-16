@@ -235,6 +235,7 @@ import type * as lib_quiet_hours from "../lib/quiet_hours.js";
 import type * as lib_recommendation_basket from "../lib/recommendation_basket.js";
 import type * as lib_recommendation_kit from "../lib/recommendation_kit.js";
 import type * as lib_recommendation_qualification from "../lib/recommendation_qualification.js";
+import type * as lib_reconciliation_dirty from "../lib/reconciliation_dirty.js";
 import type * as lib_referral_context from "../lib/referral_context.js";
 import type * as lib_referral_offer from "../lib/referral_offer.js";
 import type * as lib_rental_request from "../lib/rental_request.js";
@@ -672,6 +673,7 @@ declare const fullApi: ApiFromModules<{
   "lib/recommendation_basket": typeof lib_recommendation_basket;
   "lib/recommendation_kit": typeof lib_recommendation_kit;
   "lib/recommendation_qualification": typeof lib_recommendation_qualification;
+  "lib/reconciliation_dirty": typeof lib_reconciliation_dirty;
   "lib/referral_context": typeof lib_referral_context;
   "lib/referral_offer": typeof lib_referral_offer;
   "lib/rental_request": typeof lib_rental_request;
