@@ -1,3 +1,4 @@
+import { patchStockInput } from "./lib/stock_input_writes";
 import { internalMutation } from "./_generated/server";
 
 /** Owner confirmed model/mount; manufacturer facts replace the mixed Sony spec. */
@@ -10,7 +11,7 @@ export const run = internalMutation({ args: {}, handler: async ctx => {
   const spec = await ctx.db.query("item_specs").withIndex("by_item", q => q.eq("item_id", item._id)).unique();
   if (!spec) throw new Error("Missing reviewed lens spec");
   const display_name = "TTArtisan 11mm f/2.8 fisheye (E)";
-  await ctx.db.patch(item._id, { name_canonical: name, display_name,
+  await patchStockInput(ctx, item._id, { name_canonical: name, display_name,
     lens_mount: "Sony E-mount (full frame)",
     aliases: [...new Set([...(item.aliases ?? []), oldName, item.name_input, display_name])].filter(n => n !== name), updated_at: Date.now() });
   await ctx.db.patch(spec._id, { item_name_canonical: name,
@@ -23,7 +24,7 @@ export const run = internalMutation({ args: {}, handler: async ctx => {
   const compatibilityChanges = [];
   for (const camera of items) {
     if (!camera.compatibility?.lenses?.includes(oldName)) continue;
-    await ctx.db.patch(camera._id, { compatibility: { ...camera.compatibility, lenses: camera.compatibility.lenses.map(n => n === oldName ? name : n) }, updated_at: Date.now() });
+    await patchStockInput(ctx, camera._id, { compatibility: { ...camera.compatibility, lenses: camera.compatibility.lenses.map(n => n === oldName ? name : n) }, updated_at: Date.now() });
     compatibilityChanges.push(camera.name_canonical);
   }
   return { item_id: item._id, before: { name: item.name_canonical, mount: item.lens_mount, spec }, after: { name, display_name }, priceReferences: prices.length, compatibilityChanges };

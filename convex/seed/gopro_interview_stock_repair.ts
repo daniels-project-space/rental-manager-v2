@@ -1,3 +1,4 @@
+import { insertStockInput, patchStockInput } from "../lib/stock_input_writes";
 import { internalMutation } from "../_generated/server";
 import { v } from "convex/values";
 import { resolveListingComponents } from "../lib/listing_components";
@@ -50,11 +51,11 @@ export const apply=internalMutation({args:{dry_run:v.optional(v.boolean())},hand
   }
   const rulesChanged=nextRules.length!==existingRules.length,marketingCorrected=plans.filter(p=>p.correctMarketing).length,metadataChanged=rulesChanged||marketingCorrected>0,inserted=plans.filter(p=>!p.existing).length;
   if(args.dry_run!==false)return {preview:true,metadataChanged,marketingCorrected,inserted,plans,quantityOwned:{cameras:camera.qty,audioKits:audio.qty,panels:lights.qty}};
-  if(rulesChanged)await ctx.db.patch(camera._id,{listing_stock_rules:nextRules});
+  if(rulesChanged)await patchStockInput(ctx, camera._id,{listing_stock_rules:nextRules});
   // Imported master-link guesses must not override these verified physical
   // kits. The existing importer preserves this explicit internal correction.
   for(const p of plans)if(p.correctMarketing)await patchProduct(ctx,p.productRow,{isMarketingOnlyOverride:false,marketingOnlyUpdatedAt:Date.now()},sourceProducts.get(String(p.productRow)));
-  for(const p of plans)if(!p.existing)await ctx.db.insert("listing_resolution_override",{account_slug:"diogo",product_id:p.product,components:p.components,note:source,source:"manual_audit",updated_at:Date.now()});
+  for(const p of plans)if(!p.existing)await insertStockInput(ctx, "listing_resolution_override",{account_slug:"diogo",product_id:p.product,components:p.components,note:source,source:"manual_audit",updated_at:Date.now()});
   if(metadataChanged||inserted){
     await ctx.db.insert("audit_log",{table_name:"items/listing_resolution_override/hygglo_products",actor:"owner-confirmed-catalogue-correction",op:"update",count:Number(rulesChanged)+marketingCorrected+inserted,source_file:"seed/gopro_interview_stock_repair.apply",note:source,ts:Date.now()});
     const settings=await ctx.db.query("settings").first();if(settings)await ctx.db.patch(settings._id,{draft_epoch:(settings.draft_epoch??0)+1});

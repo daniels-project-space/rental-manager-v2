@@ -1,3 +1,4 @@
+import { patchStockInput } from "./lib/stock_input_writes";
 import { internalMutation } from "./_generated/server";
 /** Reviewed against Sony's exact ILCE-7M5 page on 2026-10-01; no kit ownership inference. */
 export const run = internalMutation({
@@ -11,7 +12,7 @@ export const run = internalMutation({
       specs_long: "Recording-area restrictions verified in Sony ILCE-7M5 Help Guide: https://helpguide.sony.net/ilc/2540/v1/en/contents/0404M_angle_of_view.html", source: "manufacturer-verified", verified_model: "ILCE-7M5",
       source_url: "https://www.sony.co.uk/electronics/support/e-mount-body-ilce-7-series/ilce-7m5/specifications", verified_at: Date.now() };
     if (spec) await ctx.db.patch(spec._id, facts); else await ctx.db.insert("item_specs", { ...facts, created_at: Date.now() });
-    await ctx.db.patch(item._id, { card_type: "Slot 1: SD UHS-I/II or CFexpress Type A; slot 2: SD UHS-I/II" });
+    await patchStockInput(ctx, item._id, { card_type: "Slot 1: SD UHS-I/II or CFexpress Type A; slot 2: SD UHS-I/II" });
     return { item: item.name_canonical, previous_source: spec?.source ?? null, previous_description: spec?.description ?? null, source: facts.source_url, model: facts.verified_model };
   },
 });

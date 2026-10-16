@@ -1,3 +1,4 @@
+import { insertStockInput } from "./lib/stock_input_writes";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
@@ -137,7 +138,7 @@ export const apply = internalMutation({
         log.push(`SKIP ${p.account_slug}#${p.product_id}: override already exists`);
         continue;
       }
-      await ctx.db.insert("listing_resolution_override", {
+      await insertStockInput(ctx, "listing_resolution_override", {
         account_slug: p.account_slug,
         product_id: p.product_id,
         components: [{ item_id: it._id, qty: 1 }],

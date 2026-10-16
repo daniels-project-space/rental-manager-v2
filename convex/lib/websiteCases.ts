@@ -1,3 +1,4 @@
+import { insertStockInput, patchStockInput } from "./stock_input_writes";
 import { ownerEnforcementRequired } from "./owner_authorization";
 /** Website case identity/evidence are source-owned; projected claims and payouts remain operator-owned. */
 export type WebsiteCase = {
@@ -37,10 +38,10 @@ export async function syncWebsiteCases(ctx: any, booking: any, reservationId: an
     };
     if (old) {
       const patch = Object.fromEntries(Object.entries(fields).filter(([k, v]) => old[k] !== v));
-      if (Object.keys(patch).length) await ctx.db.patch(old._id, patch);
+      if (Object.keys(patch).length) await patchStockInput(ctx, old._id, patch);
     } else {
       const item = c.rmv2ItemId ? itemById.get(c.rmv2ItemId) : undefined;
-      await ctx.db.insert("insurance_claims", {
+      await insertStockInput(ctx, "insurance_claims", {
         ...fields, account_slug: "dbcinema_web", opened_from: "website_return",
         item_id: item?._id, repair_item_ids: item ? [item._id] : undefined, item_name_canonical: c.title, description: c.details,
         amount_gbp: 0, claim_date: new Date(c.openedAt).toISOString().slice(0, 10),

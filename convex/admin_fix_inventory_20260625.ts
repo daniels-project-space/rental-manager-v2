@@ -1,3 +1,4 @@
+import { insertStockInput, patchStockInput } from "./lib/stock_input_writes";
 /**
  * One-off data corrections (2026-06-25, from Daniel's fact-check of the chat):
  *
@@ -56,7 +57,7 @@ export const run = internalMutation({
       const sibling = items.find((i) => i.name_canonical === "PL to L mount");
       if (sibling) {
         const now = Date.now();
-        await ctx.db.insert("items", {
+        await insertStockInput(ctx, "items", {
           name_canonical: "EF to L mount",
           name_input: "EF to L mount",
           slug: "ef-to-l-mount",
@@ -91,7 +92,7 @@ export const run = internalMutation({
       const inc = new Set(comp.included_with_rental ?? []);
       inc.add("Canon EF-to-L mount adapter");
       inc.add("LP-E6NH batteries 5x");
-      await ctx.db.patch(ff._id, {
+      await patchStockInput(ctx, ff._id, {
         compatibility: { ...comp, included_with_rental: [...inc] },
         updated_at: Date.now(),
       });

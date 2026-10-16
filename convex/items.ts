@@ -1,3 +1,4 @@
+import { patchStockInput } from "./lib/stock_input_writes";
 import { shortItemName } from "./lib/item_display_name";
 import { mutation, query, internalQuery, internalQueryOf } from "./owner_functions";
 import { loadStockSources } from "./lib/renter_stock";
@@ -863,7 +864,7 @@ export const admin_appendAliases = mutation({
       return { item_id, name_canonical: item.name_canonical, added: [], aliases: existing };
     }
     const merged = [...existing, ...additions];
-    await ctx.db.patch(item_id, { aliases: merged, updated_at: Date.now() });
+    await patchStockInput(ctx, item_id, { aliases: merged, updated_at: Date.now() });
     return { item_id, name_canonical: item.name_canonical, added: additions, aliases: merged };
   },
 });
@@ -885,7 +886,7 @@ export const admin_setAliases = mutation({
       seen.add(a);
       cleaned.push(a);
     }
-    await ctx.db.patch(item_id, { aliases: cleaned, updated_at: Date.now() });
+    await patchStockInput(ctx, item_id, { aliases: cleaned, updated_at: Date.now() });
     return { item_id, name_canonical: item.name_canonical, aliases: cleaned };
   },
 });
@@ -1030,7 +1031,7 @@ export const admin_setItemInventory = mutation({
 
     const changed = Object.keys(patch).length > 0;
     if (changed) {
-      await ctx.db.patch(item._id, { ...patch, updated_at: Date.now() });
+      await patchStockInput(ctx, item._id, { ...patch, updated_at: Date.now() });
       await ctx.db.insert("audit_log", {
         table_name: "items",
         actor: "daniel",
@@ -1084,7 +1085,7 @@ export const admin_setMarketingOnly = mutation({
     const changed =
       item.is_marketing_only !== is_marketing_only || item.status !== status;
     if (changed) {
-      await ctx.db.patch(item._id, {
+      await patchStockInput(ctx, item._id, {
         is_marketing_only,
         status,
         updated_at: Date.now(),

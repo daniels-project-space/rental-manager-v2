@@ -1,3 +1,4 @@
+import { insertStockInput, patchStockInput } from "./lib/stock_input_writes";
 /**
  * ──────────────────────────────────────────────────────────────────────────
  *  Vacation Mode — GLOBAL switch across ALL accounts.
@@ -362,7 +363,7 @@ export const setVacation = mutation({
 
     // 5. Insert (force-create even on confirmed conflicts when force=true —
     //    Daniel keeps both: the vacation row AND the confirmed bookings).
-    const _id = await ctx.db.insert("vacation_periods", {
+    const _id = await insertStockInput(ctx, "vacation_periods", {
       start_date: args.start_date,
       end_date: args.end_date,
       reason: args.reason,
@@ -379,7 +380,7 @@ export const cancelVacation = mutation({
   args: { vacation_id: v.id("vacation_periods") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await ctx.db.patch(args.vacation_id, { is_active: false });
+    await patchStockInput(ctx, args.vacation_id, { is_active: false });
     return null;
   },
 });

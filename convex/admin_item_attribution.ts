@@ -1,3 +1,4 @@
+import { insertStockInput, patchStockInput } from "./lib/stock_input_writes";
 /**
  * Phase 1.5a — Admin mutations for hydrating item attribution metadata.
  *
@@ -134,7 +135,7 @@ export const setItemAttribution = mutation({
     }
 
     patch.updated_at = Date.now();
-    await ctx.db.patch(item._id, patch);
+    await patchStockInput(ctx, item._id, patch);
     await ctx.db.insert("audit_log", {
       table_name: "items",
       actor: ACTOR_SEED,
@@ -219,7 +220,7 @@ export const bulkSetItemAttribution = mutation({
       }
 
       patch.updated_at = Date.now();
-      await ctx.db.patch(item._id, patch);
+      await patchStockInput(ctx, item._id, patch);
       updated++;
     }
 
@@ -300,7 +301,7 @@ export const correctMisclassifiedKinds = mutation({
         skipped.push({ name: fix.name, current_kind: item.kind });
         continue;
       }
-      await ctx.db.patch(item._id, { kind: fix.to, updated_at: Date.now() });
+      await patchStockInput(ctx, item._id, { kind: fix.to, updated_at: Date.now() });
       updated++;
     }
 
@@ -389,7 +390,7 @@ export const addItemIfMissing = mutation({
       ? { included_with_rental: args.included_with_rental }
       : undefined;
 
-    const itemId = await ctx.db.insert("items", {
+    const itemId = await insertStockInput(ctx, "items", {
       name_canonical: args.canonical_name,
       name_input: args.name_input ?? args.canonical_name,
       slug,

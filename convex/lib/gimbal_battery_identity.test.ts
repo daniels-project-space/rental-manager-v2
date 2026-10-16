@@ -74,6 +74,7 @@ describe("gimbal versus spare battery stock identity", () => {
 describe("atomic BG30 catalogue correction", () => {
   function fixture() {
     const rows: Record<string, any[]> = {
+      stock_input_cache_state: [],
       items: [{ ...battery, _id: "kn79kzg6j393vz9mjh7ghqx0gn86bz73", battery_type: "DJI RS BG30 grip battery", aliases: [], track_independent_stock: undefined, status: "active", is_marketing_only: false }, { ...gimbal, status: "active", is_marketing_only: false }],
       hygglo_products: [["dbcinema", 856455, 1], ["dbcinema", 856472, 2], ["diogo", 1173490, 1], ["diogo", 1173716, 2]].map(([accountSlug, productId, qty]) => ({ accountSlug, productId, masterItemId: "gimbal", name: "DJI Ronin gimbal batteries", description: `Included in this kit:\n* ${qty}x DJI RS3 Pro Gimbal Batteries` })),
       listing_resolution_override: [], audit_log: [], settings: [{ _id: "settings", draft_epoch: 4 }],
@@ -82,7 +83,7 @@ describe("atomic BG30 catalogue correction", () => {
     const db = {
       query(table: string) {
         let selected = rows[table];
-        const query = { withIndex(_name: string, callback: any) { const index = { eq(key: string, value: unknown) { selected = selected.filter(row => row[key] === value); return index; } }; callback(index); return query; }, async take(n: number) { return selected.slice(0, n); }, async first() { return selected[0] ?? null; } };
+        const query = { withIndex(_name: string, callback: any) { const index = { eq(key: string, value: unknown) { selected = selected.filter(row => row[key] === value); return index; } }; callback(index); return query; }, async take(n: number) { return selected.slice(0, n); }, async first() { return selected[0] ?? null; }, async unique() { if(selected.length>1)throw Error("Duplicate fixture key");return selected[0]??null; } };
         return query;
       },
       async patch(id: string, change: any) { const row = Object.values(rows).flat().find(row => row._id === id); if (!row) throw Error("Unknown record"); Object.assign(row, change); writes.push(`patch:${id}`); },

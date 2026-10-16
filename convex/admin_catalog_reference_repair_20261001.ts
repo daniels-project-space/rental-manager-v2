@@ -1,3 +1,4 @@
+import { patchStockInput } from "./lib/stock_input_writes";
 import { internalMutation } from "./_generated/server";
 
 export const run = internalMutation({ args: {}, handler: async ctx => {
@@ -27,7 +28,7 @@ export const run = internalMutation({ args: {}, handler: async ctx => {
         return current;
       });
     }
-    if (changed) await ctx.db.patch(i._id, { compatibility, updated_at: Date.now() });
+    if (changed) await patchStockInput(ctx, i._id, { compatibility, updated_at: Date.now() });
   }
   // Exact audit finding: this listing's authoritative map contains A7 II +
   // 28–70mm, but the old primary index points to the lens. Keep the full map.
@@ -37,6 +38,6 @@ export const run = internalMutation({ args: {}, handler: async ctx => {
   const index = await ctx.db.query("hygglo_product_index").withIndex("by_account_product", q => q.eq("account_slug", "dbcinema").eq("product_id", 936041)).unique();
   if (!index) throw new Error("Missing audited primary index");
   const previousPrimary = index.item_id;
-  await ctx.db.patch(index._id, { item_id: cameras[0]._id });
+  await patchStockInput(ctx, index._id, { item_id: cameras[0]._id });
   return { compatibilityChanges, primaryIndex: { account: "dbcinema", product_id: 936041, previous: previousPrimary, current: cameras[0]._id } };
 } });

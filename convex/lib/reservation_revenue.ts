@@ -2,6 +2,7 @@ import type { WithoutSystemFields } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { effectiveDate } from "./reservations/predicates";
+import { beforeReservationStockPatch, beforeReservationStockDelete, invalidateStockWhen, stockReservationStatuses } from "./stock_input_cache";
 
 export type RevenueFactData = WithoutSystemFields<Doc<"reservation_revenue_facts">>;
 type CompleteMapping = RevenueFactData & Record<keyof RevenueFactData, unknown>;
@@ -98,6 +99,7 @@ async function remove(ctx: MutationCtx, id: ReservationId) {
 export async function patchRevenueReservation(
   ctx: MutationCtx, id: ReservationId, patch: Partial<WithoutSystemFields<Doc<"reservations">>>,
 ) {
+  await beforeReservationStockPatch(ctx, id, patch);
   if (!Object.keys(patch).some((key) => revenueFields.has(key))) {
     await ctx.db.patch(id, patch); return;
   }
@@ -109,7 +111,12 @@ export async function patchRevenueReservation(
 }
 
 export async function insertRevenueReservation(ctx: MutationCtx, row: WithoutSystemFields<Doc<"reservations">>) {
+  const affectsStock = stockReservationStatuses.some((status) => status === row.status);
+  // Resolve metadata before writing, but only invalidate after the actual ID
+  // confirms that a Lab database has not redirected this insert.
+  if (affectsStock) await invalidateStockWhen(ctx, () => false);
   const id = await ctx.db.insert("reservations", row);
+  if (affectsStock && isProductionReservation(ctx, id)) await invalidateStockWhen(ctx, () => true);
   if (row.status === "completed" && isProductionReservation(ctx, id)) {
     await serialize(ctx, id, () => refreshReservationRevenue(ctx, id));
   }
@@ -118,6 +125,7 @@ export async function insertRevenueReservation(ctx: MutationCtx, row: WithoutSys
 
 export async function deleteRevenueReservation(ctx: MutationCtx, id: ReservationId) {
   return serialize(ctx, id, async () => {
+    await beforeReservationStockDelete(ctx, id);
     await ctx.db.delete(id);
     await maintain(ctx, () => remove(ctx, id));
   });

@@ -1,3 +1,4 @@
+import { insertStockInput, patchStockInput } from "../lib/stock_input_writes";
 import { internalMutation } from "../_generated/server";
 import { v } from "convex/values";
 import { resolveListingComponents } from "../lib/listing_components";
@@ -41,8 +42,8 @@ export const apply = internalMutation({
     const metadataChanged = battery.track_independent_stock !== true || JSON.stringify(nextAliases) !== JSON.stringify(battery.aliases ?? []);
     const inserted = plans.filter(p => !p.existing).length;
     if (args.dry_run !== false) return { preview: true, metadataChanged, inserted, plans, quantityOwned: battery.qty };
-    if (metadataChanged) await ctx.db.patch(battery._id, { aliases: nextAliases, track_independent_stock: true });
-    for (const plan of plans) if (!plan.existing) await ctx.db.insert("listing_resolution_override", { account_slug: plan.account, product_id: plan.product, components: plan.components, source: "manual_audit", note, updated_at: Date.now() });
+    if (metadataChanged) await patchStockInput(ctx, battery._id, { aliases: nextAliases, track_independent_stock: true });
+    for (const plan of plans) if (!plan.existing) await insertStockInput(ctx, "listing_resolution_override", { account_slug: plan.account, product_id: plan.product, components: plan.components, source: "manual_audit", note, updated_at: Date.now() });
     if (metadataChanged || inserted) {
       await ctx.db.insert("audit_log", { table_name: "items/listing_resolution_override", actor: "catalogue-audit", op: "update", count: Number(metadataChanged) + inserted, source_file: "seed/bg30_stock_repair.apply", note, ts: Date.now() });
       const settings = await ctx.db.query("settings").first();

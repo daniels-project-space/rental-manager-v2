@@ -16,12 +16,13 @@ const failures = [], writers = [], reviewed = new Map();
 const projectionOwners = new Map([
   ["hygglo_products", "convex/lib/product_context.ts"],
   ["reservations", "convex/lib/reservation_revenue.ts"],
+  ...["items", "hygglo_product_index", "listing_resolution_override", "insurance_claims", "owner_unavailability", "vacation_periods"]
+    .map((table) => [table, "convex/lib/stock_input_writes.ts"]),
 ]);
-// These pre-existing casts write insurance claims, reservation vision results,
-// and the explicitly enumerated MvTableName union. Keep each exception bounded
+// These pre-existing casts write reservation vision results and the explicitly
+// enumerated MvTableName union. Keep each exception bounded
 // to one existing expression, rather than exempting an entire file.
 const reviewedUnknown = new Set([
-  "convex/lib/websiteCases.ts|patch|old._id",
   "convex/reservation_vision.ts|patch|existing._id",
   "convex/mv/_helpers.ts|patch|existing._id as any",
 ]);
@@ -37,6 +38,18 @@ function unwrap(expression) {
   while (ts.isAsExpression(expression) || ts.isParenthesizedExpression(expression)) expression = expression.expression;
   return expression;
 }
+function databaseReceiver(expression, seen = new Set()) {
+  expression = unwrap(expression);
+  const type = checker.getTypeAtLocation(expression);
+  if (type.getProperty("normalizeId") && type.getProperty("query") && type.getProperty("get")) return true;
+  if (ts.isPropertyAccessExpression(expression) && expression.name.text === "db") return true;
+  if (ts.isIdentifier(expression) && !seen.has(expression.text)) {
+    seen.add(expression.text);
+    return (checker.getSymbolAtLocation(expression)?.declarations ?? []).some((declaration) =>
+      ts.isVariableDeclaration(declaration) && declaration.initializer && databaseReceiver(declaration.initializer, seen));
+  }
+  return false;
+}
 for (const source of program.getSourceFiles()) {
   if (!source.fileName.startsWith(root + path.sep) || source.fileName.includes(`${path.sep}node_modules${path.sep}`)
     || /\.(test|spec|d)\.ts$/.test(source.fileName)) continue;
@@ -44,7 +57,7 @@ for (const source of program.getSourceFiles()) {
   function visit(node) {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
       && ["insert", "patch", "replace", "delete"].includes(node.expression.name.text)
-      && /\.db$/.test(node.expression.expression.getText(source))) {
+      && databaseReceiver(node.expression.expression)) {
       const operation = node.expression.name.text;
       const first = node.arguments[0];
       if (first) {

@@ -1,3 +1,4 @@
+import { patchStockInput } from "./lib/stock_input_writes";
 import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { resolveBundleMapping } from "./lib/bundle_mapping";
@@ -21,6 +22,6 @@ export const run=internalMutation({args:{apply:v.optional(v.boolean())},handler:
  const correct=before.length===2&&before.some(c=>c.item_id===lens._id&&c.qty===1)&&before.some(c=>c.item_id===filter._id&&c.qty===1);
  if(!correct&&(before.length!==1||before[0].item_id!==lens._id||before[0].qty!==1))throw new Error("Original mapping changed; preserve owner work");
  const after=[{item_id:lens._id,qty:1},{item_id:filter._id,qty:1}];
- if(a.apply&&!correct)await ctx.db.patch(mapping._id,{components:after,source:"reviewed-explicit-contents-2026-10-03",note:(mapping.note??"")+"; reconciled explicit included ND filter against owned inventory",updated_at:Date.now()});
+ if(a.apply&&!correct)await patchStockInput(ctx, mapping._id,{components:after,source:"reviewed-explicit-contents-2026-10-03",note:(mapping.note??"")+"; reconciled explicit included ND filter against owned inventory",updated_at:Date.now()});
  return {account_slug,product_id,mapping_id:mapping._id,before,after,applied:!!a.apply&&!correct,already_correct:correct};
 }});

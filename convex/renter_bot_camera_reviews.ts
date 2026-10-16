@@ -1,3 +1,4 @@
+import { patchStockInput } from "./lib/stock_input_writes";
 import {v} from "convex/values";
 import {query,mutation,requireOwner} from "./owner_functions";
 import {specificationReviewTarget} from "./renter_bot_owner_checks";
@@ -55,7 +56,7 @@ export const saveReview=mutation({args:{...targetArgs,expected_request_message_i
  const assessment=assessCameraRequirements(verified,task.check.kind==="camera_recommendation"?task.check.requirements:{},task.check.kind==="camera_recommendation"?task.check.lens_mount:null);
  if(a.dry_run)return {ok:true,preview:true,verified,assessment};
  if(spec)await ctx.db.patch(spec._id,patch);else await ctx.db.insert("item_specs",{...patch,item_id:item._id,created_at:now});
- if(mountChange)await ctx.db.patch(item._id,{...mountChange,updated_at:now});
+ if(mountChange)await patchStockInput(ctx, item._id,{...mountChange,updated_at:now});
  const identity=await ctx.auth.getUserIdentity();await ctx.db.insert("audit_log",{table_name:"item_specs",actor:identity?.subject??"owner-service",op:spec?"update":"insert",count:1,source_file:"renter_bot_camera_reviews.saveReview",
   note:JSON.stringify({item_id:item._id,task_id:task._id,change:c.kind,before:spec??null,after:patch,previous_mount:item.lens_mount??null,mount_change:mountChange??null}),ts:now});
  const settings=await ctx.db.query("settings").first();if(settings)await ctx.db.patch(settings._id,{draft_epoch:(settings.draft_epoch??0)+1});

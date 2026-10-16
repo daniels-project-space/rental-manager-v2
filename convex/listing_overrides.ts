@@ -1,3 +1,4 @@
+import { deleteStockInput, insertStockInput, patchStockInput } from "./lib/stock_input_writes";
 import { mutation, query, requireOwner } from "./owner_functions";
 import { v } from "convex/values";
 import type {MutationCtx,QueryCtx} from "./_generated/server";
@@ -84,11 +85,11 @@ export const setOverride = mutation({
     };
     if(args.dry_run)return {preview:true,product_id:args.product_id,components,updated:existing?1:0,inserted:existing?0:1};
     if (existing) {
-      await ctx.db.patch(existing._id, doc);
+      await patchStockInput(ctx, existing._id, doc);
       await recordMappingChange(ctx,existing,doc,"update");
       return { updated: 1, product_id: args.product_id };
     }
-    await ctx.db.insert("listing_resolution_override", doc);
+    await insertStockInput(ctx, "listing_resolution_override", doc);
     await recordMappingChange(ctx,null,doc,"insert");
     return { inserted: 1, product_id: args.product_id };
   },
@@ -102,7 +103,7 @@ export const remove = mutation({
     checkRevision(existing,args.expected_revision);
     if(args.dry_run)return {preview:true,deleted:existing?1:0};
     if (existing) {
-      await ctx.db.delete(existing._id);
+      await deleteStockInput(ctx, existing._id);
       await recordMappingChange(ctx,existing,null,"delete");
       return { deleted: 1 };
     }

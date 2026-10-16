@@ -1,3 +1,4 @@
+import { deleteStockInput, insertStockInput } from "./lib/stock_input_writes";
 import { internalAction, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
@@ -111,7 +112,7 @@ export const apply = internalMutation({
           })),
         });
         if (!dry_run) {
-          await ctx.db.insert("listing_resolution_override", {
+          await insertStockInput(ctx, "listing_resolution_override", {
             account_slug: target.account_slug,
             product_id: target.product_id,
             components: src.components.map((c) => ({
@@ -157,7 +158,7 @@ export const revert = internalMutation({
     const rows = (await ctx.db.query("listing_resolution_override").collect()).filter(
       (o) => o.source === SOURCE,
     );
-    for (const r of rows) await ctx.db.delete(r._id);
+    for (const r of rows) await deleteStockInput(ctx, r._id);
     return { removed: rows.length, source: SOURCE };
   },
 });

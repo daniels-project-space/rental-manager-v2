@@ -1,3 +1,4 @@
+import { patchStockInput } from "./lib/stock_input_writes";
 import { internalMutation } from "./_generated/server";
 import { REVIEWED_CAMERA_SPECS } from "./lib/reviewed_camera_specs";
 export const run = internalMutation({
@@ -17,7 +18,7 @@ export const run = internalMutation({
      const withoutOldCards = included.filter(s => !/\bcard\b/i.test(s));
      included.splice(0, included.length, ...withoutOldCards, "1x 1TB CFexpress Type B card");
     }
-    await ctx.db.patch(item._id, { battery_type: facts.battery_type, card_type: facts.card_type,
+    await patchStockInput(ctx, item._id, { battery_type: facts.battery_type, card_type: facts.card_type,
      compatibility: { ...item.compatibility, batteries: ["NP-F570"], ...(fullFrame ? { cards: ["1TB CFexpress Type B card"] } : {}), included_with_rental: included }, updated_at: Date.now() });
     const allItems = await ctx.db.query("items").collect();
     const overrides = await ctx.db.query("listing_resolution_override").collect();
@@ -28,7 +29,7 @@ export const run = internalMutation({
       const name = allItems.find(i => i._id === c.item_id)?.name_canonical ?? "";
       return !/LP-E6/i.test(name) && !(fullFrame && name === "256GB card");
      });
-     if (components.length !== row.components.length) await ctx.db.patch(row._id, { components, updated_at: Date.now(), note: `${row.note ?? ""} Owner confirmed NP-F570 batteries${fullFrame ? " and included 1TB CFexpress Type B card" : ""} on 2026-10-01; removed conflicting accessory mappings.` });
+     if (components.length !== row.components.length) await patchStockInput(ctx, row._id, { components, updated_at: Date.now(), note: `${row.note ?? ""} Owner confirmed NP-F570 batteries${fullFrame ? " and included 1TB CFexpress Type B card" : ""} on 2026-10-01; removed conflicting accessory mappings.` });
     }
    }
    changed.push({ name: facts.name, model: facts.model, source: facts.url, previous_description: previous?.description ?? null, previous_source: previous?.source ?? null, previous_kit: item.compatibility ?? null });

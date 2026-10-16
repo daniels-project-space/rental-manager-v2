@@ -9,6 +9,8 @@ import { dedupByLogicalRental } from "./reservations/predicates";
 import { buildProductIndexMap, reservationItemUnits, type OverrideMap } from "./reservations/itemUnits";
 import { createDefaultAdapterIndex, defaultAdapterUnits, type DefaultAdapterIndex } from "./default_adapter_units";
 import type { ProductContextCache } from "./product_context";
+import { loadStockInputCache, stockReservationStatuses, type StockInputSnapshot } from "./stock_input_cache";
+import { cloneCacheValue } from "./lossless_cache_codec";
 
 export type StockRequest = {
   item_name: string;
@@ -64,7 +66,9 @@ export async function loadReservationsForStockWindow(
   window?: StockDateWindow,
   includeWebsiteTimestampRows = true,
 ): Promise<Doc<"reservations">[]> {
+  const snapshot = stockReservationStatuses.some((value) => value === status) ? await loadStockInputCache(ctx) : null;
   if (!window) {
+    if (snapshot) return cloneCacheValue(snapshot.reservations.filter((row) => row.status === status));
     return await ctx.db
       .query("reservations")
       .withIndex("by_status", (q) => q.eq("status", status))
@@ -72,7 +76,7 @@ export async function loadReservationsForStockWindow(
   }
 
   const earliestRelevantReturn = shiftStockDate(window.start_date, -1);
-  const [ending, returning, websiteRows] = await Promise.all([
+  const [ending, returning, websiteRows] = cachedReservationPartitions(snapshot, status, earliestRelevantReturn, includeWebsiteTimestampRows) ?? await Promise.all([
     ctx.db
       .query("reservations")
       .withIndex("by_status_end_date", (q) => q.eq("status", status).gte("end_date", earliestRelevantReturn))
@@ -94,6 +98,23 @@ export async function loadReservationsForStockWindow(
     ...websiteRows.filter((reservation) => reservation.site_item_windows !== undefined),
   ].map((reservation) => [String(reservation._id), reservation])).values()];
   return candidates.filter((reservation) => reservationOverlapsStockDateWindow(reservation, window));
+}
+
+/** Reproduce the existing three index partitions; keep the shared union and
+ * overlap predicate above unchanged. Malformed dates and tied keys use SQL. */
+export function cachedReservationPartitions(snapshot: StockInputSnapshot | null, status: string, earliest: string, includeWebsite: boolean): [Doc<"reservations">[], Doc<"reservations">[], Doc<"reservations">[]] | null {
+  if (!snapshot) return null;
+  const rows = snapshot.reservations.filter((row) => row.status === status);
+  if (rows.some((row) => !Number.isFinite(row._creationTime) || [row.end_date, row.return_date].some((date) => date !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(date)))) return null;
+  const sorted = (field: "end_date" | "return_date") => rows.filter((row) => row[field] !== undefined && row[field]! >= earliest).sort((a, b) => {
+    const av = a[field]!, bv = b[field]!;
+    return (av < bv ? -1 : av > bv ? 1 : 0) || a._creationTime - b._creationTime;
+  });
+  const ending = sorted("end_date"), returning = sorted("return_date");
+  const website = includeWebsite ? rows.filter((row) => row.account_slug === "dbcinema_web").sort((a, b) => a._creationTime - b._creationTime) : [];
+  if ([ending, returning, website].some((group, kind) => group.some((row, i) => i > 0 && row._creationTime === group[i - 1]._creationTime &&
+    (kind === 2 || row[kind === 0 ? "end_date" : "return_date"] === group[i - 1][kind === 0 ? "end_date" : "return_date"])))) return null;
+  return cloneCacheValue([ending, returning, website]);
 }
 
 export type Occupancy = {
@@ -226,16 +247,19 @@ type StockSources = { items:Doc<"items">[]; reservations:Doc<"reservations">[]; 
   defaultAdapterIndex?:DefaultAdapterIndex;
   occupancyCache?:{signature?:unknown[];byItem:Map<string,Occupancy[]>} };
 export async function loadStockSources(ctx: QueryCtx, window?: StockDateWindow):Promise<StockSources> {
+  const snapshot = await loadStockInputCache(ctx);
+  const cachedWebsite = snapshot?.reservations.filter((row) => row.account_slug === "dbcinema_web" && row.status === "pending_review").sort((a, b) => a._creationTime - b._creationTime);
+  const websiteHasTies = cachedWebsite?.some((row, i) => !Number.isFinite(row._creationTime) || i > 0 && row._creationTime === cachedWebsite[i - 1]._creationTime);
   const [items, confirmed, ongoing, websitePending, index, overrides, claims, blackouts, vacations, checkoutStock] = await Promise.all([
-    ctx.db.query("items").collect(),
+    snapshot ? cloneCacheValue(snapshot.items) : ctx.db.query("items").collect(),
     loadReservationsForStockWindow(ctx, "confirmed", window),
     loadReservationsForStockWindow(ctx, "ongoing", window),
-    ctx.db.query("reservations").withIndex("by_account_status", q => q.eq("account_slug", "dbcinema_web").eq("status", "pending_review")).collect(),
-    ctx.db.query("hygglo_product_index").collect(),
-    ctx.db.query("listing_resolution_override").collect(),
-    ctx.db.query("insurance_claims").collect(),
-    ctx.db.query("owner_unavailability").collect(),
-    ctx.db.query("vacation_periods").withIndex("by_active_start", (q) => q.eq("is_active", true)).collect(),
+    cachedWebsite && !websiteHasTies ? cloneCacheValue(cachedWebsite) : ctx.db.query("reservations").withIndex("by_account_status", q => q.eq("account_slug", "dbcinema_web").eq("status", "pending_review")).collect(),
+    snapshot ? cloneCacheValue(snapshot.hygglo_product_index) : ctx.db.query("hygglo_product_index").collect(),
+    snapshot ? cloneCacheValue(snapshot.listing_resolution_override) : ctx.db.query("listing_resolution_override").collect(),
+    snapshot ? cloneCacheValue(snapshot.insurance_claims) : ctx.db.query("insurance_claims").collect(),
+    snapshot ? cloneCacheValue(snapshot.owner_unavailability) : ctx.db.query("owner_unavailability").collect(),
+    snapshot ? cloneCacheValue(snapshot.vacation_periods) : ctx.db.query("vacation_periods").withIndex("by_active_start", (q) => q.eq("is_active", true)).collect(),
     ctx.db.query("storefront_checkout_stock").withIndex("by_key",q=>q.eq("key","website")).first(),
   ]);
   if(process.env.REQUIRE_WEBSITE_STOCK_HOLDS_SYNC==="true" && (!checkoutStock || Date.now()-checkoutStock.receivedAt>180000))throw Error("Website checkout stock snapshot needs refresh; availability cannot be confirmed.");
