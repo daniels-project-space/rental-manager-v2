@@ -1483,29 +1483,59 @@ export const getGanttWeek = query({
     // tolerance) are always fetched, then bucketed by effective dates (FIX 4).
     const scanStart = shiftIsoDate(weekStart!, -CALENDAR_FETCH_PAD_DAYS);
     const scanEnd = shiftIsoDate(weekEnd, CALENDAR_FETCH_PAD_DAYS);
+    // Reservations beginning before the padded window can still overlap it.
+    const overlapStart = shiftIsoDate(weekStart!, -CALENDAR_LOOKBACK_DAYS);
 
-    // --- Reservations overlapping the (padded) week ---
-    let reservations = await ctx.db
-      .query("reservations")
-      // PERF: bound the scan to the padded window (was `.gte` only → read the
-      // whole forward reservation tail on every reactive re-run). The `.lte`
-      // reproduces the JS `start_date <= scanEnd` filter below exactly, so the
-      // row set is identical; kept the filter as a cheap guard.
-      .withIndex("by_start_date", (q) =>
-        q.gte("start_date", scanStart).lte("start_date", scanEnd))
-      .collect();
-    reservations = reservations.filter(
-      (r) => r.start_date !== undefined && r.start_date <= scanEnd
-    );
+    // The only inventory commitments rendered here are confirmed rentals and
+    // verified dbcinema_web bookings (see isInventoryCommittedWithDates).
+    // Read those status slices through a bounded status/date index instead of
+    // loading cancelled, declined, completed and other non-committing rows.
+    // When an account is selected, use the account-prefixed index as well so
+    // its Gantt subscription does not read the other accounts' reservations.
+    const candidateStatuses = ["confirmed", "pending_review"] as const;
+    const readStatusRange = (
+      status: typeof candidateStatuses[number],
+      from: string,
+      to: string,
+      exclusiveTo = false,
+    ) => {
+      if (accountSlug) {
+        return ctx.db
+          .query("reservations")
+          .withIndex("by_account_status_start_date", (q) => {
+            const range = q
+              .eq("account_slug", accountSlug)
+              .eq("status", status)
+              .gte("start_date", from);
+            return exclusiveTo ? range.lt("start_date", to) : range.lte("start_date", to);
+          })
+          .collect();
+      }
+      return ctx.db
+        .query("reservations")
+        .withIndex("by_status_start_date", (q) => {
+          const range = q.eq("status", status).gte("start_date", from);
+          return exclusiveTo ? range.lt("start_date", to) : range.lte("start_date", to);
+        })
+        .collect();
+    };
+    const sortByStartAndCreation = <T extends { start_date?: string; _creationTime: number }>(rows: T[]) =>
+      rows.sort((a, b) =>
+        (a.start_date ?? "").localeCompare(b.start_date ?? "") ||
+        a._creationTime - b._creationTime,
+      );
+    const [mainStatusRows, priorStatusRows] = await Promise.all([
+      Promise.all(candidateStatuses.map((status) =>
+        readStatusRange(status, scanStart, scanEnd),
+      )),
+      Promise.all(candidateStatuses.map((status) =>
+        readStatusRange(status, overlapStart, scanStart, true),
+      )),
+    ]);
+    let reservations = sortByStartAndCreation(mainStatusRows.flat());
     // Reservations starting before weekStart but ending inside / after it.
     // Unified 120-day lookback (FIX 4 — see getCalendarStrip / getWeeklyCalendar).
-    const overlapStart = shiftIsoDate(weekStart!, -CALENDAR_LOOKBACK_DAYS);
-    const priorRes = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (q) =>
-        q.gte("start_date", overlapStart).lt("start_date", scanStart),
-      )
-      .collect();
+    const priorRes = sortByStartAndCreation(priorStatusRows.flat());
     for (const r of priorRes) {
       if (
         r.end_date !== undefined &&
@@ -1513,9 +1543,6 @@ export const getGanttWeek = query({
       ) {
         if (!reservations.find((x) => x._id === r._id)) reservations.push(r);
       }
-    }
-    if (accountSlug) {
-      reservations = reservations.filter((r) => r.account_slug === accountSlug);
     }
     // Calendar commitments include paid website verification, keeping the
     // physical reservation visible without counting it as confirmed revenue.
