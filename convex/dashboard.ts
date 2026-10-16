@@ -571,19 +571,10 @@ export const getStatsDrawerData = query({
     }
     const activeItems = allItems.filter((i) => i.status === "active" && !i.is_marketing_only);
 
-    // Phase 12.3: listing_images bank — product_id-keyed canonical photos.
-    // Fetched once here, looked up per-rental in mapRental.useHygglo branch.
-    const listingImagesRaw = await ctx.db.query("listing_images").collect();
-    const bankByProduct = new Map<string, string>(); // key: `${account_slug}#${product_id}` → image_url
-    for (const li of listingImagesRaw) {
-      bankByProduct.set(`${li.account_slug}#${li.product_id}`, li.image_url);
-    }
-
-    // Per-Hygglo-product short canonical names (2026-05-23). Keyed by
-    // `${account_slug}#${product_id}`. Looked up per item_tiles entry in
-    // mapRental.useHygglo to replace SEO-stuffed Hygglo titles with the
-    // canonical short form. Missing entries fall back to the raw name.
-    const shortNameRows = await ctx.db.query("listing_short_names").collect();
+    // These display-only lookups are loaded later for the small set of rental
+    // cards actually rendered. Collecting both entire tables here made every
+    // stats refresh read hundreds of unrelated listing records.
+    const bankByProduct = new Map<string, string>();
 
 
     // ── Listing info pool (2026-05-24) ──
@@ -715,7 +706,7 @@ export const getStatsDrawerData = query({
     const overrideRows = await ctx.db.query("listing_resolution_override").collect();
     const displayItems = new Map(allItems.map(i => [String(i._id), i]));
     const displayMappings = new Map(overrideRows.map(o => [`${o.account_slug}#${o.product_id}`, o]));
-    const manualDisplayNames = new Map(shortNameRows.filter(n => n.derivation_method === "manual").map(n => [`${n.account_slug}#${n.product_id}`, n.short_name]));
+    const manualDisplayNames = new Map<string, string>();
     const overrideByProduct = new Map<string, Array<{ item_id: string; qty: number }>>();
     for (const o of overrideRows) {
       overrideByProduct.set(`${o.account_slug}#${o.product_id}`, o.components.map((c) => ({ item_id: String(c.item_id), qty: c.qty })));
@@ -1592,6 +1583,33 @@ export const getStatsDrawerData = query({
     const pendingForList = pendingTracked.filter(
       (r) => !listedKeys.has(dedupKey(r as ResRow)),
     );
+    const displayProductKeys = new Map<string, { account: string; productId: number }>();
+    for (const rental of [...ongoingGroupRows, ...upcomingGroupRows, ...pendingForList]) {
+      const account = rental.account_slug;
+      if (!account) continue;
+      for (const item of (rental as ResRow & { hygglo_items?: Array<{ product_id?: number }> }).hygglo_items ?? []) {
+        if (!Number.isSafeInteger(item.product_id)) continue;
+        const productId = item.product_id as number;
+        displayProductKeys.set(`${account}#${productId}`, { account, productId });
+      }
+    }
+    await Promise.all([...displayProductKeys.values()].map(async ({ account, productId }) => {
+      const [images, shortNames] = await Promise.all([
+        ctx.db.query("listing_images").withIndex("by_account_product", (q) =>
+          q.eq("account_slug", account).eq("product_id", productId),
+        ).collect(),
+        ctx.db.query("listing_short_names").withIndex("by_account_product", (q) =>
+          q.eq("account_slug", account).eq("product_id", productId),
+        ).collect(),
+      ]);
+      // Preserve collect-order overwrite behavior if legacy duplicate rows exist.
+      for (const image of images) bankByProduct.set(`${account}#${productId}`, image.image_url);
+      for (const name of shortNames) {
+        if (name.derivation_method === "manual") {
+          manualDisplayNames.set(`${account}#${productId}`, name.short_name);
+        }
+      }
+    }));
     const activeRentals = [
       ...ongoingGroupRows.map((r) => mapRental(r, "ongoing")),
       ...upcomingGroupRows.map((r) => mapRental(r, "upcoming")),
@@ -2500,13 +2518,7 @@ export const getNextRentals = query({
       items.map((it) => ({ image_url: (it as { image_url?: string | null }).image_url ?? null })),
     );
 
-    // Phase 5.3: priority-0 listing_images bank for this query too, so the
-    // shared helper no longer bypasses it on the Next Rentals widget.
-    const listingImagesNext = await ctx.db.query("listing_images").collect();
     const bankByProductNext = new Map<string, string>();
-    for (const li of listingImagesNext) {
-      bankByProductNext.set(`${li.account_slug}#${li.product_id}`, li.image_url);
-    }
 
     const buildItemTilesLocal = (r: any): ItemTile[] => {
       const hyggloItems = (r.hygglo_items ?? []) as Array<{ name?: string; product_id?: number }>;
@@ -2545,15 +2557,36 @@ export const getNextRentals = query({
       item_tiles: buildItemTilesLocal(r),
     });
 
-    const pickups = confirmed
-      .filter((r) => (r.pickup_date ?? r.start_date) === targetDate)
+    const pickupRows = confirmed
+      .filter((r) => (r.pickup_date ?? r.start_date) === targetDate);
+    const returnRows = confirmed
+      .filter((r) => ((r as any).return_date ?? r.end_date) === targetDate);
+    const displayProductKeys = new Map<string, { account: string; productId: number }>();
+    for (const rental of [...pickupRows, ...returnRows]) {
+      if (!rental.account_slug) continue;
+      for (const item of (rental as typeof rental & { hygglo_items?: Array<{ product_id?: number }> }).hygglo_items ?? []) {
+        if (!Number.isSafeInteger(item.product_id)) continue;
+        const productId = item.product_id as number;
+        displayProductKeys.set(`${rental.account_slug}#${productId}`, {
+          account: rental.account_slug,
+          productId,
+        });
+      }
+    }
+    await Promise.all([...displayProductKeys.values()].map(async ({ account, productId }) => {
+      const images = await ctx.db.query("listing_images").withIndex("by_account_product", (q) =>
+        q.eq("account_slug", account).eq("product_id", productId),
+      ).collect();
+      for (const image of images) bankByProductNext.set(`${account}#${productId}`, image.image_url);
+    }));
+
+    const pickups = pickupRows
       .map((r) => mapForWire(r, "pickup"))
       .sort((a, b) =>
         (a.pickup_time ?? "99:99").localeCompare(b.pickup_time ?? "99:99"),
       );
 
-    const returns = confirmed
-      .filter((r) => ((r as any).return_date ?? r.end_date) === targetDate)
+    const returns = returnRows
       .map((r) => mapForWire(r, "return"))
       .sort((a, b) =>
         (a.return_time ?? "99:99").localeCompare(b.return_time ?? "99:99"),
