@@ -141,6 +141,7 @@ export default defineConfig({
       "convex/lib/product_context.test.ts",
       "convex/lib/reservation_revenue.test.ts",
       "convex/lib/confirmed_headline_order.test.ts",
+      "convex/lib/profile_readonly.test.ts",
       "convex/lib/reservations/itemUnits.test.ts",
       "convex/lib/rental_stage.test.ts",
       "convex/lib/booking_reply_claims.test.ts",
