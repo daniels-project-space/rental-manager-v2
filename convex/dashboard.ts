@@ -499,16 +499,17 @@ export const getStatsDrawerData = query({
       d.setDate(d.getDate() - 365);
       return d.toISOString().slice(0, 10);
     })();
+    const reservationsByStatusAndStartDate = (status: string) => accountSlug
+      ? ctx.db.query("reservations").withIndex("by_account_status_start_date", (q) =>
+          q.eq("account_slug", accountSlug).eq("status", status).gte("start_date", dashCutoff),
+        ).collect()
+      : ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+          q.eq("status", status).gte("start_date", dashCutoff),
+        ).collect();
     const [confirmedRows, completedRows, pendingReviewRows] = await Promise.all([
-      ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
-        q.eq("status", "confirmed").gte("start_date", dashCutoff),
-      ).collect(),
-      ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
-        q.eq("status", "completed").gte("start_date", dashCutoff),
-      ).collect(),
-      ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
-        q.eq("status", "pending_review").gte("start_date", dashCutoff),
-      ).collect(),
+      reservationsByStatusAndStartDate("confirmed"),
+      reservationsByStatusAndStartDate("completed"),
+      reservationsByStatusAndStartDate("pending_review"),
     ]);
     const allResRaw = [...confirmedRows, ...completedRows, ...pendingReviewRows]
       .sort((a, b) => (a.start_date ?? "").localeCompare(b.start_date ?? "") || a._creationTime - b._creationTime);
@@ -517,8 +518,45 @@ export const getStatsDrawerData = query({
     if (accountSlug) {
       allRes = allResRaw.filter((r) => r.account_slug === accountSlug);
     }
-    // Cross-account view for double-booking detection.
-    const allResCrossAccount = allResRaw;
+    // The account page still needs a cross-account set for conflict detection,
+    // but only active/forward reservations can conflict. Do not reload a year
+    // of completed history from every account just to filter it back out below.
+    let allResCrossAccount = allResRaw;
+    if (accountSlug) {
+      const [confirmedByStart, confirmedByPickup, confirmedByEnd, confirmedByReturn, pendingAcrossAccounts] = await Promise.all([
+        ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+          q.eq("status", "confirmed").gte("start_date", activeToday),
+        ).collect(),
+        ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
+          q.eq("status", "confirmed").gte("pickup_date", activeToday),
+        ).collect(),
+        ctx.db.query("reservations").withIndex("by_status_end_date", (q) =>
+          q.eq("status", "confirmed").gte("end_date", activeToday),
+        ).collect(),
+        ctx.db.query("reservations").withIndex("by_status_return_date", (q) =>
+          q.eq("status", "confirmed").gte("return_date", activeToday),
+        ).collect(),
+        ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+          q.eq("status", "pending_review").gte("start_date", dashCutoff),
+        ).collect(),
+      ]);
+      const activeAcrossAccounts = new Map<string, (typeof confirmedByStart)[number]>();
+      for (const row of [
+        ...confirmedByStart,
+        ...confirmedByPickup,
+        ...confirmedByEnd,
+        ...confirmedByReturn,
+        ...pendingAcrossAccounts,
+      ]) {
+        // Match the original 365-day source window. The active-date indexes
+        // intentionally start at effective dates, so retain this guard for
+        // rentals whose pickup/return fields extend beyond an old start date.
+        if (row.start_date && row.start_date >= dashCutoff) {
+          activeAcrossAccounts.set(String(row._id), row);
+        }
+      }
+      allResCrossAccount = [...activeAcrossAccounts.values()];
+    }
 
     // ── COLLECT 2: items ─────────────────────────────────────────
     let allItems = await ctx.db.query("items").collect();
@@ -2883,19 +2921,21 @@ export const getRentalHeadlineStats = query({
     // Pending-review reservations get their own bounded live read. The heavy
     // dashboard snapshot is intentionally refreshed less often, so it cannot
     // be the only source for new bookings on the page.
+    const statusDateWindow = (status: string, from: string, to?: string) => {
+      if (accountSlug) {
+        return ctx.db.query("reservations").withIndex("by_account_status_start_date", (q) => {
+          const range = q.eq("account_slug", accountSlug).eq("status", status).gte("start_date", from);
+          return to === undefined ? range : range.lte("start_date", to);
+        }).collect();
+      }
+      return ctx.db.query("reservations").withIndex("by_status_start_date", (q) => {
+        const range = q.eq("status", status).gte("start_date", from);
+        return to === undefined ? range : range.lte("start_date", to);
+      }).collect();
+    };
     const [confirmedRows, pendingReviewRows] = await Promise.all([
-      ctx.db
-        .query("reservations")
-        .withIndex("by_status_start_date", (q) =>
-          q.eq("status", "confirmed").gte("start_date", dashCutoff),
-        )
-        .collect(),
-      ctx.db
-        .query("reservations")
-        .withIndex("by_status_start_date", (q) =>
-          q.eq("status", "pending_review").gte("start_date", dashCutoff).lte("start_date", pendingHorizon),
-        )
-        .collect(),
+      statusDateWindow("confirmed", dashCutoff),
+      statusDateWindow("pending_review", dashCutoff, pendingHorizon),
     ]);
     const scopedConfirmed = accountSlug
       ? confirmedRows.filter((row) => row.account_slug === accountSlug)
@@ -2948,15 +2988,15 @@ export const getRentalHeadlineStats = query({
     // so both the booked total and its projection stay live without waiting
     // for the expensive all-dashboard snapshot.
     const [confirmedMonthRows, completedMonthRows, pickupMonthRows] = await Promise.all([
-      ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
-        q.eq("status", "confirmed").gte("start_date", projectionStart).lte("start_date", monthEnd),
-      ).collect(),
-      ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
-        q.eq("status", "completed").gte("start_date", projectionStart).lte("start_date", monthEnd),
-      ).collect(),
-      ctx.db.query("reservations").withIndex("by_pickup_date", (q) =>
-        q.gte("pickup_date", projectionStart).lte("pickup_date", monthEnd),
-      ).collect(),
+      statusDateWindow("confirmed", projectionStart, monthEnd),
+      statusDateWindow("completed", projectionStart, monthEnd),
+      accountSlug
+        ? ctx.db.query("reservations").withIndex("by_account_pickup_date", (q) =>
+            q.eq("account_slug", accountSlug).gte("pickup_date", projectionStart).lte("pickup_date", monthEnd),
+          ).collect()
+        : ctx.db.query("reservations").withIndex("by_pickup_date", (q) =>
+            q.gte("pickup_date", projectionStart).lte("pickup_date", monthEnd),
+          ).collect(),
     ]);
     const monthRowsById = new Map<string, (typeof confirmedRows)[number]>();
     for (const row of [...confirmedMonthRows, ...completedMonthRows, ...pickupMonthRows]) {
