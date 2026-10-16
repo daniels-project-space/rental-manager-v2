@@ -171,6 +171,9 @@ export const dispatchPending = internalAction({
                     icon: accountIcon(e.account_slug), // per-account Aputure (recoloured)
                     badge: "/icons/notif-badge.png",
                   }),
+                  // Do not store a fifteen-minute reminder for hours while a
+                  // phone is offline. Other notification retention is unchanged.
+                  e.type === "pickup_reminder" ? { TTL: 60, urgency: "high" } : undefined,
                 );
                 pushed++;
                 eventPushed++;

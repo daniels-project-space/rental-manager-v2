@@ -36,7 +36,7 @@ export function ownerAvailabilityReview(items: Doc<"items">[], products: Doc<"hy
   if(legacyA7Card&&legacyA7Card.source!==OWNER_AVAILABILITY_SOURCE)throw Error("Unreviewed A7 V card allocation changed");
   add(a7v,{supplied_stock:[...(a7v.supplied_stock??[]).filter(c=>c.item_id!==card._id&&c.item_id!==sd._id),{item_id:sd._id,qty:1,source:"Daniel confirmed A7 V includes one 256GB V90 SD card, 16 October 2026"}],
     compatibility:{...a7v.compatibility,cards:unique([...(a7v.compatibility?.cards??[]),"256GB SDXC V90 card"]),included_with_rental:unique([...(a7v.compatibility?.included_with_rental??[]).filter(s=>!/^CF Express Type A card$/i.test(s)),"1x 256GB SDXC V90 card"])}} as Partial<Doc<"items">>);
-  add(sd,{aliases:unique([...(sd.aliases??[]),"256GB SDXC V90 card"]),track_independent_stock:true});
+  add(sd,{aliases:unique([...(sd.aliases??[]),"256GB SDXC V90 card"]),track_independent_stock:true,rental_facts:{name:"256GB SDXC V90 card",source:"Daniel confirmed supplied A7 V media, 16 October 2026"}});
   const pyro=item("Hollyland Pyro S transmitter"),monitor=item("Hollyland 7-inch monitor");
   const pyroSource="Daniel confirmed Pyro S paired receiver included, 16 October 2026";
   add(pyro,{compatibility:{...pyro.compatibility,included_with_rental:unique([...(pyro.compatibility?.included_with_rental??[]),"1x Hollyland Pyro S Receiver","8x Detachable antennas"])},
@@ -44,13 +44,13 @@ export function ownerAvailabilityReview(items: Doc<"items">[], products: Doc<"hy
       {title_pattern:"Hollyland.*Pyro.*S.*(?:7|monitor)",components:[{item_id:monitor._id,qty:1}],excludes:[],source:pyroSource,apply_to_declared_component:true,
         description_override:"Contents: • 1x Hollyland Pyro S transmitter • 1x Hollyland Pyro S Receiver • 8x Detachable antennas • 1x Hollyland 7-inch monitor • 4x NP-F style batteries • 1x Dual battery charger • 2x HDMI cables • 1x SDI cable • 1x Carry case"}]} as Partial<Doc<"items">>);
   const tele=item("Sony GM 70-200mm f2.8");
-  add(tele,{aliases:unique([...(tele.aliases??[]),"Sony G series 70-200mm lens","Sony FE 70-200mm f2.8 GM OSS SEL70200GM","Sony FE 70-200mm f/2.8 GM OSS (original)"]),
+  add(tele,{rental_facts:{name:"Sony FE 70–200mm f/2.8 GM OSS (original)",source:"Daniel confirmed both lenses are original GM, 16 October 2026"},aliases:unique([...(tele.aliases??[]),"Sony G series 70-200mm lens","Sony FE 70-200mm f2.8 GM OSS SEL70200GM","Sony FE 70-200mm f/2.8 GM OSS (original)"]),
     notes:unique([...(tele.notes??"").split("\n"),"Both owned lenses are original Sony FE 70–200mm f/2.8 GM OSS (SEL70200GM), not GM II; confirmed by Daniel 16 October 2026."]).filter(Boolean).join("\n"),
     listing_stock_rules:[...(tele.listing_stock_rules??[]).filter(r=>r.source!=="Daniel confirmed original GM and attached collar, 16 October 2026"),{title_pattern:"Sony.*70[-–]200",components:[],excludes:[],source:"Daniel confirmed original GM and attached collar, 16 October 2026",apply_to_declared_component:true,supplied_parts:[{name:"Tripod collar attached",qty:1},{name:"Tripod collar (attached)",qty:1}]}],
     image_url:"https://pub-761e4d18b3b84542809dddc11936a8df.r2.dev/listings/1048172/0.jpg"});
   const zoom=item("Sony 28-70mm");
-  add(zoom,{aliases:unique([...(zoom.aliases??[]),"Sony FE 28-70mm f3.5-5.6 OSS Zoom Lens","Sony FE 28-70mm f/3.5-5.6 OSS"])});
-  add(card,{track_independent_stock:true,aliases:unique([...(card.aliases??[]),"Lexar CFexpress Type A 320GB card","Lexar CFexpress Type A 320GB memory card"]),
+  add(zoom,{rental_facts:{name:"Sony FE 28–70mm f/3.5–5.6 OSS",source:OWNER_AVAILABILITY_SOURCE},aliases:unique([...(zoom.aliases??[]),"Sony FE 28-70mm f3.5-5.6 OSS Zoom Lens","Sony FE 28-70mm f/3.5-5.6 OSS"])});
+  add(card,{track_independent_stock:true,rental_facts:{name:"Lexar CFexpress Type A 320GB card",source:OWNER_AVAILABILITY_SOURCE},aliases:unique([...(card.aliases??[]),"Lexar CFexpress Type A 320GB card","Lexar CFexpress Type A 320GB memory card"]),
     compatibility:{...card.compatibility,included_with_rental:unique([...(card.compatibility?.included_with_rental??[]),"1x Lexar CFexpress Type A card reader"])}} as Partial<Doc<"items">>);
   const mars=item("Hollyland Mars 4K transmitter");
   add(mars,{compatibility:{...mars.compatibility,included_with_rental:unique([...(mars.compatibility?.included_with_rental??[]),"1x Hollyland Mars 4K Receiver"])},

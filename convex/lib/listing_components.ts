@@ -112,10 +112,13 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
   }
   const supplied = withDefaultAdapters([...quantities].map(([item_id,qty]) => ({item_id,qty})), items);
   for (const c of supplied.components) quantities.set(c.item_id,c.qty);
-  const components = [...quantities].map(([item_id, qty]) => {
+  const components = [...quantities].map(([item_id, qty], index) => {
     const item = items.find((i) => String(i._id) === item_id);
     const valid = Number.isInteger(qty) && qty > 0;
     return { item_id, name: item?.name_canonical ?? null, kind: item?.kind ?? null,
+      ...(item?.rental_facts?.source.trim() && item.rental_facts.name.trim() ? {rental_name:item.rental_facts.name} : {}),
+      ...(index===0 && suppliedPartsFromRules.length ? {reviewed_supplied_parts:suppliedPartsFromRules} : {}),
+      ...(index===0 && optionalParts.size ? {optional_parts:rules.flatMap(rule=>rule.optional_parts??[])} : {}),
       units_per_listing: qty, requested_units: qty * quantity,
       stock_required: !item || item.track_independent_stock === true || !isStandardAccessory(item.kind, item.name_canonical),
       owned: !item || !valid ? null : item.status === "active" && !item.is_marketing_only && item.qty > 0 };

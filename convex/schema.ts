@@ -161,6 +161,7 @@ const operationalSchema = defineSchema({
       basis: v.union(v.literal("owner_lower_bound"), v.literal("owner_exact")),
       source: v.string(), note: v.string(), recorded_at: v.number(),
     })),
+    rental_facts: v.optional(v.object({ name: v.string(), source: v.string() })),
     listing_stock_rules: v.optional(v.array(v.object({ title_pattern:v.string(), components:v.array(v.object({item_id:v.id("items"),qty:v.number()})), excludes:v.array(v.id("items")), source:v.string(), apply_to_declared_component:v.optional(v.boolean()), supplied_parts:v.optional(v.array(v.object({name:v.string(),qty:v.number()}))), optional_parts:v.optional(v.array(v.string())), description_override:v.optional(v.string()) }))),
     supplied_stock: v.optional(v.array(v.object({
       item_id: v.id("items"), qty: v.number(), source: v.string(),
@@ -2543,6 +2544,10 @@ const operationalSchema = defineSchema({
   // booking ("wohoo") or a new rental request landing in the Reply Inbox.
   // `delivered_at` gates the dispatcher (send-once); `read_at` drives the
   // bell's unread badge. `url` deep-links to the chat thread.
+  rental_pickup_reminders: defineTable({
+    reservation_id: v.id("reservations"), pickup_at: v.number(), due_at: v.number(),
+    schedule_key: v.string(), active: v.boolean(),
+  }).index("by_reservation", ["reservation_id"]).index("by_active_due", ["active", "due_at"]),
   notification_events: defineTable({
     type: v.union(
       v.literal("booking_confirmed"),
@@ -2553,6 +2558,8 @@ const operationalSchema = defineSchema({
       v.literal("booking_cancelled"),
       v.literal("email_notification"),
       v.literal("booking_update"),
+      v.literal("pickup_reminder"),
+      v.literal("rental_time_changed"),
     ),
     thread_id: v.string(),                   // hygglo_order_id → deep-link target
     event_key: v.optional(v.string()),

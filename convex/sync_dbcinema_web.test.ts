@@ -25,6 +25,13 @@ function database() {
 const booking=(extra:any={})=>({id:'web-rental-1',revision:1,status:'confirmed',verification:verification({status:'verified',archiveReady:true,approved:true}),customerName:'Alex',customerEmail:'test@example.invalid',fulfilment:'collection',pickupTime:'10:30',returnTime:'17:00',start:Date.UTC(2035,0,1),end:Date.UTC(2035,0,2),subtotal:100,discount:10,deliveryFee:0,depositAmount:20,total:110,currency:'GBP',createdAt:1,lineItems:[{title:'Camera',qty:1,units:[]}],...extra});
 afterEach(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs();vi.clearAllMocks()});
 describe('real website reservation sync handlers',()=>{
+ it('emits one schedule-change alert after a newer saved website revision, never a repeat',async()=>{
+  const {ctx}=database();await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking()],reconcile:false});vi.clearAllMocks();
+  const revised=booking({revision:2,pickupTime:'11:30',returnTime:'18:00'});
+  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[revised],reconcile:false});
+  expect(queueNotificationEvents).toHaveBeenCalledTimes(1);expect(vi.mocked(queueNotificationEvents).mock.calls[0][1][0]).toMatchObject({type:'rental_time_changed',thread_id:'dbcinema:web-rental-1',title:'Your rental changed its time to 11:30'});
+  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[revised],reconcile:false});expect(queueNotificationEvents).toHaveBeenCalledTimes(1);
+ });
  it('emits one upcoming confirmation and preserves times, then ignores repeat and stale updates',async()=>{
   const {ctx,rows}=database();const b=booking();
   await invoke(upsertSiteBookingsBatch,ctx,{bookings:[b],reconcile:false});

@@ -2,6 +2,7 @@ import { providerReturnCompleted } from "../src/lib/provider-return-evidence";
 import {internalQueryOf} from "./owner_functions";
 import { mutation, query } from "./owner_functions";
 import type { MutationCtx } from "./_generated/server";
+import { rentalTimeChangedEvent, syncPickupReminder } from "./lib/rental_timing_notifications";
 import type { Id } from "./_generated/dataModel";
 import {
   applyReservationEarningsChanges,
@@ -1298,6 +1299,12 @@ async function upsertOrderImpl(
     //    status=confirmed before this point, so status alone misses the event.
     //  • new_request — Hygglo's actions map newly offers accept/deny.
     const notifyUpdate: NotifEventInput[] = [];
+    const timeChange = rentalTimeChangedEvent(existing, {
+      ...existing, ...baseFields, status: finalStatus, ...stepPatch, ...obsoleteFields,
+      ...(clearObsolete && { is_obsolete: false }),
+    }, now);
+    if (timeChange) notifyUpdate.push(timeChange);
+    await syncPickupReminder(ctx, { ...existing, ...baseFields, status: finalStatus, ...stepPatch, ...obsoleteFields, ...(clearObsolete && { is_obsolete: false }) });
     if (bookingBecameConfirmed({
       previousStep: storedStep,
       previousStatus: existing.status,
@@ -1350,6 +1357,7 @@ async function upsertOrderImpl(
     created_at: now,
   });
   await scheduleShortNameDerivation(ctx, args.account_slug, hyggloItemsInsert);
+  await syncPickupReminder(ctx, { _id: newId, ...baseFields, ...stepInsert, ...obsoleteFields });
   // listing_info_pool derivation: handled by Trigger.dev. poll-hygglo fires
   // `tasks.trigger("derive-listing-info-pool-on-demand", { targets })` after
   // the upsert batch completes — see src/trigger/poll-hygglo.ts. The
