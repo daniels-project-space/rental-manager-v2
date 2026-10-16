@@ -1,3 +1,5 @@
+
+import { deleteRevenueReservation, patchRevenueReservation } from "./lib/reservation_revenue";
 /**
  * Internal queries/mutations supporting the item_resolver action.
  * Kept in a separate module so the action (which runs in Node) doesn't
@@ -116,7 +118,7 @@ export const setResolution = internalMutation({
   },
   handler: async (ctx, { reservation_id, resolved_items, expanded_items, method, input_hash }) => {
     const now = Date.now();
-    await ctx.db.patch(reservation_id, {
+    await patchRevenueReservation(ctx, reservation_id, {
       resolved_items,
       expanded_items,
       resolution_at: now,
@@ -143,7 +145,7 @@ export const admin_setRenterNameByV1Id = mutation({
       .collect();
     if (rows.length === 0) return { ok: false, reason: "reservation not found" };
     for (const r of rows) {
-      await ctx.db.patch(r._id, { renter_name });
+      await patchRevenueReservation(ctx, r._id, { renter_name });
     }
     return { ok: true, patched: rows.length };
   },
@@ -185,7 +187,7 @@ export const admin_setResolutionByV1Id = mutation({
         .sort()
         .join("|");
       const now = Date.now();
-      await ctx.db.patch(r._id, {
+      await patchRevenueReservation(ctx, r._id, {
         resolved_items,
         resolution_at: now,
         resolution_method: method ?? "v1_migration",
@@ -460,7 +462,7 @@ export const admin_resolveBatchWrite = mutation({
     let patched = 0;
     for (const r of results) {
       const now = Date.now();
-      await ctx.db.patch(r.reservation_id, {
+      await patchRevenueReservation(ctx, r.reservation_id, {
         resolved_items: r.resolved_items,
         expanded_items: r.expanded_items,
         resolution_at: now,
@@ -594,7 +596,7 @@ export const admin_writeVisionAugmentation = mutation({
     { reservation_id, resolved_items, expanded_items, input_hash, resolved_via_tier },
   ) => {
     const now = Date.now();
-    await ctx.db.patch(reservation_id, {
+    await patchRevenueReservation(ctx, reservation_id, {
       resolved_items,
       expanded_items,
       resolution_at: now,
@@ -663,7 +665,7 @@ export const admin_purgeV1Reservations = mutation({
 
     let purged = 0;
     for (const r of candidates) {
-      await ctx.db.delete(r._id);
+      await deleteRevenueReservation(ctx, r._id);
       purged++;
     }
     return {

@@ -1,3 +1,5 @@
+
+import { patchRevenueReservation } from "./lib/reservation_revenue";
 import { previousReferralOffer } from "./lib/referral_offer";
 import {acceptsReplacement,requiresReplacementTransaction} from "./lib/renter_replacement_acceptance";
 import { additionMountRequirements } from "./lib/booking_addition_mount";
@@ -625,7 +627,7 @@ export const applyChange = mutation({
         ],
         updated_at: Date.now(),
       });
-      if (booking) await ctx.db.patch(booking._id, {
+      if (booking) await patchRevenueReservation(ctx, booking._id, {
         start_date: a.start_date,
         end_date: end,
       });
@@ -843,7 +845,7 @@ export const simulateVerificationFailure = mutation({
     if (await ctx.db.query("renter_bot_lab_referrals").withIndex("by_code", q => q.eq("code", a.referral_code)).unique())
       throw new Error("Referral code already exists");
     const now = Date.now();
-    await ctx.db.patch(booking._id, { status: "cancelled", order_step: "VERIFICATION_FAILED" });
+    await patchRevenueReservation(ctx, booking._id, { status: "cancelled", order_step: "VERIFICATION_FAILED" });
     await ctx.db.patch(order._id, { changes: [...order.changes, { at: now, summary: "Final verification failure: simulated booking automatically cancelled" }], updated_at: now });
     let physicalItems:OrderPhysicalItem[]|undefined;
     try {const resolved=await resolveOrderPhysicalItems(ctx,order.account_slug,order.items);if(resolved.items.length)physicalItems=[...resolved.items];}

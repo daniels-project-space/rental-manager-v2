@@ -13,11 +13,14 @@ const invoke = (f: any, ctx: any, args: any) => f._handler(ctx, args);
 function database() {
  const rows = new Map<string, any>(); let serial=0;
  const db = {
-  insert: async (table:string,value:any) => {const id=`${table}:${++serial}`;rows.set(id,{...value,_id:id,table});return id},
+  normalizeId: (table:string,id:string) => id.startsWith(table+':')||rows.get(id)?.table===table?id:null,
+  get: async (id:string) => rows.has(id)?{_creationTime:1,...rows.get(id)}:null,
+  delete: async (id:string) => {rows.delete(id)},
+  insert: async (table:string,value:any) => {const id=`${table}:${++serial}`;rows.set(id,{...value,_id:id,_creationTime:serial,table});return id},
   patch: async (id:string,value:any) => { rows.set(id,{...rows.get(id),...value}) },
   query: (table:string) => {
    const equalities: Array<[string,any]>=[];
-   const q:any={withIndex: (_:string, select:any) => {const selector:any={eq:(k:string,v:any)=>{equalities.push([k,v]);return selector}};select(selector);return q}, collect:async()=>[...rows.values()].filter(r=>r.table===table && equalities.every(([k,v])=>r[k]===v)),take:async(n:number)=>(await q.collect()).slice(0,n),first:async()=>(await q.collect())[0]??null};return q;
+   const q:any={withIndex: (_:string, select:any) => {const selector:any={eq:(k:string,v:any)=>{equalities.push([k,v]);return selector}};select(selector);return q}, collect:async()=>[...rows.values()].filter(r=>r.table===table && equalities.every(([k,v])=>r[k]===v)),take:async(n:number)=>(await q.collect()).slice(0,n),first:async()=>(await q.collect())[0]??null,unique:async()=>{const selected=await q.collect();if(selected.length>1)throw Error('Duplicate unique key');return selected[0]??null}};return q;
   },
  };
  return {ctx:{db,scheduler:{runAfter:vi.fn()}},rows};

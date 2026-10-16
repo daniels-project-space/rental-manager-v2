@@ -1,4 +1,4 @@
-/** A new rich-product writer must maintain the compact row in its transaction. */
+/** Source writes must maintain their derived records in the same transaction. */
 import path from "node:path";
 import ts from "typescript";
 
@@ -13,6 +13,10 @@ const backendRoots = config.fileNames.filter((file) => file.startsWith(path.join
 const program = ts.createProgram(backendRoots, config.options);
 const checker = program.getTypeChecker();
 const failures = [], writers = [], reviewed = new Map();
+const projectionOwners = new Map([
+  ["hygglo_products", "convex/lib/product_context.ts"],
+  ["reservations", "convex/lib/reservation_revenue.ts"],
+]);
 // These pre-existing casts write insurance claims, reservation vision results,
 // and the explicitly enumerated MvTableName union. Keep each exception bounded
 // to one existing expression, rather than exempting an entire file.
@@ -21,13 +25,13 @@ const reviewedUnknown = new Set([
   "convex/reservation_vision.ts|patch|existing._id",
   "convex/mv/_helpers.ts|patch|existing._id as any",
 ]);
-function permitsProduct(type) {
+function permitsTable(type, table) {
   if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return true;
   if (type.flags & ts.TypeFlags.String) return true;
-  if (type.isStringLiteral()) return type.value === "hygglo_products";
-  if (type.isUnion()) return type.types.some(permitsProduct);
+  if (type.isStringLiteral()) return type.value === table;
+  if (type.isUnion()) return type.types.some((member) => permitsTable(member, table));
   const constraint = checker.getBaseConstraintOfType(type);
-  return constraint && constraint !== type ? permitsProduct(constraint) : false;
+  return constraint && constraint !== type ? permitsTable(constraint, table) : false;
 }
 function unwrap(expression) {
   while (ts.isAsExpression(expression) || ts.isParenthesizedExpression(expression)) expression = expression.expression;
@@ -49,14 +53,16 @@ for (const source of program.getSourceFiles()) {
         const type = checker.getTypeAtLocation(identifier);
         const typeText = checker.typeToString(type);
         const tableBrand = type.getProperty("__tableName");
-        const possibleProduct = operation === "insert"
-          ? permitsProduct(checker.getTypeAtLocation(unwrap(first)))
-          : explicitTable === "hygglo_products" || typeText.includes('"hygglo_products"') ||
-            !!(tableBrand && permitsProduct(checker.getTypeOfSymbolAtLocation(tableBrand, identifier)));
+        const sourceTables = [...projectionOwners.keys()].filter((table) => operation === "insert"
+          ? permitsTable(checker.getTypeAtLocation(unwrap(first)), table)
+          : explicitTable === table || typeText.includes(JSON.stringify(table)) ||
+            !!(tableBrand && permitsTable(checker.getTypeOfSymbolAtLocation(tableBrand, identifier), table)));
         const unknown = operation !== "insert" && !!(type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown));
-        if (possibleProduct) {
-          writers.push({ file, operation });
-          if (file !== "convex/lib/product_context.ts") failures.push(`${file}: direct ${operation} bypasses the atomic product projection helpers`);
+        if (sourceTables.length) {
+          for (const table of sourceTables) {
+            writers.push({ file, table, operation });
+            if (file !== projectionOwners.get(table)) failures.push(`${file}: direct ${operation} of ${table} bypasses its atomic projection helpers`);
+          }
         } else if (unknown) {
           const key = `${file}|${operation}|${identifier.getText(source)}`;
           const count = (reviewed.get(key) ?? 0) + 1;
@@ -69,5 +75,5 @@ for (const source of program.getSourceFiles()) {
   }
   visit(source);
 }
-console.log(JSON.stringify({ productWriters: writers, reviewedUnknownWrites: [...reviewed.keys()], failures }, null, 2));
+console.log(JSON.stringify({ projectionWriters: writers, reviewedUnknownWrites: [...reviewed.keys()], failures }, null, 2));
 if (failures.length) process.exitCode = 1;

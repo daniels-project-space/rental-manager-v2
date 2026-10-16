@@ -439,6 +439,45 @@ const operationalSchema = defineSchema({
     .index("by_total_spend", ["total_spend_gbp"])
     .index("by_display_name", ["display_name"]),
 
+  reservation_revenue_facts: defineTable({
+    source_id: v.id("reservations"),
+    source_creation_time: v.number(),
+    effective_month: v.string(),
+    status: v.literal("completed"),
+    start_date: v.string(),
+    end_date: v.string(),
+    pickup_date: v.optional(v.string()),
+    account_slug: v.optional(v.string()),
+    renter_id: v.optional(v.id("renters")),
+    renter_name: v.optional(v.string()),
+    hygglo_order_id: v.optional(v.string()),
+    v1_rental_id: v.optional(v.string()),
+    is_obsolete: v.optional(v.boolean()),
+    order_step: v.optional(v.string()),
+    net_to_owner_gbp: v.optional(v.number()),
+  }).index("by_source", ["source_id"])
+    .index("by_month", ["effective_month"])
+    .index("by_account_month", ["account_slug", "effective_month"]),
+
+  reservation_revenue_state: defineTable({
+    key: v.literal("v1"),
+    phase: v.union(v.literal("backfill"), v.literal("audit_source"), v.literal("audit_facts"), v.literal("ready"), v.literal("failed")),
+    cursor: v.union(v.string(), v.null()),
+    backfilled: v.number(),
+    audited: v.number(),
+    facts_audited: v.number(),
+    mismatches: v.number(),
+    updated_at: v.number(),
+  }).index("by_key", ["key"]),
+
+  // Separate from progress counters: migration pages must not invalidate the
+  // live dashboard's readiness read and repeatedly rescan original history.
+  reservation_revenue_ready: defineTable({
+    key: v.literal("v1"),
+    ready: v.boolean(),
+    updated_at: v.number(),
+  }).index("by_key", ["key"]),
+
   reservations: defineTable({
     // Legacy/scaffold fields (kept)
     account_id: v.optional(v.id("accounts")),

@@ -10,6 +10,7 @@ function fixture() {
     renter_bot_lab_bookings: [{ _id: "booking", hygglo_order_id: "__probe__atomic", start_date: "2026-10-06", end_date: "2026-10-07", pickup_date: "2026-10-06" }],
   };
   const db = {
+    normalizeId: (table:string,id:string) => Object.entries(tables).find(([,rows])=>rows.some(row=>row._id===id))?.[0]===table?id:null,
     query: (table: string) => {
       const filters: Array<[string, any]> = [];
       let direction="asc";

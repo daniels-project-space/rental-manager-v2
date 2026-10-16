@@ -1,3 +1,5 @@
+
+import { deleteRevenueReservation, insertRevenueReservation, patchRevenueReservation } from "./lib/reservation_revenue";
 import { parseWebsiteVerification, type WebsiteVerification } from "./lib/websiteVerification";
 /**
  * DB Cinema WEB profile sync (2026-06-25).
@@ -423,14 +425,14 @@ export const upsertSiteBookingsBatch = internalMutation({
           const legacyHash = computePollHash(JSON.stringify({ ...legacyFields, ...(b.damageCases !== undefined ? { damageCases: b.damageCases } : {}) }));
           if (mine.poll_hash !== legacyHash) throw Error("Conflicting website rental revision");
         }
-        await ctx.db.patch(mine._id, {
+        await patchRevenueReservation(ctx, mine._id, {
           ...fields,
           image_hints,
           last_polled_at: Date.now(),
           poll_hash: newPollHash,
         });
       } else {
-        reservationId = await ctx.db.insert("reservations", {
+        reservationId = await insertRevenueReservation(ctx, {
           ...fields,
           image_hints,
           last_polled_at: Date.now(),
@@ -473,7 +475,7 @@ export const upsertSiteBookingsBatch = internalMutation({
         if (r.account_slug !== WEB_SLUG) continue;
         const oid = (r as { hygglo_order_id?: string }).hygglo_order_id;
         if (oid && incomingIds.has(oid)) continue;
-        await ctx.db.patch(r._id, {
+        await patchRevenueReservation(ctx, r._id, {
           status: "cancelled",
           is_obsolete: true,
           obsolete_reason: "renter_cancelled",
@@ -526,7 +528,7 @@ export const adminPurgeWebData = internalMutation({
         .collect();
       for (const r of rows) {
         if (r.account_slug !== WEB_SLUG) continue;
-        await ctx.db.delete(r._id);
+        await deleteRevenueReservation(ctx, r._id);
         reservations++;
       }
     }
@@ -550,7 +552,7 @@ export const adminDeleteSiteBooking = internalMutation({
     let deleted = 0;
     for (const r of rows) {
       if (r.account_slug !== WEB_SLUG) continue;
-      await ctx.db.delete(r._id);
+      await deleteRevenueReservation(ctx, r._id);
       deleted++;
     }
     return { deleted };

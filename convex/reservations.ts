@@ -1,3 +1,5 @@
+
+import { patchRevenueReservation } from "./lib/reservation_revenue";
 import { loadCanonicalListingAllocation, reservedListingKeys } from "./lib/canonical_listing_allocation";
 import { withoutWebsiteVerification } from "./lib/websiteVerification";
 import { action, internalAction, internalMutation, internalQuery, mutation, query, internalQueryOf, internalMutationOf } from "./owner_functions";
@@ -488,7 +490,7 @@ export const markReturned = mutation({
     if (cleanGood.length) resPatch.return_good_tags = cleanGood;
     if (cleanBad.length) resPatch.return_bad_tags = cleanBad;
     if (reviewMessage) resPatch.review_message = reviewMessage;
-    await ctx.db.patch(reservationId, resPatch);
+    await patchRevenueReservation(ctx, reservationId, resPatch);
 
     // Merged logical rental: complete every member booking too.
     for (const mid of memberIds ?? []) {
@@ -499,7 +501,7 @@ export const markReturned = mutation({
         const mPatch: Record<string, unknown> = { status: "completed", notes: mb ? `${mb} | ${cn}` : cn, platform_close_pending: true };
         if (cleanGood.length) mPatch.return_good_tags = cleanGood;
         if (cleanBad.length) mPatch.return_bad_tags = cleanBad;
-        await ctx.db.patch(mid, mPatch);
+        await patchRevenueReservation(ctx, mid, mPatch);
       }
     }
 
@@ -571,7 +573,7 @@ export const adminMarkUnreturned = mutation({
       // is a safe no-op on already-restored / never-completed members.
       if (r.status !== "completed") return false;
       const prev = r.notes ?? "";
-      await ctx.db.patch(id, {
+      await patchRevenueReservation(ctx, id, {
         status: "confirmed",
         platform_close_pending: false,
         platform_closed_at: undefined,
@@ -651,7 +653,7 @@ export const markPlatformClosed = mutation({
   handler: async (ctx, { reservationId }) => {
     const r = await ctx.db.get(reservationId);
     if (!r) return { ok: false as const };
-    await ctx.db.patch(reservationId, {
+    await patchRevenueReservation(ctx, reservationId, {
       platform_close_pending: false,
       platform_closed_at: Date.now(),
       auto_close_last_error: undefined,
@@ -677,7 +679,7 @@ export const normalizeClosedPlatformPending = internalMutation({
     let normalized = 0;
     for (const row of rows) {
       if (row.platform_closed_at == null) continue;
-      await ctx.db.patch(row._id, { platform_close_pending: false });
+      await patchRevenueReservation(ctx, row._id, { platform_close_pending: false });
       normalized += 1;
     }
     return { scanned: rows.length, normalized };
@@ -771,7 +773,7 @@ export const stampAutoCloseStep = internalMutation({
     if (stamps.platform_returned_at !== undefined) patch.platform_returned_at = stamps.platform_returned_at;
     if (stamps.review_done_at !== undefined) patch.review_done_at = stamps.review_done_at;
     if (stamps.msg_done_at !== undefined) patch.msg_done_at = stamps.msg_done_at;
-    if (Object.keys(patch).length) await ctx.db.patch(reservationId, patch);
+    if (Object.keys(patch).length) await patchRevenueReservation(ctx, reservationId, patch);
     return { ok: true as const };
   },
 });
@@ -786,7 +788,7 @@ export const recordAutoCloseFailure = internalMutation({
     const r = await ctx.db.get(reservationId);
     if (!r) return { ok: false as const };
     const prev = (r as { auto_close_attempts?: number }).auto_close_attempts ?? 0;
-    await ctx.db.patch(reservationId, {
+    await patchRevenueReservation(ctx, reservationId, {
       auto_close_attempts: prev + 1,
       auto_close_last_error: error.slice(0, 500),
     });
@@ -993,7 +995,7 @@ export const adminSetStatus = mutation({
     if (existing.account_slug === "dbcinema_web") throw Error("Website rental status must be managed in DB Cinema Rentals");
     const prev = existing.status;
     if (prev === new_status) return { reservation_id, prev, new_status, reason, skipped: true };
-    await ctx.db.patch(reservation_id, { status: new_status });
+    await patchRevenueReservation(ctx, reservation_id, { status: new_status });
     return { reservation_id, prev, new_status, reason, skipped: false };
   },
 });
@@ -1080,7 +1082,7 @@ export const adminFixStatusFromStep = mutation({
       else if (COMPLETED.has(r.order_step ?? "")) newStatus = "completed";
       else if (CANCELLED_STEPS.has(r.order_step ?? "")) newStatus = "cancelled";
       if (newStatus && r.status !== newStatus) {
-        await ctx.db.patch(r._id, { status: newStatus });
+        await patchRevenueReservation(ctx, r._id, { status: newStatus });
         fixed++;
       }
     }
@@ -1125,7 +1127,7 @@ export const completeStaleConfirmedCron = internalMutation({
         (r as { _creationTime?: number })._creationTime ??
         0;
       if (lastPolled >= freshThreshold) continue;
-      await ctx.db.patch(r._id, { status: "completed" });
+      await patchRevenueReservation(ctx, r._id, { status: "completed" });
       completed++;
     }
     return { total: rows.length, completed };
@@ -1166,7 +1168,7 @@ export const cancelStalePendingCron = internalMutation({
         (r as { _creationTime?: number })._creationTime ??
         0;
       if (lastPolled >= freshThreshold) continue; // still polled = genuinely pending
-      await ctx.db.patch(r._id, {
+      await patchRevenueReservation(ctx, r._id, {
         status: "cancelled",
         is_obsolete: true,
         obsolete_reason: "renter_cancelled",
@@ -1258,7 +1260,7 @@ export const propagateGroupedTimesCron = internalMutation({
           if (rs.return_method && !mm.return_method) patch.return_method = rs.return_method;
         }
         if (Object.keys(patch).length > 0) {
-          await ctx.db.patch(m._id, patch);
+          await patchRevenueReservation(ctx, m._id, patch);
           patched++;
         }
       }
@@ -1299,7 +1301,7 @@ export const adminCompleteStaleConfirmed = mutation({
         (r as { _creationTime?: number })._creationTime ??
         0;
       if (lastPolled >= freshThreshold) continue; // poller saw it recently
-      await ctx.db.patch(r._id, { status: "completed" });
+      await patchRevenueReservation(ctx, r._id, { status: "completed" });
       completed++;
     }
     return { total: rows.length, completed, dateCutoff, freshThreshold };
@@ -1358,7 +1360,7 @@ export const adminPatchRichFieldsByHyggloId = mutation({
         patch.photos_urls = args.photos_urls;
       }
       if (Object.keys(patch).length > 0) {
-        await ctx.db.patch(r._id, patch);
+        await patchRevenueReservation(ctx, r._id, patch);
         patched++;
       }
     }
@@ -1481,7 +1483,7 @@ export const patchHyggloItemsByOrderId = internalMutation({
         patch.image_hints = args.image_hints;
       if (args.photos_urls && args.photos_urls.length > 0)
         patch.photos_urls = args.photos_urls;
-      await ctx.db.patch(r._id, patch);
+      await patchRevenueReservation(ctx, r._id, patch);
       patched++;
     }
     return { rows: rows.length, patched };

@@ -1,3 +1,5 @@
+
+import { insertRevenueReservation, patchRevenueReservation } from "../lib/reservation_revenue";
 // Phase 2.A v1 → v2 data import mutations.
 // Source: v1 Postgres (rental_manager) → Convex (hearty-oyster-600).
 // Idempotent: skip rows already imported (matched by v1_renter_profile_id / v1_rental_id).
@@ -125,7 +127,7 @@ export const importReservationsBatch = internalMutation({
 
       const account_id = await getAccountId(r.account_slug);
 
-      await ctx.db.insert("reservations", {
+      await insertRevenueReservation(ctx, {
         account_id,
         account_slug: r.account_slug,
         renter_id,
@@ -374,7 +376,7 @@ export const backfillReservationItemsBatch = internalMutation({
       if (!res) { skipped_not_found += 1; continue; }
       // Only backfill if items is currently empty
       if ((res.items ?? []).length > 0) { skipped_already_has_items += 1; continue; }
-      await ctx.db.patch(res._id, { items: row.items });
+      await patchRevenueReservation(ctx, res._id, { items: row.items });
       updated += 1;
     }
     return { updated, skipped_not_found, skipped_already_has_items };
@@ -433,7 +435,7 @@ export const backfillPickupDatesBatch = internalMutation({
         .first();
       if (!res) { skipped_not_found += 1; continue; }
       if (res.pickup_date) { skipped_already_set += 1; continue; }
-      await ctx.db.patch(res._id, { pickup_date: row.pickup_date });
+      await patchRevenueReservation(ctx, res._id, { pickup_date: row.pickup_date });
       updated += 1;
     }
     return { updated, skipped_not_found, skipped_already_set };

@@ -139,6 +139,7 @@ export default defineConfig({
       "convex/lib/lab_lifecycle.test.ts",
       "convex/lib/item_display_name.test.ts",
       "convex/lib/product_context.test.ts",
+      "convex/lib/reservation_revenue.test.ts",
       "convex/lib/reservations/itemUnits.test.ts",
       "convex/lib/rental_stage.test.ts",
       "convex/lib/booking_reply_claims.test.ts",

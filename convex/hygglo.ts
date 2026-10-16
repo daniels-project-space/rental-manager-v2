@@ -1,3 +1,5 @@
+
+import { insertRevenueReservation, patchRevenueReservation } from "./lib/reservation_revenue";
 import { providerReturnCompleted } from "../src/lib/provider-return-evidence";
 import {internalQueryOf} from "./owner_functions";
 import { mutation, query } from "./owner_functions";
@@ -1102,7 +1104,7 @@ async function upsertOrderImpl(
       const isMaterialIncrease =
         diff >= 10 || (storedNet > 0 && diff / storedNet >= 0.1);
       if (!isMaterialIncrease) return { action: "skipped", bankItems: [] };
-      await ctx.db.patch(existing._id, {
+      await patchRevenueReservation(ctx, existing._id, {
         net_to_owner_gbp: incomingNet,
         ...(args.gross_paid_gbp !== undefined && {
           gross_paid_gbp: args.gross_paid_gbp,
@@ -1153,10 +1155,10 @@ async function upsertOrderImpl(
         `[hygglo] Step regression skipped for order ${args.hygglo_order_id}: ` +
           `stored="${storedStep}" incoming="${incomingStep}"`
       );
-      await ctx.db.patch(existing._id, { ...baseFields, ...(preserveLocalCompletion ? { status: "completed" as const } : {}), ...obsoleteFields });
+      await patchRevenueReservation(ctx, existing._id, { ...baseFields, ...(preserveLocalCompletion ? { status: "completed" as const } : {}), ...obsoleteFields });
       const hintsRegression = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
       const hyggloItemsRegression = buildHyggloItems(args.items);
-      await ctx.db.patch(existing._id, { image_hints: hintsRegression, hygglo_items: hyggloItemsRegression });
+      await patchRevenueReservation(ctx, existing._id, { image_hints: hintsRegression, hygglo_items: hyggloItemsRegression });
       await scheduleShortNameDerivation(ctx, args.account_slug, hyggloItemsRegression);
       // listing_info_pool: one-time fill at insert only — no re-derive on update.
       return {
@@ -1240,7 +1242,7 @@ async function upsertOrderImpl(
     const datesChanged =
       existing.start_date !== args.start_date || existing.end_date !== args.end_date;
 
-    await ctx.db.patch(existing._id, {
+    await patchRevenueReservation(ctx, existing._id, {
       ...baseFields,
       status: finalStatus,
       ...stepPatch,
@@ -1253,7 +1255,7 @@ async function upsertOrderImpl(
       await ctx.scheduler.runAfter(0, internal.mv.calendar.requestRefresh, {});
     }
     const hintsUpdate = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
-    await ctx.db.patch(existing._id, { image_hints: hintsUpdate, hygglo_items: hyggloItemsUpdate });
+    await patchRevenueReservation(ctx, existing._id, { image_hints: hintsUpdate, hygglo_items: hyggloItemsUpdate });
     await scheduleShortNameDerivation(ctx, args.account_slug, hyggloItemsUpdate);
     // listing_info_pool: one-time fill at insert only — no re-derive on update.
     // Transition signal feeds the batch handler's reactive MV refresh. Both
@@ -1347,7 +1349,7 @@ async function upsertOrderImpl(
     incomingStep !== undefined ? { order_step: incomingStep } : {};
   const hintsInsert = buildImageHintsFromHyggloItems(args.items, photos_urls, now);
   const hyggloItemsInsert = buildHyggloItems(args.items);
-  const newId = await ctx.db.insert("reservations", {
+  const newId = await insertRevenueReservation(ctx, {
     ...baseFields,
     ...stepInsert,
     ...obsoleteFields,

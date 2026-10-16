@@ -1,3 +1,5 @@
+
+import { patchRevenueReservation } from "./lib/reservation_revenue";
 /**
  * Auto-close reconciler (Hygglo-confirmed). A confirmed reservation stays
  * status:"confirmed" until someone closes it, but once Hygglo's funnel reaches
@@ -66,7 +68,7 @@ export const reconcile = internalMutation({
     for (const r of rows) {
       const base = r.notes ?? "";
       const stamp = "Auto-closed: Hygglo marked REVIEWED (returned)";
-      await ctx.db.patch(r._id, {
+      await patchRevenueReservation(ctx, r._id, {
         status: "completed",
         notes: base ? `${base} | ${stamp}` : stamp,
       });
