@@ -9,12 +9,14 @@ const booking = { _id: "web-rental", _creationTime: 1, account_slug: "dbcinema_w
   items: [{item_name: "Entire kit",qty: 1}], hygglo_items:[{name:"Entire kit",product_id:42}],
   site_item_windows: [window("camera", "2026-10-05", "2026-10-06", "12:00", 2), window("lens", "2026-10-05", "2026-10-06", "12:00"), window("camera", "2026-10-09", "2026-10-11", null), window("lens", "2026-10-09", "2026-10-11", "19:00")] };
 const inventory = [{_id:"camera",name_canonical:"Sony FX3",kind:"camera",status:"active",qty:1,image_url:"https://images.example/camera.png"},{_id:"lens",name_canonical:"Canon 50mm",kind:"lens",status:"active",qty:1,image_url:"https://images.example/lens.png"}];
-function context(rows: any[] = [booking], cache?: any, queryCounts?: Record<string, number>) {
- const tables: Record<string, any[]> = {reservations: rows, items: inventory, mv_calendar: cache ? [{key:Array.isArray(cache)?"strip:all":"weekly:all",anchor:"2026-10-05",days:7,payload:cache}] : []};
+function context(rows: any[] = [booking], cache?: any, queryCounts?: Record<string, number>, queryOps?: Record<string, number>) {
+ const tables: Record<string, any[]> = {reservations: rows, items: inventory,
+  listing_images:[{account_slug:"dbcinema_web",product_id:42,image_url:"https://images.example/listing-42.png"},{account_slug:"leo",product_id:99,image_url:"https://images.example/unrelated.png"}],
+  mv_calendar: cache ? [{key:Array.isArray(cache)?"strip:all":"weekly:all",anchor:"2026-10-05",days:7,payload:cache}] : []};
  return {db:{get: async () => null,query:(table:string)=>{
   if (queryCounts) queryCounts[table] = (queryCounts[table] ?? 0) + 1;
-  let result=[...(tables[table]??[])]; const index:any={}; for(const op of ["eq","gte","lte","lt","gt"]){index[op]=(field:string,value:any)=>{result=result.filter(r=>op==="eq"?r[field]===value:op==="gte"?r[field]>=value:op==="lte"?r[field]<=value:op==="lt"?r[field]<value:r[field]>value);return index;};}
-  const q:any={withIndex:(_:string,fn:any)=>{fn(index);return q;},collect:async()=>result,first:async()=>result[0]??null}; return q;
+  let result=[...(tables[table]??[])]; let indexed=false; const index:any={}; for(const op of ["eq","gte","lte","lt","gt"]){index[op]=(field:string,value:any)=>{result=result.filter(r=>op==="eq"?r[field]===value:op==="gte"?r[field]>=value:op==="lte"?r[field]<=value:op==="lt"?r[field]<value:r[field]>value);return index;};}
+  const q:any={withIndex:(name:string,fn:any)=>{indexed=true;if(queryOps)queryOps[`${table}.index.${name}`]=(queryOps[`${table}.index.${name}`]??0)+1;fn(index);return q;},collect:async()=>{if(!indexed&&queryOps)queryOps[`${table}.unindexedCollect`]=(queryOps[`${table}.unindexedCollect`]??0)+1;return result;},first:async()=>result[0]??null}; return q;
  }}} as any;
 }
 beforeEach(()=>{vi.stubEnv("OWNER_AUTH_REQUIRED","false");vi.useFakeTimers();vi.setSystemTime(new Date("2026-10-07T12:00:00Z"));});
@@ -43,6 +45,15 @@ describe("saved website calendar windows",()=>{
   expect(camera.blocks).toHaveLength(2);expect(camera.blocks.map((b:any)=>b.qty)).toEqual([2,1]);expect(camera.blocks.map((b:any)=>[b.start_date,b.return_date,b.return_time])).toEqual([["2026-10-05","2026-10-06","12:00"],["2026-10-09","2026-10-11",null]]);
   expect(lens.blocks[1].return_time).toBe("19:00");expect(camera.blocks[0].logical_group_id).toBe(lens.blocks[0].logical_group_id);expect(camera.blocks[1].logical_group_id).not.toBe(lens.blocks[1].logical_group_id);
   expect(camera.blocks.every((b:any)=>b.reservation_id===booking._id && b.set_tiles===null)).toBe(true);
+ });
+ it("loads Gantt listing images by the product keys present in the requested week",async()=>{
+  const rental={...booking,_id:"gantt-image-rental",site_item_windows:undefined};
+  const queryOps:Record<string,number>={};
+  const result=await (getGanttWeek as any)._handler(context([rental],undefined,undefined,queryOps),{accountSlug:"dbcinema_web",weekStartIso:"2026-10-05"});
+  const block=result.items.flatMap((item:any)=>item.blocks).find((row:any)=>row.reservation_id===rental._id);
+  expect(block.set_tiles).toEqual([{name:"Entire kit",image_url:"https://images.example/listing-42.png",qty:1}]);
+  expect(queryOps["listing_images.index.by_account_product"]).toBe(1);
+  expect(queryOps["listing_images.unindexedCollect"]).toBeUndefined();
  });
  it("keeps an away equipment period visible while another item returns",async()=>{
   const mixed={...booking,site_item_windows:[window("camera","2026-10-05","2026-10-07","12:00"),window("lens","2026-10-05","2026-10-09","19:00")]};
