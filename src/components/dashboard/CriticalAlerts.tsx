@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation,useQuery,useConvexAuth } from "convex/react";
+import { useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 
@@ -35,15 +35,6 @@ interface Conflict {
   reservations: ConflictReservation[];
 }
 
-interface QtyDriftSample {
-  reservation_id: string;
-  hygglo_order_id: string;
-  renter_name: string | null;
-  drift_kind: "listing_count_lt_items" | "unique_sku_lt_items";
-  raw_n: number;
-  expanded_n: number;
-}
-
 interface BlacklistAlert {
   reservation_id: string;
   renter_name: string | null;
@@ -55,28 +46,8 @@ interface BlacklistAlert {
   reason: string | null;
 }
 
-/**
- * A rented listing whose Hygglo product_id maps to no inventory item. The gear
- * is physically out, but the overbooking widget, calendar and renter bot all
- * read it as FREE — so it can be double-booked. Highest-severity alert here:
- * the others describe a conflict you can see, this one describes stock the
- * system does not know is gone.
- */
-interface UnmappedListing {
-  reservation_id: string;
-  account_slug: string | null;
-  renter_name: string | null;
-  start_date: string | null;
-  end_date: string | null;
-  product_id: number | null;
-  listing_title: string;
-}
-
 interface Props {
   conflicts: Conflict[];
-  unmapped_listings?: UnmappedListing[];
-  qty_drift_count?: number;
-  qty_drift_sample?: QtyDriftSample[];
   blacklist_alerts?: BlacklistAlert[];
 }
 
@@ -123,24 +94,17 @@ const KIND_COLOR: Record<ConflictReservation["kind"], string> = {
 
 export function CriticalAlerts({
   conflicts,
-  unmapped_listings = [],
-  qty_drift_count = 0,
-  qty_drift_sample = [],
   blacklist_alerts = [],
 }: Props) {
   // Treat a missing severity (older backend during a deploy) as confirmed so
   // nothing is silently downgraded.
   const confirmed = conflicts.filter((c) => c.severity !== "pending");
   const pending = conflicts.filter((c) => c.severity === "pending");
-  const hasDrift = qty_drift_count > 0;
   const hasBlacklist = blacklist_alerts.length > 0;
-  const hasUnmapped = unmapped_listings.length > 0;
   if (
     !confirmed.length &&
     !pending.length &&
-    !hasDrift &&
-    !hasBlacklist &&
-    !hasUnmapped
+    !hasBlacklist
   )
     return null;
 
@@ -156,12 +120,9 @@ export function CriticalAlerts({
       `}</style>
 
       <div className="space-y-2 mb-3">
-        {/* First: this is stock the system does not know is gone. */}
-        {hasUnmapped && <UnmappedListingsBanner alerts={unmapped_listings} />}
         {hasBlacklist && <BlacklistBanner alerts={blacklist_alerts} />}
         {confirmed.length > 0 && <OverbookBanner conflicts={confirmed} variant="confirmed" />}
         {pending.length > 0 && <OverbookBanner conflicts={pending} variant="pending" />}
-        {hasDrift && <QtyDriftBadge count={qty_drift_count} sample={qty_drift_sample} />}
       </div>
     </>
   );
@@ -319,146 +280,6 @@ function ConflictCard({ conflict, variant }: { conflict: Conflict; variant: Vari
 }
 
 // Blacklisted-renter alert — a flagged renter has a LIVE booking (request → out).
-/**
- * Rented gear the system cannot see. Deliberately the loudest banner: the other
- * alerts describe a conflict that IS visible somewhere, this one describes
- * stock that is out while every availability surface still reads it as free —
- * i.e. it can be double-booked. Amber rather than red so it reads as
- * "needs mapping", not "a booking is broken".
- */
-function UnmappedListingsBanner({ alerts }: { alerts: UnmappedListing[] }) {
-  const [expanded, setExpanded] = useState(false);
-  const bookings = new Set(alerts.map((a) => a.reservation_id)).size;
-  return (
-    <div
-      className={!expanded ? "ob-pulse rounded-xl" : "rounded-xl"}
-      style={
-        {
-          background: "linear-gradient(135deg, rgba(245,158,11,0.18), rgba(120,53,15,0.12))",
-          border: "1px solid rgba(245,158,11,0.5)",
-          "--ring": "rgba(245,158,11,0.55)",
-        } as React.CSSProperties
-      }
-    >
-      <button
-        onClick={() => setExpanded((x) => !x)}
-        className="w-full flex items-center gap-3 text-left p-3"
-      >
-        <span
-          className="flex-shrink-0 flex items-center justify-center rounded-lg text-base"
-          style={{
-            width: 34,
-            height: 34,
-            background: "rgba(245,158,11,0.2)",
-            border: "1px solid rgba(245,158,11,0.45)",
-          }}
-        >
-          🔗
-        </span>
-        <div className="flex-1 min-w-0">
-          <div className="text-[13px] font-bold" style={{ color: "#f59e0b" }}>
-            Rented gear not tracked · {alerts.length} line
-            {alerts.length === 1 ? "" : "s"} across {bookings} booking
-            {bookings === 1 ? "" : "s"}
-          </div>
-          <div className="text-[11px]" style={{ color: "#9ca3af" }}>
-            These listings aren&apos;t linked to inventory, so the gear is out but still
-            shows as available — it can be double-booked. Map them in Settings.
-          </div>
-        </div>
-        <span className="text-[11px]" style={{ color: "#9ca3af" }}>
-          {expanded ? "hide" : "show"}
-        </span>
-      </button>
-      {expanded && (
-        <div className="px-3 pb-3 space-y-1">
-          {alerts.map((a, i) => (
-            <UnmappedRow key={`${a.reservation_id}-${a.product_id ?? i}`} alert={a} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * One unmapped line, with an inline escape hatch.
- *
- * Not every flagged line is a mapping bug — some listings genuinely hold no
- * inventory (a delivery fee, a marketing-only listing). "Not inventory" pins
- * that judgement as an audit-authoritative `listing_resolution_override` with
- * an EMPTY components list, which is the codebase's existing convention for
- * "this listing owns nothing" (see dashboard.ts expandedIdsOf step A.0). The
- * override is one of the signals getUnmappedRentedListings checks, so the line
- * drops out of this banner on the next tick — and, because it is the same row
- * the conflict/out-of-stock resolver reads, the rest of the dashboard agrees.
- *
- * The override table is keyed by (account_slug, product_id), so a line Hygglo
- * gave no product_id cannot be pinned this way — that one needs fixing at the
- * listing, and the button says so instead of failing silently.
- */
-function UnmappedRow({ alert: a }: { alert: UnmappedListing }) {
-  const {isAuthenticated}=useConvexAuth();
-  const setOverride = useMutation(api.listing_overrides.setOverride);
-  const [saving, setSaving] = useState(false);
-  const [done, setDone] = useState(false);
-  const canPin = a.product_id !== null && !!a.account_slug;
-  const snapshot=useQuery(api.listing_overrides.getRevision,canPin?{account_slug:a.account_slug!,product_id:a.product_id!}:"skip");
-  const [error,setError]=useState<string|null>(null);
-
-  async function onNotInventory() {
-    if (saving || done || !canPin || !isAuthenticated || !snapshot?.available) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await setOverride({
-        account_slug: a.account_slug as string,
-        product_id: a.product_id as number,
-        components: [],
-        note: `marked non-inventory from dashboard alert: ${a.listing_title}`,
-        expected_revision:snapshot.revision,
-      });
-      setDone(true);
-    } catch(err) {
-      setError(err instanceof Error?err.message:"Could not update this listing");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="text-[11px] flex flex-wrap items-center gap-2" style={{ color: "#d1d5db" }}>
-      <span style={{ color: "#f59e0b" }}>
-        {fmtDate(a.start_date)}–{fmtDate(a.end_date)}
-      </span>
-      <span className="truncate flex-1 min-w-0">{a.listing_title}</span>
-      <span className="flex-shrink-0" style={{ color: "#6b7280" }}>
-        {a.account_slug ?? "?"}
-        {a.product_id === null ? " · no product id" : ` · #${a.product_id}`}
-      </span>
-      <button
-        onClick={onNotInventory}
-        disabled={!canPin || !isAuthenticated || !snapshot?.available || saving || done}
-        className="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded font-semibold transition-colors disabled:opacity-40"
-        style={{
-          background: "rgba(148,163,184,0.14)",
-          color: "#cbd5e1",
-          border: "1px solid rgba(148,163,184,0.35)",
-        }}
-        title={
-          canPin
-            ? "This listing holds no inventory (fee, service, marketing-only). Pins it as non-inventory so it stops being reported as untracked."
-            : "Hygglo sent no product id for this line, so it can't be pinned — fix the listing itself."
-        }
-      >
-        {done ? "pinned" : saving ? "…" : "not inventory"}
-      </button>
-      {canPin&&!isAuthenticated&&<a href="/login" className="underline">Sign in to update</a>}
-      {(error||snapshot?.available===false)&&<p role="alert" className="basis-full text-red-300">{error??(snapshot?.available===false?snapshot.message:"")}</p>}
-    </div>
-  );
-}
-
 function BlacklistBanner({ alerts }: { alerts: BlacklistAlert[] }) {
   const [expanded, setExpanded] = useState(false);
   const renterCount = new Set(alerts.map((a) => a.renter_name ?? "?")).size;
@@ -507,48 +328,6 @@ function BlacklistBanner({ alerts }: { alerts: BlacklistAlert[] }) {
             </div>
           ))}
         </div>
-      )}
-    </div>
-  );
-}
-
-// qty-drift mini-banner — non-blocking resolver-miss warning (unchanged behaviour).
-function QtyDriftBadge({ count, sample }: { count: number; sample: QtyDriftSample[] }) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <div
-      className="rounded-xl p-3"
-      style={{
-        background: "linear-gradient(135deg, rgba(234,179,8,0.12), rgba(202,138,4,0.08))",
-        border: "1px solid rgba(234,179,8,0.32)",
-      }}
-    >
-      <button onClick={() => setExpanded((x) => !x)} className="w-full flex items-center gap-2 text-left">
-        <span className="text-amber-300 text-sm">⚙</span>
-        <div className="flex-1 min-w-0">
-          <div className="text-[11px] uppercase tracking-wider font-bold text-amber-200">
-            {count} booking{count === 1 ? "" : "s"} with an unmatched listing
-          </div>
-          <div className="text-[11px] text-amber-100/70 mt-0.5">
-            a listing on these isn&apos;t in your master inventory (often an accessory) — info only
-          </div>
-        </div>
-        <span
-          className="text-amber-300 text-sm"
-          style={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}
-        >
-          ▾
-        </span>
-      </button>
-      {expanded && sample.length > 0 && (
-        <ul className="mt-2 text-[11px] text-amber-100 space-y-1">
-          {sample.map((s) => (
-            <li key={s.reservation_id}>
-              <span className="font-mono">{s.hygglo_order_id}</span> {s.renter_name ?? "—"} · expanded {s.expanded_n} /
-              raw {s.raw_n}
-            </li>
-          ))}
-        </ul>
       )}
     </div>
   );

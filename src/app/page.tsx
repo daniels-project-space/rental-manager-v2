@@ -22,7 +22,6 @@ import { EditModeBar } from "@/components/dashboard/EditModeBar";
 import { AddWidgetDrawer } from "@/components/dashboard/AddWidgetDrawer";
 import { EditableWidget } from "@/components/dashboard/EditableWidget";
 import { WidgetErrorBoundary } from "@/components/dashboard/WidgetErrorBoundary";
-import { RentalHeadlinePanel } from "@/components/dashboard/StatsGrid";
 import { PANEL_WIDGETS, panelLayoutClass } from "@/lib/dashboard/widget-registry";
 import { useEditMode } from "@/lib/dashboard/edit-mode-context";
 import { DeferredMount } from "@/lib/dashboard/deferred-mount";
@@ -31,7 +30,7 @@ import { CalendarStrip } from "@/components/dashboard/CalendarStrip";
 import { CalendarOverlayProvider } from "@/lib/dashboard/calendar-overlay-context";
 
 // CRITICAL panels — mount eagerly so they paint in the first frame. The live
-// rental KPIs render above this configurable grid; these panels contain the
+// rental KPIs are editable cards in Stats Grid; these panels contain the
 // operational stats, calendar strip, and next-rentals / due-returns lists.
 //
 // Everything else (revenue charts, AI assistant, analytics / intel / rankings)
@@ -109,7 +108,7 @@ export default function DashboardPage() {
   );
 
   const visiblePanels = panelOrder
-    .filter((id) => id === "stats-grid" || !isPanelHidden(id) || (id === "reply-inbox" && notificationOpen))
+    .filter((id) => !isPanelHidden(id) || (id === "reply-inbox" && notificationOpen))
     .map((id) => PANEL_WIDGETS.find((w) => w.id === id))
     .filter((w): w is (typeof PANEL_WIDGETS)[number] => Boolean(w));
 
@@ -135,11 +134,6 @@ export default function DashboardPage() {
           className="mx-auto px-4 md:px-6 py-5"
           style={{ maxWidth: "1440px" }}
         >
-          <div className="mb-4">
-            <WidgetErrorBoundary label="Live rental totals">
-              <RentalHeadlinePanel />
-            </WidgetErrorBoundary>
-          </div>
           {!visiblePanels.some(panel => panel.id === "calendar-strip") && (
             <section aria-label="Rental tiles" className="mb-4 min-w-0 md:hidden">
               <WidgetErrorBoundary label="Rentals">

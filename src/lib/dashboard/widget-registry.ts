@@ -90,10 +90,11 @@ export const STAT_WIDGETS: readonly StatWidget[] = [
   { id: "channel_response_rates", label: "Channel Response Rate" },
   { id: "todos",           label: "To-Do" },
   { id: "walle",           label: "WallE" },
-  { id: "active",          label: "Active" },
+  { id: "active",          label: "Active Rentals" },
   { id: "weekly_calendar", label: "Weekly Calendar" },
   { id: "earnings",        label: "Earnings Today" },
-  { id: "monthly",         label: "Monthly" },
+  { id: "monthly",         label: "Expected Monthly" },
+  { id: "pending_review", label: "Bookings awaiting confirmation" },
   { id: "confirmed",       label: "Confirmed" },
   { id: "scanner",         label: "Scanner" },
   { id: "insurance",       label: "Insurance Claims" },
@@ -131,6 +132,8 @@ export const HERO_SPANS: Record<string, { col: number; row: number }> = {
 export const HERO_IDS: ReadonlySet<string> = new Set([
 
   "active",
+  "monthly",
+  "pending_review",
   "weekly_calendar",
   "ongoing",
   "upcoming",
