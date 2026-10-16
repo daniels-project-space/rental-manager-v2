@@ -35,8 +35,6 @@ import { websiteWindowUnits } from "./lib/reservations/itemUnits";
 import { buildConfirmedBookingNotificationCopy } from "./lib/notification_events";
 
 const upsertBatchRef = internal.sync_dbcinema_web.upsertSiteBookingsBatch;
-// This scheduled refresh is an action, as declared by its native registration.
-const statsDrawerRefreshRef = internal.mv.stats_drawer.refresh;
 
 const WEB_SLUG = "dbcinema_web";
 // The storefront's gear is DB Cinema's gear; its product IDs live in the
@@ -483,14 +481,10 @@ export const upsertSiteBookingsBatch = internalMutation({
       }
     }
 
-    // Reactively rebuild the Active-Rentals MV so the dashboard tiles reflect
-    // the change now (the hourly MV cron's dirty-probe can miss web rows).
+    // The live rental-headline query immediately reflects website bookings.
+    // Avoid the broad stats-drawer rebuild here: it reads every account and
+    // can exceed the Convex read cap before reaching this account's MV row.
     if (upserted > 0 || cancelled > 0) {
-      await ctx.scheduler.runAfter(0, statsDrawerRefreshRef, {
-        force: true,
-        scope: "all_and_account",
-        accountSlug: WEB_SLUG,
-      });
       // Website stock and verification changes must invalidate the reply tiles immediately.
       await ctx.scheduler.runAfter(0, internal.mv.reply_queue.refresh, { force: true });
     }
@@ -535,13 +529,6 @@ export const adminPurgeWebData = internalMutation({
       if ((m as { account_slug?: string }).account_slug !== WEB_SLUG) continue;
       await ctx.db.delete(m._id);
       weekly_metrics++;
-    }
-    if (reservations > 0) {
-      await ctx.scheduler.runAfter(0, statsDrawerRefreshRef, {
-        force: true,
-        scope: "all_and_account",
-        accountSlug: WEB_SLUG,
-      });
     }
     return { reservations, weekly_metrics };
   },
