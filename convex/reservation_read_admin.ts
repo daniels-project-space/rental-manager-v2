@@ -34,8 +34,15 @@ export const step = internalMutation({ args: {}, handler: async ctx => {
     const page = await ctx.db.query("reservation_read_records").paginate({ cursor: progress.cursor, numItems: 80 });
     let removed = 0;
     for (const row of page.page) if (!await ctx.db.get(row.source_id)) { await ctx.db.delete(row._id); removed++; }
-    await ctx.db.patch(progress._id, { pruned_count: progress.pruned_count + removed, cursor: page.isDone ? null : page.continueCursor, stage: page.isDone ? "audit" : "prune", ...(page.isDone ? { audited_revision: progress.revision, audited_count: 0, audited_fallback_count: 0 } : {}) });
+    await ctx.db.patch(progress._id, { pruned_count: progress.pruned_count + removed, cursor: page.isDone ? null : page.continueCursor, stage: page.isDone ? "prunePresence" : "prune" });
     return { stage: "prune", processed: page.page.length, removed, done: page.isDone };
+  }
+  if (progress.stage === "prunePresence") {
+    const page = await ctx.db.query("reservation_order_presence").paginate({ cursor: progress.cursor, numItems: 80 });
+    let removed = 0;
+    for (const row of page.page) if (!await ctx.db.get(row.source_id)) { await ctx.db.delete(row._id); removed++; }
+    await ctx.db.patch(progress._id, { pruned_count: progress.pruned_count + removed, cursor: page.isDone ? null : page.continueCursor, stage: page.isDone ? "audit" : "prunePresence", ...(page.isDone ? { audited_revision: progress.revision, audited_count: 0, audited_fallback_count: 0 } : {}) });
+    return { stage: "prunePresence", processed: page.page.length, removed, done: page.isDone };
   }
   if (progress.audited_revision !== progress.revision) {
     await ctx.db.patch(progress._id, { audited_revision: progress.revision, audited_count: 0, audited_fallback_count: 0, cursor: null });
@@ -45,7 +52,8 @@ export const step = internalMutation({ args: {}, handler: async ctx => {
   let fallbackCount = 0;
   for (const source of page.page) {
     const record = await ctx.db.query("reservation_read_records").withIndex("by_source", q => q.eq("source_id", source._id)).unique();
-    if (!await reservationReadRecordMatches(record, source)) throw Error("Reservation read-model source audit failed");
+    const presence = await ctx.db.query("reservation_order_presence").withIndex("by_source", q => q.eq("source_id", source._id)).unique();
+    if (!presence || presence.hygglo_order_id !== source.hygglo_order_id || !await reservationReadRecordMatches(record, source)) throw Error("Reservation read-model source audit failed");
     if (record && !record.valid) fallbackCount++;
   }
   await ctx.db.patch(progress._id, { audited_count: progress.audited_count + page.page.length, audited_fallback_count: progress.audited_fallback_count + fallbackCount, cursor: page.isDone ? null : page.continueCursor, stage: page.isDone ? "prepared" : "audit" });

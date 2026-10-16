@@ -107,3 +107,21 @@ export function sourceReservationReadContext(ctx: QueryCtx): QueryCtx {
 export function preparedReservationReadContext(ctx: QueryCtx): QueryCtx {
   return useReservationReadModel({ ...ctx, db: originals.get(ctx.db) ?? ctx.db, [modeKey]: undefined } as ReadContext, true);
 }
+
+const presenceGates = new WeakMap<object, Promise<Awaited<ReturnType<typeof reservationReadGate>>>>();
+/** Boolean existence needs neither a complete record nor its compressed body. */
+export async function hasReservationByOrder(ctx: QueryCtx, orderId: string): Promise<boolean> {
+  const rawDb = originals.get(ctx.db) ?? ctx.db, mode = (ctx as ReadContext)[modeKey];
+  const source = async () => !!await rawDb.query("reservations").withIndex("by_hygglo_order_id", q => q.eq("hygglo_order_id", orderId)).first();
+  if (mode === "source") return source();
+  try {
+    let pending = presenceGates.get(ctx);
+    if (!pending) { pending = reservationReadGate({ db: rawDb }); presenceGates.set(ctx, pending); }
+    const gate = await pending;
+    if (gate?.ready && gate.version === 1 && (gate.enabled || mode === "prepared")) {
+      return !!await rawDb.query("reservation_order_presence").withIndex("by_order", q => q.eq("hygglo_order_id", orderId)).first();
+    }
+    if (mode === "prepared") throw Error("Prepared reservation presence is unavailable");
+  } catch (error) { if (mode === "prepared") throw error; }
+  return source();
+}

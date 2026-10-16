@@ -7,7 +7,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { Doc } from "../_generated/dataModel";
 import { reservationReadIndexes } from "./reservation_read_indexes";
 import { syncReservationReadRecord, decodeReservationRead, reservationReadRecordMatches } from "./reservation_read_model";
-import { useReservationReadModel, sourceReservationReadContext, preparedReservationReadContext } from "./reservation_read_queries";
+import { useReservationReadModel, sourceReservationReadContext, preparedReservationReadContext, hasReservationByOrder } from "./reservation_read_queries";
 import { patchRevenueReservation, insertRevenueReservation, deleteRevenueReservation } from "./reservation_revenue";
 import * as admin from "../reservation_read_admin";
 
@@ -26,10 +26,10 @@ function fixture(rows?: any[]) {
     { _id: "r1", _creationTime: 10, status: "confirmed", created_at: 1, v1_updated_at: 1, account_slug: "leo", hygglo_order_id: "order1", start_date: "2026-10-15", end_date: "2026-10-18", notes: "all original fields retained", net_to_owner_gbp: 0.30000000000000004 },
     { _id: "r2", _creationTime: 20, status: "ongoing", created_at: 2, v1_updated_at: 2, account_slug: "dbcinema", hygglo_order_id: "order2", start_date: "2026-10-16", end_date: "2026-10-19" },
     { _id: "r3", _creationTime: 30, status: "cancelled", created_at: 3, v1_updated_at: 3, account_slug: "leo", hygglo_order_id: "order1", start_date: "2026-10-17" },
-  ]), reservation_read_records: [], reservation_read_gate: [], reservation_read_progress: [], reservation_revenue_ready: [], reservation_revenue_facts: [], stock_input_cache_state: [], renter_bot_lab_bookings: [{ _id: "lab1", _creationTime: 1, status: "confirmed", created_at: 0, v1_updated_at: 0 }] };
+  ]), reservation_read_records: [], reservation_order_presence: [], reservation_read_gate: [], reservation_read_progress: [], reservation_revenue_ready: [], reservation_revenue_facts: [], stock_input_cache_state: [], renter_bot_lab_bookings: [{ _id: "lab1", _creationTime: 1, status: "confirmed", created_at: 0, v1_updated_at: 0 }] };
   const sourceIds = new Set(tables.reservations.map(r => r._id)), reads: string[] = [], writes: string[] = []; let serial = 100, modelFailure = false, sourceFailure = false;
   function query(table: string, index = "by_creation_time", operations: any[] = [], direction = "asc", filter?: (row: any) => boolean): any {
-    const fields = index === "by_key" ? ["key"] : index === "by_source" ? ["source_id"] : index === "by_source_creation_time" ? ["source_creation_time"] : index === "by_creation_time" ? [] : index === "by_renter" ? ["renter_id"] : [...(reservationReadIndexes[index as keyof typeof reservationReadIndexes] ?? []), ...(table === "reservation_read_records" ? ["source_creation_time"] : [])];
+    const fields = index === "by_key" ? ["key"] : index === "by_source" ? ["source_id"] : index === "by_order" ? ["hygglo_order_id"] : index === "by_source_creation_time" ? ["source_creation_time"] : index === "by_creation_time" ? [] : index === "by_renter" ? ["renter_id"] : [...(reservationReadIndexes[index as keyof typeof reservationReadIndexes] ?? []), ...(table === "reservation_read_records" ? ["source_creation_time"] : [])];
     function values() {
       const compare = (a: any, b: any) => a === b ? 0 : a === undefined ? -1 : b === undefined ? 1 : a < b ? -1 : 1;
       return tables[table].filter(row => operations.every(([op, key, value]) => op === "eq" ? row[key] === value : op === "gte" ? compare(row[key], value) >= 0 : op === "lte" ? compare(row[key], value) <= 0 : op === "gt" ? compare(row[key], value) > 0 : compare(row[key], value) < 0)).filter(row => !filter || filter(row)).slice().sort((a, b) => {
@@ -204,6 +204,27 @@ describe("full lossless reservation read model", () => {
     const rows = jsonToConvex(JSON.parse(fs.readFileSync(process.env.RM_RESERVATION_READ_SNAPSHOT!, "utf8"))) as any[];
     const f = fixture(rows); await prepare(f); expect(await useReservationReadModel(f.context()).db.query("reservations").collect()).toEqual(rows);
     expect(f.tables.reservation_read_progress[0].audited_count).toBe(rows.length);
+  });
+  it("checks booking existence without full documents or compressed bodies", async () => {
+    const f = fixture(); await prepare(f); f.reads.length = 0; const ctx = useReservationReadModel(f.context());
+    expect(await hasReservationByOrder(ctx, "order1")).toBe(true); expect(await hasReservationByOrder(ctx, "absent")).toBe(false);
+    expect(f.reads.some(x => x.startsWith("reservations:") || x.startsWith("reservation_read_records:"))).toBe(false);
+    expect(f.reads.filter(x => x.startsWith("reservation_read_gate:"))).toHaveLength(1);
+  });
+  it("updates existence keys and preserves other duplicate source orders on deletion", async () => {
+    const f = fixture(); await prepare(f); await patchRevenueReservation(f.context(), "r1" as any, { hygglo_order_id: "changed" });
+    expect(await hasReservationByOrder(useReservationReadModel(f.context()), "order1")).toBe(true);
+    await deleteRevenueReservation(f.context(), "r3" as any); expect(await hasReservationByOrder(useReservationReadModel(f.context()), "order1")).toBe(false);
+    expect(await hasReservationByOrder(useReservationReadModel(f.context()), "changed")).toBe(true);
+  });
+  it("retains raw existence queries when disabled and during source-only qualification", async () => {
+    const f = fixture(); await prepare(f, false); expect(await hasReservationByOrder(f.context(), "order1")).toBe(true);
+    expect(await hasReservationByOrder(preparedReservationReadContext(f.context()), "order2")).toBe(true);
+    f.reads.length = 0; expect(await hasReservationByOrder(sourceReservationReadContext(f.context()), "order1")).toBe(true); expect(f.reads).toContain("reservations:by_hygglo_order_id");
+  });
+  it("does not rewrite existence rows for unrelated polling metadata", async () => {
+    const f = fixture(); await prepare(f); f.writes.length = 0; await patchRevenueReservation(f.context(), "r1" as any, { last_polled_at: 99 });
+    expect(f.writes).not.toContain("reservation_order_presence");
   });
   it("rejects stale activation and audit tampering", async () => {
     const f = fixture(); await prepare(f, false); await patchRevenueReservation(f.context(), "r1" as any, { v1_updated_at: 9 });

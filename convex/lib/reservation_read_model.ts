@@ -42,19 +42,29 @@ export async function disableReservationReadModel(ctx: MutationCtx) {
 }
 export async function syncReservationReadRecord(ctx: MutationCtx, id: Id<"reservations">, sourceChange = true, knownSource?: Doc<"reservations">) {
   if (!await reservationReadGate(ctx)) return;
-  const [source, prior] = await Promise.all([
+  const [source, prior, presence] = await Promise.all([
     knownSource ? Promise.resolve(knownSource) : ctx.db.get(id),
     ctx.db.query("reservation_read_records").withIndex("by_source", q => q.eq("source_id", id)).unique(),
+    ctx.db.query("reservation_order_presence").withIndex("by_source", q => q.eq("source_id", id)).unique(),
   ]);
   if (knownSource && knownSource._id !== id) throw Error("Known reservation does not match source ID");
   if (!source) {
     if (prior) await ctx.db.delete(prior._id);
+    if (presence) await ctx.db.delete(presence._id);
     if (sourceChange) await bumpRevision(ctx);
     return;
   }
+  const presenceChanged = !presence || presence.hygglo_order_id !== source.hygglo_order_id;
+  if (presenceChanged) {
+    const value = { source_id: id, ...(source.hygglo_order_id === undefined ? {} : { hygglo_order_id: source.hygglo_order_id }) };
+    if (presence) await ctx.db.replace(presence._id, value); else await ctx.db.insert("reservation_order_presence", value);
+  }
   const source_sha256 = await cacheValueDigest(source);
   if (prior && prior.source_sha256 === source_sha256 && reservationReadMetadataMatches(prior, source)
-      && (!prior.valid || prior.data && await cacheByteDigest(prior.data) === prior.packed_sha256)) return;
+      && (!prior.valid || prior.data && await cacheByteDigest(prior.data) === prior.packed_sha256)) {
+    if (presenceChanged && sourceChange) await bumpRevision(ctx);
+    return;
+  }
   let payload: { valid: boolean; data?: ArrayBuffer; packed_sha256?: string };
   try {
     const data = packCacheValue(source);

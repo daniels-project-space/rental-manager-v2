@@ -1,4 +1,4 @@
-import { useReservationReadModel } from "./lib/reservation_read_queries";
+import { hasReservationByOrder, useReservationReadModel } from "./lib/reservation_read_queries";
 /**
  * Inquiry listing context (2026-06-27).
  *
@@ -133,11 +133,7 @@ export const threadsNeedingListing = internalQuery({
     const out: string[] = [];
     for (const conv of convs) {
       if ((conv.inquiry_items ?? []).length > 0) continue;
-      const reservation = await ctx.db
-        .query("reservations")
-        .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", conv.thread_id))
-        .first();
-      if (!reservation) out.push(conv.thread_id);
+      if (!await hasReservationByOrder(ctx, conv.thread_id)) out.push(conv.thread_id);
       if (out.length >= limit) break;
     }
     return out;
