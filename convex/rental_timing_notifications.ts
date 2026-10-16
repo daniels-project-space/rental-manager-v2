@@ -2,8 +2,8 @@ import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { queueNotificationEvents } from "./notifications";
-import { pickupReminderEvent } from "./lib/rental_timing_notifications";
-import { syncPickupReminder } from "./lib/rental_timing_notifications";
+import { rentalReminderEvent, rentalReminderSchedule } from "./lib/rental_timing_notifications";
+import { syncRentalReminders } from "./lib/rental_timing_notifications";
 
 /** One clock, only due projected rows. No recurring rental/history scan. */
 export const checkPickups = internalMutation({
@@ -14,9 +14,11 @@ export const checkPickups = internalMutation({
     let inserted = 0;
     for (const entry of due) {
       const rental = await ctx.db.get(entry.reservation_id);
-      const event = rental ? pickupReminderEvent(rental, now) : null;
+      const event = rental ? rentalReminderEvent(rental, now, entry.kind ?? "pickup") : null;
       if (event) inserted += await queueNotificationEvents(ctx, [event]);
-      await ctx.db.patch(entry._id, { active: false });
+      await ctx.db.patch(entry._id, { active: false, ...(event ? { fired_schedule_key: rentalReminderSchedule(rental!, entry.kind ?? "pickup")!.local } : {}) });
+      // Recover a missed source projection update without editing the rental.
+      if (rental && event?.event_key !== `${entry.kind ?? "pickup"}15:${rental.account_slug}:${rental.hygglo_order_id}:${entry.schedule_key}`) await syncRentalReminders(ctx, rental);
     }
     if (due.length === 100) await ctx.scheduler.runAfter(0, internal.rental_timing_notifications.checkPickups, {});
     return { checked: due.length, inserted };
@@ -28,7 +30,7 @@ export const seedUpcoming = internalMutation({
   args: { cursor: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const page = await ctx.db.query("reservations").withIndex("by_status", q => q.eq("status", "confirmed")).paginate({ cursor: args.cursor ?? null, numItems: 100 });
-    for (const row of page.page) await syncPickupReminder(ctx, row);
+    for (const row of page.page) await syncRentalReminders(ctx, row);
     if (!page.isDone) await ctx.scheduler.runAfter(0, internal.rental_timing_notifications.seedUpcoming, { cursor: page.continueCursor });
     return { checked: page.page.length, done: page.isDone };
   },

@@ -77,10 +77,10 @@ export function NotificationBell() {
   const registrationStatus = useQuery(api.notifications.pushRegistrationStatus, { endpoint: pushEndpoint ?? "" });
   const [pushMode, setPushMode] = useState<PushMode>("all");
   const [modeBusy, setModeBusy] = useState(false);
-  // Declared after pushMode: the device mode is an argument, so the listed
-  // amounts match what this device is pushed — "My 50%" halves the bell list
-  // too, not just the notification itself.
-  const recent = useQuery(api.notifications.listRecent, { limit: 20, mode: pushMode });
+  // Reading the bell must not change (or inherit) this device's push lane.
+  // A phone receiving only its 50% income can still open All to see logistics.
+  const [feedMode, setFeedMode] = useState<PushMode>("all");
+  const recent = useQuery(api.notifications.listRecent, { limit: 50, mode: feedMode });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -289,7 +289,7 @@ export function NotificationBell() {
   function toggleOpen() {
     const next = !open;
     setOpen(next);
-    if (next && (recent?.unread ?? 0) > 0) markAllRead({ mode: pushMode }).catch(() => {});
+    if (next && (recent?.unread ?? 0) > 0) markAllRead({ mode: feedMode }).catch(() => {});
   }
 
   function openThread(url: string) {
@@ -406,7 +406,7 @@ export function NotificationBell() {
               </div>
               <div>
                 <p className="text-[10px] uppercase tracking-[0.12em] text-[#6b7280] mb-1.5">
-                  Active notification lane
+                  Send to this device
                 </p>
                 <div className="grid grid-cols-3 gap-1 rounded-lg bg-white/[0.04] p-1">
                   {([
@@ -440,13 +440,25 @@ export function NotificationBell() {
                   })}
                 </div>
                 <p className="text-[9px] text-[#6b7280] mt-1.5 leading-snug">
-                  All notifications includes pickup reminders and rental time changes. Money only sends confirmed-rental “Wohoo” earnings alerts. My 50% shows half the earnings and the item rented. This choice survives browser push-endpoint refreshes.
+                  All notifications includes pickup, return and rental time changes. Money only sends confirmed-rental “Wohoo” earnings alerts. My 50% shows half the earnings and the item rented. This choice survives browser push-endpoint refreshes.
                 </p>
                 {err && <p className="text-[10px] text-red-400 mt-1">{err}</p>}
               </div>
             </div>
           )}
 
+          <div className="px-3 py-2 border-b border-white/10">
+            <p className="text-[10px] text-[#9aa0ad] mb-1.5">Show in bell</p>
+            <div role="tablist" aria-label="Notification list" className="grid grid-cols-3 gap-1 rounded-lg bg-white/[0.04] p-1">
+              {([["all", "All"], ["money_only", "Income"], ["my_share", "My 50%"]] as const).map(([mode, label]) => (
+                <button key={mode} role="tab" aria-selected={feedMode === mode}
+                  onClick={() => setFeedMode(mode)}
+                  className={`rounded-md px-2 py-1.5 text-[11px] font-semibold ${feedMode === mode ? "bg-white/10 text-white" : "text-[#9aa0ad] hover:text-white"}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
           {/* Event list */}
           <div className="overflow-y-auto">
             {events.length === 0 ? (
@@ -461,12 +473,12 @@ export function NotificationBell() {
                   className="w-full text-left px-3 py-2.5 border-b border-white/[0.06] hover:bg-white/[0.04] transition-colors flex gap-2.5"
                 >
                   <span className="text-base leading-none mt-0.5">
-                    {e.type === "booking_confirmed" ? "🎉" : e.type === "pickup_reminder" ? "⏰" : e.type === "rental_time_changed" ? "🗓️" : e.type === "low_response_rate" ? "🚨" : "🔔"}
+                    {e.type === "booking_confirmed" ? "🎉" : (e.type === "pickup_reminder" || e.type === "return_reminder") ? "⏰" : e.type === "rental_time_changed" ? "🗓️" : e.type === "low_response_rate" ? "🚨" : "🔔"}
                   </span>
                   <span className="flex-1 min-w-0">
                     {e.account_slug === "dbcinema_web" && <span className="block text-[10px] text-emerald-300">DB Cinema Web{e.source_channel === "email" ? " · Email" : ""}{e.type === "human_request" ? " · Human requested" : e.type === "booking_cancelled" ? " · Cancellation" : ""}</span>}
-                    <span className="flex items-center gap-1.5">
-                      <span className="text-[12px] font-semibold text-[#e4e6eb] truncate">
+                    <span className="flex items-start gap-1.5">
+                      <span className="text-[12px] font-semibold text-[#e4e6eb] whitespace-normal break-words">
                         {e.title.replace(/^[^\w]+\s*/, "")}
                       </span>
                       {e.read_at === undefined && (
@@ -476,7 +488,7 @@ export function NotificationBell() {
                         {timeAgo(e.created_at)}
                       </span>
                     </span>
-                    <span className="block text-[11px] text-[#9aa0ad] truncate mt-0.5">
+                    <span className="block text-[11px] text-[#9aa0ad] whitespace-normal break-words mt-0.5">
                       {e.body}
                     </span>
                     {e.account_slug && (

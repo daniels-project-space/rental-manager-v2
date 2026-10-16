@@ -11,7 +11,7 @@ const route=http.lookup('/dbcinema/booking-sync','POST')![0] as any;
 function fixture(){
  const rows=new Map<string,any>();let serial=0;
  const db={insert:async(table:string,value:any)=>{const id=`${table}:${++serial}`;rows.set(id,{...value,_id:id,table});return id},patch:async(id:string,value:any)=>rows.set(id,{...rows.get(id),...value}),query:(table:string)=>{
-  const equalities:Array<[string,any]>=[];const q:any={withIndex:(_:string,select:any)=>{const selector:any={eq:(k:string,v:any)=>{equalities.push([k,v]);return selector}};select(selector);return q},collect:async()=>[...rows.values()].filter(r=>r.table===table&&equalities.every(([k,v])=>r[k]===v)),first:async()=>(await q.collect())[0]??null};return q;
+  const equalities:Array<[string,any]>=[];const q:any={withIndex:(_:string,select:any)=>{const selector:any={eq:(k:string,v:any)=>{equalities.push([k,v]);return selector}};select(selector);return q},collect:async()=>[...rows.values()].filter(r=>r.table===table&&equalities.every(([k,v])=>r[k]===v)),take:async(n:number)=>(await q.collect()).slice(0,n),first:async()=>(await q.collect())[0]??null};return q;
  }};
  const ctx:any={db,scheduler:{runAfter:vi.fn()}};ctx.runMutation=vi.fn(async(_ref,args)=>{expect(args.reconcile).toBe(false);return(upsertSiteBookingsBatch as any)._handler(ctx,args)});return{ctx,rows};
 }
