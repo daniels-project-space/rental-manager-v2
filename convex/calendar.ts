@@ -120,6 +120,8 @@ export type CalendarComputePreload = {
   listingImages?: Doc<"listing_images">[];
   productIndexRows?: Doc<"hygglo_product_index">[];
   overrideRows?: Doc<"listing_resolution_override">[];
+  /** Product/listing mapping resolved once for every refreshed view. */
+  listingAllocation?: Awaited<ReturnType<typeof loadCanonicalListingAllocation>>;
 };
 
 /**
@@ -648,7 +650,8 @@ export async function computeStripLive(
     const productIndexStrip = buildProductIndexMap(
       pre?.productIndexRows ?? (await ctx.db.query("hygglo_product_index").collect()),
     );
-    const overrideMapStrip = await loadCanonicalListingAllocation(ctx,pre?.items,pre?.overrideRows,reservations);
+    const overrideMapStrip = pre?.listingAllocation ??
+      await loadCanonicalListingAllocation(ctx,pre?.items,pre?.overrideRows,reservations);
     const imageByResItemStrip = new Map<string, string>();
     for (const rr of reservations) {
       const acct = (rr as { account_slug?: string }).account_slug ?? "";
@@ -1277,7 +1280,8 @@ export async function computeWeeklyLive(
     const productIndexW = buildProductIndexMap(
       pre?.productIndexRows ?? (await ctx.db.query("hygglo_product_index").collect()),
     );
-    const overrideMapW = await loadCanonicalListingAllocation(ctx,allItemsWeekly,pre?.overrideRows,reservations);
+    const overrideMapW = pre?.listingAllocation ??
+      await loadCanonicalListingAllocation(ctx,allItemsWeekly,pre?.overrideRows,reservations);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const itemByIdW = new Map<string, any>(allItemsWeekly.map((it) => [String(it._id), it]));
     const resolvedNamesByResW = new Map<string, string[]>();

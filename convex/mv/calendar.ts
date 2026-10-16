@@ -59,6 +59,7 @@ import {
 import { anyApi } from "convex/server";
 import { internal } from "../_generated/api";
 import { londonToday } from "../lib/effectiveDates";
+import { loadCanonicalListingAllocation } from "../lib/canonical_listing_allocation";
 import {
   CALENDAR_FETCH_PAD_DAYS,
   CALENDAR_LOOKBACK_DAYS,
@@ -372,8 +373,10 @@ export const refreshSlugs = query({
  * [min(anchor)-120d, max(viewEnd)+7d] (contains every compute's padded window
  * AND lookback), one calendar_holds by_date collect over
  * [min(anchor), max(viewEnd)] (both computes read holds), one collect per
- * shared table — then runs computeWeeklyLive/computeStripLive in-memory per
- * {view, slug}. Total reads ~2-4MB / well under the 16k-doc query limit.
+ * shared table, and one canonical product/listing allocation map for the
+ * union of reservation candidates — then runs computeWeeklyLive/
+ * computeStripLive in-memory per {view, slug}. This avoids repeating the
+ * same indexed product/listing reads for each of up to ten views.
  *
  * Each compute independently verifies the preload's range contains its own
  * index bounds and falls back to its own ctx.db reads otherwise, and the
@@ -447,6 +450,24 @@ export const computeViews = internalQuery({
         a._creationTime - b._creationTime,
     );
 
+    const [holdsRows, items, listingImages, productIndexRows, overrideRows] = await Promise.all([
+      ctx.db
+        .query("calendar_holds")
+        .withIndex("by_date", (q) =>
+          q.gte("date", holdsFrom).lte("date", holdsTo),
+        )
+        .collect(),
+      ctx.db.query("items").collect(),
+      ctx.db.query("listing_images").collect(),
+      ctx.db.query("hygglo_product_index").collect(),
+      ctx.db.query("listing_resolution_override").collect(),
+    ]);
+    const listingAllocation = await loadCanonicalListingAllocation(
+      ctx,
+      items,
+      overrideRows,
+      reservationWindowRows,
+    );
     const pre: CalendarComputePreload = {
       reservationsWindow: {
         from: resFrom,
@@ -456,17 +477,13 @@ export const computeViews = internalQuery({
       holds: {
         from: holdsFrom,
         to: holdsTo,
-        rows: await ctx.db
-          .query("calendar_holds")
-          .withIndex("by_date", (q) =>
-            q.gte("date", holdsFrom).lte("date", holdsTo),
-          )
-          .collect(),
+        rows: holdsRows,
       },
-      items: await ctx.db.query("items").collect(),
-      listingImages: await ctx.db.query("listing_images").collect(),
-      productIndexRows: await ctx.db.query("hygglo_product_index").collect(),
-      overrideRows: await ctx.db.query("listing_resolution_override").collect(),
+      items,
+      listingImages,
+      productIndexRows,
+      overrideRows,
+      listingAllocation,
     };
 
     const out: Array<{ key: string; payload: unknown }> = [];

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./auth", () => ({ authComponent: { safeGetAuthUser: vi.fn(async () => null) } }));
 import { computeStripLive, computeWeeklyLive, getGanttWeek, getCalendarStrip, getWeeklyCalendar, getItemAvailabilityForChat } from "./calendar";
+import { computeViews } from "./mv/calendar";
 import { websiteCalendarPeriods } from "./lib/reservations/itemUnits";
 const ms = (day: string) => Date.parse(`${day}T00:00:00Z`);
 const window = (id: string, start: string, end: string, clock: string | null, qty = 1) => ({ item_id: id, start: ms(start), end: ms(end), qty, pickupTime: "09:00", returnTime: clock });
@@ -8,9 +9,10 @@ const booking = { _id: "web-rental", _creationTime: 1, account_slug: "dbcinema_w
   items: [{item_name: "Entire kit",qty: 1}], hygglo_items:[{name:"Entire kit",product_id:42}],
   site_item_windows: [window("camera", "2026-10-05", "2026-10-06", "12:00", 2), window("lens", "2026-10-05", "2026-10-06", "12:00"), window("camera", "2026-10-09", "2026-10-11", null), window("lens", "2026-10-09", "2026-10-11", "19:00")] };
 const inventory = [{_id:"camera",name_canonical:"Sony FX3",kind:"camera",status:"active",qty:1,image_url:"https://images.example/camera.png"},{_id:"lens",name_canonical:"Canon 50mm",kind:"lens",status:"active",qty:1,image_url:"https://images.example/lens.png"}];
-function context(rows: any[] = [booking], cache?: any) {
+function context(rows: any[] = [booking], cache?: any, queryCounts?: Record<string, number>) {
  const tables: Record<string, any[]> = {reservations: rows, items: inventory, mv_calendar: cache ? [{key:Array.isArray(cache)?"strip:all":"weekly:all",anchor:"2026-10-05",days:7,payload:cache}] : []};
  return {db:{get: async () => null,query:(table:string)=>{
+  if (queryCounts) queryCounts[table] = (queryCounts[table] ?? 0) + 1;
   let result=[...(tables[table]??[])]; const index:any={}; for(const op of ["eq","gte","lte","lt","gt"]){index[op]=(field:string,value:any)=>{result=result.filter(r=>op==="eq"?r[field]===value:op==="gte"?r[field]>=value:op==="lte"?r[field]<=value:op==="lt"?r[field]<value:r[field]>value);return index;};}
   const q:any={withIndex:(_:string,fn:any)=>{fn(index);return q;},collect:async()=>result,first:async()=>result[0]??null}; return q;
  }}} as any;
@@ -66,6 +68,25 @@ describe("saved website calendar windows",()=>{
   expect(strip[0].pickups).toHaveLength(1);
   const weekly=await (getWeeklyCalendar as any)._handler(context([booking],{days:[]}),{accountSlug:null,weekStartDate:"2026-10-05"});expect(weekly.days).toHaveLength(7);
  });
+});
+
+it("preloads listing allocation once and shares the same mapping across refreshed views", async () => {
+ const rental={...booking,_id:"leo-rental",account_slug:"leo",site_item_windows:undefined,
+   hygglo_items:[{name:"Sony FX3",product_id:42}],items:[{item_name:"Sony FX3",qty:1}]};
+ const counts:Record<string,number>={};
+ const views=await (computeViews as any)._handler(context([rental],undefined,counts),{
+   weekAnchor:"2026-10-05",stripAnchor:"2026-10-07",stripDays:7,slugs:["leo"],
+ });
+ const byKey=Object.fromEntries(views.map((view:any)=>[view.key,view.payload]));
+ expect(counts.hygglo_product_context).toBe(1);
+ expect(counts.online_listings).toBe(1);
+ expect(counts.hygglo_products).toBe(1);
+ expect(byKey["weekly:leo"]).toEqual(await computeWeeklyLive(context([rental]),{
+   accountSlug:"leo",weekStartDate:"2026-10-05",
+ }));
+ expect(byKey["strip:leo"]).toEqual(await computeStripLive(context([rental]),{
+   accountSlug:"leo",startDate:"2026-10-07",days:7,
+ }));
 });
 
 
