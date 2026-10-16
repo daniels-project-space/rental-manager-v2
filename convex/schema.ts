@@ -440,6 +440,14 @@ const operationalSchema = defineSchema({
     .index("by_total_spend", ["total_spend_gbp"])
     .index("by_display_name", ["display_name"]),
 
+  catalogue_cache_state: defineTable({
+    key: v.literal("dbcinema:v1"), revision: v.number(), ready_revision: v.optional(v.number()),
+    enabled: v.boolean(), queued: v.boolean(), job_token: v.number(), attempts: v.number(), error: v.optional(v.string()), updated_at: v.number(),
+  }).index("by_key", ["key"]),
+  catalogue_cache_blobs: defineTable({
+    key: v.literal("dbcinema:v1"), version: v.literal(1), revision: v.number(),
+    data: v.bytes(), count: v.number(), sha256: v.string(), packed_sha256: v.string(),
+  }).index("by_key", ["key"]),
   reservation_revenue_facts: defineTable({
     source_id: v.id("reservations"),
     source_creation_time: v.number(),

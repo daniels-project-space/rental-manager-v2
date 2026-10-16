@@ -1,4 +1,6 @@
+import type { QueryCtx } from "./_generated/server";
 import { resolvedMarketingOnly } from "./lib/power_listing_identity";
+import { loadCatalogueProducts } from "./lib/catalogue_read_cache";
 import { canonicalKitContents } from "./lib/canonical_kit_contents";
 import { listingKitItem } from "./lib/listing_kit_context";
 import { createBundleMappingContext } from "./lib/bundle_mapping";
@@ -260,27 +262,29 @@ export const __service_listForStorefront = internalQueryOf(list);
 
 /** One source snapshot for catalogue identity, declared kit coverage and exact
  * physical pools. A fuzzy primary match alone never certifies a complete kit. */
-export const __service_catalogueForStorefront = internalQuery({
-  args: { accountSlug: v.literal("dbcinema") },
-  handler: async (ctx, { accountSlug }) => {
-    const [products, inventory, overrides, listings] = await Promise.all([
-      ctx.db.query("hygglo_products").withIndex("by_account", q => q.eq("accountSlug", accountSlug)).collect(),
+export async function catalogueForStorefrontRows(ctx: QueryCtx, allowPrepared = false) {
+    const accountSlug = "dbcinema" as const;
+    const [products, inventory, overrides] = await Promise.all([
+      loadCatalogueProducts(ctx, allowPrepared),
       ctx.db.query("items").collect(),
       ctx.db.query("listing_resolution_override").withIndex("by_account_product", q => q.eq("account_slug", accountSlug)).collect(),
-      ctx.db.query("online_listings").withIndex("by_account_product", q => q.eq("account_slug", accountSlug)).collect(),
     ]);
     // Preserve the same first indexed row selected by loadListingInventory.
     const mapping = new Map<number, typeof overrides[number]>();
-    const descriptions = new Map<number, typeof listings[number]>();
+    const missingDescriptionIds = [...new Set(products.filter((product) => product.description == null).map((product) => product.productId))];
+    const descriptions = new Map(await Promise.all(missingDescriptionIds.map(async (productId) => {
+      const first = await ctx.db.query("online_listings").withIndex("by_account_product", (q) =>
+        q.eq("account_slug", accountSlug).eq("product_id", productId)).first();
+      return [productId, first?.description] as const;
+    })));
     for (const row of overrides) if (!mapping.has(row.product_id)) mapping.set(row.product_id, row);
-    for (const row of listings) if (!descriptions.has(row.product_id)) descriptions.set(row.product_id, row);
     const byId = new Map(inventory.map(i => [String(i._id), i]));
     const context=createBundleMappingContext(inventory);
     return await Promise.all(products.map(async product => {
       const resolved = resolveListingComponents(inventory,
         mapping.get(product.productId)?.components.map(c => ({item_id:String(c.item_id),qty:c.qty})),
         product.masterItemId ? String(product.masterItemId) : undefined, 1,
-        product.description ?? descriptions.get(product.productId)?.description,context,product.name);
+        product.description ?? descriptions.get(product.productId),context,product.name);
       const components = resolved.components.filter(c => c.stock_required && byId.has(c.item_id)).map(c => {
         const item = byId.get(c.item_id)!;
         const active = item.status === "active" && item.is_marketing_only === false;
@@ -300,7 +304,7 @@ export const __service_catalogueForStorefront = internalQuery({
       const {productId,name,isPublished,isMarketingOnly,valuation,minimumRentalDays,prices,images,unavailableDates,listings,masterItemId}=product;
       // Copy identity follows actual seller wording, not repaired stock links.
       // Only the digest crosses the service bridge; descriptions stay private.
-      const sourceDescription=product.description??descriptions.get(product.productId)?.description??null;
+      const sourceDescription=product.description??descriptions.get(product.productId)??null;
       const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify([1,accountSlug,productId,name??"",sourceDescription])));
       const copySourceFingerprint="v1:"+Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,"0")).join("");
       return {
@@ -311,7 +315,11 @@ export const __service_catalogueForStorefront = internalQuery({
         valuation,minimumRentalDays,prices,images,unavailableDates,listings,masterItemId,
         stockMapping:{version:1,complete,owned:classifiedMarketing?false:resolved.owned,components,inventoryFacts} };
     }));
-  },
+  }
+
+export const __service_catalogueForStorefront = internalQuery({
+  args: { accountSlug: v.literal("dbcinema") },
+  handler: async (ctx) => catalogueForStorefrontRows(ctx),
 });
 
 const marketingChange = v.object({
