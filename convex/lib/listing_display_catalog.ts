@@ -3,6 +3,7 @@ import type { QueryCtx } from "../_generated/server";
 import type { Doc } from "../_generated/dataModel";
 import { listingDisplayName } from "./item_display_name";
 import { loadProductContext, type ProductContextCache } from "./product_context";
+import { readOnlineListing } from "./online_listing_read";
 
 /** One shared catalog per query; never an N-per-card database lookup. */
 /** A bundle may supply a photograph of its exact mapped model. This is display
@@ -81,12 +82,7 @@ export async function listingDisplayCatalog(
       imageReads.set(
         key,
         Promise.all([
-          ctx.db
-            .query("online_listings")
-            .withIndex("by_account_product", (q) =>
-              q.eq("account_slug", slug).eq("product_id", pid),
-            )
-            .first(),
+          readOnlineListing(ctx, slug, pid),
           ctx.db
             .query("listing_images")
             .withIndex("by_account_product", (q) =>

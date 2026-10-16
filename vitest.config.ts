@@ -28,6 +28,7 @@ export default defineConfig({
       "convex/quick_reply_thread_state.test.ts",
       "convex/lib/renter_message_watermark.test.ts",
       "convex/lib/reply_message_order.test.ts",
+      "convex/replyInbox.reads.test.ts",
       "src/lib/quick-reply-queue-state.test.ts",
       "src/lib/dashboard/layout-order.test.ts",
       "src/lib/rental-calendar-time.test.ts",
