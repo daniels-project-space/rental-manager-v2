@@ -1,3 +1,4 @@
+import { insertAccountProfile } from "../lib/account_hub_projection";
 /**
  * One-off seed: give the `diogo` account an account_profiles row.
  *
@@ -27,7 +28,7 @@ export const seedDiogoProfile = internalMutation({
     if (existing) return { ok: true, reason: "already exists", id: existing._id };
 
     const now = Date.now();
-    const id = await ctx.db.insert("account_profiles", {
+    const id = await insertAccountProfile(ctx, {
       account_id: account._id,
       persona_prompt:
         "You are Diogo, an independent camera and film-gear owner renting out your own kit to people in the UK. " +

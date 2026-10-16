@@ -89,6 +89,10 @@ const operationalSchema = defineSchema({
   }).index("by_slug", ["slug"]),
 
   // Per-account persona/templates/rules (Phase 1.B v1 mining seed)
+  account_hub_projection: defineTable({
+    key: v.string(), version: v.literal(1), revision: v.number(), enabled: v.boolean(), ready: v.boolean(), sha256: v.optional(v.string()),
+    rows: v.array(v.object({ source_id: v.id("account_profiles"), account_id: v.id("accounts"), hub_lat: v.union(v.number(), v.null()), hub_lng: v.union(v.number(), v.null()) })),
+  }).index("by_key", ["key"]),
   account_profiles: defineTable({
     account_id: v.id("accounts"),
     // legacy fields (kept for compat)
@@ -3056,9 +3060,69 @@ const operationalSchema = defineSchema({
     .index("by_run_at", ["run_at"]),
 });
 
+
+// Full reservation documents are stored losslessly in a derived read model.
+// Reuse the authoritative validators for every copied index field.
+const reservationSourceFields = operationalSchema.tables.reservations.validator.fields;
+const reservationReadTable = defineTable({
+  source_id: v.id("reservations"), source_creation_time: v.number(), version: v.literal(1),
+  valid: v.boolean(), data: v.optional(v.bytes()), packed_sha256: v.optional(v.string()), source_sha256: v.optional(v.string()),
+  account_id: reservationSourceFields.account_id,
+  status: reservationSourceFields.status,
+  account_slug: reservationSourceFields.account_slug,
+  start_date: reservationSourceFields.start_date,
+  pickup_date: reservationSourceFields.pickup_date,
+  hygglo_order_id: reservationSourceFields.hygglo_order_id,
+  order_step: reservationSourceFields.order_step,
+  awaiting_owner_action: reservationSourceFields.awaiting_owner_action,
+  created_at: reservationSourceFields.created_at,
+  is_obsolete: reservationSourceFields.is_obsolete,
+  end_date: reservationSourceFields.end_date,
+  return_date: reservationSourceFields.return_date,
+}).index("by_source", ["source_id"]).index("by_source_creation_time", ["source_creation_time"])
+  .index("by_account", ["account_id","source_creation_time"])
+  .index("by_status", ["status","source_creation_time"])
+  .index("by_account_slug", ["account_slug","source_creation_time"])
+  .index("by_start_date", ["start_date","source_creation_time"])
+  .index("by_pickup_date", ["pickup_date","source_creation_time"])
+  .index("by_hygglo_order_id", ["hygglo_order_id","source_creation_time"])
+  .index("by_order_step", ["order_step","source_creation_time"])
+  .index("by_awaiting_owner_action", ["awaiting_owner_action","source_creation_time"])
+  .index("by_order_step_created_at", ["order_step","created_at","source_creation_time"])
+  .index("by_awaiting_owner_action_created_at", ["awaiting_owner_action","created_at","source_creation_time"])
+  .index("by_is_obsolete", ["is_obsolete","source_creation_time"])
+  .index("by_is_obsolete_start_date", ["is_obsolete","start_date","source_creation_time"])
+  .index("by_account_status", ["account_slug","status","source_creation_time"])
+  .index("by_status_start_date", ["status","start_date","source_creation_time"])
+  .index("by_account_status_start_date", ["account_slug","status","start_date","source_creation_time"])
+  .index("by_account_status_end_date", ["account_slug","status","end_date","source_creation_time"])
+  .index("by_account_status_return_date", ["account_slug","status","return_date","source_creation_time"])
+  .index("by_account_pickup_date", ["account_slug","pickup_date","source_creation_time"])
+  .index("by_account_status_pickup_date", ["account_slug","status","pickup_date","start_date","source_creation_time"])
+  .index("by_status_pickup_date", ["status","pickup_date","start_date","source_creation_time"])
+  .index("by_status_return_date", ["status","return_date","source_creation_time"])
+  .index("by_status_return_end_date", ["status","return_date","end_date","source_creation_time"])
+  .index("by_status_end_date", ["status","end_date","source_creation_time"])
+  .index("by_status_order_step_end_date", ["status","order_step","end_date","source_creation_time"])
+  .index("by_account_start", ["account_slug","start_date","source_creation_time"])
+  .index("by_account_end", ["account_slug","end_date","source_creation_time"])
+  .index("by_account_order_step", ["account_slug","order_step","source_creation_time"])
+  .index("by_account_obsolete_start", ["account_slug","is_obsolete","start_date","source_creation_time"]);
+
 // Keep identical validated lifecycle facts in a physically separate test table.
 // Production stock, calendars, revenue and return workflows only read reservations.
 export default defineSchema({
+  product_read_records: defineTable({ source_id: v.id("hygglo_products"), source_creation_time: v.number(), accountSlug: v.string(), version: v.literal(1), valid: v.boolean(), data: v.optional(v.bytes()), packed_sha256: v.optional(v.string()), source_sha256: v.string() })
+    .index("by_source", ["source_id"]).index("by_source_creation_time", ["source_creation_time"]).index("by_account", ["accountSlug", "source_creation_time"]),
+  product_read_gate: defineTable({ key: v.literal("full:v1"), version: v.literal(1), enabled: v.boolean(), ready: v.boolean(), accounts: v.optional(v.array(v.object({ accountSlug: v.string(), count: v.number() }))) }).index("by_key", ["key"]),
+  product_read_progress: defineTable({ accounts: v.array(v.object({ accountSlug: v.string(), count: v.number() })), key: v.literal("full:v1"), revision: v.number(), stage: v.union(v.literal("backfill"), v.literal("prune"), v.literal("audit"), v.literal("prepared")), cursor: v.union(v.string(), v.null()), audited_revision: v.optional(v.number()), audited_count: v.number(), audited_fallback_count: v.number(), copied_count: v.number(), pruned_count: v.number() }).index("by_key", ["key"]),
+  reservation_read_records: reservationReadTable,
+  reservation_order_presence: defineTable({ source_id: v.id("reservations"), hygglo_order_id: operationalSchema.tables.reservations.validator.fields.hygglo_order_id })
+    .index("by_source", ["source_id"]).index("by_order", ["hygglo_order_id"]),
+  // Runtime gates stay stable during normal writes; migration/revision updates
+  // must not invalidate every reservation query.
+  reservation_read_gate: defineTable({key:v.literal("full:v1"),version:v.literal(1),enabled:v.boolean(),ready:v.boolean()}).index("by_key",["key"]),
+  reservation_read_progress: defineTable({key:v.literal("full:v1"),revision:v.number(),stage:v.union(v.literal("backfill"),v.literal("prune"),v.literal("prunePresence"),v.literal("audit"),v.literal("prepared")),cursor:v.union(v.string(),v.null()),audited_revision:v.optional(v.number()),audited_count:v.number(),audited_fallback_count:v.number(),copied_count:v.number(),pruned_count:v.number()}).index("by_key",["key"]),
   quick_reply_swaps: defineTable({thread_id:v.string(),request_id:v.string(),snapshot:v.string(),state:v.union(v.literal("running"),v.literal("applied"),v.literal("failed"),v.literal("attention")),at:v.number()}).index("by_thread",["thread_id"]).index("by_request",["request_id"]),
 
   ...operationalSchema.tables,

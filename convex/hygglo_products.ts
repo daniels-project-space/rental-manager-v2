@@ -1,6 +1,7 @@
 import type { QueryCtx } from "./_generated/server";
 import { resolvedMarketingOnly } from "./lib/power_listing_identity";
 import { loadCatalogueProducts } from "./lib/catalogue_read_cache";
+import { loadProductReadRecords } from "./lib/product_read_model";
 import { canonicalKitContents } from "./lib/canonical_kit_contents";
 import { listingKitItem } from "./lib/listing_kit_context";
 import { createBundleMappingContext } from "./lib/bundle_mapping";
@@ -233,13 +234,7 @@ export const upsertProductsBatch = mutation({
 export const list = query({
   args: { accountSlug: v.optional(v.string()) },
   handler: async (ctx, { accountSlug }) => {
-    if (accountSlug !== undefined) {
-      return await ctx.db
-        .query("hygglo_products")
-        .withIndex("by_account", (q) => q.eq("accountSlug", accountSlug))
-        .collect();
-    }
-    return await ctx.db.query("hygglo_products").collect();
+    return loadProductReadRecords(ctx, accountSlug);
   },
 });
 

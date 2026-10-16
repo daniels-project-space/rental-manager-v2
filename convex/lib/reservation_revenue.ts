@@ -1,3 +1,4 @@
+import { disableReservationReadModel, syncReservationReadRecord } from "./reservation_read_model";
 import type { WithoutSystemFields } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
@@ -62,6 +63,7 @@ function serialize<T>(ctx: MutationCtx, id: string, work: () => Promise<T>): Pro
 async function maintain<T>(ctx: MutationCtx, work: () => Promise<T>): Promise<T> {
   try { return await work(); }
   catch (error) {
+    await disableReservationReadModel(ctx);
     // A caller may catch a per-record sync error. It must not leave readers
     // using an old projection after the successful source write.
     const ready = await ctx.db.query("reservation_revenue_ready").withIndex("by_key", (q) => q.eq("key", "v1")).unique();
@@ -100,33 +102,37 @@ export async function patchRevenueReservation(
   ctx: MutationCtx, id: ReservationId, patch: Partial<WithoutSystemFields<Doc<"reservations">>>,
 ) {
   await beforeReservationStockPatch(ctx, id, patch);
-  if (!Object.keys(patch).some((key) => revenueFields.has(key))) {
-    await ctx.db.patch(id, patch); return;
-  }
-  return serialize(ctx, id, async () => {
+  if (!isProductionReservation(ctx, id)) { await ctx.db.patch(id, patch); return; }
+  return serialize(ctx, id, () => maintain(ctx, async () => {
     await ctx.db.patch(id, patch);
-    await maintain(ctx, () => patch.status !== undefined && patch.status !== "completed"
-      ? remove(ctx, id) : refresh(ctx, id));
-  });
+    if (Object.keys(patch).some(key => revenueFields.has(key))) {
+      if (patch.status !== undefined && patch.status !== "completed") await remove(ctx, id);
+      else await refresh(ctx, id);
+    }
+    await syncReservationReadRecord(ctx, id);
+  }));
 }
 
 export async function insertRevenueReservation(ctx: MutationCtx, row: WithoutSystemFields<Doc<"reservations">>) {
-  const affectsStock = stockReservationStatuses.some((status) => status === row.status);
-  // Resolve metadata before writing, but only invalidate after the actual ID
-  // confirms that a Lab database has not redirected this insert.
+  const affectsStock = stockReservationStatuses.some(status => status === row.status);
   if (affectsStock) await invalidateStockWhen(ctx, () => false);
   const id = await ctx.db.insert("reservations", row);
-  if (affectsStock && isProductionReservation(ctx, id)) await invalidateStockWhen(ctx, () => true);
-  if (row.status === "completed" && isProductionReservation(ctx, id)) {
-    await serialize(ctx, id, () => refreshReservationRevenue(ctx, id));
-  }
+  if (isProductionReservation(ctx, id)) await serialize(ctx, id, () => maintain(ctx, async () => {
+    if (affectsStock) await invalidateStockWhen(ctx, () => true);
+    if (row.status === "completed") await refresh(ctx, id);
+    await syncReservationReadRecord(ctx, id);
+  }));
   return id;
 }
 
 export async function deleteRevenueReservation(ctx: MutationCtx, id: ReservationId) {
   return serialize(ctx, id, async () => {
     await beforeReservationStockDelete(ctx, id);
-    await ctx.db.delete(id);
-    await maintain(ctx, () => remove(ctx, id));
+    if (!isProductionReservation(ctx, id)) { await ctx.db.delete(id); return; }
+    return maintain(ctx, async () => {
+      await ctx.db.delete(id);
+      await remove(ctx, id);
+      await syncReservationReadRecord(ctx, id);
+    });
   });
 }

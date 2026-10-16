@@ -14,7 +14,7 @@ const source = (id = "p1", extra: Record<string, unknown> = {}) => ({ _id: id, _
   prices: [{ days: 1, amount: 12.25 }], unavailableDates: [], listings: [], ...extra }) as unknown as Doc<"hygglo_products">;
 
 function fixture(products = [source()]) {
-  const tables: Record<string, any[]> = { hygglo_products: structuredClone(products), hygglo_product_context: [], catalogue_cache_state: [], catalogue_cache_blobs: [] };
+  const tables: Record<string, any[]> = { product_read_gate: [], hygglo_products: structuredClone(products), hygglo_product_context: [], catalogue_cache_state: [], catalogue_cache_blobs: [] };
   const reads: string[] = [], writes: string[] = [], scheduled: unknown[] = [];
   let serial = 0;
   const db = {

@@ -1,3 +1,4 @@
+import { insertAccountProfile, patchAccountProfile } from "./lib/account_hub_projection";
 import { action, mutation, query, internalMutation, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
@@ -252,9 +253,9 @@ export const applyAccountHub = internalMutation({
       .first();
     const now = Date.now();
     const fields = { hub_postcode: postcode, hub_label: label, hub_lat: lat, hub_lng: lng };
-    if (profile) await ctx.db.patch(profile._id, { ...fields, updated_at: now });
+    if (profile) await patchAccountProfile(ctx, profile._id, { ...fields, updated_at: now });
     else
-      await ctx.db.insert("account_profiles", {
+      await insertAccountProfile(ctx, {
         account_id,
         ...fields,
         created_at: now,
@@ -306,9 +307,9 @@ export const setAccountHardTruths = mutation({
       .first();
     const now = Date.now();
     if (profile) {
-      await ctx.db.patch(profile._id, { hard_truths, updated_at: now });
+      await patchAccountProfile(ctx, profile._id, { hard_truths, updated_at: now });
     } else {
-      await ctx.db.insert("account_profiles", {
+      await insertAccountProfile(ctx, {
         account_id,
         hard_truths,
         created_at: now,
@@ -373,9 +374,9 @@ export const setAccountPersonaSettings = mutation({
       .first();
     const now = Date.now();
     if (profile) {
-      await ctx.db.patch(profile._id, { persona_prompt, greeting_template, signoff_template, updated_at: now });
+      await patchAccountProfile(ctx, profile._id, { persona_prompt, greeting_template, signoff_template, updated_at: now });
     } else {
-      await ctx.db.insert("account_profiles", {
+      await insertAccountProfile(ctx, {
         account_id,
         persona_prompt,
         greeting_template,
@@ -474,9 +475,9 @@ export const setAccountCommunication = mutation({
       draft_text_blocks: draftTextBlocks,
       updated_at: now,
     };
-    if (profile) await ctx.db.patch(profile._id, fields);
+    if (profile) await patchAccountProfile(ctx, profile._id, fields);
     else {
-      await ctx.db.insert("account_profiles", {
+      await insertAccountProfile(ctx, {
         account_id: args.account_id,
         ...fields,
         created_at: now,
@@ -556,13 +557,13 @@ export const setReturnDiscount = mutation({
       .first();
     const now = Date.now();
     if (profile) {
-      await ctx.db.patch(profile._id, {
+      await patchAccountProfile(ctx, profile._id, {
         return_discount_code: clean,
         return_discount_percent: rounded,
         updated_at: now,
       });
     } else {
-      await ctx.db.insert("account_profiles", {
+      await insertAccountProfile(ctx, {
         account_id,
         return_discount_code: clean,
         return_discount_percent: rounded,
@@ -587,7 +588,7 @@ export const setAccountPickupAddress = mutation({
       .withIndex("by_account", (q) => q.eq("account_id", acct._id))
       .first();
     if (!profile) throw new Error(`No profile for "${account_slug}"`);
-    await ctx.db.patch(profile._id, { pickup_address });
+    await patchAccountProfile(ctx, profile._id, { pickup_address });
     return { ok: true, account_slug, pickup_address };
   },
 });
@@ -608,7 +609,7 @@ export const setAccountPickupHours = mutation({
       .withIndex("by_account", (q) => q.eq("account_id", acct._id))
       .first();
     if (!profile) throw new Error(`No profile for "${account_slug}"`);
-    await ctx.db.patch(profile._id, { pickup_hours });
+    await patchAccountProfile(ctx, profile._id, { pickup_hours });
     return { ok: true, account_slug, pickup_hours };
   },
 });

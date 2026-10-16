@@ -1,3 +1,4 @@
+import { patchAccountProfile } from "../lib/account_hub_projection";
 import { internalMutation } from "../_generated/server";
 import { v } from "convex/values";
 import { DEFAULT_HARD_TRUTHS, LEGACY_HARD_TRUTHS } from "./hard_truths";
@@ -27,7 +28,7 @@ export const repairLegacyKitSources = internalMutation({
       return fix ? [{ row: m, fix }] : [];
     });
     if (apply) {
-      for (const p of matchedProfiles) await ctx.db.patch(p._id, { hard_truths: DEFAULT_HARD_TRUTHS, updated_at: Date.now() });
+      for (const p of matchedProfiles) await patchAccountProfile(ctx, p._id, { hard_truths: DEFAULT_HARD_TRUTHS, updated_at: Date.now() });
       for (const { row, fix } of matchedMemories) await ctx.db.patch(row._id, { content: fix.after, updated_at: Date.now() });
       // Cached drafts/review holds were based on superseded source facts.
       if (matchedProfiles.length || matchedMemories.length) {

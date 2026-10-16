@@ -1,0 +1,237 @@
+import fs from "node:fs";
+import { jsonToConvex } from "convex/values";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
+import type { Doc } from "../_generated/dataModel";
+import { reservationReadIndexes } from "./reservation_read_indexes";
+import { syncReservationReadRecord, decodeReservationRead, reservationReadRecordMatches } from "./reservation_read_model";
+import { useReservationReadModel, sourceReservationReadContext, preparedReservationReadContext, hasReservationByOrder } from "./reservation_read_queries";
+import { patchRevenueReservation, insertRevenueReservation, deleteRevenueReservation } from "./reservation_revenue";
+import * as admin from "../reservation_read_admin";
+
+class Range {
+  #operations: any[];
+  constructor(operations: any[] = []) { this.#operations = operations; }
+  eq(k: string, v: any) { return new Range([...this.#operations, ["eq", k, v]]); }
+  gt(k: string, v: any) { return new Range([...this.#operations, ["gt", k, v]]); }
+  gte(k: string, v: any) { return new Range([...this.#operations, ["gte", k, v]]); }
+  lt(k: string, v: any) { return new Range([...this.#operations, ["lt", k, v]]); }
+  lte(k: string, v: any) { return new Range([...this.#operations, ["lte", k, v]]); }
+  export() { return this.#operations; }
+}
+function fixture(rows?: any[]) {
+  const tables: Record<string, any[]> = { reservations: structuredClone(rows ?? [
+    { _id: "r1", _creationTime: 10, status: "confirmed", created_at: 1, v1_updated_at: 1, account_slug: "leo", hygglo_order_id: "order1", start_date: "2026-10-15", end_date: "2026-10-18", notes: "all original fields retained", net_to_owner_gbp: 0.30000000000000004 },
+    { _id: "r2", _creationTime: 20, status: "ongoing", created_at: 2, v1_updated_at: 2, account_slug: "dbcinema", hygglo_order_id: "order2", start_date: "2026-10-16", end_date: "2026-10-19" },
+    { _id: "r3", _creationTime: 30, status: "cancelled", created_at: 3, v1_updated_at: 3, account_slug: "leo", hygglo_order_id: "order1", start_date: "2026-10-17" },
+  ]), reservation_read_records: [], reservation_order_presence: [], reservation_read_gate: [], reservation_read_progress: [], reservation_revenue_ready: [], reservation_revenue_facts: [], stock_input_cache_state: [], renter_bot_lab_bookings: [{ _id: "lab1", _creationTime: 1, status: "confirmed", created_at: 0, v1_updated_at: 0 }] };
+  const sourceIds = new Set(tables.reservations.map(r => r._id)), reads: string[] = [], writes: string[] = []; let serial = 100, modelFailure = false, sourceFailure = false;
+  function query(table: string, index = "by_creation_time", operations: any[] = [], direction = "asc", filter?: (row: any) => boolean): any {
+    const fields = index === "by_key" ? ["key"] : index === "by_source" ? ["source_id"] : index === "by_order" ? ["hygglo_order_id"] : index === "by_source_creation_time" ? ["source_creation_time"] : index === "by_creation_time" ? [] : index === "by_renter" ? ["renter_id"] : [...(reservationReadIndexes[index as keyof typeof reservationReadIndexes] ?? []), ...(table === "reservation_read_records" ? ["source_creation_time"] : [])];
+    function values() {
+      const compare = (a: any, b: any) => a === b ? 0 : a === undefined ? -1 : b === undefined ? 1 : a < b ? -1 : 1;
+      return tables[table].filter(row => operations.every(([op, key, value]) => op === "eq" ? row[key] === value : op === "gte" ? compare(row[key], value) >= 0 : op === "lte" ? compare(row[key], value) <= 0 : op === "gt" ? compare(row[key], value) > 0 : compare(row[key], value) < 0)).filter(row => !filter || filter(row)).slice().sort((a, b) => {
+        for (const field of [...fields, "_creationTime", "_id"]) { const n = compare(a[field], b[field]); if (n) return direction === "asc" ? n : -n; } return 0;
+      });
+    }
+    const q = {
+      withIndex(name: string, build?: (range: Range) => Range) { return query(table, name, build ? build(new Range()).export() : [], direction, filter); },
+      order(value: string) { return query(table, index, operations, value, filter); },
+      filter(fn: (row: any) => boolean) { return query(table, index, operations, direction, fn); },
+      async collect() { reads.push(table + ":" + index); return structuredClone(values()); },
+      async take(n: number) { reads.push(table + ":" + index); if (!Number.isSafeInteger(n) || n < 0) throw Error("Invalid take count"); return structuredClone(values().slice(0, n)); },
+      async first() { return (await q.take(1))[0] ?? null; },
+      async unique() { const result = await q.take(2); if (result.length > 1) throw Error("Original unique violation"); return result[0] ?? null; },
+      async paginate({ cursor, numItems }: any) { reads.push(table + ":paginate"); const after = cursor ? JSON.parse(cursor) : null; const all = values().filter(r => !after || r._creationTime > after[0] || r._creationTime === after[0] && r._id > after[1]); const page = all.slice(0, numItems), last = page.at(-1); return { page: structuredClone(page), isDone: page.length === all.length, continueCursor: last ? JSON.stringify([last._creationTime, last._id]) : cursor }; },
+      async *[Symbol.asyncIterator]() { for (const row of await q.collect()) yield row; },
+    }; return q;
+  }
+  const db = {
+    query,
+    normalizeId(table: string, id: string) { return table === "reservations" && sourceIds.has(id) ? id : null; },
+    async get(id: string) { reads.push("get:" + id); return structuredClone(Object.values(tables).flat().find(row => row._id === id) ?? null); },
+    async insert(table: string, value: any) { if (table === "reservation_read_records" && modelFailure) throw Error("model write failed"); const id = table === "reservations" ? "r" + (++serial) : table + ":" + (++serial); if (table === "reservations") sourceIds.add(id); tables[table].push({ ...structuredClone(value), _id: id, _creationTime: serial }); writes.push(table); return id; },
+    async patch(id: string, value: any) { const table = Object.keys(tables).find(key => tables[key].some(row => row._id === id))!; if (table === "reservations" && sourceFailure) throw Error("source write failed"); const row = tables[table].find(row => row._id === id); for (const [key, v] of Object.entries(value)) if (v === undefined) delete row[key]; else row[key] = structuredClone(v); writes.push(table); },
+    async replace(id: string, value: any) { const table = Object.keys(tables).find(key => tables[key].some(row => row._id === id))!; if (table === "reservation_read_records" && modelFailure) throw Error("model write failed"); const row = tables[table].find(row => row._id === id); for (const key of Object.keys(row)) if (!key.startsWith("_")) delete row[key]; Object.assign(row, structuredClone(value)); writes.push(table); },
+    async delete(id: string) { for (const [table, rows] of Object.entries(tables)) { const i = rows.findIndex(row => row._id === id); if (i >= 0) { if (table === "reservation_read_records" && modelFailure) throw Error("model write failed"); rows.splice(i, 1); writes.push(table); } } },
+  };
+  const context = () => ({ db, scheduler: { async runAfter() { return "job"; } } }) as unknown as MutationCtx;
+  return { tables, db, reads, writes, context, modelFailure: (v: boolean) => { modelFailure = v; }, sourceFailure: (v: boolean) => { sourceFailure = v; } };
+}
+async function prepare(f: ReturnType<typeof fixture>, enabled = true) {
+  await (admin.start as any)._handler(f.context(), {});
+  for (let n = 0; n < 20 && f.tables.reservation_read_progress[0].stage !== "prepared"; n++) await (admin.step as any)._handler(f.context(), {});
+  expect(f.tables.reservation_read_gate[0].ready).toBe(true);
+  if (enabled) await (admin.enable as any)._handler(f.context(), { revision: f.tables.reservation_read_progress[0].revision, count: f.tables.reservation_read_progress[0].audited_count });
+}
+
+describe("full lossless reservation read model", () => {
+  it("uses the installed Convex SDK range builder without replaying clock callbacks", () => {
+    const require = createRequire(import.meta.url);
+    const { QueryInitializerImpl } = require(path.join(path.dirname(require.resolve("convex/server")), "impl/query_impl.js"));
+    const f = fixture(); const ctx = { ...f.context(), db: { ...f.db, query(table: string) { return table === "reservations" ? new QueryInitializerImpl(table) : f.db.query(table); } } } as unknown as QueryCtx;
+    let calls = 0;
+    expect(() => useReservationReadModel(ctx).db.query("reservations").withIndex("by_creation_time", q => { calls++; return q.gte("_creationTime", calls * 15); })).not.toThrow();
+    expect(calls).toBe(1);
+  });
+  it("falls back for an incompressible large source value without losing bytes", async () => {
+    const bytes = new Uint8Array(900_000); for (let at = 0; at < bytes.length; at += 65536) crypto.getRandomValues(bytes.subarray(at, Math.min(at + 65536, bytes.length)));
+    const f = fixture([{ _id: "r1", _creationTime: 1, status: "confirmed", created_at: 1, v1_updated_at: 1, completeOriginalBytes: bytes.buffer }]);
+    await prepare(f); expect(f.tables.reservation_read_records[0].valid).toBe(false); expect(f.tables.reservation_read_progress[0].audited_fallback_count).toBe(1);
+    expect(await useReservationReadModel(f.context()).db.query("reservations").collect()).toEqual(f.tables.reservations);
+  });
+  it("keeps source fallback active after a caught source-write failure", async () => {
+    const f = fixture(); await prepare(f); f.sourceFailure(true);
+    await expect(patchRevenueReservation(f.context(), "r1" as any, { v1_updated_at: 9 })).rejects.toThrow("source write failed");
+    expect(f.tables.reservation_read_gate[0].ready).toBe(false);
+    expect(await useReservationReadModel(f.context()).db.query("reservations").collect()).toEqual(f.tables.reservations);
+  });
+  it("preserves complete documents, source creation order and duplicate order IDs", async () => {
+    const f = fixture(); await prepare(f); f.tables.reservation_read_records.reverse(); f.reads.length = 0;
+    const ctx = useReservationReadModel(f.context());
+    expect(await ctx.db.query("reservations").collect()).toEqual(f.tables.reservations);
+    expect(await ctx.db.query("reservations").withIndex("by_hygglo_order_id", q => q.eq("hygglo_order_id", "order1")).first()).toEqual(f.tables.reservations[0]);
+    expect(f.reads.some(x => x.startsWith("reservations:"))).toBe(false);
+  });
+  it("round trips IEEE values, bytes, integer values and nested fields without truncation", async () => {
+    const f = fixture([{ _id: "r1", _creationTime: 1, status: "confirmed", created_at: 1, v1_updated_at: 1, nested: { numbers: [-0, NaN, Infinity, -Infinity, 0.30000000000000004], integer: 8n, bytes: new Uint8Array([0, 1, 255]).buffer } }]); await prepare(f);
+    expect(await decodeReservationRead(f.tables.reservation_read_records[0])).toEqual(f.tables.reservations[0]);
+  });
+  it("uses complete source records when absent, disabled, dirty or corrupted", async () => {
+    for (const mode of ["absent", "disabled", "dirty", "corrupt"]) {
+      const f = fixture(); if (mode !== "absent") await prepare(f);
+      if (mode === "disabled") f.tables.reservation_read_gate[0].enabled = false;
+      if (mode === "dirty") f.tables.reservation_read_gate[0].ready = false;
+      if (mode === "corrupt") f.tables.reservation_read_records[0].data = new Uint8Array([1, 2, 3]).buffer;
+      expect(await useReservationReadModel(f.context()).db.query("reservations").collect()).toEqual(f.tables.reservations);
+    }
+  });
+  it("uses all five range operations with original order, limit and optional-field semantics", async () => {
+    const f = fixture(); await prepare(f);
+    for (const order of ["asc", "desc"] as const) for (const limit of [0, 1, 2, 10]) {
+      const raw = f.db.query("reservations").withIndex("by_account_start", (q: any) => q.eq("account_slug", "leo").gte("start_date", "2026-10-15").lte("start_date", "2026-10-17")).order(order);
+      const cached = useReservationReadModel(f.context()).db.query("reservations").withIndex("by_account_start", q => q.eq("account_slug", "leo").gte("start_date", "2026-10-15").lte("start_date", "2026-10-17")).order(order);
+      expect(await cached.take(limit)).toEqual(await raw.take(limit));
+    }
+    const ctx = useReservationReadModel(f.context()); expect(await ctx.db.query("reservations").withIndex("by_status_start_date", q => q.eq("status", "confirmed").gt("start_date", "2026-10-14").lt("start_date", "2026-10-16")).collect()).toEqual([f.tables.reservations[0]]);
+  });
+  it("evaluates a range callback once, preserving exact moving-clock boundaries", async () => {
+    const f = fixture(); await prepare(f); let calls = 0;
+    const rows = await useReservationReadModel(f.context()).db.query("reservations").withIndex("by_creation_time", q => { calls++; return q.gte("_creationTime", calls * 15); }).collect();
+    expect(calls).toBe(1); expect(rows.map(r => r._id)).toEqual(["r2", "r3"]);
+  });
+  it("retains raw filters, pagination cursors, iterators and unsupported indexes", async () => {
+    const f = fixture(); await prepare(f); const ctx = useReservationReadModel(f.context());
+    expect(await (ctx.db.query("reservations") as any).filter((row: any) => row.status === "ongoing").collect()).toEqual([f.tables.reservations[1]]);
+    expect(await ctx.db.query("reservations").paginate({ cursor: null, numItems: 2 })).toEqual(await f.db.query("reservations").paginate({ cursor: null, numItems: 2 }));
+    expect(await ctx.db.query("reservations").withIndex("by_renter", q => q.eq("renter_id", undefined)).collect()).toEqual(f.tables.reservations);
+    const iterated = []; for await (const row of ctx.db.query("reservations")) iterated.push(row); expect(iterated).toEqual(f.tables.reservations);
+  });
+  it("falls back on source creation-time ties, including a take boundary", async () => {
+    const f = fixture(); f.tables.reservations[1]._creationTime = 10; await prepare(f); f.reads.length = 0;
+    expect(await useReservationReadModel(f.context()).db.query("reservations").take(1)).toEqual(await f.db.query("reservations").take(1)); expect(f.reads).toContain("reservations:by_creation_time");
+  });
+  it("preserves unique violations, empty results and point IDs", async () => {
+    const f = fixture(); await prepare(f); const ctx = useReservationReadModel(f.context());
+    await expect(ctx.db.query("reservations").withIndex("by_hygglo_order_id", q => q.eq("hygglo_order_id", "order1")).unique()).rejects.toThrow("Original unique violation");
+    expect(await ctx.db.query("reservations").withIndex("by_hygglo_order_id", q => q.eq("hygglo_order_id", "none")).first()).toBeNull();
+    expect(await ctx.db.get("r2" as any)).toEqual(f.tables.reservations[1]);
+    await f.db.delete("r2"); await syncReservationReadRecord(f.context(), "r2" as any); expect(await useReservationReadModel(f.context()).db.get("r2" as any)).toBeNull();
+  });
+  it("requires strict prepared reads and preserves existing context identity", async () => {
+    const f = fixture(); const original = f.context(); expect(useReservationReadModel(original)).toBe(original);
+    await expect(preparedReservationReadContext(f.context()).db.query("reservations").collect()).rejects.toThrow("unavailable");
+    await prepare(f, false); const ctx = preparedReservationReadContext(original); expect(await ctx.db.query("reservations").collect()).toEqual(f.tables.reservations);
+    const raw = sourceReservationReadContext(ctx); expect(useReservationReadModel(raw)).toBe(raw); expect(raw.db).toBe(f.db);
+  });
+  it("maintains every source field through real central writer helpers", async () => {
+    const f = fixture(); await prepare(f);
+    await patchRevenueReservation(f.context(), "r1" as any, { last_polled_at: 55 });
+    expect(await reservationReadRecordMatches(f.tables.reservation_read_records.find(r => r.source_id === "r1"), f.tables.reservations[0])).toBe(true);
+    const id = await insertRevenueReservation(f.context(), { status: "confirmed", created_at: 40, v1_updated_at: 40 });
+    await deleteRevenueReservation(f.context(), "r2" as any);
+    expect(await useReservationReadModel(f.context()).db.query("reservations").collect()).toEqual(await f.db.query("reservations").collect());
+    expect(f.tables.reservation_read_records.some(r => r.source_id === id)).toBe(true);
+  });
+  it("keeps the runtime gate stable on normal writes and coalesces revision bumps", async () => {
+    const f = fixture(); await prepare(f); const gate = structuredClone(f.tables.reservation_read_gate[0]); const ctx = f.context();
+    await Promise.all([patchRevenueReservation(ctx, "r1" as any, { last_polled_at: 8 }), patchRevenueReservation(ctx, "r2" as any, { last_polled_at: 9 })]);
+    expect(f.tables.reservation_read_gate[0]).toEqual(gate); expect(f.tables.reservation_read_progress[0].revision).toBe(1);
+  });
+  it("does not invalidate or rewrite unchanged records", async () => {
+    const f = fixture(); await prepare(f); f.writes.length = 0; await patchRevenueReservation(f.context(), "r1" as any, { v1_updated_at: 1 });
+    expect(f.writes).toEqual(["reservations"]); expect(f.tables.reservation_read_progress[0].revision).toBe(0);
+  });
+  it("disables reads and restarts preparation after a caught model-write failure", async () => {
+    const f = fixture(); await prepare(f); f.modelFailure(true); await expect(patchRevenueReservation(f.context(), "r1" as any, { v1_updated_at: 9 })).rejects.toThrow("model write failed");
+    expect(f.tables.reservation_read_gate[0].ready).toBe(false); expect(f.tables.reservation_read_progress[0].stage).toBe("backfill");
+    expect(await useReservationReadModel(f.context()).db.query("reservations").collect()).toEqual(f.tables.reservations);
+  });
+  it("does not route Lab source IDs into production compressed records", async () => {
+    const f = fixture(); await prepare(f); const before = structuredClone(f.tables.reservation_read_records);
+    await patchRevenueReservation(f.context(), "lab1" as any, { last_polled_at: 9 }); expect(f.tables.reservation_read_records).toEqual(before);
+  });
+  it("prunes ghost records before auditing the whole source and keeps activation disabled", async () => {
+    const f = fixture(); await prepare(f, false); const ghost = structuredClone(f.tables.reservation_read_records[0]); ghost._id = "ghost"; ghost.source_id = "missing"; f.tables.reservation_read_records.push(ghost);
+    await prepare(f, false); expect(f.tables.reservation_read_records.some(r => r._id === "ghost")).toBe(false); expect(f.tables.reservation_read_gate[0].enabled).toBe(false); expect(f.tables.reservation_read_progress[0].audited_count).toBe(3);
+  });
+  it("keeps Lab reads on their original isolated table and IDs", async () => {
+    const f = fixture(); await prepare(f); const ctx = useReservationReadModel(f.context()); f.reads.length = 0;
+    expect(await ctx.db.get("lab1" as any)).toEqual(f.tables.renter_bot_lab_bookings[0]);
+    expect(await ctx.db.query("renter_bot_lab_bookings").collect()).toEqual(f.tables.renter_bot_lab_bookings);
+    expect(f.reads.some(x => x.startsWith("reservation_read_records:"))).toBe(false);
+  });
+  it("can re-audit a disabled prepared model after normal source changes", async () => {
+    const f = fixture(); await prepare(f, false); await patchRevenueReservation(f.context(), "r1" as any, { last_polled_at: 99 });
+    await (admin.reaudit as any)._handler(f.context(), {});
+    for (let n = 0; n < 20 && f.tables.reservation_read_progress[0].stage !== "prepared"; n++) await (admin.step as any)._handler(f.context(), {});
+    await (admin.enable as any)._handler(f.context(), { revision: 1, count: 3 }); expect(f.tables.reservation_read_gate[0].enabled).toBe(true);
+  });
+  it("does not certify an orphan left by a caught delete failure during migration", async () => {
+    const f = fixture(); await prepare(f, false); f.modelFailure(true);
+    await expect(deleteRevenueReservation(f.context(), "r1" as any)).rejects.toThrow("model write failed");
+    expect(f.tables.reservation_read_progress[0].stage).toBe("backfill"); f.modelFailure(false);
+    for (let n = 0; n < 20 && f.tables.reservation_read_progress[0].stage !== "prepared"; n++) await (admin.step as any)._handler(f.context(), {});
+    expect(f.tables.reservation_read_progress[0].audited_count).toBe(2); expect(f.tables.reservation_read_records.some(r => r.source_id === "r1")).toBe(false);
+  });
+  it("preserves source behavior for a read-only framework context", async () => {
+    const f = fixture(); await prepare(f); const ctx = Object.freeze(f.context());
+    expect(useReservationReadModel(ctx)).toBe(ctx); expect(await ctx.db.query("reservations").collect()).toEqual(f.tables.reservations);
+  });
+  it.skipIf(!process.env.RM_RESERVATION_READ_SNAPSHOT)("round trips complete private production source records", async () => {
+    const rows = jsonToConvex(JSON.parse(fs.readFileSync(process.env.RM_RESERVATION_READ_SNAPSHOT!, "utf8"))) as any[];
+    const f = fixture(rows); await prepare(f); expect(await useReservationReadModel(f.context()).db.query("reservations").collect()).toEqual(rows);
+    expect(f.tables.reservation_read_progress[0].audited_count).toBe(rows.length);
+  });
+  it("checks booking existence without full documents or compressed bodies", async () => {
+    const f = fixture(); await prepare(f); f.reads.length = 0; const ctx = useReservationReadModel(f.context());
+    expect(await hasReservationByOrder(ctx, "order1")).toBe(true); expect(await hasReservationByOrder(ctx, "absent")).toBe(false);
+    expect(f.reads.some(x => x.startsWith("reservations:") || x.startsWith("reservation_read_records:"))).toBe(false);
+    expect(f.reads.filter(x => x.startsWith("reservation_read_gate:"))).toHaveLength(1);
+  });
+  it("updates existence keys and preserves other duplicate source orders on deletion", async () => {
+    const f = fixture(); await prepare(f); await patchRevenueReservation(f.context(), "r1" as any, { hygglo_order_id: "changed" });
+    expect(await hasReservationByOrder(useReservationReadModel(f.context()), "order1")).toBe(true);
+    await deleteRevenueReservation(f.context(), "r3" as any); expect(await hasReservationByOrder(useReservationReadModel(f.context()), "order1")).toBe(false);
+    expect(await hasReservationByOrder(useReservationReadModel(f.context()), "changed")).toBe(true);
+  });
+  it("retains raw existence queries when disabled and during source-only qualification", async () => {
+    const f = fixture(); await prepare(f, false); expect(await hasReservationByOrder(f.context(), "order1")).toBe(true);
+    expect(await hasReservationByOrder(preparedReservationReadContext(f.context()), "order2")).toBe(true);
+    f.reads.length = 0; expect(await hasReservationByOrder(sourceReservationReadContext(f.context()), "order1")).toBe(true); expect(f.reads).toContain("reservations:by_hygglo_order_id");
+  });
+  it("does not rewrite existence rows for unrelated polling metadata", async () => {
+    const f = fixture(); await prepare(f); f.writes.length = 0; await patchRevenueReservation(f.context(), "r1" as any, { last_polled_at: 99 });
+    expect(f.writes).not.toContain("reservation_order_presence");
+  });
+  it("rejects stale activation and audit tampering", async () => {
+    const f = fixture(); await prepare(f, false); await patchRevenueReservation(f.context(), "r1" as any, { v1_updated_at: 9 });
+    await expect((admin.enable as any)._handler(f.context(), { revision: 0, count: 3 })).rejects.toThrow("qualify again");
+    f.tables.reservation_read_records[0].source_sha256 = "tampered"; await (admin.start as any)._handler(f.context(), {});
+    // Direct audit catches a bad payload; normal source backfill repairs it.
+    f.tables.reservation_read_progress[0].stage = "audit"; f.tables.reservation_read_progress[0].audited_revision = f.tables.reservation_read_progress[0].revision;
+    await expect((admin.step as any)._handler(f.context(), {})).rejects.toThrow("audit failed");
+  });
+});
