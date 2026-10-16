@@ -484,18 +484,34 @@ export const getStatsDrawerData = query({
     // ── Next-30-day window for out-of-stock calc ─────────────────
     const next30 = new Date(now.getTime() + 30 * 86400000).toISOString().slice(0, 10);
 
-    // ── COLLECT 1: reservations (indexed last 365d) ──────────────
-    // Stat cards display current month + active + earnings (today/week/month).
-    // YTD + lifetime-trend widgets pull their own MV/lifetime data; this
-    // query never returns pre-365d totals. Indexed read drops ~1767 → ~250.
+    // ── COLLECT 1: current/revenue reservations (indexed last 365d) ────────
+    // Most cancelled rows are obsolete copies from Hygglo history. They only
+    // feed the weekly operational-loss card and the 30-day demand classifier;
+    // reading all of them on every stats refresh was ~80% of this query's
+    // reservation I/O. Read the live revenue states here. The weekly loss path
+    // and computeMissedRevenue each read their own bounded obsolete/cancelled
+    // indexes only when needed below.
+    //
+    // Keep the same 365-day source window for current-year revenue, active
+    // rental summaries, month projection, AI attribution and tax estimates.
     const dashCutoff = (() => {
       const d = new Date();
       d.setDate(d.getDate() - 365);
       return d.toISOString().slice(0, 10);
     })();
-    const allResRaw = await ctx.db.query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", dashCutoff))
-      .collect();
+    const [confirmedRows, completedRows, pendingReviewRows] = await Promise.all([
+      ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+        q.eq("status", "confirmed").gte("start_date", dashCutoff),
+      ).collect(),
+      ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+        q.eq("status", "completed").gte("start_date", dashCutoff),
+      ).collect(),
+      ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+        q.eq("status", "pending_review").gte("start_date", dashCutoff),
+      ).collect(),
+    ]);
+    const allResRaw = [...confirmedRows, ...completedRows, ...pendingReviewRows]
+      .sort((a, b) => (a.start_date ?? "").localeCompare(b.start_date ?? "") || a._creationTime - b._creationTime);
     // Account-scoped view for per-card numbers (active, earnings, monthly, etc.)
     let allRes = allResRaw;
     if (accountSlug) {
@@ -1576,21 +1592,24 @@ export const getStatsDrawerData = query({
       r.obsolete_at ?? r.v1_updated_at ?? r._creationTime;
     let allObsoleteRes: ResRow[] = [];
     if (!reuseWeeklyFallout) {
-      // COLLECT 1 already loaded every row starting on/after dashCutoff.
-      // Re-reading the full obsolete set at month rollover duplicated ~6.5 MB
-      // and pushed the all-accounts refresh past Convex's 16 MB read limit.
-      // The indexed complement includes undated legacy rows (undefined sorts
-      // before strings), preserving fallout for old bookings that failed later.
+      // Obsolete cancellations are intentionally not part of the frequent live
+      // reservation reads above. Pull both indexed date ranges only when the
+      // weekly operational-loss snapshot expires. The older indexed complement
+      // includes undated legacy rows (undefined sorts before strings), so old
+      // bookings that failed later remain represented.
+      const recentObsoleteRes = await ctx.db
+        .query("reservations")
+        .withIndex("by_is_obsolete_start_date", (q) =>
+          q.eq("is_obsolete", true).gte("start_date", dashCutoff),
+        )
+        .collect();
       const olderObsoleteRes = await ctx.db
         .query("reservations")
         .withIndex("by_is_obsolete_start_date", (q) =>
           q.eq("is_obsolete", true).lt("start_date", dashCutoff),
         )
         .collect();
-      allObsoleteRes = [
-        ...allResRaw.filter((r) => r.is_obsolete === true),
-        ...olderObsoleteRes,
-      ];
+      allObsoleteRes = [...recentObsoleteRes, ...olderObsoleteRes];
       if (accountSlug) allObsoleteRes = allObsoleteRes.filter((r) => r.account_slug === accountSlug);
     }
     const monthlyLosses = await loadMonthlyVerificationLosses(ctx, monthKey, accountSlug);
@@ -1855,21 +1874,15 @@ export const getStatsDrawerData = query({
     // present for the first hour after deploy.
     // 2026-06-27 overhaul: turned-away DEMAND, classified live. The old idle-
     // capacity mv_missed_revenue is retired (idle days × price wasn't real loss).
-    // 2026-07-12 dedupe: pass this handler's own collects (COLLECT 1 allResRaw,
-    // COLLECT 2 allItems, COLLECT 3 denialRows, COLLECT 8 productIndexRows,
-    // COLLECT 9 overrideRows — all full/unfiltered, never mutated) so the
-    // helper skips 5 duplicate table reads. allResRaw's 365d by_start_date
-    // window is a strict superset of the helper's 30d gte on the same index;
-    // the helper re-derives its window with the identical predicate (see
-    // MissedRevenuePreloads in convex/lib/missed_revenue.ts). The confirmed
-    // by_status collect stays inside the helper — confirmed rows can start
-    // >365d ago, so allResRaw does not provably contain them.
+    // 2026-07-12 dedupe: pass the already-loaded items, denial, product-index
+    // and override rows. Do not preload reservations here: the helper's indexed
+    // 30-day cancellation/obsolete reads are much smaller than the dashboard's
+    // old 365-day all-status collect and preserve its exact demand classifier.
     const missedRevenueResult = await computeMissedRevenue(ctx, accountSlug, 30, {
       items: allItems,
       productIndexRows,
       overrideRows,
       denialRows,
-      reservations: { rows: allResRaw, gteStartDate: dashCutoff },
     });
     const missed_revenue = {
       total_gbp: missedRevenueResult.totalMissed,
@@ -2055,10 +2068,9 @@ export const getStatsDrawerData = query({
     const sellCutoffStr = new Date(Date.now() - SELL_LOOKBACK_DAYS * 86400000)
       .toISOString()
       .slice(0, 10);
-    // Dedup (2026-07-08): sell_reco's 90d window is a strict sub-range of the 365d
-    // `allResRaw` already collected earlier in this handler. Filter in-memory instead
-    // of a second `reservations` full scan — byte-identical rows (same predicate),
-    // one fewer windowed collect per getStatsDrawerData run.
+    // Use the live-status rows already loaded above. Cancelled/declined and
+    // obsolete copies are not rental utilization and must not suppress a sell
+    // recommendation; excluding them also avoids another all-status range read.
     let sellReservations = allResRaw.filter(
       (r) => (r.start_date as string) >= sellCutoffStr,
     );
