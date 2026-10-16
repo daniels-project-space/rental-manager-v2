@@ -6,7 +6,11 @@ const root = process.cwd();
 const configFile = ts.readConfigFile(path.join(root, "tsconfig.json"), ts.sys.readFile);
 if (configFile.error) throw new Error("Cannot read TypeScript configuration for product writer audit");
 const config = ts.parseJsonConfigFileContent(configFile.config, ts.sys, root);
-const program = ts.createProgram(config.fileNames, config.options);
+// Only backend roots and their actual imports can write through MutationCtx.
+// Avoid loading the unrelated Next.js UI and test suite into a second checker.
+const backendRoots = config.fileNames.filter((file) => file.startsWith(path.join(root, "convex") + path.sep)
+  && !/\.(test|spec|d)\.ts$/.test(file));
+const program = ts.createProgram(backendRoots, config.options);
 const checker = program.getTypeChecker();
 const failures = [], writers = [], reviewed = new Map();
 // These pre-existing casts write insurance claims, reservation vision results,
@@ -30,7 +34,8 @@ function unwrap(expression) {
   return expression;
 }
 for (const source of program.getSourceFiles()) {
-  if (!source.fileName.startsWith(path.join(root, "convex") + path.sep) || /\.(test|spec|d)\.ts$/.test(source.fileName)) continue;
+  if (!source.fileName.startsWith(root + path.sep) || source.fileName.includes(`${path.sep}node_modules${path.sep}`)
+    || /\.(test|spec|d)\.ts$/.test(source.fileName)) continue;
   const file = path.relative(root, source.fileName).split(path.sep).join("/");
   function visit(node) {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
