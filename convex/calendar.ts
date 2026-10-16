@@ -1562,10 +1562,32 @@ export const getGanttWeek = query({
     }
 
     // Phase 13.2: listing_images bank — product_id-keyed canonical photos.
-    const listingImagesAllGantt = await ctx.db.query("listing_images").collect();
+    // Only listings actually referenced by this week's reservations can
+    // contribute a Gantt image. Avoid re-reading the entire image bank on every
+    // reactive query; the compound index fetches just the referenced keys.
+    const listingImageKeys = new Map<string, { account: string; productId: number }>();
+    for (const r of reservations) {
+      const account = (r as { account_slug?: string }).account_slug ?? "";
+      for (const h of (r as { hygglo_items?: Array<{ product_id?: number }> }).hygglo_items ?? []) {
+        if (typeof h.product_id !== "number") continue;
+        const key = `${account}#${h.product_id}`;
+        if (!listingImageKeys.has(key)) listingImageKeys.set(key, { account, productId: h.product_id });
+      }
+    }
+    const listingImageRows = await Promise.all(
+      [...listingImageKeys.values()].map(({ account, productId }) =>
+        ctx.db.query("listing_images")
+          .withIndex("by_account_product", (q) =>
+            q.eq("account_slug", account).eq("product_id", productId),
+          )
+          .collect(),
+      ),
+    );
     const bankByProductGantt = new Map<string, string>();
-    for (const li of listingImagesAllGantt) {
-      bankByProductGantt.set(`${li.account_slug}#${li.product_id}`, li.image_url);
+    for (const rows of listingImageRows) {
+      for (const li of rows) {
+        bankByProductGantt.set(`${li.account_slug}#${li.product_id}`, li.image_url);
+      }
     }
     // Per override-resolved item -> the photo of the LISTING it was rented in
     // (items have no stock photo). Keyed by item_id so the canonical Gantt rows
