@@ -92,18 +92,25 @@ export default function DashboardPage() {
       window.removeEventListener("popstate", syncUrl);
     };
   }, []);
+  // Core dashboard panels must survive layouts saved by older releases.
+  // Stats Grid contains the live Active Rentals and Monthly KPIs, so restore
+  // it at the top when a saved layout predates the panel. Keep the existing
+  // placement when the user already has it in their layout.
+  const compatiblePanelOrder = layout.panelOrder.includes("stats-grid")
+    ? layout.panelOrder
+    : ["stats-grid", ...layout.panelOrder];
   // Pin this owner tool into older saved layouts too, so it never gets lost in
   // the add-widget drawer after a deployment introduces the new control.
-  const panelOrder = layout.panelOrder.includes("marketing-only-listings")
-    ? layout.panelOrder
-    : [...layout.panelOrder, "marketing-only-listings"];
+  const panelOrder = compatiblePanelOrder.includes("marketing-only-listings")
+    ? compatiblePanelOrder
+    : [...compatiblePanelOrder, "marketing-only-listings"];
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
   const visiblePanels = panelOrder
-    .filter((id) => !isPanelHidden(id) || (id === "reply-inbox" && notificationOpen))
+    .filter((id) => id === "stats-grid" || !isPanelHidden(id) || (id === "reply-inbox" && notificationOpen))
     .map((id) => PANEL_WIDGETS.find((w) => w.id === id))
     .filter((w): w is (typeof PANEL_WIDGETS)[number] => Boolean(w));
 
