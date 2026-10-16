@@ -553,7 +553,7 @@ export const pollHyggloInbox = schedules.task({
     const reconcileAccountHolds = async (
       accountSlug: string,
       reconReservationsRaw: FunctionReturnType<typeof api.reservations.listForReconcile>,
-    ) => {
+    ): Promise<boolean> => {
       try {
         const reconItemsRaw = await getReconItemsRaw();
 
@@ -662,9 +662,11 @@ export const pollHyggloInbox = schedules.task({
         }
 
         logger.log(`[reconcile] account=${accountSlug} stats: ${JSON.stringify(result.stats)}`);
+        return true;
       } catch (reconErr) {
         // Reconciliation failure is non-fatal — Hygglo fetch + reservation upsert succeeded
         logger.error(`[reconcile] account=${accountSlug} failed (non-fatal): ${reconErr instanceof Error ? reconErr.message : String(reconErr)}`);
+        return false;
       }
     };
     try {
@@ -850,7 +852,6 @@ export const pollHyggloInbox = schedules.task({
               api.hygglo.upsertOrdersAsReservationsBatch,
               { orders: orderArgs },
             );
-
             for (let j = 0; j < batchResults.length; j++) {
               const resResult = batchResults[j];
               const payload = batch[j];
@@ -1076,22 +1077,67 @@ export const pollHyggloInbox = schedules.task({
         }
       }
 
-      // Reconcile from a single snapshot AFTER every successful account's
-      // upserts, so later accounts never consume a pre-poll reservation view.
-      // The old per-account query remains a recovery path if batching fails.
+      // Reconcile only dirty reservations on every full poll, reserving the
+      // broad indexed snapshot for a six-hour repair pass. The full scan reads
+      // about 4,500 large reservation documents (roughly 11 MB) every 15 min.
       if (isFullPoll) {
         const successfulSlugs = reconciliationSlugs;
-        let batch: FunctionReturnType<typeof api.reconciliation.listBatch> | null = null;
+        let dirtyBatch: FunctionReturnType<typeof api.reconciliation.listDirtyBatch> | null = null;
         if (successfulSlugs.length) try {
-          batch = await convex.query(api.reconciliation.listBatch, { account_slugs: successfulSlugs });
+          dirtyBatch = await convex.query(api.reconciliation.listDirtyBatch, { account_slugs: successfulSlugs });
+        } catch (error) {
+          logger.warn(`[reconcile] dirty queue unavailable; full repair gate remains available: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        const forceAccounts = successfulSlugs.filter((slug) =>
+          (dirtyBatch?.groups.find((group) => group.account_slug === slug)?.markers.length ?? 0) >= 500,
+        );
+        let fullSlugs: string[] = [];
+        if (successfulSlugs.length) try {
+          fullSlugs = await convex.mutation(api.account_state.tryClaimFullReconciliation, {
+            accounts: successfulSlugs,
+            forceAccounts,
+            now: Date.now(),
+          });
+        } catch (error) {
+          logger.warn(`[reconcile] full-repair gate unavailable; using dirty rows only: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        fullSlugs = [...new Set([...fullSlugs, ...forceAccounts])];
+
+        let batch: FunctionReturnType<typeof api.reconciliation.listBatch> | null = null;
+        if (fullSlugs.length) try {
+          batch = await convex.query(api.reconciliation.listBatch, { account_slugs: fullSlugs });
           logger.log(`[reconcile] strategy=${batch.strategy} accounts=${batch.groups.length}`);
         } catch (error) {
-          logger.warn(`[reconcile] batch unavailable; retaining per-account recovery: ${error instanceof Error ? error.message : String(error)}`);
+          logger.warn(`[reconcile] periodic full snapshot failed; changed-row repair remains available: ${error instanceof Error ? error.message : String(error)}`);
         }
         for (const slug of successfulSlugs) try {
-          const rows = batch?.groups.find(group => group.account_slug === slug)?.reservations ??
-            await convex.query(api.reservations.listForReconcile, { account_slug: slug });
-          await reconcileAccountHolds(slug, rows);
+          const dirtyGroup = dirtyBatch?.groups.find((group) => group.account_slug === slug);
+          const fullRows = fullSlugs.includes(slug)
+            ? batch?.groups.find((group) => group.account_slug === slug)?.reservations
+            : undefined;
+          const rows = fullRows ?? dirtyGroup?.reservations;
+          if (!rows || (!fullRows && (dirtyGroup?.markers.length ?? 0) === 0)) {
+            if (fullSlugs.includes(slug)) logger.error(`[reconcile] full snapshot unavailable for account=${slug}; no dirty rows to fall back to`);
+            continue;
+          }
+          logger.log(`[reconcile] account=${slug} strategy=${fullRows ? "periodic-full" : "changed-rows"} rows=${rows.length}`);
+          let holdsReconciled = await reconcileAccountHolds(slug, rows);
+          const missingIds = (dirtyGroup?.markers ?? [])
+            .filter((marker) => marker.missingReservation)
+            .map((marker) => marker.reservation_id);
+          if (holdsReconciled && missingIds.length > 0) {
+            try {
+              await convex.mutation(api.calendar.deleteStaleHolds, { reservation_ids: missingIds });
+            } catch (error) {
+              holdsReconciled = false;
+              logger.error(`[reconcile] account=${slug} deleted-row cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          }
+          if (holdsReconciled && dirtyGroup && dirtyGroup.markers.length > 0) {
+            await convex.mutation(api.reconciliation.ackDirty, {
+              markers: dirtyGroup.markers.map(({ id, version }) => ({ id, version })),
+            });
+          }
         } catch (error) {
           logger.error(`[reconcile] account=${slug} read failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`);
         }

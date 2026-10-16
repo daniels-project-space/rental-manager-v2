@@ -10,6 +10,7 @@ import { confirmedChatClock, recoverConfirmedChatClock } from "../src/lib/bookin
 import { hashBookingTimeTranscript } from "../src/lib/booking-time-transcript";
 import type { MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
+import { markReservationDirty } from "./lib/reconciliation_dirty";
 
 /** Re-read the real stored transcript; model/client confidence is not evidence.
  * A stale asynchronous model response must never overwrite a newer agreement. */
@@ -37,6 +38,11 @@ async function persistTimes(ctx:MutationCtx,id:Id<"reservations">,hash:string,pa
  };
  pickup??=keep(row.pickup_time_provenance,"pickup");returned??=keep(row.return_time_provenance,"return");
  await ctx.db.patch(id,{...patch,pickup_time_provenance:pickup,return_time_provenance:returned,...(stampExtraction?{times_transcript_hash:hash,times_extracted_at:Date.now()}:{} )});
+ const changesHoldWindow = (["pickup_time", "return_time", "pickup_date", "return_date"] as const)
+  .some((field) => patch[field] !== undefined && row[field] !== patch[field]);
+ if (changesHoldWindow && row.account_slug) {
+  await markReservationDirty(ctx, id, row.account_slug);
+ }
  return true;
 }
 
