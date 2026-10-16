@@ -1016,7 +1016,11 @@ const operationalSchema = defineSchema({
     item_resolution_confidence: v.optional(v.number()),
     // Phase 3 — link denial to source reservation (back-fill in Phase 6).
     rental_id: v.optional(v.id("reservations")),
-  }).index("by_account", ["account_id"]).index("by_reason", ["reason"]).index("by_item", ["item_id"]),
+  }).index("by_account", ["account_id"])
+    .index("by_account_created_at", ["account_id", "created_at"])
+    .index("by_created_at", ["created_at"])
+    .index("by_reason", ["reason"])
+    .index("by_item", ["item_id"]),
 
   // ── Audit log ────────────────────────────────────────────────
   audit_log: defineTable({
