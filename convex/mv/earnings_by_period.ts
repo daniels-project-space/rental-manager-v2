@@ -339,8 +339,32 @@ export const get = query({
 export const refresh = internalMutation({
   args: {},
   handler: async (ctx) => {
-    const reservations = await ctx.db.query("reservations").collect(); // check-patterns:ok — MV builder — lifetime buckets need the full table (manual/dispatch path; daily cron uses master's shared collect)
-    const rows = computeEarningsByPeriod({ reservations, generatedAt: Date.now() });
+    const generatedAt = Date.now();
+    const cutoff = new Date(generatedAt);
+    cutoff.setMonth(cutoff.getMonth() - RETENTION_MONTHS);
+    const cutoffISO = cutoff.toISOString().slice(0, 10);
+    const now = new Date(generatedAt);
+    const nextMonthISO = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))
+      .toISOString()
+      .slice(0, 10);
+
+    // `computeEarningsByPeriod` retains only effective dates in the trailing
+    // 24 months through the current month. Collect the indexed start/pickup
+    // windows that can contribute, then dedupe reservations with both dates.
+    // A reservation with an older start but a recent pickup is included by the
+    // pickup index; the inverse is included by the start index and filtered by
+    // effectiveDate in the shared compute function.
+    const [byStartDate, byPickupDate] = await Promise.all([
+      ctx.db.query("reservations")
+        .withIndex("by_start_date", (q) => q.gte("start_date", cutoffISO).lt("start_date", nextMonthISO))
+        .collect(),
+      ctx.db.query("reservations")
+        .withIndex("by_pickup_date", (q) => q.gte("pickup_date", cutoffISO).lt("pickup_date", nextMonthISO))
+        .collect(),
+    ]);
+    const byId = new Map(byStartDate.map((reservation) => [reservation._id, reservation]));
+    for (const reservation of byPickupDate) byId.set(reservation._id, reservation);
+    const rows = computeEarningsByPeriod({ reservations: [...byId.values()], generatedAt });
     for (const r of rows) {
       const existing = await ctx.db
         .query("mv_earnings_by_period")

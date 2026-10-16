@@ -94,17 +94,17 @@ export async function refreshAll(
     }
   }
 
-  // Run the live assembly once (accountSlug null → all tiles; high limit so the
-  // stored list is never truncated before the reader slices per-account).
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // Each cohort needs account-specific tile assembly, but the query also reads
+  // shared conversations, reservation indexes, availability and listing context.
+  // Pass every live cohort in one query so the shared data is loaded only once;
+  // row filtering still keeps account-specific tile assembly partitioned.
   const partitions:Array<string|null>=await ctx.runQuery(anyApi.mv.reply_queue.partitionAccounts,{});
-  const parts=await Promise.all(partitions.map(_partitionSlug=>ctx.runQuery(internal.replyInbox.__service_getReplyQueue, {
+  const part=await ctx.runQuery(internal.replyInbox.__service_getReplyQueue, {
     limit:REPLY_MV_LIMIT,withinDays:REPLY_MV_WITHIN_DAYS,messagesWithinDays:REPLY_MV_MESSAGES_WITHIN_DAYS,
-    includeFinished:false,includeMessages:true,includePending:incPending,_bypassMv:true,_partitionSlug,
-  })));
-  // Never publish a partial account result. Promise.all rejects on any failed
-  // cohort; global ordering, full coverage and thread identity are retained.
-  const tiles=mergeReplyPartitions(parts,REPLY_MV_LIMIT);
+    includeFinished:false,includeMessages:true,includePending:incPending,_bypassMv:true,_partitionSlugs:partitions,
+  });
+  // Keep deterministic deduplication and global ordering on the returned rows.
+  const tiles=mergeReplyPartitions([part],REPLY_MV_LIMIT);
   await ctx.runMutation(anyApi.mv.reply_queue.write, {
     account: key,
     tiles,
