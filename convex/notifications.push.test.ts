@@ -113,3 +113,47 @@ describe("selected phone renewal capability",()=>{
   await invoke(savePushSubscription,f.ctx,{endpoint:phone,...keys,activate:true,renewal_credential:otherToken});expect(await invoke(renewPushSubscription,f.ctx,{endpoint:phone,previous_endpoint:phone,...keys,renewal_credential:token})).toMatchObject({active:false});
  });
 });
+
+import { claimPending, listRecent, queueNotificationEvents } from "./notifications";
+import { rentalReminderEvent } from "./lib/rental_timing_notifications";
+
+describe("real timing event queue, bell and delivery claims",()=>{
+ const now=Date.parse("2035-07-01T11:45Z");
+ const rental:any={_id:"rental",hygglo_order_id:"fixture",account_slug:"diogo",renter_name:"Alex",status:"confirmed",order_step:"DELIVERED",start_date:"2035-07-01",end_date:"2035-07-01",pickup_time:"13:00",return_time:"13:00",items:[{item_name:"Camera",qty:1}]};
+ function fixture(){
+  const rows:any[]=[{...rental,table:"reservations"}];const writes:any[]=[];
+  const db:any={get:async(id:string)=>rows.find(r=>r._id===id),patch:async(id:string,fields:any)=>{Object.assign(rows.find(r=>r._id===id),fields);writes.push({id,fields})},insert:async(table:string,fields:any)=>{const id=table+rows.length;rows.push({_id:id,...fields,table});return id},query:(table:string)=>{
+   const filters:Array<(r:any)=>boolean>=[];let desc=false;
+   const select:any={eq:(k:string,v:any)=>{filters.push(r=>r[k]===v);return select}};
+   const matches=()=>rows.filter(r=>r.table===table&&filters.every(f=>f(r))).sort((a,b)=>(desc?-1:1)*((a.created_at??0)-(b.created_at??0)));
+   const q:any={withIndex:(_n:string,f?:any)=>{f?.(select);return q},order:(dir:string)=>{desc=dir==="desc";return q},take:async(n:number)=>matches().slice(0,n),first:async()=>matches()[0]??null};return q;
+  }};
+  return {ctx:{db,scheduler:{runAfter:vi.fn()}},rows,writes};
+ }
+ it("queues all three logistics types once and includes them in All, while income lanes stay income-only",async()=>{
+  vi.spyOn(Date,"now").mockReturnValue(now);
+  try{
+   const f=fixture();const events=[rentalReminderEvent(rental,now,"pickup")!,rentalReminderEvent(rental,now,"return")!,{type:"rental_time_changed" as const,event_key:"schedule-fixture",thread_id:"fixture",account_slug:"diogo",title:"Alex has changed their rental times",body:"Pickup: 14:00 → 15:00",url:"/?thread=fixture"}];
+   expect(await queueNotificationEvents(f.ctx as any,events)).toBe(3);expect(await queueNotificationEvents(f.ctx as any,events)).toBe(0);
+   const all=await invoke(listRecent,f.ctx,{mode:"all"});expect(all.events.map((e:any)=>e.type).sort()).toEqual(["pickup_reminder","rental_time_changed","return_reminder"]);
+   for(const mode of ["my_share","money_only"])expect((await invoke(listRecent,f.ctx,{mode})).events).toEqual([]);
+   expect(f.writes).toEqual([]); // No reservation writes, nor any real transport.
+  }finally{vi.restoreAllMocks()}
+ });
+ it("refreshes both reminder countdowns on a delayed claim and drops cancelled, rescheduled and expired claims",async()=>{
+  vi.spyOn(Date,"now").mockReturnValue(now);
+  try{
+   for(const kind of ["pickup","return"] as const){
+    const f=fixture(),event=rentalReminderEvent(rental,now,kind)!;await queueNotificationEvents(f.ctx as any,[event]);
+    vi.mocked(Date.now).mockReturnValue(now+2*60_000);
+    expect((await invoke(claimPending,f.ctx,{}))[0].title).toBe(`You have a ${kind} in 13 minutes`);
+    for(const patch of [{status:"cancelled"},{pickup_time:"14:00",return_time:"14:00"},{}]){
+     const g=fixture();await queueNotificationEvents(g.ctx as any,[event]);Object.assign(g.rows[0],patch);
+     if(Object.keys(patch).length===0)vi.mocked(Date.now).mockReturnValue(now+15*60_000);
+     expect(await invoke(claimPending,g.ctx,{})).toEqual([]);expect(g.writes.every(w=>w.id!=="rental")).toBe(true);
+    }
+    vi.mocked(Date.now).mockReturnValue(now);
+   }
+  }finally{vi.restoreAllMocks()}
+ });
+});

@@ -15,9 +15,9 @@ async function dispatch(type:string,extra:any={}){
  return {calls:vi.mocked(webpush.sendNotification).mock.calls,runMutation};
 }
 describe("actual notification dispatcher with isolated transports",()=>{
- it.each(["pickup_reminder","rental_time_changed"])("delivers %s only to All notifications",async type=>{
+ it.each(["pickup_reminder","return_reminder","rental_time_changed"])("delivers %s only to All notifications",async type=>{
   const {calls}=await dispatch(type);expect(calls).toHaveLength(1);expect(calls[0][0].endpoint).toBe("https://all.example.invalid");
-  if(type==="pickup_reminder")expect(calls[0][2]).toEqual({TTL:60,urgency:"high"});
+  if(type==="pickup_reminder"||type==="return_reminder")expect(calls[0][2]).toEqual({TTL:60,urgency:"high"});
  });
  it("keeps the item and exact half income in the actual 50% phone payload",async()=>{
   const {calls}=await dispatch("booking_confirmed",{copy_data:{item_name:"Sony FX3",renter_name:"Fixture",net:81,gross:100,currency:"GBP"}});
