@@ -2122,6 +2122,21 @@ const operationalSchema = defineSchema({
     .index("by_account", ["accountSlug"])
     .searchIndex("search_name", { searchField: "name", filterFields: ["accountSlug"] }),
 
+  // Narrow read model for reservation → inventory allocation. The catalog
+  // rows above also carry images, price tiers, availability dates and other
+  // storefront data; allocation only needs these three fields. Keep this
+  // projection atomically synchronized with catalog upserts so calendar,
+  // availability and missed-revenue reads do not repeatedly load full catalog
+  // documents. Existing rows are backfilled by the one-shot internal action.
+  hygglo_product_context: defineTable({
+    account_slug: v.string(),
+    product_id: v.number(),
+    name: v.optional(v.string()),
+    description: v.optional(v.string()),
+    master_item_id: v.optional(v.id("items")),
+    source_last_synced_at: v.number(),
+  }).index("by_account_product", ["account_slug", "product_id"]),
+
   // ===========================================================================
   // Ported Listings (Phase 2, Wave 0 — ADDITIVE).
   // Tracks dbcinema catalog products that are MISSING on the leo account and
