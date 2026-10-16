@@ -21,9 +21,17 @@ export async function authorizeOwner(
   return "owner";
 }
 
-/** Temporary rollout switch, to be removed after caller migration and cutover. */
+/**
+ * Keep local development opt-in, but fail closed in production if the rollout
+ * flag is missing. Production may not explicitly disable the owner gate.
+ */
 export function ownerEnforcementRequired(value: string | undefined): boolean {
-  if (value === undefined || value === "false") return false;
+  const production = process.env.NODE_ENV === "production";
+  if (value === undefined) return production;
+  if (value === "false") {
+    if (production) throw new Error("OWNER_AUTH_REQUIRED cannot be disabled in production");
+    return false;
+  }
   if (value === "true") return true;
   throw new Error("Invalid OWNER_AUTH_REQUIRED configuration");
 }
