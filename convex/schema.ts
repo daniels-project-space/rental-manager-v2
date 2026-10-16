@@ -741,6 +741,11 @@ const operationalSchema = defineSchema({
     // owner's approve/decline, so the queue can always surface them.
     .index("by_order_step", ["order_step"])
     .index("by_awaiting_owner_action", ["awaiting_owner_action"])
+    // The reply queue only emits actionable requests created inside its
+    // recency window. Keep those lookups bounded instead of collecting every
+    // historical REQUEST / owner-action row on every cache refresh.
+    .index("by_order_step_created_at", ["order_step", "created_at"])
+    .index("by_awaiting_owner_action_created_at", ["awaiting_owner_action", "created_at"])
     // Pass 13e (2026-05-26): obsolete rows are a small fraction of the table
     // (~50 of ~1700) and the dashboard / refresher / audit paths frequently
     // filter to them. Unindexed `.filter(is_obsolete=true)` was scanning the
