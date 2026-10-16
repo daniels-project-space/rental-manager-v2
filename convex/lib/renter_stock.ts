@@ -29,6 +29,72 @@ export function shiftStockDate(date: string, days: number): string {
   return new Date(Date.parse(date + "T00:00:00Z") + days * 86400000).toISOString().slice(0, 10);
 }
 
+export type StockDateWindow = Readonly<{ start_date: string; end_date: string }>;
+
+/**
+ * A reservation can affect a requested window when its confirmed pickup is no
+ * later than the requested end and its effective return is within the
+ * one-day lookback for the stock turnaround buffer. Return dates only extend
+ * occupancy when their clock has been confirmed, matching stockOccupancyForItem.
+ */
+export function reservationOverlapsStockDateWindow(
+  reservation: Doc<"reservations">,
+  window: StockDateWindow,
+): boolean {
+  // Website checkouts use explicit timestamp windows as the physical stock
+  // source, so their provider reservation dates are not a safe filter.
+  if (reservation.account_slug === "dbcinema_web" && reservation.site_item_windows !== undefined) {
+    return true;
+  }
+  if (!reservation.start_date || !reservation.end_date) return false;
+  const pickupDate = reservation.pickup_date && confirmedClock(reservation, "pickup", reservation.pickup_date)
+    ? reservation.pickup_date
+    : reservation.start_date;
+  const returnDate = reservation.return_date && confirmedClock(reservation, "return", reservation.return_date)
+    ? reservation.return_date
+    : reservation.end_date;
+  return pickupDate <= window.end_date && returnDate >= shiftStockDate(window.start_date, -1);
+}
+
+/** Load a bounded set of reservations that may occupy the requested dates. */
+export async function loadReservationsForStockWindow(
+  ctx: QueryCtx,
+  status: string,
+  window?: StockDateWindow,
+  includeWebsiteTimestampRows = true,
+): Promise<Doc<"reservations">[]> {
+  if (!window) {
+    return await ctx.db
+      .query("reservations")
+      .withIndex("by_status", (q) => q.eq("status", status))
+      .collect();
+  }
+
+  const earliestRelevantReturn = shiftStockDate(window.start_date, -1);
+  const [ending, returning, websiteRows] = await Promise.all([
+    ctx.db
+      .query("reservations")
+      .withIndex("by_status_end_date", (q) => q.eq("status", status).gte("end_date", earliestRelevantReturn))
+      .collect(),
+    ctx.db
+      .query("reservations")
+      .withIndex("by_status_return_date", (q) => q.eq("status", status).gte("return_date", earliestRelevantReturn))
+      .collect(),
+    includeWebsiteTimestampRows
+      ? ctx.db
+          .query("reservations")
+          .withIndex("by_account_status", (q) => q.eq("account_slug", "dbcinema_web").eq("status", status))
+          .collect()
+      : Promise.resolve([] as Doc<"reservations">[]),
+  ]);
+  const candidates = [...new Map([
+    ...ending,
+    ...returning,
+    ...websiteRows.filter((reservation) => reservation.site_item_windows !== undefined),
+  ].map((reservation) => [String(reservation._id), reservation])).values()];
+  return candidates.filter((reservation) => reservationOverlapsStockDateWindow(reservation, window));
+}
+
 export type Occupancy = {
   start: string;
   end: string;
@@ -105,11 +171,11 @@ type StockSources = { items:Doc<"items">[]; reservations:Doc<"reservations">[]; 
   claims:Doc<"insurance_claims">[];blackouts:Doc<"owner_unavailability">[];vacations:Doc<"vacation_periods">[];
   checkoutHolds?:Doc<"storefront_checkout_stock">["rows"];reservationUnits?:Map<string,Map<string,number>>;
   occupancyCache?:{signature?:unknown[];byItem:Map<string,Occupancy[]>} };
-export async function loadStockSources(ctx: QueryCtx):Promise<StockSources> {
+export async function loadStockSources(ctx: QueryCtx, window?: StockDateWindow):Promise<StockSources> {
   const [items, confirmed, ongoing, websitePending, index, overrides, claims, blackouts, vacations, checkoutStock] = await Promise.all([
     ctx.db.query("items").collect(),
-    ctx.db.query("reservations").withIndex("by_status", (q) => q.eq("status", "confirmed")).collect(),
-    ctx.db.query("reservations").withIndex("by_status", (q) => q.eq("status", "ongoing")).collect(),
+    loadReservationsForStockWindow(ctx, "confirmed", window),
+    loadReservationsForStockWindow(ctx, "ongoing", window),
     ctx.db.query("reservations").withIndex("by_account_status", q => q.eq("account_slug", "dbcinema_web").eq("status", "pending_review")).collect(),
     ctx.db.query("hygglo_product_index").collect(),
     ctx.db.query("listing_resolution_override").collect(),

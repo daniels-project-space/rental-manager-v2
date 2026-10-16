@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { evaluateStockWindow, stockForItem, stockWindowPeak, validIsoDate } from "./renter_stock";
+import { evaluateStockWindow, reservationOverlapsStockDateWindow, stockForItem, stockWindowPeak, validIsoDate } from "./renter_stock";
 
 const request = { item_name: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04" };
 const evaluate = (overrides: Partial<Parameters<typeof evaluateStockWindow>[0]> = {}) => evaluateStockWindow({ request, owned: true, total: 4, repair: 0, occupancy: [], blackouts: [], vacations: [], ...overrides });
@@ -174,6 +174,33 @@ describe("booked-period availability and separate custody",()=>{
   expect(result.free_units).toBe(3);expect(result.per_day.map(d=>d.booked)).toEqual([0,0]);
   expect(JSON.stringify(reservation)).toBe(saved);
  });
+});
+
+describe("reservation stock-window candidate filtering", () => {
+  const window = { start_date: "2026-10-21", end_date: "2026-10-22" };
+  const booking = (overrides: Record<string, unknown> = {}) => ({
+    start_date: "2026-10-20",
+    end_date: "2026-10-21",
+    ...overrides,
+  }) as any;
+
+  it("keeps rentals overlapping either requested day", () => {
+    expect(reservationOverlapsStockDateWindow(booking(), window)).toBe(true);
+    expect(reservationOverlapsStockDateWindow(booking({ start_date: "2026-10-22", end_date: "2026-10-22" }), window)).toBe(true);
+  });
+
+  it("keeps the prior-day return for the one-hour turnaround buffer", () => {
+    expect(reservationOverlapsStockDateWindow(booking({ start_date: "2026-10-19", end_date: "2026-10-20" }), window)).toBe(true);
+    expect(reservationOverlapsStockDateWindow(booking({ start_date: "2026-10-18", end_date: "2026-10-19" }), window)).toBe(false);
+  });
+
+  it("excludes rentals that start after the requested window", () => {
+    expect(reservationOverlapsStockDateWindow(booking({ start_date: "2026-10-23", end_date: "2026-10-24" }), window)).toBe(false);
+  });
+
+  it("keeps website rows because their timestamp item windows own occupancy", () => {
+    expect(reservationOverlapsStockDateWindow(booking({ account_slug: "dbcinema_web", site_item_windows: [] }), window)).toBe(true);
+  });
 });
 
 describe("marked website occupied endpoints",()=>{

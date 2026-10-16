@@ -58,7 +58,7 @@ import { currentDraftApproval, currentDraftReview, draftContextKey, sameDraftApp
 import { replyStockWindow, type ReplyStockWindow } from "./lib/reply_stock_dates";
 import { replyPartitionKey, compareReplyQueue } from "./lib/reply_queue_partitions";
 import type { ResolvableRes } from "./lib/reservations/itemUnits";
-import { loadStockSources, resolveStockItem, stockForRentalItem } from "./lib/renter_stock";
+import { loadReservationsForStockWindow, loadStockSources, resolveStockItem, stockForRentalItem, type StockDateWindow } from "./lib/renter_stock";
 import { stockRequestForSeparateCheck, stockRequestForInquiryQuote, unsupportedStockClaims, type StockReceipt } from "./lib/stock_claims";
 import { reviewFlagValidator } from "./lib/draft_review_validator";
 import { inclusiveRentalDays } from "./lib/hygglo_pricing";
@@ -391,17 +391,17 @@ type AvailCtx = {
 async function loadAvailCtx(
   ctx: QueryCtx,
   includePending: boolean,
+  window?: StockDateWindow,
 ): Promise<AvailCtx> {
   // Shared inventory authority includes confirmed, ongoing and verified website rentals.
   // RETURNED is still awaiting the return; REVIEWED/completed releases stock.
-  const stockSources=await loadStockSources(ctx);
+  const stockSources=await loadStockSources(ctx, window);
   const confirmedRaw=stockSources.reservations;
   const confirmed=confirmedRaw.filter(r=>!r.is_obsolete&&r.order_step!=="REVIEWED"&&r.status!=="completed");
   const pendingRaw = includePending
-    ? await ctx.db
-        .query("reservations")
-        .withIndex("by_status", (q) => q.eq("status", "pending_review"))
-        .collect()
+    // Website pending rows are already part of stockSources.reservations via
+    // its account/status-indexed stock-hold read.
+    ? await loadReservationsForStockWindow(ctx, "pending_review", window, false)
     : [];
   const pending = pendingRaw.filter(
     (r) => r.order_step === "VERIFIED" && !r.is_obsolete,
@@ -540,6 +540,15 @@ export function computeAvailability(reservation:BotBooking|null,av?:AvailCtx,req
  * the renter-last pass and the always-include REQUEST pass so both emit an
  * identical shape (item thumbnails, booking/request context, urgency driver).
  */
+async function loadReplyTileMessages(ctx: QueryCtx, threadId: string) {
+  const messagePages = await Promise.all([
+    ctx.db.query("hygglo_messages").withIndex("by_thread_and_sent_at", q => q.eq("thread_id", threadId)).order("desc").take(40),
+    // Include recently ingested messages missing a provider timestamp.
+    ctx.db.query("hygglo_messages").withIndex("by_thread", q => q.eq("thread_id", threadId)).order("desc").take(40),
+  ]);
+  return orderedReplyMessages([...new Map(messagePages.flat().map(message => [message.message_id, message])).values()]).slice(0, 40);
+}
+
 export async function assembleTile(
   ctx: QueryCtx,
   conv: Doc<"conversations"> | null,
@@ -549,6 +558,7 @@ export async function assembleTile(
   availCtx?: AvailCtx,
   hub?: HubBook,
   display?: Awaited<ReturnType<typeof listingDisplayCatalog>>,
+  preloadedMessages?: Awaited<ReturnType<typeof loadReplyTileMessages>>,
 ) {
   const simOrder = await getLabOrder(ctx, threadId);
   let slug = reservation?.account_slug ?? conv?.account_slug ?? undefined;
@@ -560,12 +570,8 @@ export async function assembleTile(
   const renter = renterId ? await ctx.db.get(renterId) : null;
 
   // One bounded indexed read supplies the existing preview and gear mentions.
-  const messagePages=await Promise.all([
-    ctx.db.query("hygglo_messages").withIndex("by_thread_and_sent_at",q=>q.eq("thread_id",threadId)).order("desc").take(40),
-    // Include recently ingested messages missing a provider timestamp.
-    ctx.db.query("hygglo_messages").withIndex("by_thread",q=>q.eq("thread_id",threadId)).order("desc").take(40),
-  ]);
-  const mentionMessages=orderedReplyMessages([...new Map(messagePages.flat().map(message=>[message.message_id,message])).values()]).slice(0,40);
+  // getThreadById already reads this same transcript to derive its stock window.
+  const mentionMessages=preloadedMessages??await loadReplyTileMessages(ctx,threadId);
   const latestMsg=mentionMessages[0]??null;
 
   const sourceItems: RichItem[] = simOrder ? simOrder.items.map(i => ({ name: i.name, qty: i.qty, product_id: i.product_id, image_url: null })) : buildRichItems(reservation, conv);
@@ -1268,11 +1274,14 @@ export const getThreadById = query({
     const reservation = await getBotBooking(ctx, thread_id);
     if (!conv && !reservation) return null;
     const slug=reservation?.account_slug??conv?.account_slug??(conv?.account_id?(await ctx.db.get(conv.account_id))?.slug:undefined);
+    const messages = await loadReplyTileMessages(ctx, thread_id);
+    const stockWindow = replyStockWindow(reservation, messages, Date.now());
     const priceIndex = await loadPriceIndex(ctx);
     const settingsRow = await ctx.db.query("settings").first();
     const incPending = settingsRow?.availability_include_pending ?? false;
-    const availCtx = await loadAvailCtx(ctx, incPending);
+    const availCtx = await loadAvailCtx(ctx, incPending, stockWindow);
     await extendAvailabilityMappings(ctx,availCtx,reservation?[reservation]:slug?[{account_slug:slug,hygglo_items:conv?.inquiry_items}]:[]);
+    const [hub, display] = await Promise.all([loadHubBook(ctx), listingDisplayCatalog(ctx)]);
     return await assembleTile(
       ctx,
       conv,
@@ -1280,8 +1289,9 @@ export const getThreadById = query({
       thread_id,
       priceIndex,
       availCtx,
-      await loadHubBook(ctx),
-      await listingDisplayCatalog(ctx),
+      hub,
+      display,
+      messages,
     );
   },
 });
@@ -1502,7 +1512,7 @@ export const getThreadContext = internalQuery({
     // One shared availability snapshot supplies reservations, product mappings,
     // overrides and items for the entire draft-context build. Previously this
     // function collected the fat product-index and items tables again below.
-    const availCtx = await loadAvailCtx(ctx, false);
+    const availCtx = await loadAvailCtx(ctx, false, stockWindow);
     await extendAvailabilityMappings(ctx,availCtx,reservation?[reservation]:slug?[{account_slug:slug,hygglo_items:conv?.inquiry_items}]:[]);
     if (slug && lineItems.some((li) => typeof li.product_id !== "number")) {
       const STOP = new Set(["the","and","for","with","plus","set","kit","bundle","combo"]);
