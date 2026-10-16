@@ -115,6 +115,19 @@ describe("monthly failed-verification reader", () => {
     expect(result.unvalued_count).toBe(1);
     expect(result.scheduled_month).toBe("2026-10");
   });
+  it("counts a failed provider step even when a legacy import left the row pending", async () => {
+    const pendingFailure = event("pending-failure", {
+      obsolete_at: start + 300,
+      status: "pending_review",
+      is_obsolete: false,
+      hygglo_system_signal: "none",
+      order_step: "VERIFICATION_FAILED",
+      net_to_owner_gbp: 100,
+    });
+    const result = await loadMonthlyVerificationLosses(makeCtx([pendingFailure]), "2026-10", "leo");
+    expect(result.failed_security_checks_count).toBe(1);
+    expect(result.failed_security_checks_lost_gbp).toBe(100);
+  });
   it("combines accounts and uses an exclusive month end", async () => {
     const all = await loadMonthlyVerificationLosses(ctx, "2026-10", null);
     expect(all.failed_security_checks_count).toBe(4);
@@ -154,7 +167,8 @@ describe("monthly failed-verification reader", () => {
         event("legacy-renter", { obsolete_at: start + 1002, hygglo_system_signal: "none", obsolete_reason: "renter_cancelled", order_step: "CANCELED", hygglo_system_signal_text: "did not pass our security checks" }),
       ]);
     const result = await loadMonthlyVerificationLosses(makeCtx(source), "2026-10", null);
-    expect(result.total_count).toBe(18);
+    // The provider's terminal failed step wins over the stale recovered status.
+    expect(result.total_count).toBe(19);
     expect(result.failed_security_checks_lost_gbp).toBe(180);
   });
 

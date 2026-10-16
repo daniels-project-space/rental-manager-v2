@@ -843,6 +843,10 @@ const operationalSchema = defineSchema({
     .index("by_is_obsolete_start_date", ["is_obsolete", "start_date"])
     // Failure-event month lookup, including legacy updated/created-date fallbacks.
     .index("by_fallout_dates", ["obsolete_at", "v1_updated_at"])
+    // Include a failed provider step even if its row was historically left in
+    // `pending_review` by a filter-bucket import. Date partitions keep the
+    // monthly loss reader bounded while that legacy row is reclassified.
+    .index("by_order_step_fallout_dates", ["order_step", "obsolete_at", "v1_updated_at"])
     .index("by_signal_fallout_dates", ["hygglo_system_signal", "obsolete_at", "v1_updated_at"])
     .index("by_signal_obsolete_fallout_dates", ["hygglo_system_signal", "is_obsolete", "obsolete_at", "v1_updated_at"])
     .index("by_signal_status_obsolete_fallout_dates", ["hygglo_system_signal", "status", "is_obsolete", "obsolete_at", "v1_updated_at"])
