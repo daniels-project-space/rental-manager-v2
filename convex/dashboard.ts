@@ -3222,15 +3222,13 @@ async function loadRentalHeadlineStats(
   const confirmedMonthRows = confirmedRows.filter((row) =>
     row.start_date !== undefined && row.start_date >= projectionStart && row.start_date <= monthEnd,
   );
-  const [completedMonthRows, confirmedPickupRows] = await Promise.all([
-    loadCompletedMonthlyRows(ctx, projectionStart, monthEnd, accountSlug),
-    accountSlug
-      ? ctx.db.query("reservations").withIndex("by_account_status_pickup_date", (q) =>
-          q.eq("account_slug", accountSlug).eq("status", "confirmed")
-            .gte("pickup_date", projectionStart).lte("pickup_date", monthEnd)).collect()
-      : ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
-          q.eq("status", "confirmed").gte("pickup_date", projectionStart).lte("pickup_date", monthEnd)).collect(),
-  ]);
+  // `confirmedRows` above already contains every confirmed reservation, so
+  // derive the pickup-date window from that read instead of issuing a second
+  // overlapping index scan for the same status/account cohort.
+  const completedMonthRows = await loadCompletedMonthlyRows(ctx, projectionStart, monthEnd, accountSlug);
+  const confirmedPickupRows = confirmedRows.filter((row) =>
+    row.pickup_date !== undefined && row.pickup_date >= projectionStart && row.pickup_date <= monthEnd,
+  );
   const pickupMonthRows: ReservationRow[] = [...confirmedPickupRows, ...completedMonthRows.pickupRows].sort((a, b) =>
     (a.pickup_date ?? "").localeCompare(b.pickup_date ?? "") || a._creationTime - b._creationTime,
   );
