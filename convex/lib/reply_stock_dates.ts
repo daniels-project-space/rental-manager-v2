@@ -1,4 +1,5 @@
 import { validIsoDate, shiftStockDate } from "./renter_stock";
+import type { StockDateWindow } from "./renter_stock";
 import { confirmedClock } from "./confirmed_schedule";
 
 export type ReplyStockWindow = {
@@ -10,6 +11,16 @@ export type ReplyStockWindow = {
   pickup_time?: string;
   return_time?: string;
 };
+
+/** Smallest contiguous date range that safely covers a batch of reply tiles. */
+export function replyStockWindowEnvelope(windows: readonly ReplyStockWindow[]): StockDateWindow | undefined {
+  if (!windows.length) return undefined;
+  return {
+    start_date: windows.reduce((earliest, window) => window.start_date < earliest ? window.start_date : earliest, windows[0].start_date),
+    end_date: windows.reduce((latest, window) => window.end_date > latest ? window.end_date : latest, windows[0].end_date),
+  };
+}
+
 type Message = { sender: string; body_text?: string; hygglo_sent_at?: number; message_id?: string };
 const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 const weekdays = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];

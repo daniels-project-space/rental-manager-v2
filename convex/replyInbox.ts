@@ -55,7 +55,7 @@ import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
 import { currentDraftApproval, currentDraftReview, draftContextKey, sameDraftApproval } from "./lib/draft_review";
-import { replyStockWindow, type ReplyStockWindow } from "./lib/reply_stock_dates";
+import { replyStockWindow, replyStockWindowEnvelope, type ReplyStockWindow } from "./lib/reply_stock_dates";
 import { replyPartitionKey, compareReplyQueue } from "./lib/reply_queue_partitions";
 import type { ResolvableRes } from "./lib/reservations/itemUnits";
 import { loadReservationsForStockWindow, loadStockSources, resolveStockItem, stockForRentalItem, type StockDateWindow } from "./lib/renter_stock";
@@ -1028,9 +1028,99 @@ export const getReplyQueue = query({
       !windowConvos.length &&
       ![...byStep, ...byAction].some(inPartition)
     ) return [];
+    // Prepare only the conversations that the three queue passes can emit.
+    // Their bounded transcripts and point reservation lookups give us one
+    // shared date envelope before availability is loaded, replacing the full
+    // confirmed/ongoing reservation scan on every MV refresh.
+    const convos = windowConvos
+      .filter((c) => c.last_sender === "renter")
+      .sort((a, b) => a._creationTime - b._creationTime);
+    const seenReq = new Set<string>();
+    const requests: typeof byStep = [];
+    const requestConversationByThread = new Map<string, Doc<"conversations"> | null>();
+    for (const r of [...byStep, ...byAction]) {
+      if (!inPartition(r)) continue;
+      const k = r._id as unknown as string;
+      if (seenReq.has(k)) continue;
+      seenReq.add(k);
+      const requestThread = r.hygglo_order_id;
+      if (!requestThread) continue;
+      let requestConv = requestConversationByThread.get(requestThread);
+      if (!requestConversationByThread.has(requestThread)) {
+        requestConv = convByThread.get(requestThread) ?? await ctx.db
+          .query("conversations")
+          .withIndex("by_thread", (q) => q.eq("thread_id", requestThread))
+          .first();
+        requestConversationByThread.set(requestThread, requestConv);
+      }
+      const reqTs = Math.max(
+        requestConv?.last_msg_at ?? 0,
+        requestConv?.last_renter_msg_at ?? 0,
+        (r as { created_at?: number }).created_at ?? 0,
+        r._creationTime ?? 0,
+      );
+      if (reqTs && reqTs < cutoff) continue;
+      requests.push(r);
+    }
+
+    const candidateConvos = windowConvos.filter((c) => {
+      const renterRecency = c.last_renter_msg_at ?? c.last_msg_at;
+      const messageRecency = c.last_msg_at ?? c.last_renter_msg_at ?? 0;
+      return (c.last_sender === "renter" && renterRecency >= cutoff) ||
+        (includeMessages && messageRecency >= msgCutoff);
+    });
+    const reservationCheckThreadIds = candidateConvos.map((conv) => conv.thread_id);
+    const conversationReservationByThread = new Map<string, Doc<"reservations"> | null>();
+    for (let offset = 0; offset < reservationCheckThreadIds.length; offset += 8) {
+      const batch = reservationCheckThreadIds.slice(offset, offset + 8);
+      const loaded = await Promise.all(batch.map(async (threadId) => ({
+        threadId,
+        reservation: await ctx.db.query("reservations").withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", threadId)).first(),
+      })));
+      for (const row of loaded) conversationReservationByThread.set(row.threadId, row.reservation);
+    }
+
+    const pass1ThreadIds = new Set(convos
+      .filter((conv) => (conv.last_renter_msg_at ?? conv.last_msg_at) >= cutoff)
+      .map((conv) => conv.thread_id));
+    const eligibleConversationThreadIds = candidateConvos
+      .filter((conv) => {
+        if (pass1ThreadIds.has(conv.thread_id)) return true;
+        const reservation = conversationReservationByThread.get(conv.thread_id);
+        const isFinished = !!reservation && (
+          FINISHED_STATUS.has(reservation.status) ||
+          !!reservation.order_step && FINISHED_STEP.has(reservation.order_step)
+        );
+        return includeFinished || !isFinished;
+      })
+      .map((conv) => conv.thread_id);
+    const candidateThreadIds = [...new Set([
+      ...eligibleConversationThreadIds,
+      ...requests.map((r) => r.hygglo_order_id!).filter(Boolean),
+    ])];
+    const messagesByThread = new Map<string, Awaited<ReturnType<typeof loadReplyTileMessages>>>();
+    for (let offset = 0; offset < candidateThreadIds.length; offset += 8) {
+      const batch = candidateThreadIds.slice(offset, offset + 8);
+      const loaded = await Promise.all(batch.map(async (threadId) => ({
+        threadId,
+        messages: await loadReplyTileMessages(ctx, threadId),
+      })));
+      for (const row of loaded) messagesByThread.set(row.threadId, row.messages);
+    }
+    const stockWindows: ReplyStockWindow[] = [];
+    for (const threadId of candidateThreadIds) {
+      const reservation = conversationReservationByThread.get(threadId) ??
+        requests.find((r) => r.hygglo_order_id === threadId) ?? null;
+      stockWindows.push(replyStockWindow(reservation, messagesByThread.get(threadId) ?? [], now));
+    }
+    for (const r of requests) {
+      stockWindows.push(replyStockWindow(r, messagesByThread.get(r.hygglo_order_id!) ?? [], now));
+    }
+    const stockWindow = replyStockWindowEnvelope(stockWindows) ?? replyStockWindow(null, [], now);
+
     const [priceIndex,settingsRow,hub,display]=await Promise.all([loadPriceIndex(ctx),ctx.db.query("settings").first(),loadHubBook(ctx),listingDisplayCatalog(ctx)]);
     const incPending=includePending??settingsRow?.availability_include_pending??false;
-    const availCtx=await loadAvailCtx(ctx,incPending);
+    const availCtx=await loadAvailCtx(ctx,incPending,stockWindow);
     // Reservation-by-order-id cache: loadAvailCtx's confirmed/pending rows plus
     // the request rows above — every reservation already read this execution.
     // See AvailCtx.byOrderId for why a hit is exactly `.first()`'s answer.
@@ -1042,17 +1132,11 @@ export const getReplyQueue = query({
       if (!prev || r._creationTime < prev._creationTime)
         resByOrderId.set(r.hygglo_order_id, r);
     }
-    // Load historical conversations once, then qualify their listings in one
-    // batch. Rebuilding canonical allocation separately for every old chat can
-    // exhaust the query execution budget and leave the materialized view stale.
-    const missingThreads = [...convByThread.keys()].filter(thread => !resByOrderId.has(thread));
-    const historical = await Promise.all(missingThreads.map(thread => ctx.db
-      .query("reservations")
-      .withIndex("by_hygglo_order_id", q => q.eq("hygglo_order_id", thread))
-      .first()));
-    historical.forEach((reservation, index) => {
-      if (reservation) resByOrderId.set(missingThreads[index], reservation);
-    });
+    for (const reservation of conversationReservationByThread.values()) {
+      if (!reservation?.hygglo_order_id) continue;
+      const prev = resByOrderId.get(reservation.hygglo_order_id);
+      if (!prev || reservation._creationTime < prev._creationTime) resByOrderId.set(reservation.hygglo_order_id, reservation);
+    }
     await extendAvailabilityMappings(ctx, availCtx, [
       ...[...resByOrderId.values()].filter(r => !!r.hygglo_order_id && (convByThread.has(r.hygglo_order_id) || inPartition(r)&&(r.created_at ?? r._creationTime) >= cutoff)),
       // Enquiries have no reservation, but their exact account/product identity
@@ -1064,7 +1148,7 @@ export const getReplyQueue = query({
     ): Promise<Doc<"reservations"> | null> => {
       const cached = resByOrderId.get(threadId);
       if (cached) return cached;
-      if (convByThread.has(threadId)) return null; // The batched lookup already found no booking.
+      if (conversationReservationByThread.has(threadId)) return conversationReservationByThread.get(threadId) ?? null;
       // Not in any collected status (e.g. completed/cancelled/declined orders
       // that live inquiries land on) — one indexed read, only for these.
       const reservation = await ctx.db
@@ -1113,41 +1197,21 @@ export const getReplyQueue = query({
     // by the stamp skew, and such a tile is already dropped today by the hard
     // last_activity_at guard below, since its genuine newest message is older
     // than the window.)
-    const convos = windowConvos
-      .filter((c) => c.last_sender === "renter")
-      // The old by_last_sender scan iterated [last_sender, _creationTime] asc;
-      // keep that order so byThread insertion order — and therefore tie order
-      // in the final stable sort — is byte-identical.
-      .sort((a, b) => a._creationTime - b._creationTime);
     for (const conv of convos) {
       const recencyTs = conv.last_renter_msg_at ?? conv.last_msg_at;
       if (recencyTs < cutoff) continue;
       const reservation = await resFor(conv.thread_id);
-      const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex, availCtx, hub, display);
+      const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex, availCtx, hub, display, messagesByThread.get(conv.thread_id));
       if (accountOk(tile.account_slug)) byThread.set(conv.thread_id, tile);
     }
 
     // Pass 2 — ALWAYS surface rental REQUESTs awaiting my approve/decline, even
     // if I spoke last or it's outside the recency window. This is what makes the
     // Approve / Decline buttons reliably reachable. (Collects hoisted above.)
-    const seenReq = new Set<string>();
-    const requests: typeof byStep = [];
-    for (const r of [...byStep, ...byAction]) {
-      if(!inPartition(r))continue;
-      const k = r._id as unknown as string;
-      if (seenReq.has(k)) continue;
-      seenReq.add(k);
-      requests.push(r);
-    }
     for (const r of requests) {
       const threadId = r.hygglo_order_id;
       if (!threadId || byThread.has(threadId)) continue;
-      const conv =
-        convByThread.get(threadId) ??
-        (await ctx.db
-          .query("conversations")
-          .withIndex("by_thread", (q) => q.eq("thread_id", threadId))
-          .first());
+      const conv = requestConversationByThread.get(threadId) ?? convByThread.get(threadId) ?? null;
       // Respect the recency window even for requests. A request with no activity
       // in `withinDays` (no recent message AND created long ago) is stale —
       // Hygglo requests expire, so a 10-day-old "pending" one is almost always
@@ -1161,7 +1225,7 @@ export const getReplyQueue = query({
         r._creationTime ?? 0,
       );
       if (reqTs && reqTs < cutoff) continue;
-      const tile = await assembleTile(ctx, conv, r, threadId, priceIndex, availCtx, hub, display);
+      const tile = await assembleTile(ctx, conv, r, threadId, priceIndex, availCtx, hub, display, messagesByThread.get(threadId));
       if (accountOk(tile.account_slug)) byThread.set(threadId, tile);
     }
 
@@ -1190,7 +1254,7 @@ export const getReplyQueue = query({
           if ((st && FINISHED_STATUS.has(st)) || (step && FINISHED_STEP.has(step)))
             continue;
         }
-        const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex, availCtx, hub, display);
+        const tile = await assembleTile(ctx, conv, reservation, conv.thread_id, priceIndex, availCtx, hub, display, messagesByThread.get(conv.thread_id));
         if (accountOk(tile.account_slug)) byThread.set(conv.thread_id, tile);
       }
     }
