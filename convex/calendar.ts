@@ -117,12 +117,42 @@ export type CalendarComputePreload = {
   holds?: { from: string; to: string; rows: Doc<"calendar_holds">[] };
   /** Full-table collects (identical to the computes' own reads). */
   items?: Doc<"items">[];
+  /** Rows for the account/product keys in the supplied reservation window. */
   listingImages?: Doc<"listing_images">[];
   productIndexRows?: Doc<"hygglo_product_index">[];
   overrideRows?: Doc<"listing_resolution_override">[];
   /** Product/listing mapping resolved once for every refreshed view. */
   listingAllocation?: Awaited<ReturnType<typeof loadCanonicalListingAllocation>>;
 };
+
+/** Load only canonical listing images that the supplied reservations can use.
+ * The account/product index preserves the same per-key creation order as the
+ * old full collect, including duplicate rows whose last image wins in maps. */
+export async function loadCalendarListingImages(
+  ctx: QueryCtx,
+  reservations: Doc<"reservations">[],
+): Promise<Doc<"listing_images">[]> {
+  const keys = new Map<string, { account: string; productId: number }>();
+  for (const reservation of reservations) {
+    const account = reservation.account_slug ?? "";
+    for (const item of reservation.hygglo_items ?? []) {
+      if (typeof item.product_id !== "number") continue;
+      const key = `${account}#${item.product_id}`;
+      if (!keys.has(key)) keys.set(key, { account, productId: item.product_id });
+    }
+  }
+  const rows = await Promise.all(
+    [...keys.values()].map(({ account, productId }) =>
+      ctx.db
+        .query("listing_images")
+        .withIndex("by_account_product", (q) =>
+          q.eq("account_slug", account).eq("product_id", productId),
+        )
+        .collect(),
+    ),
+  );
+  return rows.flat();
+}
 
 /**
  * Effective return date for a reservation: prefer AI-extracted `return_date`
@@ -640,7 +670,7 @@ export async function computeStripLive(
 
     // Phase 13.2: listing_images bank — product_id-keyed canonical photos.
     const listingImagesAllStrip =
-      pre?.listingImages ?? (await ctx.db.query("listing_images").collect());
+      pre?.listingImages ?? (await loadCalendarListingImages(ctx, reservations));
     const bankByProductStrip = new Map<string, string>();
     for (const li of listingImagesAllStrip) {
       bankByProductStrip.set(`${li.account_slug}#${li.product_id}`, li.image_url);
@@ -1306,7 +1336,7 @@ export async function computeWeeklyLive(
 
     // Phase 13.2: listing_images bank — product_id-keyed canonical photos.
     const listingImagesAllWeekly =
-      pre?.listingImages ?? (await ctx.db.query("listing_images").collect());
+      pre?.listingImages ?? (await loadCalendarListingImages(ctx, reservations));
     const bankByProductWeekly = new Map<string, string>();
     for (const li of listingImagesAllWeekly) {
       bankByProductWeekly.set(`${li.account_slug}#${li.product_id}`, li.image_url);
