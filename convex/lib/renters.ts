@@ -60,6 +60,72 @@ export async function renterMaps(ctx: QueryCtx | MutationCtx) {
   return { all, byHuid, byName };
 }
 
+/** Build renter maps only for the supplied reservation set. Name-only legacy
+ * rows keep the original case-insensitive/collision behavior through a bounded
+ * fallback; normal ID/HUID rows never scan the renter table. */
+export async function renterMapsForReservations(
+  ctx: QueryCtx,
+  reservations: Array<{ renter_id?: string | null; hygglo_user_id?: string | null; renter_name?: string | null }>,
+) {
+  const byId = new Map<string, RenterDoc>();
+  const byHuid = new Map<string, RenterDoc>();
+  const byName = new Map<string, RenterDoc>();
+  const addName = (r: RenterDoc) => {
+    const name = (r.display_name ?? "").trim().toLowerCase();
+    if (!name) return;
+    const previous = byName.get(name);
+    if (!previous || (r.total_rentals_count ?? 0) > (previous.total_rentals_count ?? 0)) byName.set(name, r);
+  };
+
+  const ids = [...new Set(reservations.map(r => r.renter_id).filter((id): id is string => Boolean(id)))];
+  const direct = await Promise.all(ids.map(async id => {
+    try {
+      const row = await ctx.db.get(id as Id<"renters">);
+      return row && (row as RenterDoc).display_name !== undefined ? [id, row as RenterDoc] as const : null;
+    } catch {
+      return null;
+    }
+  }));
+  for (const entry of direct) if (entry) {
+    byId.set(entry[0], entry[1]);
+    addName(entry[1]);
+  }
+
+  const huidKeys = [...new Set(reservations.flatMap(r => {
+    // The reservation ID is authoritative when it resolves. Avoid a second
+    // index read for its HUID; only use HUID lookup for unresolved IDs or rows
+    // that have no direct renter reference.
+    if (r.renter_id && byId.has(r.renter_id)) return [];
+    return [r.hygglo_user_id, r.renter_id];
+  }).filter((id): id is string => Boolean(id)))];
+  const huidRows = await Promise.all(huidKeys.map(id => ctx.db.query("renters")
+    .withIndex("by_hygglo_user_id", q => q.eq("hygglo_user_id", id)).collect()));
+  for (const rows of huidRows) for (const row of rows) {
+    const renter = row as RenterDoc;
+    if (renter.hygglo_user_id) byHuid.set(renter.hygglo_user_id, renter);
+    addName(renter);
+  }
+
+  const unresolvedNames = [...new Set(reservations.filter(r => {
+    const resolved = Boolean((r.renter_id && (byId.has(r.renter_id) || byHuid.has(r.renter_id))) ||
+      (r.hygglo_user_id && byHuid.has(r.hygglo_user_id)));
+    return !resolved && Boolean(r.renter_name?.trim());
+  }).map(r => r.renter_name!.trim()))];
+  // The old map matched names case-insensitively and preferred the renter with
+  // the most rentals on collisions. A name-only row cannot preserve that rule
+  // through an exact display_name index alone, so retain the legacy scan only
+  // when ID and HUID resolution both fail.
+  if (unresolvedNames.length > 0) {
+    const fallback = await renterMaps(ctx);
+    for (const [key, value] of fallback.byHuid) byHuid.set(key, value);
+    for (const [key, value] of fallback.byName) {
+      const previous = byName.get(key);
+      if (!previous || (value.total_rentals_count ?? 0) > (previous.total_rentals_count ?? 0)) byName.set(key, value);
+    }
+  }
+  return { byId, byHuid, byName };
+}
+
 type ResLike = {
   renter_id?: string | null;
   hygglo_user_id?: string | null;
@@ -70,14 +136,18 @@ type ResLike = {
 export async function renterForReservation(
   ctx: QueryCtx | MutationCtx,
   r: ResLike,
-  maps: { byHuid: Map<string, RenterDoc>; byName: Map<string, RenterDoc> },
+  maps: { byHuid: Map<string, RenterDoc>; byName: Map<string, RenterDoc>; byId?: Map<string, RenterDoc> },
 ): Promise<RenterDoc | null> {
   if (r.renter_id) {
-    try {
-      const direct = await ctx.db.get(r.renter_id as Id<"renters">);
-      if (direct && (direct as RenterDoc).display_name !== undefined) return direct as RenterDoc;
-    } catch {
-      // renter_id may be a hygglo_user_id on some rows — fall through.
+    const cachedById = maps.byId?.get(r.renter_id);
+    if (cachedById) return cachedById;
+    if (!maps.byId) {
+      try {
+        const direct = await ctx.db.get(r.renter_id as Id<"renters">);
+        if (direct && (direct as RenterDoc).display_name !== undefined) return direct as RenterDoc;
+      } catch {
+        // renter_id may be a hygglo_user_id on some rows — fall through.
+      }
     }
     const viaHuid = maps.byHuid.get(r.renter_id);
     if (viaHuid) return viaHuid;

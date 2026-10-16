@@ -127,6 +127,7 @@ export default defineConfig({
       "convex/dbcinema_webhook.test.ts",
       "convex/reservations.storefront.test.ts",
       "convex/lib/due_return_candidates.test.ts",
+      "convex/lib/renters.lookup.test.ts",
       "convex/items.storefront-stock.test.ts",
       "convex/storefront-read.test.ts",
       "convex/storefront-canonical-kits.test.ts",
