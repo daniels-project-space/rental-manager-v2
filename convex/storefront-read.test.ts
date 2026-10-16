@@ -29,7 +29,7 @@ describe("registered private storefront read transport",()=>{
   const response=await invoke({runQuery:async()=>{throw Error("PRIVATE SOURCE DETAIL")}},request());expect(response.status).toBe(503);expect(await response.text()).not.toContain("PRIVATE");
  });
  it("uses actual internal counterparts while public inventory remains owner-protected",async()=>{
-  vi.stubEnv("OWNER_AUTH_REQUIRED","true");vi.stubEnv("DBCINEMA_WEBHOOK_SECRET",secret);
+  vi.stubEnv("OWNER_AUTH_REQUIRED","true");vi.stubEnv("RENTAL_MANAGER_ACCESS","owner");vi.stubEnv("DBCINEMA_WEBHOOK_SECRET",secret);
   const rows:any={items:[{_id:"body",name_canonical:"Fixture camera",qty:2,status:"active",is_marketing_only:false}],hygglo_products:[{accountSlug:"dbcinema",productId:10,name:"Fixture kit",masterItemId:"body",private_note:"SECRET"},{accountSlug:"other",productId:11,name:"Other account"}],reservations:[{_id:"r1",account_slug:"dbcinema",start_date:"2090-01-01",end_date:"2090-01-02",status:"confirmed",order_step:"DELIVERED",renter_name:"PRIVATE",items:[{product_id:10,qty:1,item_name:"Fixture camera",private_note:"SECRET"}],resolved_items:[{item_id:"body",qty:1,item_name_canonical:"Fixture camera",private_note:"SECRET"}]}]};
   const db={query:(table:string)=>{let values=rows[table]??[];const q:any={withIndex:(_:string,fn:any)=>{const selector:any={eq:(k:string,v:any)=>{values=values.filter((r:any)=>r[k]===v);return selector},gte:(k:string,v:any)=>{values=values.filter((r:any)=>r[k]>=v);return selector}};fn(selector);return q},collect:async()=>values};return q}};
   await expect((itemsPublic as any)._handler({db,auth:{getUserIdentity:async()=>null}},{})).rejects.toThrow("OWNER_AUTH_REQUIRED");

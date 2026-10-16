@@ -8,7 +8,7 @@ vi.mock("./auth", () => ({
 afterEach(() => vi.unstubAllEnvs());
 import { basketOptions } from "./quick_reply_replacements";
 function fixture() {
-  vi.stubEnv("OWNER_AUTH_REQUIRED", "true");
+  vi.stubEnv("OWNER_AUTH_REQUIRED", "true");vi.stubEnv("RENTAL_MANAGER_ACCESS","owner");
   vi.stubEnv("CONVEX_SITE_URL", "https://example.convex.site");
   const calls: any[] = [];
   const state = {
