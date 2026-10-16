@@ -179,7 +179,10 @@ function PendingReviewPanel({ rentals }: { rentals: Array<{
   start_date?: string | null;
   net_gbp?: number | null;
 }> }) {
+  const [showAll, setShowAll] = useState(false);
   if (!rentals.length) return null;
+  const previewLimit = 8;
+  const visibleRentals = showAll ? rentals : rentals.slice(0, previewLimit);
 
   return (
     <section className="mt-4 rounded-xl border border-sky-500/20 bg-sky-500/[0.04] p-4" aria-label="Bookings awaiting confirmation">
@@ -188,7 +191,7 @@ function PendingReviewPanel({ rentals }: { rentals: Array<{
         <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[11px] font-semibold text-sky-300">{rentals.length}</span>
       </div>
       <div className="space-y-2">
-        {rentals.slice(0, 8).map((rental) => (
+        {visibleRentals.map((rental) => (
           <div key={rental.reservation_id} className="flex min-w-0 items-center justify-between gap-3 text-xs">
             <div className="min-w-0">
               <div className="truncate text-slate-200">{rental.renter_name || rental.item_names_summary || "New booking"}</div>
@@ -198,6 +201,18 @@ function PendingReviewPanel({ rentals }: { rentals: Array<{
           </div>
         ))}
       </div>
+      {rentals.length > previewLimit && (
+        <div className="mt-3 border-t border-sky-500/10 pt-2 text-right">
+          <button
+            type="button"
+            aria-expanded={showAll}
+            className="text-[11px] font-semibold text-sky-300 hover:text-sky-200"
+            onClick={() => setShowAll((expanded) => !expanded)}
+          >
+            {showAll ? "Show fewer bookings" : `Show all ${rentals.length} bookings`}
+          </button>
+        </div>
+      )}
     </section>
   );
 }
