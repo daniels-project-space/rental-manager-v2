@@ -108,7 +108,7 @@ export const setTimes = internalMutation({
       patch.pickup_date !== undefined ||
       patch.return_date !== undefined;
     if (changedTimeOrDate) {
-      await ctx.scheduler.runAfter(0, internal.mv.calendar.refresh, {});
+      await ctx.scheduler.runAfter(0, internal.mv.calendar.requestRefresh, {});
     }
     return { ok: true };
   },
@@ -316,7 +316,7 @@ export const admin_setExtractedTimes = mutation({
       patch.pickup_date !== undefined ||
       patch.return_date !== undefined;
     if (changedTimeOrDate) {
-      await ctx.scheduler.runAfter(0, internal.mv.calendar.refresh, {});
+      await ctx.scheduler.runAfter(0, internal.mv.calendar.requestRefresh, {});
     }
     return { ok: true };
   },
@@ -342,7 +342,7 @@ export const reconcileTimeProvenance = mutation({
    if(changed)await ctx.db.insert("audit_log",{table_name:"reservations",actor:"system:confirmed-schedule-reconciliation",op:"update",count:1,note:JSON.stringify({reservation_id:id,evidenceHash:hash,pickupConfirmed:!!next?.pickup_time_provenance,returnConfirmed:!!next?.return_time_provenance}),ts:Date.now()});
    results.push({reservation_id:id,changed,pickupConfirmed:!!next?.pickup_time_provenance,returnConfirmed:!!next?.return_time_provenance});
   }
-  await ctx.scheduler.runAfter(0,internal.mv.calendar.refresh,{});
+  await ctx.scheduler.runAfter(0,internal.mv.calendar.requestRefresh,{});
   return results;
  }
 });

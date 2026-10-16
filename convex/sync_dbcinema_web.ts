@@ -486,7 +486,11 @@ export const upsertSiteBookingsBatch = internalMutation({
     // Reactively rebuild the Active-Rentals MV so the dashboard tiles reflect
     // the change now (the hourly MV cron's dirty-probe can miss web rows).
     if (upserted > 0 || cancelled > 0) {
-      await ctx.scheduler.runAfter(0, statsDrawerRefreshRef, { force: true });
+      await ctx.scheduler.runAfter(0, statsDrawerRefreshRef, {
+        force: true,
+        scope: "all_and_account",
+        accountSlug: WEB_SLUG,
+      });
       // Website stock and verification changes must invalidate the reply tiles immediately.
       await ctx.scheduler.runAfter(0, internal.mv.reply_queue.refresh, { force: true });
     }
@@ -533,7 +537,11 @@ export const adminPurgeWebData = internalMutation({
       weekly_metrics++;
     }
     if (reservations > 0) {
-      await ctx.scheduler.runAfter(0, statsDrawerRefreshRef, { force: true });
+      await ctx.scheduler.runAfter(0, statsDrawerRefreshRef, {
+        force: true,
+        scope: "all_and_account",
+        accountSlug: WEB_SLUG,
+      });
     }
     return { reservations, weekly_metrics };
   },

@@ -57,6 +57,7 @@ import {
   query,
 } from "../owner_functions";
 import { anyApi } from "convex/server";
+import { internal } from "../_generated/api";
 import { londonToday } from "../lib/effectiveDates";
 import {
   CALENDAR_FETCH_PAD_DAYS,
@@ -68,6 +69,9 @@ import {
 } from "../calendar";
 
 const STRIP_DAYS = 7;
+const REFRESH_REQUEST_KEY = "meta:refresh_request";
+const REFRESH_DEBOUNCE_MS = 30_000;
+const REFRESH_LEASE_MS = 10 * 60 * 1000;
 
 // Rebuild at least this often even with no new row, so status/date edits on
 // existing reservations (which don't insert a row) reconcile. Bounds worst-case
@@ -96,6 +100,128 @@ export const refresh = internalAction({
     { force },
   ): Promise<{ ok: true; written: number; skipped: number; durationMs: number }> => {
     return await refreshAll(ctx, force ?? false);
+  },
+});
+
+/** Coalesce event-driven refresh requests into one near-term rebuild. The
+ * 30-minute cron remains the backstop; this queue preserves the event path's
+ * sub-minute freshness while preventing a burst of booking-time extractions
+ * from launching the same full-table preload repeatedly. */
+export const requestRefresh = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const queued = await ctx.db
+      .query("mv_calendar")
+      .withIndex("by_key", (q) => q.eq("key", REFRESH_REQUEST_KEY))
+      .first();
+    const state = (queued?.payload ?? {}) as {
+      generation?: number;
+      scheduledAt?: number;
+      runningAt?: number;
+    };
+    const generation = (state.generation ?? 0) + 1;
+    const leaseAt = state.runningAt ?? state.scheduledAt;
+    const leaseIsActive = typeof leaseAt === "number" && now - leaseAt < REFRESH_LEASE_MS;
+
+    if (queued && leaseIsActive) {
+      await ctx.db.patch(queued._id, {
+        payload: { ...state, generation },
+      });
+      return { queued: true, coalesced: true };
+    }
+
+    const payload = { generation, scheduledAt: now };
+    if (queued) {
+      await ctx.db.patch(queued._id, { payload, generatedAt: now });
+    } else {
+      await ctx.db.insert("mv_calendar", {
+        key: REFRESH_REQUEST_KEY,
+        anchor: "refresh-request",
+        payload,
+        generatedAt: now,
+      });
+    }
+    await ctx.scheduler.runAfter(
+      REFRESH_DEBOUNCE_MS,
+      internal.mv.calendar.refreshQueued,
+      {},
+    );
+    return { queued: true, coalesced: false };
+  },
+});
+
+/** Claim a queued refresh once; duplicate delayed workers exit without reading
+ * calendar tables. */
+export const beginRefreshRequest = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ generation: number } | null> => {
+    const row = await ctx.db
+      .query("mv_calendar")
+      .withIndex("by_key", (q) => q.eq("key", REFRESH_REQUEST_KEY))
+      .first();
+    if (!row) return null;
+    const state = (row.payload ?? {}) as {
+      generation?: number;
+      runningAt?: number;
+    };
+    const now = Date.now();
+    if (typeof state.runningAt === "number" && now - state.runningAt < REFRESH_LEASE_MS) {
+      return null;
+    }
+    const generation = state.generation ?? 0;
+    await ctx.db.patch(row._id, {
+      payload: { ...state, generation, scheduledAt: now, runningAt: now },
+      generatedAt: now,
+    });
+    return { generation };
+  },
+});
+
+/** Finish a worker. If another request arrived while it was running, schedule
+ * one follow-up pass; otherwise remove the queue row. The cron remains the
+ * recovery path if the worker cannot finish. */
+export const finishRefreshRequest = internalMutation({
+  args: { runGeneration: v.number() },
+  handler: async (ctx, { runGeneration }) => {
+    const row = await ctx.db
+      .query("mv_calendar")
+      .withIndex("by_key", (q) => q.eq("key", REFRESH_REQUEST_KEY))
+      .first();
+    if (!row) return { queued: false };
+    const state = (row.payload ?? {}) as { generation?: number };
+    const generation = state.generation ?? 0;
+    if (generation > runGeneration) {
+      const now = Date.now();
+      await ctx.db.patch(row._id, {
+        payload: { generation, scheduledAt: now },
+        generatedAt: now,
+      });
+      await ctx.scheduler.runAfter(
+        REFRESH_DEBOUNCE_MS,
+        internal.mv.calendar.refreshQueued,
+        {},
+      );
+      return { queued: true };
+    }
+    await ctx.db.delete(row._id);
+    return { queued: false };
+  },
+});
+
+/** One delayed worker for a burst of event requests. */
+export const refreshQueued = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const ticket = await ctx.runMutation(anyApi.mv.calendar.beginRefreshRequest, {});
+    if (!ticket) return { ok: true, skipped: 1, reason: "already-running-or-cleared" };
+    try {
+      return await refreshAll(ctx, false);
+    } finally {
+      await ctx.runMutation(anyApi.mv.calendar.finishRefreshRequest, {
+        runGeneration: ticket.generation,
+      });
+    }
   },
 });
 
