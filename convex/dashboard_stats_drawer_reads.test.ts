@@ -2,12 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("./auth", () => ({ authComponent: { safeGetAuthUser: vi.fn() } }));
 
-import { getStatsDrawerData } from "./dashboard";
+import { getStatsDrawerData, getRentalHeadlineStats } from "./dashboard";
+import * as headlineOrder from "./lib/confirmed_headline_order";
 import { confirmedForDemandWindow } from "./lib/missed_revenue";
 
 type FilterSet = Record<string, Array<{ op: string; value: unknown }>>;
 
-function makeEmptyContext() {
+function makeEmptyContext(reservationRows: any[] = []) {
   const reservationReads: Array<{ index: string; filters: FilterSet }> = [];
   const collectedReads: Array<{ table: string; index: string; filters: FilterSet }> = [];
   const db = {
@@ -52,7 +53,25 @@ function makeEmptyContext() {
         async collect() {
           collectedReads.push({ table, index, filters: structuredClone(filters) });
           if (table === "reservations") reservationReads.push({ index, filters: structuredClone(filters) });
-          return [];
+          if (table !== "reservations") return [];
+          const matches = reservationRows.filter((row) => Object.entries(filters).every(([field, entries]) =>
+            entries.every(({ op, value }) => op === "eq" ? row[field] === value
+              : op === "gte" ? row[field] >= (value as any)
+              : op === "lte" ? row[field] <= (value as any)
+              : op === "gt" ? row[field] > (value as any) : row[field] < (value as any)),
+          ));
+          const dates = index.includes("pickup_date") ? ["pickup_date", "start_date"]
+            : index.includes("return_date") ? ["return_date"]
+            : index.includes("end_date") ? ["end_date"] : ["start_date"];
+          return matches.sort((a, b) => {
+            for (const field of dates) {
+              if (a[field] === b[field]) continue;
+              if (a[field] === undefined) return -1;
+              if (b[field] === undefined) return 1;
+              return a[field] < b[field] ? -1 : 1;
+            }
+            return a._creationTime - b._creationTime;
+          });
         },
         async first() { return null; },
         async unique() { return null; },
@@ -232,5 +251,52 @@ describe("missed-revenue capacity reservation reads", () => {
         return_date: [{ op: "eq", value: undefined }],
         end_date: [{ op: "gte", value: "2026-09-01" }],
       });
+  });
+});
+
+
+describe("actual headline handler reuses confirmed pickup rows", () => {
+  it("retains the source pickup query for tied creation times", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-16T12:00:00Z"));
+    try {
+      const context = makeEmptyContext([
+        { _id: "later-start", _creationTime: 1, status: "confirmed", account_slug: "dbcinema", start_date: "2026-10-11", end_date: "2026-10-21", pickup_date: "2026-10-12", net_to_owner_gbp: 11.123456789, items: [] },
+        { _id: "earlier-start", _creationTime: 1, status: "confirmed", account_slug: "dbcinema", start_date: "2026-10-10", end_date: "2026-10-20", pickup_date: "2026-10-12", net_to_owner_gbp: 22.987654321, items: [] },
+      ]);
+      await (getRentalHeadlineStats as any)._handler(context.ctx, { accountSlug: "dbcinema" });
+      expect(context.reservationReads.filter(({ index, filters }) => index === "by_account_status_pickup_date" &&
+        filters.status?.some(({ value }) => value === "confirmed") &&
+        filters.pickup_date?.some(({ op, value }) => op === "gte" && value === "2026-07-01"))).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it.each([null, "dbcinema", "leo", "unknown", ""])("preserves every field for account %s", async (accountSlug) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-16T12:00:00Z"));
+    const rows = [
+      { _id: "one", _creationTime: 1, status: "confirmed", account_slug: "dbcinema", start_date: "2026-10-10", end_date: "2026-10-20", pickup_date: "2026-10-11", net_to_owner_gbp: 123.456789, items: [] },
+      { _id: "two", _creationTime: 2, status: "confirmed", account_slug: "leo", start_date: "2026-07-01", end_date: "2026-07-02", pickup_date: "2026-07-01", net_to_owner_gbp: 17.123456789, items: [] },
+      { _id: "three", _creationTime: 3, status: "confirmed", account_slug: "dbcinema", start_date: "2026-11-01", end_date: "2026-11-02", pickup_date: "2026-10-31", net_to_owner_gbp: 22.987654321, items: [] },
+      { _id: "completed", _creationTime: 4, status: "completed", account_slug: "dbcinema", start_date: "2026-10-01", end_date: "2026-10-02", pickup_date: "2026-10-01", net_to_owner_gbp: 31.23456789, items: [] },
+      { _id: "missing", _creationTime: 5, status: "confirmed", account_slug: "dbcinema", start_date: "2026-09-01", end_date: "2026-09-02", net_to_owner_gbp: 4.56789, items: [] },
+    ];
+    const optimized = makeEmptyContext(rows), original = makeEmptyContext(rows);
+    let restore: (() => void) | undefined;
+    try {
+      const actual = await (getRentalHeadlineStats as any)._handler(optimized.ctx, { accountSlug });
+      const spy = vi.spyOn(headlineOrder, "confirmedPickupWindow").mockReturnValue(null);
+      restore = () => { spy.mockRestore(); };
+      const expected = await (getRentalHeadlineStats as any)._handler(original.ctx, { accountSlug });
+      expect(actual).toEqual(expected);
+      const confirmedPickupReads = (context: typeof optimized) => context.reservationReads.filter(({ index, filters }) =>
+        index.includes("pickup_date") && filters.status?.some(({ value }) => value === "confirmed"));
+      expect(confirmedPickupReads(original)).toHaveLength(1);
+      expect(confirmedPickupReads(optimized)).toHaveLength(0);
+    } finally {
+      restore?.();
+      vi.useRealTimers();
+    }
   });
 });
