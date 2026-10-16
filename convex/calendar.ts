@@ -1,4 +1,4 @@
-import { loadCanonicalListingAllocation } from "./lib/canonical_listing_allocation";
+import { loadCanonicalListingAllocation, reservedListingKeys } from "./lib/canonical_listing_allocation";
 import { calendarClock, confirmedClock } from "./lib/confirmed_schedule";
 import { shortItemName } from "./lib/item_display_name";
 import { mutation, query, type QueryCtx } from "./owner_functions";
@@ -1532,8 +1532,32 @@ export const getGanttWeek = query({
     const sharedBlacklistGantt = buildSharedImageBlacklist(allItems);
     // Override-resolved item names per reservation (memoized) — Gantt rows key
     // off the corrected inventory items, not raw listing/item-name strings.
-    const productIndexG = buildProductIndexMap(await ctx.db.query("hygglo_product_index").collect());
-    const overrideMapG = await loadCanonicalListingAllocation(ctx,undefined,undefined,reservations);
+    const listingKeysG = reservedListingKeys(reservations as unknown as ReservationRow[]);
+    const [productIndexRowsG, overrideRowsG] = await Promise.all([
+      Promise.all(listingKeysG.map(({ account, productId }) =>
+        ctx.db.query("hygglo_product_index")
+          .withIndex("by_account_product", (q) =>
+            q.eq("account_slug", account).eq("product_id", productId),
+          )
+          .collect(),
+      )),
+      Promise.all(listingKeysG.map(({ account, productId }) =>
+        ctx.db.query("listing_resolution_override")
+          .withIndex("by_account_product", (q) =>
+            q.eq("account_slug", account).eq("product_id", productId),
+          )
+          .collect(),
+      )),
+    ]);
+    const productIndexG = buildProductIndexMap(productIndexRowsG.flat());
+    // Reuse the inventory already loaded for Gantt name and image resolution.
+    // Both lookup tables are scoped to the reservation listings in this window.
+    const overrideMapG = await loadCanonicalListingAllocation(
+      ctx,
+      inventoryForGantt,
+      overrideRowsG.flat(),
+      reservations,
+    );
     const itemByIdG = new Map<string, GanttItemDoc>(allItems.filter((it) => it._id).map((it) => [String(it._id), it]));
     const resolvedNamesByRes = new Map<string, Set<string>>();
     for (const r of reservations) {
