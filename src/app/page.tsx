@@ -108,7 +108,11 @@ export default function DashboardPage() {
   );
 
   const visiblePanels = panelOrder
-    .filter((id) => !isPanelHidden(id) || (id === "reply-inbox" && notificationOpen))
+    // Keep the rental totals on the page even when an older/saved layout has
+    // `stats-grid` marked hidden. The individual stat cards remain editable;
+    // hiding the parent panel removed Active Rentals and Expected Monthly
+    // entirely for layouts that predate this dashboard change.
+    .filter((id) => id === "stats-grid" || !isPanelHidden(id) || (id === "reply-inbox" && notificationOpen))
     .map((id) => PANEL_WIDGETS.find((w) => w.id === id))
     .filter((w): w is (typeof PANEL_WIDGETS)[number] => Boolean(w));
 
