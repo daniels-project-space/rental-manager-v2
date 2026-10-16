@@ -484,7 +484,7 @@ export const getStatsDrawerData = query({
     // ── Next-30-day window for out-of-stock calc ─────────────────
     const next30 = new Date(now.getTime() + 30 * 86400000).toISOString().slice(0, 10);
 
-    // ── COLLECT 1: current/revenue reservations (indexed last 365d) ────────
+    // ── COLLECT 1: live reservations plus the completed history this view uses ──
     // Most cancelled rows are obsolete copies from Hygglo history. They only
     // feed the weekly operational-loss card and the 30-day demand classifier;
     // reading all of them on every stats refresh was ~80% of this query's
@@ -492,23 +492,30 @@ export const getStatsDrawerData = query({
     // and computeMissedRevenue each read their own bounded obsolete/cancelled
     // indexes only when needed below.
     //
-    // Keep the same 365-day source window for current-year revenue, active
-    // rental summaries, month projection, AI attribution and tax estimates.
+    // Confirmed and pending rows keep the rolling 365-day window so long-running
+    // rentals and existing pending bookings retain their current classification.
+    // Completed rows only feed this year's tax total and this month plus the
+    // previous three completed months used by the projection baseline. Reading
+    // older completed rows on each refresh adds no value to those calculations.
     const dashCutoff = (() => {
       const d = new Date();
       d.setDate(d.getDate() - 365);
       return d.toISOString().slice(0, 10);
     })();
-    const reservationsByStatusAndStartDate = (status: string) => accountSlug
+    const currentYearStart = `${now.getFullYear()}-01-01`;
+    const projectionStart = new Date(now.getFullYear(), now.getMonth() - 3, 1)
+      .toISOString().slice(0, 10);
+    const completedCutoff = currentYearStart < projectionStart ? currentYearStart : projectionStart;
+    const reservationsByStatusAndStartDate = (status: string, cutoff = dashCutoff) => accountSlug
       ? ctx.db.query("reservations").withIndex("by_account_status_start_date", (q) =>
-          q.eq("account_slug", accountSlug).eq("status", status).gte("start_date", dashCutoff),
+          q.eq("account_slug", accountSlug).eq("status", status).gte("start_date", cutoff),
         ).collect()
       : ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
-          q.eq("status", status).gte("start_date", dashCutoff),
+          q.eq("status", status).gte("start_date", cutoff),
         ).collect();
     const [confirmedRows, completedRows, pendingReviewRows] = await Promise.all([
       reservationsByStatusAndStartDate("confirmed"),
-      reservationsByStatusAndStartDate("completed"),
+      reservationsByStatusAndStartDate("completed", completedCutoff),
       reservationsByStatusAndStartDate("pending_review"),
     ]);
     const allResRaw = [...confirmedRows, ...completedRows, ...pendingReviewRows]
