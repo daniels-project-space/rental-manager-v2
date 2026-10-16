@@ -369,7 +369,7 @@ export const getLifetimeByMonth = query({
     // all-account chart. Read only its earliest indexed date instead of
     // collecting every other account's reservations to discover that bound.
     const firstGlobalReservation = accountSlug
-      ? await ctx.db.query("reservations").withIndex("by_start_date").first()
+      ? await ctx.db.query("reservations").withIndex("by_start_date", (q) => q).first()
       : null;
 
     // Determine the earliest month across live reservations AND historical data
