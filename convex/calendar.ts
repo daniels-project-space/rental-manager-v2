@@ -11,7 +11,7 @@ import {
   renterPeriodGroupIds,
   type ReservationRow,
 } from "./lib/reservations/predicates";
-import { websiteCalendarPeriods, websiteDayIntervals, reservationItemUnits, buildProductIndexMap, isStandardAccessory } from "./lib/reservations/itemUnits";
+import { websiteCalendarPeriods, websiteDayIntervals, reservationItemUnits, buildProductIndexMap, isStandardAccessory, type ResolvableRes } from "./lib/reservations/itemUnits";
 import {
   isTrackableLine,
   lineResolvesToSomething,
@@ -1532,7 +1532,7 @@ export const getGanttWeek = query({
     const sharedBlacklistGantt = buildSharedImageBlacklist(allItems);
     // Override-resolved item names per reservation (memoized) — Gantt rows key
     // off the corrected inventory items, not raw listing/item-name strings.
-    const listingKeysG = reservedListingKeys(reservations as unknown as ReservationRow[]);
+    const listingKeysG = reservedListingKeys(reservations as unknown as ResolvableRes[]);
     const [productIndexRowsG, overrideRowsG] = await Promise.all([
       Promise.all(listingKeysG.map(({ account, productId }) =>
         ctx.db.query("hygglo_product_index")
