@@ -22,7 +22,7 @@ import {
 } from "./lib/reservations/predicates";
 import { realisedMonthRevenue, rentalMonthProjectionInputs } from "./lib/reservations/monthRevenue";
 import { loadCompletedMonthlyRows } from "./lib/monthly_revenue_rows";
-import { confirmedHeadlineOrder } from "./lib/confirmed_headline_order";
+import { confirmedHeadlineOrder, confirmedPickupWindow } from "./lib/confirmed_headline_order";
 import {
   pctOfTarget,
   projectCurrentMonth,
@@ -3227,10 +3227,16 @@ async function loadRentalHeadlineStats(
   // `confirmedRows` above already contains every confirmed reservation, so
   // derive the pickup-date window from that read instead of issuing a second
   // overlapping index scan for the same status/account cohort.
-  const completedMonthRows = await loadCompletedMonthlyRows(ctx, projectionStart, monthEnd, accountSlug);
-  const confirmedPickupRows = confirmedRows.filter((row) =>
-    row.pickup_date !== undefined && row.pickup_date >= projectionStart && row.pickup_date <= monthEnd,
-  );
+  const reusedPickupRows = confirmedPickupWindow(confirmedRows, projectionStart, monthEnd);
+  const [completedMonthRows, confirmedPickupRows] = await Promise.all([
+    loadCompletedMonthlyRows(ctx, projectionStart, monthEnd, accountSlug),
+    reusedPickupRows ?? (accountSlug
+      ? ctx.db.query("reservations").withIndex("by_account_status_pickup_date", (q) =>
+          q.eq("account_slug", accountSlug).eq("status", "confirmed")
+            .gte("pickup_date", projectionStart).lte("pickup_date", monthEnd)).collect()
+      : ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
+          q.eq("status", "confirmed").gte("pickup_date", projectionStart).lte("pickup_date", monthEnd)).collect()),
+  ]);
   const pickupMonthRows: ReservationRow[] = [...confirmedPickupRows, ...completedMonthRows.pickupRows].sort((a, b) =>
     (a.pickup_date ?? "").localeCompare(b.pickup_date ?? "") || a._creationTime - b._creationTime,
   );
