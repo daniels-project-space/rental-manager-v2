@@ -756,6 +756,10 @@ const operationalSchema = defineSchema({
     // Live unmapped-listing alert: read only active status rows in its bounded
     // forward horizon, rather than every reservation sharing that date range.
     .index("by_status_start_date", ["status", "start_date"])
+    // Account-specific dashboard totals and materialized-view refreshes must
+    // not read every account's full reservation documents before filtering.
+    .index("by_account_status_start_date", ["account_slug", "status", "start_date"])
+    .index("by_account_pickup_date", ["account_slug", "pickup_date"])
     // Missed-revenue capacity checks are bounded to the dates of recent
     // countable demand. Keep both source and negotiated date fields indexed:
     // pickup/return dates override start/end when present, and older confirmed
