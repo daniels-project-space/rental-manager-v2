@@ -63,6 +63,7 @@ import { loadCanonicalListingAllocation } from "../lib/canonical_listing_allocat
 import {
   CALENDAR_FETCH_PAD_DAYS,
   CALENDAR_LOOKBACK_DAYS,
+  loadCalendarListingImages,
   computeStripLive,
   computeWeeklyLive,
   shiftIsoDate,
@@ -458,7 +459,7 @@ export const computeViews = internalQuery({
         )
         .collect(),
       ctx.db.query("items").collect(),
-      ctx.db.query("listing_images").collect(),
+      loadCalendarListingImages(ctx, reservationWindowRows),
       ctx.db.query("hygglo_product_index").collect(),
       ctx.db.query("listing_resolution_override").collect(),
     ]);
