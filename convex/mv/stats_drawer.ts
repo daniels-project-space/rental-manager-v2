@@ -159,21 +159,33 @@ export async function refreshAll(
         ? allSlugs.filter((s) => s.key === ACCOUNT_ALL || s.key === accountSlug)
         : allSlugs;
 
-  if (scope === "all") {
+  let slugsToRefresh = slugs;
+  let skippedByGate = 0;
+  // Any scope containing the all-account row must share the same attempt gate.
+  // The daily "both" schedule and operator "all_and_account" scope otherwise
+  // bypass the guard used by refreshFast and can repeat the same read-limit
+  // failure around a failed all-account refresh.
+  if (slugs.some(({ key }) => key === ACCOUNT_ALL)) {
     const canRefresh = await ctx.runMutation(anyApi.mv.stats_drawer.tryStartAllRefresh, {
       account: ACCOUNT_ALL,
       now: startedAt,
       force: force ?? false,
     });
     if (!canRefresh) {
-      return { ok: true, written: 0, skipped: slugs.length, durationMs: Date.now() - startedAt };
+      slugsToRefresh = slugs.filter(({ key }) => key !== ACCOUNT_ALL);
+      skippedByGate = slugs.length - slugsToRefresh.length;
+      // A pure all-account refresh has nothing left to do. Combined scopes
+      // continue refreshing their per-account snapshots.
+      if (slugsToRefresh.length === 0) {
+        return { ok: true, written: 0, skipped: skippedByGate, durationMs: Date.now() - startedAt };
+      }
     }
   }
 
   // Read the prior generatedAt for each row. Use the lowest across accounts
   // as the staleness cutoff — if ANY account has stale data, we re-run.
   const priorRows = await Promise.all(
-    slugs.map(({ key }) =>
+    slugsToRefresh.map(({ key }) =>
       ctx.runQuery(anyApi.mv.stats_drawer.get, { account: key }),
     ),
   );
@@ -204,7 +216,7 @@ export async function refreshAll(
       const timeLondon = londonTime(new Date(startedAt));
       type UpcomingRow = { pickup_date?: string | null; start_date?: string | null; pickup_time?: string | null };
       type CachedRentals = { rentals?: { upcoming?: UpcomingRow[] } } | null;
-      const cachedRentals = await Promise.all(slugs.map(({ key }) =>
+      const cachedRentals = await Promise.all(slugsToRefresh.map(({ key }) =>
         ctx.runQuery(anyApi.mv.stats_drawer.getRentals, { account: key }) as Promise<CachedRentals>,
       ));
       const crossedPickup = cachedRentals.some((row) =>
@@ -227,7 +239,7 @@ export async function refreshAll(
   }
 
   let written = 0;
-  for (const { key, arg } of slugs) {
+  for (const { key, arg } of slugsToRefresh) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const fullPayload: any = await ctx.runQuery(internal.dashboard.__service_getStatsDrawerData, {
       accountSlug: arg,
@@ -268,7 +280,7 @@ export async function refreshAll(
     });
     written += 1;
   }
-  return { ok: true, written, skipped: 0, durationMs: Date.now() - startedAt };
+  return { ok: true, written, skipped: skippedByGate, durationMs: Date.now() - startedAt };
 }
 
 export const write = internalMutation({
