@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {websiteWindowUnits,websiteCalendarPeriods, websiteDayIntervals, reservationItemUnits, type OverrideMap } from "./itemUnits";
-import { withDefaultAdapters } from "../default_adapter_units";
+import { createDefaultAdapterIndex, withDefaultAdapters } from "../default_adapter_units";
 const overrides: OverrideMap = new Map([
   ["leo#1", [{ item_id: "camera", qty: 2 }, { item_id: "lens", qty: 2 }]],
   ["leo#2", [{ item_id: "gopro", qty: 3 }]],
@@ -13,6 +13,15 @@ describe("held units from fully mapped listing quantities", () => {
     const mapping:OverrideMap=new Map([["leo#10",[{item_id:"ff",qty:1}]],["leo#11",[{item_id:"adapter",qty:1}]]]);
     const units=reservationItemUnits({account_slug:"leo",hygglo_items:[{product_id:10,qty:2},{product_id:11}]},new Map(),mapping,inventory);
     expect(Object.fromEntries(units)).toEqual({ff:2,adapter:3});
+  });
+  it("reuses a snapshot adapter index without changing reservation allocations",()=>{
+    const mapping:OverrideMap=new Map([["leo#10",[{item_id:"ff",qty:1}]]]);
+    const index=createDefaultAdapterIndex(inventory);
+    const rental={account_slug:"leo",hygglo_items:[{product_id:10,qty:2}]};
+    expect(Object.fromEntries(reservationItemUnits(rental,new Map(),mapping,inventory)))
+      .toEqual(Object.fromEntries(reservationItemUnits(rental,new Map(),mapping,inventory,undefined,index)));
+    expect(withDefaultAdapters([{item_id:"ff",qty:2}],inventory,index))
+      .toEqual(withDefaultAdapters([{item_id:"ff",qty:2}],inventory));
   });
   it("does not double-count an explicitly mapped supplied adapter",()=>{
     expect(withDefaultAdapters([{item_id:"ff",qty:1},{item_id:"adapter",qty:1}],inventory).components).toEqual([{item_id:"ff",qty:1},{item_id:"adapter",qty:1}]);
