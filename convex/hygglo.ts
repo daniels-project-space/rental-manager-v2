@@ -1403,11 +1403,9 @@ export const upsertOrdersAsReservationsBatch = mutation({
     const results: UpsertResult[] = [];
     // account_slug -> aggregated bank items (one flush per account at the end).
     const perAccountBank = new Map<string, BankItem[]>();
-    // Pass 15a (2026-05-26): track obsolete transitions so we can fire a
-    // SINGLE reactive MV refresh at the end of the batch — converging the
-    // dashboard's mv_stats_drawer (active/ongoing/upcoming/confirmed lists)
-    // within seconds of a cancellation instead of waiting up to ~60 min for
-    // the next refreshFast cron. One refresh per batch covers N transitions.
+    // Track pending-state changes for the small return-widget refresh below.
+    // The main rental and monthly totals now read through the bounded live
+    // headline query; do not enqueue the broad stats-drawer rebuild per poll.
     let anyTransitionedToObsolete = false;
     // Realised-revenue change in this batch → reactively refresh the lifetime
     // revenue + investment MVs (otherwise daily-only, so a fresh pickup — e.g.
@@ -1450,31 +1448,13 @@ export const upsertOrdersAsReservationsBatch = mutation({
       });
     }
 
-    // Reactively converge transition-driven views rather than waiting for the
-    // periodic crons. Ordinary detail edits keep the hourly stats snapshot
-    // cadence: its broad refresh reads ~15 MB and can fail before advancing its
-    // generatedAt, which otherwise makes every later poll enqueue the same
-    // expensive failed refresh. Active/monthly/pending dashboard headlines are
-    // independently live; revenue MVs still refresh on realised transitions.
+    // Core rental and monthly headlines are live. Keep the broad stats-drawer
+    // snapshot on its hourly schedule: triggering it here is wasteful because
+    // a read-limit failure leaves generatedAt unchanged and makes every later
+    // poll enqueue the same ~15 MB failed rebuild.
     const pendingChanged = anyTransitionedToObsolete || allNotify.length > 0;
     if (pendingChanged || anyRevenueRealized) {
       try {
-        if (pendingChanged) {
-          // New requests, confirmations and cancellations can update chat-side
-          // snapshot consumers within five minutes. Ordinary changes do not
-          // enqueue this megaquery; the dashboard's critical headlines read
-          // reservations directly and the scheduled snapshot remains hourly.
-          const mvAll = await ctx.db
-            .query("mv_stats_drawer")
-            .withIndex("by_account", (q) => q.eq("account", "all"))
-            .first();
-          if (!mvAll || Date.now() - mvAll.generatedAt > 5 * 60 * 1000) {
-            await ctx.scheduler.runAfter(0, internal.mv.stats_drawer.refresh, {
-              force: true,
-              scope: "all",
-            });
-          }
-        }
         if (pendingChanged) {
           await ctx.scheduler.runAfter(0, internal.mv.due_returns.refresh, {});
         }
