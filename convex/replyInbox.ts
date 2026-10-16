@@ -1,3 +1,4 @@
+import { loadHubRows } from "./lib/account_hub_projection";
 import { loadPricingRows } from "./lib/pricing_input_cache";
 
 import { patchRevenueReservation } from "./lib/reservation_revenue";
@@ -100,9 +101,9 @@ type HubBook = {
   draftEpoch: number;
 };
 
-async function loadHubBook(ctx: QueryCtx): Promise<HubBook> {
+export async function loadHubBook(ctx: QueryCtx): Promise<HubBook> {
   const settings = await ctx.db.query("settings").first();
-  const profiles = await ctx.db.query("account_profiles").collect();
+  const profiles = await loadHubRows(ctx);
   const bySlug = new Map<string, { lat: number | null; lng: number | null }>();
   for (const p of profiles) {
     const acc = await ctx.db.get(p.account_id);

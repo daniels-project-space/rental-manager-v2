@@ -89,6 +89,10 @@ const operationalSchema = defineSchema({
   }).index("by_slug", ["slug"]),
 
   // Per-account persona/templates/rules (Phase 1.B v1 mining seed)
+  account_hub_projection: defineTable({
+    key: v.string(), version: v.literal(1), revision: v.number(), enabled: v.boolean(), ready: v.boolean(), sha256: v.optional(v.string()),
+    rows: v.array(v.object({ source_id: v.id("account_profiles"), account_id: v.id("accounts"), hub_lat: v.union(v.number(), v.null()), hub_lng: v.union(v.number(), v.null()) })),
+  }).index("by_key", ["key"]),
   account_profiles: defineTable({
     account_id: v.id("accounts"),
     // legacy fields (kept for compat)

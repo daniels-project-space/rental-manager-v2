@@ -1,3 +1,4 @@
+import { patchAccountProfile } from "../lib/account_hub_projection";
 /**
  * One-off seed: give every account_profiles row a starter `hard_truths` (the
  * ground-truth block injected verbatim at the end of the draft prompt). Universal
@@ -29,7 +30,7 @@ export const seedHardTruths = internalMutation({
     let updated = 0;
     for (const p of profiles) {
       if (p.hard_truths && p.hard_truths.trim()) continue;
-      await ctx.db.patch(p._id, {
+      await patchAccountProfile(ctx, p._id, {
         hard_truths: DEFAULT_HARD_TRUTHS,
         updated_at: Date.now(),
       });
