@@ -168,9 +168,9 @@ export const runStalenessCheck = internalAction({
     const now = Date.now();
 
     // Off-hours guard: the poller is intentionally idle overnight, so a stale
-    // lastSuccessfulPollAt during London 23:00–07:00 is expected — not a stall.
+    // lastSuccessfulPollAt during London 23:00–08:00 is expected — not a stall.
     // Return a type-correct "skipped" report WITHOUT scanning account_state or
-    // inserting alerts. (07:00 = 420 min inclusive, 23:00 = 1380 min exclusive.)
+    // inserting alerts. (08:00 = 480 min inclusive, 23:00 = 1380 min exclusive.)
     const londonMin = londonMinutesSinceMidnight();
     if (!isWithinActivePollingWindow(londonMin)) {
       return {

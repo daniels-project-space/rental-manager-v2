@@ -130,15 +130,18 @@ crons.weekly(
 // self-gating) so a Convex cron outage cannot silently stop the poller.
 //
 // One primary clock decides when a poll is due from Convex local state.
+// Five-minute wall-clock ticks align with the 5-minute configured interval and
+// the 15-minute full-poll boundaries selected by hyggloPollMode. An interval
+// anchored to an arbitrary deploy time can drift past those boundaries.
 // Production requires POLL_TRIGGER_URL in Convex and the same
 // POLL_TRIGGER_SECRET in Convex and Vercel. Keep Trigger.dev on its
 // low-frequency backup cadence; deploy both schedules together to avoid
 // duplicate polling.
 // Set POLL_TRIGGER_URL and POLL_TRIGGER_SECRET on the same Convex deployment
 // exposed by NEXT_PUBLIC_CONVEX_URL so the dashboard reads the refreshed data.
-crons.interval(
+crons.cron(
   "hygglo poll clock",
-  { minutes: 2 },
+  "*/5 * * * *",
   internal.poll_clock.tickPollClock,
   {},
 );
