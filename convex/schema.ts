@@ -3108,6 +3108,10 @@ const reservationReadTable = defineTable({
 // Keep identical validated lifecycle facts in a physically separate test table.
 // Production stock, calendars, revenue and return workflows only read reservations.
 export default defineSchema({
+  product_read_records: defineTable({ source_id: v.id("hygglo_products"), source_creation_time: v.number(), accountSlug: v.string(), version: v.literal(1), valid: v.boolean(), data: v.optional(v.bytes()), packed_sha256: v.optional(v.string()), source_sha256: v.string() })
+    .index("by_source", ["source_id"]).index("by_source_creation_time", ["source_creation_time"]).index("by_account", ["accountSlug", "source_creation_time"]),
+  product_read_gate: defineTable({ key: v.literal("full:v1"), version: v.literal(1), enabled: v.boolean(), ready: v.boolean(), accounts: v.optional(v.array(v.object({ accountSlug: v.string(), count: v.number() }))) }).index("by_key", ["key"]),
+  product_read_progress: defineTable({ accounts: v.array(v.object({ accountSlug: v.string(), count: v.number() })), key: v.literal("full:v1"), revision: v.number(), stage: v.union(v.literal("backfill"), v.literal("prune"), v.literal("audit"), v.literal("prepared")), cursor: v.union(v.string(), v.null()), audited_revision: v.optional(v.number()), audited_count: v.number(), audited_fallback_count: v.number(), copied_count: v.number(), pruned_count: v.number() }).index("by_key", ["key"]),
   reservation_read_records: reservationReadTable,
   reservation_order_presence: defineTable({ source_id: v.id("reservations"), hygglo_order_id: operationalSchema.tables.reservations.validator.fields.hygglo_order_id })
     .index("by_source", ["source_id"]).index("by_order", ["hygglo_order_id"]),
