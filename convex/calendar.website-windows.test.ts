@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./auth", () => ({ authComponent: { safeGetAuthUser: vi.fn(async () => null) } }));
-import { computeStripLive, computeWeeklyLive, getGanttWeek, getCalendarStrip, getWeeklyCalendar, getItemAvailabilityForChat } from "./calendar";
+import { computeStripLive, computeWeeklyLive, getGanttWeek, getCalendarStrip, getWeeklyCalendar, getItemAvailabilityForChat, searchCalendarInventory } from "./calendar";
 import { computeViews } from "./mv/calendar";
 import { websiteCalendarPeriods } from "./lib/reservations/itemUnits";
 const ms = (day: string) => Date.parse(`${day}T00:00:00Z`);
@@ -132,4 +132,43 @@ it("keeps saved native clocks through the real Gantt query while stock calendars
  expect(blocks[0]).toMatchObject({pickup_time:"09:15",return_time:"17:30",pickup_time_status:"reported",return_time_status:"reported"});
  const week=await computeWeeklyLive(ctx,{accountSlug:"leo",weekStartDate:"2026-10-05"});
  expect(week.days[6].reservations[0].returnTime).toBeNull();
+});
+
+it("uses status/date indexes and retains rentals older than the former 120-day overlap scan",async()=>{
+ const long={...booking,_id:"long-rental",account_slug:"leo",hygglo_order_id:"long-order",
+   site_item_windows:undefined,start_date:"2026-01-01",end_date:"2026-10-10",
+   items:[{item_name:"Sony FX3",qty:1}],resolved_items:[{item_id:"camera",qty:1}],
+   hygglo_items:[{name:"Sony FX3",product_id:42}]};
+ const ops:Record<string,number>={};
+ const ctx=context([long],undefined,undefined,ops);
+ const weekly=await computeWeeklyLive(ctx,{accountSlug:"leo",weekStartDate:"2026-10-05"});
+ expect(weekly.days[0].reservations.map((r:any)=>r.reservationId)).toContain(long._id);
+
+ const strip=await computeStripLive(ctx,{accountSlug:"leo",startDate:"2026-10-05",days:7});
+ expect(strip[0].away.some((r:any)=>r.reservationId===long._id)).toBe(true);
+
+ const gantt=await (getGanttWeek as any)._handler(ctx,{weekStartIso:"2026-10-05",accountSlug:"leo"});
+ expect(gantt.items.flatMap((item:any)=>item.blocks).some((b:any)=>b.reservation_id===long._id)).toBe(true);
+
+ const search=await (searchCalendarInventory as any)._handler(ctx,{
+   query:"Sony FX3",weekStartIso:"2026-10-05",accountSlug:"leo",
+ });
+ expect(search.reservationIds).toContain(long._id);
+ vi.setSystemTime(new Date("2026-10-05T10:00:00Z"));
+ const chat=await (getItemAvailabilityForChat as any)._handler(context([long]),{
+   query:"Sony FX3",horizonDays:7,accountSlug:"leo",
+ });
+ expect(chat.items[0].upcoming_bookings.some((b:any)=>b.return==="2026-10-10")).toBe(true);
+
+ const views=await (computeViews as any)._handler(context([long],undefined,undefined,ops),{
+   weekAnchor:"2026-10-05",stripAnchor:"2026-10-05",stripDays:7,slugs:["leo"],
+ });
+ const byKey=Object.fromEntries(views.map((view:any)=>[view.key,view.payload]));
+ expect(byKey["weekly:leo"]).toEqual(await computeWeeklyLive(context([long]),{
+   accountSlug:"leo",weekStartDate:"2026-10-05",
+ }));
+ expect(byKey["weekly:leo"].days[0].reservations.map((r:any)=>r.reservationId)).toContain(long._id);
+ expect(ops["reservations.index.by_status_end_date"]).toBeGreaterThan(0);
+ expect(ops["reservations.index.by_account_status_end_date"]).toBeGreaterThan(0);
+ expect(ops["reservations.unindexedCollect"]).toBeUndefined();
 });
