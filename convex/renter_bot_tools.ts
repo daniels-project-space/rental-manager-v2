@@ -291,6 +291,7 @@ export const get_listing_context = query({
             requested_name,
             status: "owned" as const,
             name: item.name_canonical,
+            rental_name: item.rental_facts?.name ?? item.name_canonical,
             kind: item.kind ?? null,
             spec_text: verified?.text ?? null,
             spec_verification: verified

@@ -440,7 +440,7 @@ export function NotificationBell() {
                   })}
                 </div>
                 <p className="text-[9px] text-[#6b7280] mt-1.5 leading-snug">
-                  All notifications shows every rental alert. Money only sends confirmed-rental “Wohoo” earnings alerts. My 50% sends the same alerts showing half the earnings — your share. This choice survives browser push-endpoint refreshes.
+                  All notifications includes pickup reminders and rental time changes. Money only sends confirmed-rental “Wohoo” earnings alerts. My 50% shows half the earnings and the item rented. This choice survives browser push-endpoint refreshes.
                 </p>
                 {err && <p className="text-[10px] text-red-400 mt-1">{err}</p>}
               </div>
@@ -461,7 +461,7 @@ export function NotificationBell() {
                   className="w-full text-left px-3 py-2.5 border-b border-white/[0.06] hover:bg-white/[0.04] transition-colors flex gap-2.5"
                 >
                   <span className="text-base leading-none mt-0.5">
-                    {e.type === "booking_confirmed" ? "🎉" : e.type === "low_response_rate" ? "🚨" : "🔔"}
+                    {e.type === "booking_confirmed" ? "🎉" : e.type === "pickup_reminder" ? "⏰" : e.type === "rental_time_changed" ? "🗓️" : e.type === "low_response_rate" ? "🚨" : "🔔"}
                   </span>
                   <span className="flex-1 min-w-0">
                     {e.account_slug === "dbcinema_web" && <span className="block text-[10px] text-emerald-300">DB Cinema Web{e.source_channel === "email" ? " · Email" : ""}{e.type === "human_request" ? " · Human requested" : e.type === "booking_cancelled" ? " · Cancellation" : ""}</span>}

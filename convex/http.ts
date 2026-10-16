@@ -147,7 +147,7 @@ export const storefrontRead = httpAction(async (ctx, request) => {
     const value = rows.map((row: any) => {
       if(path==="items:sharedStockForStorefront") return {version:row.version,turnaroundBufferMinutes:row.turnaroundBufferMinutes,checkedAt:row.checkedAt,units:row.units.map((unit:any)=>({masterItemId:unit.masterItemId,active:unit.active,quantityOwned:unit.quantityOwned,windows:unit.windows.map((window:any)=>pick(window,["start","end","qty"]))}))};
       if (path === "hygglo_products:list" || path === "hygglo_products:catalogueForStorefront") return pick(row, ["productId", "name", "isPublished", "isMarketingOnly", "valuation", "minimumRentalDays", "prices", "images", "unavailableDates", "listings", "masterItemId", ...(path === "hygglo_products:catalogueForStorefront" ? ["marketingOnlyMode", "marketingOnlyUpdatedAt", "stockMapping", "copySourceFingerprint"] : [])]);
-      if (path === "items:listForReconcile") return pick(row, ["_id", "name", "display_name", "aliases", "qty", "status", "is_marketing_only"]);
+      if (path === "items:listForReconcile") return pick(row, ["_id", "name", "rental_name", "display_name", "aliases", "qty", "status", "is_marketing_only"]);
       return {
         ...pick(row, ["_id", "hygglo_order_id", "start_date", "end_date", "pickup_date", "return_date", "order_step", "status", "is_obsolete"]),
         items: (row.items ?? []).map((item: any) => pick(item, ["product_id", "item_name", "qty"])),

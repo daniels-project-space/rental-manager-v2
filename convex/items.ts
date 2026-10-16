@@ -823,6 +823,7 @@ export const listForReconcile = query({
     return all.map((i) => ({
       _id: i._id as string,
       name: i.name_canonical,
+      rental_name: i.rental_facts?.name ?? i.name_canonical,
       display_name: shortItemName(i),
       aliases: i.aliases ?? [],
       qty: i.qty,

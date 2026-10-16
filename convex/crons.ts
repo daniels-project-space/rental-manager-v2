@@ -464,4 +464,6 @@ crons.interval(
 // Read-only invoice discovery and bounded, retryable PDF backfill. No rental messaging or payment execution.
 crons.daily("invoice archive discovery", { hourUTC: 5, minuteUTC: 35 }, internal.invoice_sync.discover, {});
 crons.interval("invoice archive retries", { minutes: 5 }, internal.invoice_sync.drain, {});
+// Owner alerts only. The shared dispatcher keeps both money-only lanes income-only.
+crons.cron("pickup reminders 15 minutes before", "* * * * *", internal.rental_timing_notifications.checkPickups, {});
 export default crons;

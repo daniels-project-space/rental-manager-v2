@@ -13,7 +13,8 @@ export type PushNotificationType =
   | "new_request"
   | "renter_message"
   | "low_response_rate"
-  | "human_request" | "booking_cancelled" | "email_notification" | "booking_update";
+  | "human_request" | "booking_cancelled" | "email_notification" | "booking_update"
+  | "pickup_reminder" | "rental_time_changed";
 
 /**
  * A device moving from a money-only mode to "all" may have just missed a
@@ -165,7 +166,7 @@ export function buildConfirmedBookingNotificationCopy(args: {
   const where = acct ? `${itemName} on ${acct}` : itemName;
   return {
     title: made ? `🎉 Wohoo, you made ${made}!` : "🎉 Wohoo, booking made!",
-    body: args.mode === "my_share" ? `${acct || "Rental income"} · Your 50% share` : `${where} · ${firstName}`,
+    body: args.mode === "my_share" ? `${where} · Your 50% share` : `${where} · ${firstName}`,
   };
 }
 

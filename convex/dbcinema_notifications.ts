@@ -5,18 +5,18 @@ import { buildConfirmedBookingNotificationCopy } from "./lib/notification_events
 
 export const receive = internalMutation({
   args: { event: v.object({ version: v.literal(1), eventKey: v.string(), kind: v.string(), conversationId: v.string(),
-    createdAt: v.number(), title: v.string(), body: v.string(), renterName: v.string(),
+    createdAt: v.number(), title: v.string(), body: v.string(), renterName: v.string(), itemName: v.optional(v.string()),
     income: v.optional(v.object({ gross: v.number(), net: v.number(), currency: v.string() })) }) },
   handler: async (ctx, { event: e }) => {
     if (![e.eventKey, e.kind, e.conversationId].every(s => s.length > 0 && s.length <= 256) ||
         !Number.isSafeInteger(e.createdAt) || e.createdAt < 0 || e.createdAt > Date.now() + 60_000 ||
-        e.title.length > 300 || e.body.length > 2000 || e.renterName.length > 300)
+        e.title.length > 300 || e.body.length > 2000 || e.renterName.length > 300 || (e.itemName?.length ?? 0) > 2000)
       throw Error("Invalid website notification");
     const paid = e.kind === "booking_paid";
     if (paid && (!e.income || e.income.currency !== "GBP" || ![e.income.gross, e.income.net].every(n => Number.isFinite(n) && n >= 0 && n <= 1_000_000)))
       throw Error("Website income receipt is missing");
-    const copy_data = paid ? { renter_name: e.renterName, gross: e.income!.gross, net: e.income!.net, currency: "GBP" } : undefined;
-    const copy = paid ? buildConfirmedBookingNotificationCopy({ ...e.income!, renterName: e.renterName, accountSlug: "dbcinema_web" })
+    const copy_data = paid ? { renter_name: e.renterName, item_name:e.itemName, gross: e.income!.gross, net: e.income!.net, currency: "GBP" } : undefined;
+    const copy = paid ? buildConfirmedBookingNotificationCopy({ ...e.income!, renterName: e.renterName, itemName:e.itemName, accountSlug: "dbcinema_web" })
       : { title: `DB Cinema Web · ${e.title}`, body: e.body };
     const type = paid ? "booking_confirmed" : e.kind === "human_request" ? "human_request" :
       e.kind === "renter_message" ? "renter_message" : e.kind === "booking_cancelled" ? "booking_cancelled" :

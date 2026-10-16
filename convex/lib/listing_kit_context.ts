@@ -2,14 +2,14 @@ import type {Doc} from "../_generated/dataModel";
 import type {QueryCtx} from "../_generated/server";
 import {baseListingProductIds} from "./base_listing_identity";
 import {listingMediaConflict,withoutUnverifiedMediaCapacity} from "./listing_media_conflict";
-import {recordedKit} from "./recommendation_kit";
+import {canonicalKitContents,type KitComponent} from "./canonical_kit_contents";
 
 type KitSources={indexes:Doc<"hygglo_product_index">[];overrides:Doc<"listing_resolution_override">[];peers:Doc<"online_listings">[]};
 
 /** One Native interpretation for renter context and owner-task revalidation.
  * A complete stock mapping does not resolve conflicting supplied contents. */
 export async function listingKitContext(ctx:QueryCtx,account:string|null|undefined,item:Doc<"items">|undefined,
-  components:Array<{name:string|null;units_per_listing:number}>,inventory:Doc<"items">[],sources?:KitSources) {
+  components:KitComponent[],inventory:Doc<"items">[],sources?:KitSources) {
   const recorded=item?.compatibility?.included_with_rental??[];
   let safe=recorded,conflict=false;
   let listingNames:string[]=[];
@@ -24,7 +24,7 @@ export async function listingKitContext(ctx:QueryCtx,account:string|null|undefin
     conflict=listingMediaConflict(recorded,listingNames);
     if(conflict)safe=withoutUnverifiedMediaCapacity(recorded);
   }
-  const kit=recordedKit(components.map(c=>({name:c.name,qty:c.units_per_listing})),safe);
+  const kit=canonicalKitContents(components,inventory,safe);
   const contents_review_required=conflict||kit.unreconciled_contents.length>0;
   return {kit,included_with_rental:safe.filter(text=>!kit.unreconciled_contents.includes(text)),contents_review_required,
     contents_review:contents_review_required?{recorded_contents:recorded,listing_names:listingNames,unreconciled_contents:kit.unreconciled_contents}:null};

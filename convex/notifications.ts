@@ -27,6 +27,9 @@
 import { v } from "convex/values";
 import { ownsPushDestination, validatePushSubscription, pushCredentialHash, validPushRenewalCredential, pushKeysHash } from "./lib/push_registration";
 import {
+  pickupReminderEvent,
+} from "./lib/rental_timing_notifications";
+import {
   query,
   mutation,
   internalQuery,
@@ -47,7 +50,7 @@ import {
   shouldReplayPreferenceSuppressedLowResponseRateAlert,
 } from "./lib/notification_events";
 
-export const NOTIF_TYPES = ["booking_confirmed", "new_request", "renter_message", "low_response_rate", "human_request", "booking_cancelled", "email_notification", "booking_update"] as const;
+export const NOTIF_TYPES = ["booking_confirmed", "new_request", "renter_message", "low_response_rate", "human_request", "booking_cancelled", "email_notification", "booking_update", "pickup_reminder", "rental_time_changed"] as const;
 export type NotifType = (typeof NOTIF_TYPES)[number];
 export const PUSH_NOTIFICATION_MODES = ["all", "money_only", "my_share"] as const;
 export type PushNotificationMode = (typeof PUSH_NOTIFICATION_MODES)[number];
@@ -444,6 +447,17 @@ export const claimPending = internalMutation({
       // has burned its attempts is not claimable in the first place.
       if (!notificationAttemptDue(event, now)) continue;
       if (!notificationClaimAvailable(event, now)) continue;
+      if (event.type === "pickup_reminder") {
+        const orderId = event.account_slug === "dbcinema_web" ? event.thread_id.replace(/^dbcinema:/, "") : event.thread_id;
+        const rental = await ctx.db.query("reservations").withIndex("by_hygglo_order_id", q => q.eq("hygglo_order_id", orderId)).first();
+        const current = rental && rental.account_slug === event.account_slug ? pickupReminderEvent(rental, now) : null;
+        if (!current || current.event_key !== event.event_key) {
+          // A reschedule, cancellation or expired fifteen-minute window must
+          // not produce a stale push (including a later delivery retry).
+          await ctx.db.patch(event._id, { delivered_at: now, delivery_exhausted_at: now });
+          continue;
+        }
+      }
       await ctx.db.patch(event._id, { dispatch_claimed_at: now });
       claimed.push({ ...event, dispatch_claimed_at: now });
     }
