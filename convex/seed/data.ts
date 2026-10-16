@@ -1,3 +1,4 @@
+import { patchStockInput } from "../lib/stock_input_writes";
 
 import { insertRevenueReservation, patchRevenueReservation } from "../lib/reservation_revenue";
 // Phase 2.A v1 → v2 data import mutations.
@@ -403,7 +404,7 @@ export const backfillItemAcquisitionCostsBatch = internalMutation({
         .collect();
       if (items.length === 0) { not_found += 1; continue; }
       for (const item of items) {
-        await ctx.db.patch(item._id, { acquisition_cost_gbp: row.acquisition_cost_gbp });
+        await patchStockInput(ctx, item._id, { acquisition_cost_gbp: row.acquisition_cost_gbp });
         updated += 1;
       }
     }

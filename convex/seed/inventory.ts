@@ -1,3 +1,4 @@
+import { insertStockInput } from "../lib/stock_input_writes";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { v } from "convex/values";
 
@@ -91,7 +92,7 @@ export const seedItems = internalMutation({
     const t = now();
     let inserted = 0;
     for (const it of items) {
-      await ctx.db.insert("items", { ...it, created_at: t, updated_at: t });
+      await insertStockInput(ctx, "items", { ...it, created_at: t, updated_at: t });
       inserted++;
     }
     await ctx.db.insert("audit_log", {

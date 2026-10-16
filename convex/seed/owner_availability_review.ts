@@ -1,3 +1,4 @@
+import { patchStockInput } from "../lib/stock_input_writes";
 import { internalMutation } from "../_generated/server";
 import { patchProduct } from "../lib/product_context";
 import { v } from "convex/values";
@@ -15,7 +16,7 @@ export const apply = internalMutation({
     if(items.length===301||products.some(p=>!p))throw Error("Owner stock review snapshot is incomplete");
     const plan=ownerAvailabilityReview(items,products.filter((p):p is NonNullable<typeof p>=>p!==null));
     if(!dryRun){
-      for(const row of plan.items)await ctx.db.patch(row.id,{...row.patch,updated_at:Date.now()});
+      for(const row of plan.items)await patchStockInput(ctx, row.id,{...row.patch,updated_at:Date.now()});
       for(const row of plan.products){
         const at=Date.now();
         await patchProduct(ctx,row.id,{...row.patch,marketingOnlyUpdatedAt:at},products.find(p=>p?._id===row.id)!);

@@ -1,3 +1,4 @@
+import { insertStockInput, patchStockInput } from "./lib/stock_input_writes";
 /** Owner-confirmed physical inventory intake and exact external listing linkage.
  * No marketplace write, renter message, or insurance email is sent here. */
 import { internal } from "./_generated/api";
@@ -231,7 +232,7 @@ export const create = mutation({
     const owned = args.ownership === "owned";
     const bookableQuantity = owned ? args.quantity : 0;
     const insuranceStatus = insuranceReady(args) ? "ready_for_review" as const : "needs_details" as const;
-    const itemId = await ctx.db.insert("items", {
+    const itemId = await insertStockInput(ctx, "items", {
       name_canonical: name, name_input: name, slug, kind, qty: bookableQuantity, unit_kind: "unit",
       lens_mount: args.lens_mount?.trim() || undefined,
       compatibility: {
@@ -374,18 +375,18 @@ export const registerListing = mutation({
       await patchProduct(ctx, mirror._id, { masterItemId: args.item_id, isMarketingOnly: !owned }, mirror);
     if (override) {
       if (!override.public_url || !override.stock_item_id)
-        await ctx.db.patch(override._id, {
+        await patchStockInput(ctx, override._id, {
           public_url: url, stock_item_id: args.item_id, updated_at: now,
           note: `Owner-confirmed public listing ${url}; one canonical physical stock pool.`,
         });
     } else {
-      await ctx.db.insert("listing_resolution_override", {
+      await insertStockInput(ctx, "listing_resolution_override", {
         account_slug: account, product_id: args.product_id, components,
         stock_item_id: args.item_id, public_url: url, source: "walle-owner-confirmed-listing",
         note: `Owner-confirmed public listing ${url}; one canonical physical stock pool.`, updated_at: now,
       });
     }
-    if (owned && !index) await ctx.db.insert("hygglo_product_index", {
+    if (owned && !index) await insertStockInput(ctx, "hygglo_product_index", {
       account_slug: account, product_id: args.product_id, item_id: args.item_id, source: "manual",
       evidence_count: 1, sample_title: mirror.name, created_at: now, last_seen_at: now,
     });
@@ -486,7 +487,7 @@ export const updateInsuranceDetails = mutation({
       insurance_status: ready ? "ready_for_review" : "needs_details",
       broker_evidence: undefined, broker_evidence_kind: undefined, confirmed_cover_date: undefined, updated_at: now,
     });
-    await ctx.db.patch(item._id, {
+    await patchStockInput(ctx, item._id, {
       replacement_cost_gbp: moneyPerUnit(args.replacement_value_gbp, args.replacement_value_basis, intake.physical_quantity),
       acquisition_cost_gbp: moneyPerUnit(args.purchase_price_gbp, args.purchase_value_basis, intake.physical_quantity),
       updated_at: now,

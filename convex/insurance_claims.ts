@@ -1,3 +1,4 @@
+import { deleteStockInput, insertStockInput, patchStockInput } from "./lib/stock_input_writes";
 
 import { patchRevenueReservation } from "./lib/reservation_revenue";
 import { websiteCaseView } from "./lib/websiteCases";
@@ -73,7 +74,7 @@ export const create = mutation({
       accountId = acc?._id;
     }
     const stage = (args.stage as Stage) ?? "case_opened";
-    const id = await ctx.db.insert("insurance_claims", {
+    const id = await insertStockInput(ctx, "insurance_claims", {
       account_slug: args.account_slug,
       account_id: accountId,
       item_id: args.item_id,
@@ -136,7 +137,7 @@ export const openCaseFromReservation = mutation({
       accountId = acc?._id;
     }
     const today = new Date().toISOString().slice(0, 10);
-    const claimId = await ctx.db.insert("insurance_claims", {
+    const claimId = await insertStockInput(ctx, "insurance_claims", {
       account_slug: res.account_slug,
       account_id: accountId,
       item_id: itemId,
@@ -170,7 +171,7 @@ export const openCaseFromReservation = mutation({
         blacklisted_at: Date.now(),
         note_log: log,
       });
-      await ctx.db.patch(claimId, { renter_id: renterDoc._id });
+      await patchStockInput(ctx, claimId, { renter_id: renterDoc._id });
     }
 
     // Pull the rental(s) out of the Return Hub.
@@ -219,7 +220,7 @@ export const update = mutation({
       patch.stage = "closed";
       patch.repair_item_ids = [];
     }
-    await ctx.db.patch(id, patch);
+    await patchStockInput(ctx, id, patch);
     if (auditClose)
       await ctx.db.insert("audit_log", {table_name:"insurance_claims",actor:"owner",op:"update",count:1,
         source_file:"insurance_claims.update",note:`Closed case ${id} without recording money; original claim amount and payout history retained; repair holds released.`,ts:Date.now()});
@@ -236,7 +237,7 @@ export const advanceStage = mutation({
     if (cur === "denied" || cur === "added_to_revenue" || cur === "closed") return;
     const idx = STAGES.indexOf(cur as (typeof STAGES)[number]);
     const next = STAGES[Math.min(STAGES.length - 1, idx + 1)];
-    await ctx.db.patch(id, { stage: next, status: statusForStage(next) });
+    await patchStockInput(ctx, id, { stage: next, status: statusForStage(next) });
   },
 });
 
@@ -247,26 +248,26 @@ export const revertStage = mutation({
     if (!row) return;
     const cur = stageOf(row);
     if (cur === "denied" || cur === "closed") {
-      await ctx.db.patch(id, { stage: "case_opened", status: "open" });
+      await patchStockInput(ctx, id, { stage: "case_opened", status: "open" });
       return;
     }
     const idx = Math.max(0, STAGES.indexOf(cur as (typeof STAGES)[number]));
     const prev = STAGES[Math.max(0, idx - 1)];
-    await ctx.db.patch(id, { stage: prev, status: statusForStage(prev) });
+    await patchStockInput(ctx, id, { stage: prev, status: statusForStage(prev) });
   },
 });
 
 export const markDenied = mutation({
   args: { id: v.id("insurance_claims") },
   handler: async (ctx, { id }) => {
-    await ctx.db.patch(id, { stage: "denied", status: "denied" });
+    await patchStockInput(ctx, id, { stage: "denied", status: "denied" });
   },
 });
 
 export const creditToRevenue = mutation({
   args: { id: v.id("insurance_claims"), credited_to_month: v.string(), payout_amount_gbp: v.number() },
   handler: async (ctx, { id, credited_to_month, payout_amount_gbp }) => {
-    await ctx.db.patch(id, {
+    await patchStockInput(ctx, id, {
       stage: "added_to_revenue",
       status: "settled",
       credited_to_month,
@@ -286,7 +287,7 @@ export const remove = mutation({
       (r) => (r as { case_id?: string }).case_id === (id as string),
     );
     for (const r of linked) await patchRevenueReservation(ctx, r._id, { case_open: undefined, case_id: undefined });
-    await ctx.db.delete(id);
+    await deleteStockInput(ctx, id);
     // Same reason as openCaseFromReservation: refresh the Return Hub cache now so
     // the released rental reappears immediately instead of after the hourly cron.
     await ctx.scheduler.runAfter(0, internal.mv.due_returns.refresh, {});

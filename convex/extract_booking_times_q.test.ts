@@ -4,7 +4,7 @@ import {hashBookingTimeTranscript} from "../src/lib/booking-time-transcript";
 function fixture(){
  const messages=[{sender:"renter",body_text:"Return at 5pm",hygglo_sent_at:1},{sender:"owner",body_text:"Yes!",hygglo_sent_at:2}];
  const row:any={_id:"rental",hygglo_order_id:"123",start_date:"2026-10-09",end_date:"2026-10-09"};const writes:any[]=[];
- const ctx:any={db:{get:async()=>({...row}),insert:async()=>{},patch:async(_:string,p:any)=>{writes.push(p);Object.assign(row,p)},query:()=>{const q:any={withIndex:()=>q,order:()=>q,first:async()=>null,take:async()=>messages.slice().reverse()};return q}},scheduler:{runAfter:async()=>{}}};
+ const ctx:any={db:{normalizeId:(table:string,id:string)=>table==="reservations"&&id===row._id?id:null,get:async()=>({...row}),insert:async()=>{},patch:async(_:string,p:any)=>{writes.push(p);Object.assign(row,p)},query:()=>{const q:any={withIndex:()=>q,order:()=>q,first:async()=>null,unique:async()=>null,take:async()=>messages.slice().reverse()};return q}},scheduler:{runAfter:async()=>{}}};
  return {messages,row,writes,ctx};
 }
 describe("real extraction writer schedule provenance",()=>{

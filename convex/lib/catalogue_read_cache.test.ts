@@ -147,7 +147,7 @@ describe("lossless catalogue input cache", () => {
   it("rejects an oversized decompression header before allocating the output", () => {
     const data = packCatalogue([catalogueProduct(source())]);
     new DataView(data).setUint32(data.byteLength - 4, 9 * 1024 * 1024, true);
-    expect(() => unpackCatalogue(data)).toThrow("Invalid catalogue cache size");
+    expect(() => unpackCatalogue(data)).toThrow("Invalid cache size");
   });
   it("keeps the catalogue available if derived metadata has duplicate keys", async () => {
     const f = fixture(); await ready(f);

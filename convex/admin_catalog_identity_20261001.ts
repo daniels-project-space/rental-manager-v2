@@ -1,3 +1,4 @@
+import { patchStockInput } from "./lib/stock_input_writes";
 import { internalMutation } from "./_generated/server";
 import { shortItemName } from "./lib/item_display_name";
 
@@ -10,7 +11,7 @@ export const run = internalMutation({ args: {}, handler: async ctx => {
     const name = macro ? "Sony FE 90mm f2.8 Macro G OSS" : item.name_canonical;
     const display_name = macro ? "Sony 90mm f/2.8 Macro G OSS" : shortItemName(item);
     const aliases = [...new Set([...(item.aliases ?? []), item.name_canonical, display_name])].filter(n => n !== name);
-    await ctx.db.patch(item._id, { name_canonical: name, display_name, aliases, updated_at: Date.now(), ...(macro ? { image_url: undefined } : {}) });
+    await patchStockInput(ctx, item._id, { name_canonical: name, display_name, aliases, updated_at: Date.now(), ...(macro ? { image_url: undefined } : {}) });
     if (macro) {
       const spec = await ctx.db.query("item_specs").withIndex("by_item", q => q.eq("item_id", item._id)).first();
       if (!spec) throw new Error("Missing macro model record; correction must remain atomic");

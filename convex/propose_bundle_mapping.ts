@@ -1,3 +1,4 @@
+import { insertStockInput, patchStockInput } from "./lib/stock_input_writes";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
@@ -154,8 +155,8 @@ export const apply = internalMutation({
         source: "manual_audit",
         updated_at: Date.now(),
       };
-      if (existing) await ctx.db.patch(existing._id, patch);
-      else await ctx.db.insert("listing_resolution_override", patch);
+      if (existing) await patchStockInput(ctx, existing._id, patch);
+      else await insertStockInput(ctx, "listing_resolution_override", patch);
       changed++;
       log.push(`${p.account_slug}#${p.product_id} -> ${p.component_ids.length} components`);
     }

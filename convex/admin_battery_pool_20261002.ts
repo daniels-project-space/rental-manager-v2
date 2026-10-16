@@ -1,3 +1,4 @@
+import { insertStockInput, patchStockInput } from "./lib/stock_input_writes";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { defaultAdapterUnits } from "./lib/default_adapter_units";
 
@@ -28,7 +29,7 @@ export const run = internalMutation({ args: {}, handler: async ctx => {
     if (pool.quantity_basis?.source !== SOURCE || !pool.track_independent_stock || pool.unit_kind !== "unit")
       throw new Error("Existing NP-F570 pool requires review; refusing to overwrite");
   } else {
-    poolId = await ctx.db.insert("items", {
+    poolId = await insertStockInput(ctx, "items", {
       name_canonical: POOL_NAME, display_name: "NP-F570 batteries", name_input: POOL_NAME,
       slug: "np-f570-batteries", kind: "power", battery_type: "NP-F570", unit_kind: "unit",
       qty: 12, track_independent_stock: true,
@@ -46,7 +47,7 @@ export const run = internalMutation({ args: {}, handler: async ctx => {
       throw new Error(`Changed kit allocation requires review: ${camera.name_canonical}`);
     const allocations = previous.filter(c => String(c.item_id) !== String(poolId));
     allocations.push({item_id:poolId,qty:5,source:SOURCE});
-    await ctx.db.patch(camera._id,{supplied_stock:allocations,updated_at:now});
+    await patchStockInput(ctx, camera._id,{supplied_stock:allocations,updated_at:now});
   }
   return {pool_id:poolId,conservative_units:matches[0]?.qty ?? 12,exact_total_confirmed:false,
     allocations:cameras.map(i=>({camera:i.name_canonical,battery_units:5})),legacy_pack_unchanged:true};

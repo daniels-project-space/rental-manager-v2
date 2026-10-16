@@ -1,3 +1,4 @@
+import { deleteStockInput, insertStockInput } from "./lib/stock_input_writes";
 /**
  * Bootstrap the deterministic Hygglo product_id → item_id index from the
  * existing reservations corpus. For each (account_slug, product_id):
@@ -83,7 +84,7 @@ export const run = internalMutation({
     // Wipe existing auto-* entries (manual entries preserved).
     const existing = await ctx.db.query("hygglo_product_index").collect();
     for (const e of existing) {
-      if (e.source !== "manual") await ctx.db.delete(e._id);
+      if (e.source !== "manual") await deleteStockInput(ctx, e._id);
     }
 
     let writtenUnanimous = 0;
@@ -109,7 +110,7 @@ export const run = internalMutation({
 
       if (entries.length === 1) {
         const [itemId, ev] = entries[0];
-        await ctx.db.insert("hygglo_product_index", {
+        await insertStockInput(ctx, "hygglo_product_index", {
           account_slug,
           product_id,
           item_id: itemId as any,
@@ -142,7 +143,7 @@ export const run = internalMutation({
 
       if (candidatesPassing.length === 1) {
         const winner = candidatesPassing[0];
-        await ctx.db.insert("hygglo_product_index", {
+        await insertStockInput(ctx, "hygglo_product_index", {
           account_slug,
           product_id,
           item_id: winner.itemId as any,
