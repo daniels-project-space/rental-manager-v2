@@ -2970,6 +2970,21 @@ export const getRentalHeadlineStats = query({
       statusDateWindow("confirmed", dashCutoff),
       statusDateWindow("pending_review", dashCutoff, pendingHorizon),
     ]);
+    // Account filtering can otherwise hide a just-arrived booking from the
+    // owner's dashboard with no indication why. When scoped to one account,
+    // do one bounded indexed read of the small pending-review set so the page
+    // can offer a direct switch to All accounts for arrivals elsewhere.
+    const pendingRowsForArrivalNotice = accountSlug
+      ? await ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+          q.eq("status", "pending_review").gte("start_date", dashCutoff).lte("start_date", pendingHorizon),
+        ).collect()
+      : pendingReviewRows;
+    const newBookingsInOtherAccounts = accountSlug
+      ? dedupByLogicalRental(pendingRowsForArrivalNotice.filter((row) =>
+          !row.is_obsolete && row.account_slug !== accountSlug &&
+          row._creationTime >= now.getTime() - 24 * 60 * 60 * 1000,
+        ))
+      : [];
     const scopedConfirmed = accountSlug
       ? confirmedRows.filter((row) => row.account_slug === accountSlug)
       : confirmedRows;
@@ -3089,6 +3104,7 @@ export const getRentalHeadlineStats = query({
         pending_review_count: scopedPendingReview.length,
         pending_review_value_gbp: Math.round(pendingReviewValue * 100) / 100,
         pending_review_rentals: pendingReviewRentals,
+        other_account_new_booking_count: newBookingsInOtherAccounts.length,
         rentals: activeRentals,
       },
       monthly: {
