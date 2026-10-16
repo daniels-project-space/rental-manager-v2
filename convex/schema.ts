@@ -1260,6 +1260,7 @@ const operationalSchema = defineSchema({
     account: v.string(),                          // e.g. "dbcinema" | "leo"
     lastSuccessfulPollAt: v.number(),
     lastTimestamp: v.optional(v.number()),        // cursor for differential polling if ever supported
+    lastFullReconciliationAttemptAt: v.optional(v.number()),
     consecutiveFailures: v.number(),
     mode: v.union(
       v.literal("active"),                        // normal cadence
@@ -1269,6 +1270,16 @@ const operationalSchema = defineSchema({
     modeChangedAt: v.number(),
     lastError: v.optional(v.string()),
   }).index("by_account", ["account"]),
+
+  // Compact queue of reservation rows whose calendar holds need reconciliation.
+  // A full reservation scan remains as a periodic repair, while normal poll and
+  // time-extraction changes are handled from this small account-scoped queue.
+  reservation_reconcile_dirty: defineTable({
+    reservation_id: v.id("reservations"),
+    account_slug: v.string(),
+    version: v.number(),
+  }).index("by_account_version", ["account_slug", "version"])
+    .index("by_reservation", ["reservation_id"]),
 
   // ── Sync state (freshness tracking, Phase 1 live-data upgrade) ─
   sync_state: defineTable({
