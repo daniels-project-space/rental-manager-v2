@@ -1,3 +1,4 @@
+import { useReservationReadModel } from "./lib/reservation_read_queries";
 import { websiteCaseView, type WebsiteCaseRow } from "./lib/websiteCases";
 import { loadHandoffReservations } from "./lib/handoff_reservations";
 import { listingDisplayName, shortItemName, shortListingTitle } from "./lib/item_display_name";
@@ -3166,6 +3167,7 @@ async function loadRentalHeadlineStats(
   ctx: QueryCtx,
   accountSlug: string | null,
 ) {
+    useReservationReadModel(ctx);
   const now = new Date();
   const today = londonToday();
   const time = londonTime(now);

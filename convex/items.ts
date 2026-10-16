@@ -1,3 +1,4 @@
+import { loadPricingRows } from "./lib/pricing_input_cache";
 import { patchStockInput } from "./lib/stock_input_writes";
 import { shortItemName } from "./lib/item_display_name";
 import { mutation, query, internalQuery, internalQueryOf } from "./owner_functions";
@@ -110,7 +111,7 @@ export const getItemRevenueRanking = query({
     });
 
     // Fetch pricing for weighted split
-    const pricingAll = await ctx.db.query("pricing_catalog").collect();
+    const pricingAll = await loadPricingRows(ctx);
     const priceByCanonical = new Map(pricingAll.map((p) => [p.item_name_canonical, p.daily_price_min]));
 
     // Phase 6 — attribution engine is the only path.
@@ -761,7 +762,7 @@ export const getPriceRecommendations = query({
       }
     }
 
-    const allPricingRows = await ctx.db.query("pricing_catalog").collect();
+    const allPricingRows = await loadPricingRows(ctx);
 
     // BF-01: deduplicate — one row per name_canonical, keep highest updated_at
     const bestByName = new Map<string, typeof allPricingRows[0]>();

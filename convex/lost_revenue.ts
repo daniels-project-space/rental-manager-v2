@@ -1,3 +1,4 @@
+import { loadPricingRows } from "./lib/pricing_input_cache";
 /**
  * Lost-revenue queries (Wave 2.5).
  *
@@ -291,7 +292,7 @@ export const getPurchaseRecommendations = query({
     }
 
     // 3) Cross-join with pricing_catalog for daily rate.
-    const pricingRows = await ctx.db.query("pricing_catalog").collect();
+    const pricingRows = await loadPricingRows(ctx);
     const pricingByKey = new Map<string, { dailyRate: number }>();
     for (const p of pricingRows) {
       const rate = (p.daily_price_min + p.daily_price_max) / 2;

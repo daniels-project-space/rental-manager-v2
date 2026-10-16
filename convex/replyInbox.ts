@@ -1,3 +1,6 @@
+import { useReservationReadModel } from "./lib/reservation_read_queries";
+import { loadHubRows } from "./lib/account_hub_projection";
+import { loadPricingRows } from "./lib/pricing_input_cache";
 
 import { patchRevenueReservation } from "./lib/reservation_revenue";
 import {orderedReplyMessages} from "./lib/reply_message_order";
@@ -99,9 +102,9 @@ type HubBook = {
   draftEpoch: number;
 };
 
-async function loadHubBook(ctx: QueryCtx): Promise<HubBook> {
+export async function loadHubBook(ctx: QueryCtx): Promise<HubBook> {
   const settings = await ctx.db.query("settings").first();
-  const profiles = await ctx.db.query("account_profiles").collect();
+  const profiles = await loadHubRows(ctx);
   const bySlug = new Map<string, { lat: number | null; lng: number | null }>();
   for (const p of profiles) {
     const acc = await ctx.db.get(p.account_id);
@@ -233,8 +236,8 @@ const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
 type PriceRow = { min: number; max: number; key: string };
 type PriceIndex = PriceRow[];
 
-async function loadPriceIndex(ctx: QueryCtx): Promise<PriceIndex> {
-  const rows = await ctx.db.query("pricing_catalog").collect();
+export async function loadPriceIndex(ctx: QueryCtx): Promise<PriceIndex> {
+  const rows = await loadPricingRows(ctx);
   const out: PriceIndex = [];
   for (const r of rows) {
     const key = squash(r.item_name_canonical);
@@ -943,6 +946,7 @@ export const getReplyQueue = query({
       _partitionSlugs,
     },
   ) => {
+    useReservationReadModel(ctx);
     // ── MV fast path ────────────────────────────────────────────────────────
     // For the canonical frontend config, read the precomputed tile list (one
     // indexed row) instead of running the full multi-pass assembly + N+1
@@ -1404,6 +1408,7 @@ export const dismissThread = mutation({
 export const getThreadById = query({
   args: { thread_id: v.string() },
   handler: async (ctx, { thread_id }) => {
+    useReservationReadModel(ctx);
     const conv = await ctx.db
       .query("conversations")
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
@@ -1445,6 +1450,7 @@ export const getThreadById = query({
 export const getThreadContext = internalQuery({
   args: { thread_id: v.string() },
   handler: async (ctx, { thread_id }) => {
+    useReservationReadModel(ctx);
     const conv = await ctx.db
       .query("conversations")
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
@@ -1790,7 +1796,7 @@ export const getThreadContext = internalQuery({
       }
 
       if (resolvedIds.length) {
-        const priceRows = await ctx.db.query("pricing_catalog").collect();
+        const priceRows = await loadPricingRows(ctx);
         const specs: { name: string; text: string }[] = [];
         const itemPrices: { name: string; min: number; max: number }[] = [];
         const marketingItems: string[] = [];

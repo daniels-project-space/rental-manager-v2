@@ -1,3 +1,4 @@
+import { patchAccountProfile } from "../lib/account_hub_projection";
 /**
  * One-off migration: copy the legacy GLOBAL settings hub (settings.hub_*) onto
  * each account_profiles row that has no per-account hub yet, so tiles keep
@@ -15,7 +16,7 @@ export const seedAccountHubs = internalMutation({
     let updated = 0;
     for (const p of profiles) {
       if (p.hub_lat != null) continue;
-      await ctx.db.patch(p._id, {
+      await patchAccountProfile(ctx, p._id, {
         hub_postcode: s.hub_postcode,
         hub_label: s.hub_label,
         hub_lat: s.hub_lat,

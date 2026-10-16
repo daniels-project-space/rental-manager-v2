@@ -1,3 +1,4 @@
+import { loadPricingRows } from "../lib/pricing_input_cache";
 /**
  * Phase 18.3 — MV master refresher with shared-collect.
  *
@@ -130,7 +131,7 @@ export const collectDenials = internalQuery({
 
 export const collectPricing = internalQuery({
   args: {},
-  handler: async (ctx) => await ctx.db.query("pricing_catalog").collect(),
+  handler: async (ctx) => await loadPricingRows(ctx),
 });
 
 export const collectAccounts = internalQuery({

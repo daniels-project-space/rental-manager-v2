@@ -1,3 +1,4 @@
+import { loadPricingRows } from "./pricing_input_cache";
 /**
  * Shared rental-volume attribution pipeline (Wave 9 dedup).
  *
@@ -87,7 +88,7 @@ export async function loadRentalVolumeWindow(
   });
 
   // Pricing catalog for revenue split weights (canonical → daily_price_min).
-  const pricingAll = await ctx.db.query("pricing_catalog").collect();
+  const pricingAll = await loadPricingRows(ctx);
   const priceByCanonical = new Map<string, number>(
     pricingAll.map((p) => [p.item_name_canonical, p.daily_price_min]),
   );
