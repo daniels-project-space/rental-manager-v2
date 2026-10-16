@@ -3,6 +3,12 @@ export function resolvedMarketingOnly(product:any,resolved:any,items:any[]) {
   if(typeof product.isMarketingOnlyOverride === "boolean")return product.isMarketingOnlyOverride;
   const powerPack=/v[ -]?mount/i.test(product.name??"") && /\d+\s*(?:wh|wah)\b/i.test(product.name??"") && !/camera|bmpcc|blackmagic|komodo|pyxis/i.test(product.name??"");
   if(powerPack && resolved.complete && resolved.owned === true && resolved.components.length && resolved.components.every((c:any)=>items.find(i=>String(i._id)===c.item_id)?.kind === "power"))return false;
+  // This exact packing review verifies both TX/RX and the separately counted
+  // monitor. An imported automatic tag predates that confirmation; explicit
+  // operator exclusions above remain authoritative.
+  const confirmedPyro=/Hollyland.*Pyro\s*S\b/i.test(product.name??"") &&
+    resolved.applied_stock_rules?.some((rule:any)=>rule.source==="Daniel confirmed Pyro S paired receiver included, 16 October 2026");
+  if(confirmedPyro && resolved.complete && resolved.owned===true && resolved.components.length>0)return false;
   return !!product.isMarketingOnly;
 }
 

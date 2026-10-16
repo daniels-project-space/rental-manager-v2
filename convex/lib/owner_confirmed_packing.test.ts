@@ -2,6 +2,7 @@ import {describe,it,expect} from 'vitest';
 import fixture from '../fixtures/owner-confirmed-packing-20261016.json';
 import {ownerAvailabilityReview} from './owner_availability_review';
 import {resolveListingComponents} from './listing_components';
+import {resolvedMarketingOnly} from './power_listing_identity';
 import {reservationItemUnits} from './reservations/itemUnits';
 function corrected(){const data=structuredClone(fixture) as any;const plan=ownerAvailabilityReview(data.items,data.products);for(const p of plan.items)Object.assign(data.items.find((i:any)=>i._id===p.id),p.patch);for(const p of plan.products)Object.assign(data.products.find((i:any)=>i._id===p.id),p.patch);return {data,plan};}
 describe('owner confirmed packing on 16 October',()=>{
@@ -15,6 +16,9 @@ describe('owner confirmed packing on 16 October',()=>{
   for(const p of data.products.filter((p:any)=>/Pyro S/.test(p.name))){
    const q=resolveListingComponents(data.items,undefined,p.masterItemId,1,p.description,undefined,p.name);
    expect(q,JSON.stringify(q.coverage)).toMatchObject({complete:true,owned:true});
+   expect(resolvedMarketingOnly(p,q,data.items)).toBe(false);
+   expect(resolvedMarketingOnly({...p,isMarketingOnlyOverride:true},q,data.items)).toBe(true);
+   expect(resolvedMarketingOnly(p,{...q,complete:false},data.items)).toBe(!!p.isMarketingOnly);
    expect(q.components).toEqual(expect.arrayContaining([expect.objectContaining({item_id:pyro._id,units_per_listing:1})]));
    expect(q.components.some(c=>/Mars/.test(c.name??''))).toBe(false);
    expect(q.components.some(c=>/receiver/i.test(c.name??''))).toBe(false);
