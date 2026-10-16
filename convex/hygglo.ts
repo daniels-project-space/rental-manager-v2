@@ -1450,37 +1450,25 @@ export const upsertOrdersAsReservationsBatch = mutation({
       });
     }
 
-    // Reactively converge the dashboard the moment something changes, rather
-    // than waiting for the periodic crons (stats hourly, lifetime DAILY). The
-    // refreshers are skip-when-clean / cheap, and we don't await — the poller's
-    // hot path must not block on MV rebuilds.
-    //  • "active/pending" MVs: on any obsolete/pickup transition OR any new
-    //    request/confirmed booking (so the pending lists never lag a poll).
-    //  • revenue MVs: only when realised revenue actually changed (pickups) —
-    //    sparse, so the daily-only staleness that hid diogo's £18 can't recur.
+    // Reactively converge transition-driven views rather than waiting for the
+    // periodic crons. Ordinary detail edits keep the hourly stats snapshot
+    // cadence: its broad refresh reads ~15 MB and can fail before advancing its
+    // generatedAt, which otherwise makes every later poll enqueue the same
+    // expensive failed refresh. Active/monthly/pending dashboard headlines are
+    // independently live; revenue MVs still refresh on realised transitions.
     const pendingChanged = anyTransitionedToObsolete || allNotify.length > 0;
-    // 2026-07-13 cost audit: any real row change can converge the "all" stats
-    // row, because chat surfaces read the MV instead of running the live
-    // compute per message. Scope "all" only — account drill-down rows are
-    // staleness-tolerant by design (6h cron).
-    const anyRowChanged = results.some((r) => r.action !== "skipped");
-    if (pendingChanged || anyRevenueRealized || anyRowChanged) {
+    if (pendingChanged || anyRevenueRealized) {
       try {
-        if (anyRowChanged || pendingChanged) {
-          // The broad dashboard compute reads ~15MB from the database per run.
-          // New requests, confirmations and cancellations keep the fast
-          // 5-minute convergence needed by the pending lists. Ordinary field
-          // changes use the existing hourly dashboard cadence; repeatedly
-          // rebuilding the full snapshot for them added several costly runs
-          // per hour without improving the live Active Rentals / Monthly cards.
+        if (pendingChanged) {
+          // New requests, confirmations and cancellations can update chat-side
+          // snapshot consumers within five minutes. Ordinary changes do not
+          // enqueue this megaquery; the dashboard's critical headlines read
+          // reservations directly and the scheduled snapshot remains hourly.
           const mvAll = await ctx.db
             .query("mv_stats_drawer")
             .withIndex("by_account", (q) => q.eq("account", "all"))
             .first();
-          const minRefreshIntervalMs = pendingChanged
-            ? 5 * 60 * 1000
-            : 60 * 60 * 1000;
-          if (!mvAll || Date.now() - mvAll.generatedAt > minRefreshIntervalMs) {
+          if (!mvAll || Date.now() - mvAll.generatedAt > 5 * 60 * 1000) {
             await ctx.scheduler.runAfter(0, internal.mv.stats_drawer.refresh, {
               force: true,
               scope: "all",
