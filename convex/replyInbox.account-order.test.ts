@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import {describe,it,expect,vi} from 'vitest';
 vi.mock('./auth',()=>({authComponent:{safeGetAuthUser:vi.fn()}}));
-import {assembleTile} from './replyInbox';
+import {assembleTile,createPriceIndexLoader} from './replyInbox';
 import {listingDisplayCatalog} from './lib/listing_display_catalog';
 import source from './fixtures/quick-reply-source-kit.json';
 function fixture(last:'owner'|'renter'='owner'){
@@ -15,6 +15,35 @@ function fixture(last:'owner'|'renter'='owner'){
  return {ctx,reservation,conv,rows};
 }
 describe('actual reply tile account photos and chronology',()=>{
+ it('reuses stock catalog rows while retaining exact manual display names',async()=>{
+  const f=fixture(),product=source.products[0];
+  f.rows.listing_short_names=[
+   {account_slug:'diogo',product_id:product.productId,derivation_method:'manual',short_name:'Owner exact name'},
+   {account_slug:'diogo',product_id:product.productId,derivation_method:'display-v2',short_name:'Derived name'},
+   {account_slug:'leo',product_id:product.productId,derivation_method:'manual',short_name:'Other account name'},
+  ];
+  const query=vi.spyOn(f.ctx.db,'query');
+  const display=await listingDisplayCatalog(f.ctx,'diogo',{items:f.rows.items as any,mappings:f.rows.listing_resolution_override as any});
+  expect(display.name('diogo',product.productId,product.name)).toBe('Owner exact name');
+  expect(query.mock.calls.map(call=>call[0])).toEqual(['listing_short_names']);
+  expect(display.mappingMap.size).toBe(source.overrides.filter(row=>row.account_slug==='diogo').length);
+ });
+ it('loads prices only for estimates and shares one read across a queue',async()=>{
+  const f=fixture();
+  f.rows.pricing_catalog=source.products.map(p=>({item_name_canonical:p.name,daily_price_min:10,daily_price_max:20}));
+  const query=vi.spyOn(f.ctx.db,'query'),prices=createPriceIndexLoader(f.ctx);
+  await assembleTile(f.ctx,f.conv,{...f.reservation,gross_paid_gbp:50},'case',prices);
+  await assembleTile(f.ctx,f.conv,{...f.reservation,gross_paid_gbp:0},'case',prices);
+  expect(query.mock.calls.filter(call=>call[0]==='pricing_catalog')).toHaveLength(0);
+  const first=await assembleTile(f.ctx,f.conv,f.reservation,'case',prices);
+  const second=await assembleTile(f.ctx,f.conv,f.reservation,'case',prices);
+  expect(query.mock.calls.filter(call=>call[0]==='pricing_catalog')).toHaveLength(1);
+  const reference=await assembleTile(f.ctx,f.conv,f.reservation,'case',await createPriceIndexLoader(f.ctx)());
+  expect(first.estimate_gbp).toBeGreaterThan(0);
+  expect([first.estimate_gbp,first.estimate_days,first.estimate_earnings_gbp])
+   .toEqual([reference.estimate_gbp,reference.estimate_days,reference.estimate_earnings_gbp]);
+  expect(second.estimate_gbp).toBe(first.estimate_gbp);
+ });
  it('uses the six basket photos belonging to the requested account without global or duplicate chat photos',async()=>{
   const f=fixture(),display=await listingDisplayCatalog(f.ctx);const tile=await assembleTile(f.ctx,f.conv,f.reservation,'case',undefined,undefined,undefined,display);
   expect(tile.requested_items).toHaveLength(6);

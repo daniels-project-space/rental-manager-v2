@@ -1,5 +1,6 @@
 import { requestedDisplayMatch } from "./quick_reply_requested_items";
 import type { QueryCtx } from "../_generated/server";
+import type { Doc } from "../_generated/dataModel";
 import { listingDisplayName } from "./item_display_name";
 
 /** One shared catalog per query; never an N-per-card database lookup. */
@@ -32,10 +33,16 @@ export function displayImageMappings<
     .slice(0, 2);
 }
 
-export async function listingDisplayCatalog(ctx: QueryCtx, account?: string) {
+export async function listingDisplayCatalog(
+  ctx: QueryCtx,
+  account?: string,
+  preloaded?: { items?: Doc<"items">[]; mappings?: Doc<"listing_resolution_override">[] },
+) {
   const [items, mappings, names] = await Promise.all([
-    ctx.db.query("items").collect(),
-    account
+    preloaded?.items ?? ctx.db.query("items").collect(),
+    preloaded?.mappings
+      ? preloaded.mappings.filter((mapping) => !account || mapping.account_slug === account)
+      : account
       ? ctx.db
           .query("listing_resolution_override")
           .withIndex("by_account_product", (q) => q.eq("account_slug", account))
@@ -44,9 +51,13 @@ export async function listingDisplayCatalog(ctx: QueryCtx, account?: string) {
     account
       ? ctx.db
           .query("listing_short_names")
-          .withIndex("by_account_product", (q) => q.eq("account_slug", account))
+          .withIndex("by_method_account_product", (q) =>
+            q.eq("derivation_method", "manual").eq("account_slug", account),
+          )
           .collect()
-      : ctx.db.query("listing_short_names").collect(),
+      : ctx.db.query("listing_short_names").withIndex("by_method_account_product", (q) =>
+          q.eq("derivation_method", "manual"),
+        ).collect(),
   ]);
   const itemMap = new Map(items.map((i) => [String(i._id), i]));
   const mappingMap = new Map(

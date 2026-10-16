@@ -761,6 +761,7 @@ const operationalSchema = defineSchema({
     // not read every account's full reservation documents before filtering.
     .index("by_account_status_start_date", ["account_slug", "status", "start_date"])
     .index("by_account_pickup_date", ["account_slug", "pickup_date"])
+    .index("by_account_status_pickup_date", ["account_slug", "status", "pickup_date"])
     // Reconciliation can load terminal reservations by the same bounded
     // account/date window as active candidates, without scanning calendar_holds
     // or falling back to the full 400-day account history.
@@ -1898,6 +1899,7 @@ const operationalSchema = defineSchema({
   })
     .index("by_account_product", ["account_slug", "product_id"])
     .index("by_account_raw_title", ["account_slug", "raw_title"])
+    .index("by_method_account_product", ["derivation_method", "account_slug", "product_id"])
     .index("by_account", ["account_slug"]),
 
   // ── Phase Listing-Pool: per-(account, product) info pool (2026-05-24) ────
