@@ -1,6 +1,7 @@
 import type { WithoutSystemFields } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { cataloguePatchChanges, invalidateCatalogue } from "./catalogue_read_cache";
 
 export type ProductContext = {
   account_slug: string;
@@ -88,7 +89,8 @@ export async function refreshProductContext(
   return "updated";
 }
 
-/** All source writers go through these helpers; the source and mirror commit atomically. */
+/** All source writers go through these helpers; the source and mirror commit atomically.
+ * `known`, when supplied, must be a source read from this same mutation transaction. */
 export async function patchProduct(
   ctx: MutationCtx, id: Id<"hygglo_products">, patch: Partial<WithoutSystemFields<Doc<"hygglo_products">>>,
   known?: Doc<"hygglo_products">,
@@ -96,6 +98,7 @@ export async function patchProduct(
   const before = known ?? await ctx.db.get(id);
   if (!before || before._id !== id) throw new Error("Product patch requires its matching source record");
   const previousAccount = before.accountSlug, previousId = before.productId;
+  if (cataloguePatchChanges(before, patch)) await invalidateCatalogue(ctx, [previousAccount, patch.accountSlug ?? previousAccount]);
   await ctx.db.patch(id, patch);
   await refreshProductContext(ctx, previousAccount, previousId);
   const nextAccount = patch.accountSlug ?? previousAccount;
@@ -106,6 +109,7 @@ export async function patchProduct(
 }
 
 export async function insertProduct(ctx: MutationCtx, value: WithoutSystemFields<Doc<"hygglo_products">>) {
+  await invalidateCatalogue(ctx, [value.accountSlug]);
   const id = await ctx.db.insert("hygglo_products", value);
   await refreshProductContext(ctx, value.accountSlug, value.productId);
   return id;
@@ -114,6 +118,7 @@ export async function insertProduct(ctx: MutationCtx, value: WithoutSystemFields
 export async function deleteProduct(ctx: MutationCtx, id: Id<"hygglo_products">) {
   const before = await ctx.db.get(id);
   if (!before) return;
+  await invalidateCatalogue(ctx, [before.accountSlug]);
   await ctx.db.delete(id);
   await refreshProductContext(ctx, before.accountSlug, before.productId);
 }

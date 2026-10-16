@@ -9,7 +9,8 @@ import { getFunctionName } from "convex/server";
 function fixture(){
  const items:any[]=[{_id:"body",name_canonical:"Sony FX3",kind:"camera_body",status:"active",is_marketing_only:false,qty:4,replacement_cost_gbp:4000},{_id:"lens",name_canonical:"Sony GM 24-70mm f2.8",kind:"lens",status:"active",is_marketing_only:false,qty:3,replacement_cost_gbp:2000},{_id:"battery",name_canonical:"NP-FZ100 batteries",kind:"power",track_independent_stock:true,status:"active",is_marketing_only:false,qty:12,replacement_cost_gbp:70}];
  const tables:any={items,hygglo_products:[{productId:10,accountSlug:"dbcinema",name:"Two body camera and lens kit",masterItemId:"body",private_note:"PRIVATE"}],hygglo_product_context:[],online_listings:[{account_slug:"dbcinema",product_id:10,description:"Included in this rental: • 2x Sony FX3 • 2x Sony GM 24-70mm f2.8 • 5x NP-FZ100 batteries"}],listing_resolution_override:[{account_slug:"dbcinema",product_id:10,components:[{item_id:"body",qty:2},{item_id:"lens",qty:2},{item_id:"battery",qty:5}]}],hygglo_product_index:[],reservations:[]};
- const reads:string[]=[];const operations:string[]=[];const db:any={query:(table:string)=>{reads.push(table);let values=tables[table]??[];const q:any={withIndex:(_:string,fn:any)=>{const s:any={eq:(k:string,v:any)=>{values=values.filter((r:any)=>r[k]===v);return s},gte:(k:string,v:any)=>{values=values.filter((r:any)=>r[k]>=v);return s}};fn(s);return q},collect:async()=>{operations.push(table+":collect");return values},first:async()=>{operations.push(table+":first");return values[0]??null}};return q},insert:async(table:string,row:any)=>{const id=`${table}:${tables[table].length}`;tables[table].push({...row,_id:id});operations.push(table+":insert");return id}};return {tables,db,reads,operations};
+ tables.catalogue_cache_state=[];tables.catalogue_cache_blobs=[];
+ const reads:string[]=[];const operations:string[]=[];const db:any={query:(table:string)=>{reads.push(table);let values=tables[table]??[];const q:any={withIndex:(_:string,fn:any)=>{const s:any={eq:(k:string,v:any)=>{values=values.filter((r:any)=>r[k]===v);return s},gte:(k:string,v:any)=>{values=values.filter((r:any)=>r[k]>=v);return s}};fn(s);return q},collect:async()=>{operations.push(table+":collect");return values},first:async()=>{operations.push(table+":first");return values[0]??null},unique:async()=>{if(values.length>1)throw Error("Duplicate fixture key");return values[0]??null}};return q},get:async(id:string)=>Object.values(tables).flat().find((r:any)=>r._id===id)??null,insert:async(table:string,row:any)=>{const id=`${table}:${tables[table].length}`;tables[table].push({...row,_id:id});operations.push(table+":insert");return id}};return {tables,db,reads,operations,scheduler:{runAfter:vi.fn(async()=>"scheduled")}};
 }
 afterEach(()=>{vi.unstubAllEnvs();vi.useRealTimers()});
 it("does not publish partial or unowned fallbacks as confirmed packing",async()=>{
@@ -40,11 +41,11 @@ describe("actual canonical website kit snapshot and stock feed",()=>{
   const f=fixture(),stored=f.tables.hygglo_products[0];stored._id="product";stored.description="Recorded contents";stored.descriptionSyncedAt=100;
   const db={...f.db,query:(table:string)=>{const q=f.db.query(table);q.first=async()=>(await q.collect())[0]??null;return q},patch:async(id:string,patch:any)=>{const target=Object.values(f.tables).flat().find((row:any)=>row._id===id) as any;if(!target)throw Error(`Unknown fixture row ${id}`);for(const [k,v]of Object.entries(patch))if(v===undefined)delete target[k];else target[k]=v;}};
   const product={productId:10,accountSlug:"dbcinema",name:stored.name,isMarketingOnly:false};
-  await (upsertProductsBatch as any)._handler({db},{products:[product]});
+  await (upsertProductsBatch as any)._handler({db,scheduler:f.scheduler},{products:[product]});
   expect(stored.description).toBe("Recorded contents");expect(stored.descriptionSyncedAt).toBe(100);
-  await (upsertProductsBatch as any)._handler({db},{products:[{...product,description:"New verified contents"}]});
+  await (upsertProductsBatch as any)._handler({db,scheduler:f.scheduler},{products:[{...product,description:"New verified contents"}]});
   expect(stored.description).toBe("New verified contents");expect(stored.descriptionSyncedAt).toBe(Date.now());
-  await (upsertProductsBatch as any)._handler({db},{products:[{...product,description:""}]});
+  await (upsertProductsBatch as any)._handler({db,scheduler:f.scheduler},{products:[{...product,description:""}]});
   expect(stored.description).toBe("");
  });
  it("projects only storefront fields before serializing private source descriptions",async()=>{
@@ -55,7 +56,7 @@ describe("actual canonical website kit snapshot and stock feed",()=>{
  });
  it("uses one indexed snapshot with exact physical quantities and audited per-kit contents",async()=>{
   const f=fixture();const [row]=await (__service_catalogueForStorefront as any)._handler({db:f.db},{accountSlug:"dbcinema"});
-  expect(row.stockMapping).toMatchObject({version:1,complete:true,owned:true});expect(row.stockMapping.components.map((c:any)=>[c.masterItemId,c.qty,c.quantityOwned,c.replacementCost])).toEqual([["body",2,4,4000],["lens",2,3,2000],["battery",5,12,70]]);expect(f.reads).toEqual(["hygglo_products","items","listing_resolution_override","online_listings"]);
+  expect(row.stockMapping).toMatchObject({version:1,complete:true,owned:true});expect(row.stockMapping.components.map((c:any)=>[c.masterItemId,c.qty,c.quantityOwned,c.replacementCost])).toEqual([["body",2,4,4000],["lens",2,3,2000],["battery",5,12,70]]);expect(f.reads).toEqual(["catalogue_cache_state","items","listing_resolution_override","hygglo_products","online_listings"]);
  });
  it("certifies exact complete contents but never a primary match with missing or uncertain contents",async()=>{
   const f=fixture();f.tables.listing_resolution_override=[];
