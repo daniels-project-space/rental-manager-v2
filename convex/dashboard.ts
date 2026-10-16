@@ -3018,11 +3018,10 @@ export const getRentalHeadlineStats = query({
     pendingHorizonDate.setUTCDate(pendingHorizonDate.getUTCDate() + 365);
     const pendingHorizon = pendingHorizonDate.toISOString().slice(0, 10);
 
-    // Match the main dashboard's 365-day source window, but use the composite
-    // status/date index so cancelled, declined and completed history is not read.
-    // Pending-review reservations get their own bounded live read. The heavy
-    // dashboard snapshot is intentionally refreshed less often, so it cannot
-    // be the only source for new bookings on the page.
+    // Active totals are not a rolling-year metric. Read the date-indexed union
+    // of current/overdue rentals and all future pickups; completed history does
+    // not belong in this live headline query. Pending-review reservations keep
+    // their separate bounded window and display path below.
     const statusDateWindow = (status: string, from: string, to?: string) => {
       if (accountSlug) {
         return ctx.db.query("reservations").withIndex("by_account_status_start_date", (q) => {
@@ -3035,10 +3034,60 @@ export const getRentalHeadlineStats = query({
         return to === undefined ? range : range.lte("start_date", to);
       }).collect();
     };
-    const [confirmedRows, pendingReviewRows] = await Promise.all([
-      statusDateWindow("confirmed", dashCutoff),
+    const confirmedActiveWindow = (
+      field: "end_date" | "return_date" | "pickup_date" | "start_date",
+    ) => {
+      if (accountSlug) {
+        switch (field) {
+          case "end_date":
+            return ctx.db.query("reservations").withIndex("by_account_status_end_date", (q) =>
+              q.eq("account_slug", accountSlug).eq("status", "confirmed").gte("end_date", today),
+            ).collect();
+          case "return_date":
+            return ctx.db.query("reservations").withIndex("by_account_status_return_date", (q) =>
+              q.eq("account_slug", accountSlug).eq("status", "confirmed").gte("return_date", today),
+            ).collect();
+          case "pickup_date":
+            return ctx.db.query("reservations").withIndex("by_account_status_pickup_date", (q) =>
+              q.eq("account_slug", accountSlug).eq("status", "confirmed").gte("pickup_date", today),
+            ).collect();
+          case "start_date":
+            return ctx.db.query("reservations").withIndex("by_account_status_start_date", (q) =>
+              q.eq("account_slug", accountSlug).eq("status", "confirmed").gte("start_date", today),
+            ).collect();
+        }
+      }
+      switch (field) {
+        case "end_date":
+          return ctx.db.query("reservations").withIndex("by_status_end_date", (q) =>
+            q.eq("status", "confirmed").gte("end_date", today),
+          ).collect();
+        case "return_date":
+          return ctx.db.query("reservations").withIndex("by_status_return_date", (q) =>
+            q.eq("status", "confirmed").gte("return_date", today),
+          ).collect();
+        case "pickup_date":
+          return ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
+            q.eq("status", "confirmed").gte("pickup_date", today),
+          ).collect();
+        case "start_date":
+          return ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+            q.eq("status", "confirmed").gte("start_date", today),
+          ).collect();
+      }
+    };
+    const [confirmedByEnd, confirmedByReturn, confirmedByPickup, confirmedByStart, pendingReviewRows] = await Promise.all([
+      confirmedActiveWindow("end_date"),
+      confirmedActiveWindow("return_date"),
+      confirmedActiveWindow("pickup_date"),
+      confirmedActiveWindow("start_date"),
       statusDateWindow("pending_review", dashCutoff, pendingHorizon),
     ]);
+    const confirmedRowsById = new Map<string, (typeof confirmedByEnd)[number]>();
+    for (const row of [...confirmedByEnd, ...confirmedByReturn, ...confirmedByPickup, ...confirmedByStart]) {
+      if (!accountSlug || row.account_slug === accountSlug) confirmedRowsById.set(String(row._id), row);
+    }
+    const confirmedRows = [...confirmedRowsById.values()];
     // Account filtering can otherwise hide a just-arrived booking from the
     // owner's dashboard with no indication why. When scoped to one account,
     // do one bounded indexed read of the small pending-review set so the page

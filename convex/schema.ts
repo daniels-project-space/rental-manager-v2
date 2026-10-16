@@ -754,6 +754,9 @@ const operationalSchema = defineSchema({
     .index("by_is_obsolete_start_date", ["is_obsolete", "start_date"])
     // Failure-event month lookup, including legacy updated/created-date fallbacks.
     .index("by_fallout_dates", ["obsolete_at", "v1_updated_at"])
+    .index("by_signal_fallout_dates", ["hygglo_system_signal", "obsolete_at", "v1_updated_at"])
+    .index("by_signal_obsolete_fallout_dates", ["hygglo_system_signal", "is_obsolete", "obsolete_at", "v1_updated_at"])
+    .index("by_signal_status_obsolete_fallout_dates", ["hygglo_system_signal", "status", "is_obsolete", "obsolete_at", "v1_updated_at"])
     .index("by_demand_loss_class", ["demand_loss_class"])
     // Phase 7a (2026-05-24) — composite for audit_qty_drift + dashboard
     // status-scoped queries. Cuts unindexed full-table scans down to the
@@ -765,6 +768,8 @@ const operationalSchema = defineSchema({
     // Account-specific dashboard totals and materialized-view refreshes must
     // not read every account's full reservation documents before filtering.
     .index("by_account_status_start_date", ["account_slug", "status", "start_date"])
+    .index("by_account_status_end_date", ["account_slug", "status", "end_date"])
+    .index("by_account_status_return_date", ["account_slug", "status", "return_date"])
     .index("by_account_pickup_date", ["account_slug", "pickup_date"])
     .index("by_account_status_pickup_date", ["account_slug", "status", "pickup_date"])
     // Reconciliation can load terminal reservations by the same bounded
