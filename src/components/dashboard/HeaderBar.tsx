@@ -148,7 +148,7 @@ export function HeaderBar() {
                     ringColor={active ? accent : "rgba(255,255,255,0.18)"}
                   />
                 )}
-                <span className="hidden sm:inline">{a.label}</span>
+                <span className={active || a.slug === null ? "inline" : "hidden sm:inline"}>{a.label}</span>
               </button>
             );
           })}
