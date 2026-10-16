@@ -1,4 +1,4 @@
-import { loadCanonicalListingAllocation } from "./lib/canonical_listing_allocation";
+import { loadCanonicalListingAllocation, reservedListingKeys } from "./lib/canonical_listing_allocation";
 import { withoutWebsiteVerification } from "./lib/websiteVerification";
 import { action, internalAction, internalMutation, internalQuery, mutation, query, internalQueryOf, internalMutationOf } from "./owner_functions";
 import { anyApi } from "convex/server";
@@ -58,7 +58,7 @@ export const getRecentActivity = query({
  * WallESignals so every reservation mutation re-evaluates. Refresher runs
  * hourly. `_bypassMv:true` is set ONLY by mv/due_returns.ts:refreshAll.
  */
-import { renterMaps, renterForReservation, trustOf } from "./lib/renters";
+import { renterForReservation, renterMaps, renterMapsForReservations, trustOf } from "./lib/renters";
 import { renderDiscountMessage, reviewOnlyMessageFor } from "./lib/return_messages";
 import { resolveReturnDiscount } from "./lib/return_discounts";
 import { reservationItemUnits, buildProductIndexMap, isStandardAccessory, type ResolvableRes } from "./lib/reservations/itemUnits";
@@ -214,20 +214,31 @@ export const getDueReturns = query({
 
     // Item-name shortening — SAME source the Active Rentals tile uses
     // (listing_short_names keyed by account#product_id). No extra processing.
-    const shortRows = await ctx.db.query("listing_short_names").collect();
+    const listingKeys = reservedListingKeys(candidates as ResolvableRes[]);
+    const [unitInventory, overrideRows, shortRows, productIndexRows] = await Promise.all([
+      ctx.db.query("items").collect(),
+      Promise.all(listingKeys.map(key => ctx.db.query("listing_resolution_override")
+        .withIndex("by_account_product", q => q.eq("account_slug", key.account).eq("product_id", key.productId)).first()))
+        .then(rows => rows.filter((row): row is NonNullable<typeof row> => row !== null)),
+      Promise.all(listingKeys.map(key => ctx.db.query("listing_short_names")
+        .withIndex("by_account_product", q => q.eq("account_slug", key.account).eq("product_id", key.productId)).collect()))
+        .then(rows => rows.flat()),
+      Promise.all(listingKeys.map(key => ctx.db.query("hygglo_product_index")
+        .withIndex("by_account_product", q => q.eq("account_slug", key.account).eq("product_id", key.productId)).collect()))
+        .then(rows => rows.flat()),
+    ]);
     const shortByProduct = new Map<string, string>();
     for (const sn of shortRows) shortByProduct.set(`${sn.account_slug}#${sn.product_id}`, sn.short_name);
 
     // Reliable per-listing resolution (covers items the LLM bundle-resolver
     // dropped from expanded/resolved) + inventory names for the case checklist.
-    const productIndex = buildProductIndexMap(await ctx.db.query("hygglo_product_index").collect());
-    const overrideMap = await loadCanonicalListingAllocation(ctx,undefined,undefined,candidates);
+    const productIndex = buildProductIndexMap(productIndexRows);
+    const overrideMap = await loadCanonicalListingAllocation(ctx, unitInventory, overrideRows, candidates);
     const itemNameById = new Map<string, string>();
     const stdAccIds = new Set<string>();
-    const unitInventory = await ctx.db.query("items").collect();
     for (const it of unitInventory) { itemNameById.set(String(it._id), it.name_canonical); if (isStandardAccessory((it as { kind?: string }).kind, it.name_canonical)) stdAccIds.add(String(it._id)); }
 
-    const maps = await renterMaps(ctx);
+    const maps = await renterMapsForReservations(ctx, candidates);
     const results: Array<Record<string, unknown>> = [];
     for (const g of groups) {
       const members = (g.members as unknown as CandRow[])
