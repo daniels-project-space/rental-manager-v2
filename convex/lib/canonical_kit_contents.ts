@@ -19,6 +19,10 @@ export function canonicalKitContents(components: KitComponent[], inventory: Doc<
   // A reviewed media unit can also carry its supplied reader. No additional
   // independently rentable receiver/reader stock is invented by these notes.
   for(const c of components){const item=inventory.find(i=>String(i._id)===c.item_id);if(item?.rental_facts?.source.trim())extras.push(...(item.compatibility?.included_with_rental??[]));}
-  const notes=[...new Map([...recorded,...extras].filter(s=>!optionalKeys.has(key(part(s).name))).map(s=>{const p=part(s);return [`${p.qty??""}:${key(p.name)}`,s] as const})).values()];
+  // Legacy battery records count "sets", without defining how many cells a
+  // set contains. Keep the supplied battery identity, not an invented count;
+  // the exact offering's reviewed packing list states its individual cells.
+  const recordedNotes=recorded.map(s=>/\bbatter(?:y|ies)\b/i.test(s)?s.replace(/\s*\d+\s*x\s*sets?\b/gi," (included)"):s);
+  const notes=[...new Map([...recordedNotes,...extras].filter(s=>!optionalKeys.has(key(part(s).name))).map(s=>{const p=part(s);return [`${p.qty??""}:${key(p.name)}`,s] as const})).values()];
   return {...recordedKit(mapped,notes),optional_contents:optional};
 }

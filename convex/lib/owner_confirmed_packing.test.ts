@@ -30,7 +30,7 @@ describe('owner confirmed packing on 16 October',()=>{
   for(const p of data.products.filter((p:any)=>/A7 V|Alpha 7 V/.test(p.name))){
    const q=resolveListingComponents(data.items,undefined,p.masterItemId,1,p.description,undefined,p.name);
    const k=await listingKitContext(ctx,p.accountSlug,listingKitItem(q,data.items),q.components,data.items);
-   expect(k.kit.contents.join(' '),p.name).toContain('256GB SDXC V90');expect(k.contents_review_required,p.name).toBe(false);
+   expect(k.kit.contents.join(' '),p.name).toContain('256GB SDXC V90');expect(k.kit.contents.join(' ')).not.toMatch(/2x sets/i);expect(k.contents_review_required,p.name).toBe(false);
   }
  });
  it('uses one real 256GB SD card, never a CFexpress card for the A7 V',()=>{
