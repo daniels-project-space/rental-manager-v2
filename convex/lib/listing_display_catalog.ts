@@ -61,6 +61,10 @@ export async function listingDisplayCatalog(
         ).collect(),
   ]);
   const itemMap = new Map(items.map((i) => [String(i._id), i]));
+  // Keep a stable, image-free catalogue for chat-mentioned display items. The
+  // reply matcher caches normalized aliases by array identity, and this view
+  // must not leak another account's general catalogue photos into a tile.
+  const imageItems = items.map(({ image_url: _imageUrl, ...item }) => item);
   const mappingMap = new Map(
     mappings.map((m) => [`${m.account_slug}#${m.product_id}`, m]),
   );
@@ -142,6 +146,7 @@ export async function listingDisplayCatalog(
   };
   return {
     items,
+    imageItems,
     mappingMap,
     itemMap,
     imagesFor,

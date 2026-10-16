@@ -19,22 +19,69 @@ const key = (s: string) =>
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 
+type CatalogueIndex<T extends CatalogueItem> = {
+  aliasesByItem: Map<T, string[]>;
+  exact: Map<string, T[]>;
+  reordered: Map<string, T[]>;
+  chatAliasesByItem: Map<T, string[]>;
+};
+
+// listingDisplayCatalog creates one immutable inventory array per query. Keep
+// its normalized lookup tables for the duration of that query so every tile
+// does not rebuild aliases (and re-scan the catalogue to prove uniqueness).
+const catalogueIndexes = new WeakMap<CatalogueItem[], CatalogueIndex<CatalogueItem>>();
+
+function catalogueIndex<T extends CatalogueItem>(catalogue: T[]): CatalogueIndex<T> {
+  const cached = catalogueIndexes.get(catalogue);
+  if (cached) return cached as CatalogueIndex<T>;
+
+  const aliasesByItem = new Map<T, string[]>();
+  const exact = new Map<string, T[]>();
+  const reordered = new Map<string, T[]>();
+  const owners = new Map<string, Set<T>>();
+  for (const item of catalogue) {
+    const aliases = [...new Set([item.name_canonical, ...(item.aliases ?? [])].map(key).filter(Boolean))];
+    aliasesByItem.set(item, aliases);
+    for (const alias of aliases) {
+      const exactRows = exact.get(alias) ?? [];
+      exactRows.push(item);
+      exact.set(alias, exactRows);
+
+      const tokenKey = alias.split(" ").sort().join(" ");
+      const reorderedRows = reordered.get(tokenKey) ?? [];
+      if (!reorderedRows.includes(item)) reorderedRows.push(item);
+      reordered.set(tokenKey, reorderedRows);
+
+      const aliasOwners = owners.get(alias) ?? new Set<T>();
+      aliasOwners.add(item);
+      owners.set(alias, aliasOwners);
+    }
+  }
+
+  const chatAliasesByItem = new Map<T, string[]>();
+  for (const [item, aliases] of aliasesByItem) {
+    chatAliasesByItem.set(item, aliases.filter((alias) =>
+      alias.length >= 3 && (alias.includes(" ") || /\d/.test(alias)) && owners.get(alias)?.size === 1,
+    ));
+  }
+  const result = { aliasesByItem, exact, reordered, chatAliasesByItem };
+  catalogueIndexes.set(catalogue, result as CatalogueIndex<CatalogueItem>);
+  return result;
+}
+
 /** Exact model tokens may be reordered by an inquiry label. This is only an
  * image/display match and must never be used as a physical stock identity. */
 export function requestedDisplayMatch<T extends CatalogueItem>(
   name: string,
   catalogue: T[],
 ): T | null {
-  const n = key(name),
-    aliases = (item: T) =>
-      [item.name_canonical, ...(item.aliases ?? [])].map(key);
-  const exact = catalogue.filter((item) => aliases(item).includes(n));
+  const index = catalogueIndex(catalogue);
+  const n = key(name);
+  const exact = index.exact.get(n) ?? [];
   if (exact.length) return exact.length === 1 ? exact[0] : null;
   if (!/\d/.test(n)) return null;
   const tokens = n.split(" ").sort().join(" ");
-  const reordered = catalogue.filter((item) =>
-    aliases(item).some((alias) => alias.split(" ").sort().join(" ") === tokens),
-  );
+  const reordered = index.reordered.get(tokens) ?? [];
   return reordered.length === 1 ? reordered[0] : null;
 }
 
@@ -46,9 +93,8 @@ export function requestedImageItems(
   texts: string[],
   catalogue: CatalogueItem[],
 ): RequestedImageItem[] {
+  const index = catalogueIndex(catalogue);
   const result: RequestedImageItem[] = [];
-  const aliases = (item: CatalogueItem) =>
-    [item.name_canonical, ...(item.aliases ?? [])].map(key).filter(Boolean);
   const resolve = (name: string) => requestedDisplayMatch(name, catalogue);
   const add = (item: RequestedImageItem, origin: "basket" | "chat") => {
     const known = resolve(item.canonical_name ?? item.name) ?? resolve(item.display_name ?? ""),
@@ -92,23 +138,13 @@ export function requestedImageItems(
   inquiry.forEach((item) => add(item, "chat"));
   for (const text of texts) {
     const normalized = ` ${key(text)} `;
+    const mentioned = new Set<CatalogueItem>();
     for (const item of catalogue) {
-      const matches = aliases(item).filter(
-        (alias) =>
-          alias.length >= 3 &&
-          (alias.includes(" ") || /\d/.test(alias)) &&
-          normalized.includes(` ${alias} `),
-      );
-      if (!matches.length) continue;
-      // Shared aliases are ambiguous; do not invent which model was requested.
-      if (
-        !matches.some(
-          (alias) =>
-            catalogue.filter((other) => aliases(other).includes(alias))
-              .length === 1,
-        )
-      )
-        continue;
+      if (index.chatAliasesByItem.get(item)?.some((alias) => normalized.includes(` ${alias} `)))
+        mentioned.add(item);
+    }
+    for (const item of catalogue) {
+      if (!mentioned.has(item)) continue;
       add(
         {
           name: item.name_canonical,

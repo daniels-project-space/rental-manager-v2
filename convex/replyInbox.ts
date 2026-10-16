@@ -594,7 +594,7 @@ export async function assembleTile(
   }));
 
   // Only renter text supplements display context.
-  const requestedItemsRaw=requestedImageItems(richItems,(conv?.inquiry_items??[]).map(i=>({...i,qty:i.qty??1,image_url:null})),mentionMessages.filter(m=>m.sender==="renter").map(m=>m.body_text??""),(display?.items??[]).map(({image_url,...item})=>item));
+  const requestedItemsRaw=requestedImageItems(richItems,(conv?.inquiry_items??[]).map(i=>({...i,qty:i.qty??1,image_url:null})),mentionMessages.filter(m=>m.sender==="renter").map(m=>m.body_text??""),display?.imageItems??[]);
   const requestedItems=await Promise.all(requestedItemsRaw.map(async item=>{
     const candidates=[...new Set([item.image_url,...(item.image_urls??[]),...(slug&&display?await display.imageChoicesForName(slug,item.name):[])].filter((url):url is string=>typeof url==="string"&&!!url))];
     return {...item,image_url:candidates[0]??null,...(candidates.length>1?{image_urls:candidates}:{})};
