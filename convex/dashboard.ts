@@ -1014,6 +1014,40 @@ export const getStatsDrawerData = query({
       ...upcomingCrossUniq,
       ...pendingCrossTracked,
     ];
+    // Resolve each reservation's item quantities once, then index by inventory
+    // item. The previous item-first scan expanded every reservation for every
+    // inventory row (including its legacy/name resolution path), which made
+    // the all-account stats query exceed Convex's 1s query limit as data grew.
+    const upcomingConflictSet = new Set(upcomingCrossUniq);
+    const ongoingConflictSet = new Set(ongoingCrossUniq);
+    type ConflictCandidate = {
+      r: ResWithItems;
+      kind: "ongoing" | "upcoming" | "pending";
+      qty: number;
+    };
+    const conflictCandidatesByItem = new Map<string, ConflictCandidate[]>();
+    const seenConflictIdsByItem = new Map<string, Set<string>>();
+    for (const r of activeForConflicts) {
+      if (!r.start_date || !r.end_date || (r.start_date as string) > horizonEnd) continue;
+      const kind: ConflictCandidate["kind"] = upcomingConflictSet.has(r)
+        ? "upcoming"
+        : ongoingConflictSet.has(r)
+          ? "ongoing"
+          : "pending";
+      for (const [itemId, qty] of expandedIdsOf(r as ResRow)) {
+        if (qty < 1 || !activeItemIds.has(itemId)) continue;
+        let seen = seenConflictIdsByItem.get(itemId);
+        if (!seen) {
+          seen = new Set<string>();
+          seenConflictIdsByItem.set(itemId, seen);
+        }
+        if (seen.has(r._id)) continue;
+        seen.add(r._id);
+        const candidates = conflictCandidatesByItem.get(itemId) ?? [];
+        candidates.push({ r, kind, qty });
+        conflictCandidatesByItem.set(itemId, candidates);
+      }
+    }
     interface Conflict {
       conflict_key: string;
       item_id: string;
@@ -1044,30 +1078,14 @@ export const getStatsDrawerData = query({
     for (const item of activeItems) {
       if (item.qty < 1) continue;
       if (stdAccIds.has(String(item._id))) continue; // SD cards / batteries: bundled, not a constraint
-      const matchingRes: Array<{ r: ResWithItems; kind: "ongoing" | "upcoming" | "pending" }> = [];
-      const seenIds = new Set<string>();
-      const tag = (r: ResWithItems): "ongoing" | "upcoming" | "pending" =>
-        upcomingCrossUniq.includes(r) ? "upcoming"
-        : ongoingCrossUniq.includes(r) ? "ongoing"
-        : "pending";
       const itemIdStr = item._id as string;
+      const matchingRes = conflictCandidatesByItem.get(itemIdStr) ?? [];
       // Effective capacity = owned qty minus units out on repair (open cases).
       const effQty = item.qty - (repairByItem.get(itemIdStr) ?? 0);
-      for (const r of activeForConflicts) {
-        if (!r.start_date || !r.end_date) continue;
-        if ((r.start_date as string) > horizonEnd) continue;
-        // Strict match via LLM-resolved item IDs — no substring fuzzy.
-        const idsToQty = expandedIdsOf(r as ResRow);
-        const q = idsToQty.get(itemIdStr);
-        if (!q || q < 1) continue;
-        if (seenIds.has(r._id)) continue;
-        seenIds.add(r._id);
-        matchingRes.push({ r, kind: tag(r) });
-      }
       // Concurrent qty SUM is what matters. A reservation holding 2× of the item
       // counts as 2 toward overlap.
       const sumQty = (rows: typeof matchingRes): number => extensionOccupancyQty(
-        rows.map(({ r }) => ({ renter_name: r.renter_name, qty: expandedIdsOf(r as ResRow).get(itemIdStr) ?? 0 })),
+        rows.map(({ r, qty }) => ({ renter_name: r.renter_name, qty })),
       );
       if (sumQty(matchingRes) <= effQty) continue;
 
