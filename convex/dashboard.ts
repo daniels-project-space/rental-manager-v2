@@ -3047,233 +3047,303 @@ export const getMonthlyVerificationLosses = query({
 export const __service_getRentalVolumeByCategory = internalQueryOf(getRentalVolumeByCategory);
 
 // Privileged caller counterpart; shares the original handler and validators.
+type PendingReviewHeadlineStats = {
+  count: number;
+  value_gbp: number;
+  month_value_gbp: number;
+  rentals: Array<{
+    reservation_id: string;
+    calendar_reservation_id: string;
+    created_at: number;
+    renter_name: string | null;
+    account_slug: string;
+    start_date: string | null;
+    end_date: string | null;
+    pickup_date: string | null;
+    pickup_time: string | null;
+    return_date: string | null;
+    return_time: string | null;
+    items: string[];
+    item_names_summary: string;
+    duration_days: number | null;
+    net_gbp: number | null;
+    order_step: string | null;
+    kind: "review";
+    is_ongoing: false;
+  }>;
+  other_account_new_booking_count: number;
+};
+
+async function loadPendingReviewHeadlineStats(
+  ctx: QueryCtx,
+  accountSlug: string | null,
+): Promise<PendingReviewHeadlineStats> {
+  const now = new Date();
+  const today = londonToday();
+  const monthKey = today.slice(0, 7);
+  const dashCutoffDate = new Date(now);
+  dashCutoffDate.setDate(now.getDate() - 365);
+  const dashCutoff = dashCutoffDate.toISOString().slice(0, 10);
+  const pendingHorizonDate = new Date(`${today}T00:00:00.000Z`);
+  pendingHorizonDate.setUTCDate(pendingHorizonDate.getUTCDate() + 365);
+  const pendingHorizon = pendingHorizonDate.toISOString().slice(0, 10);
+
+  const pendingReviewRows = accountSlug
+    ? await ctx.db.query("reservations").withIndex("by_account_status_start_date", (q) =>
+        q.eq("account_slug", accountSlug).eq("status", "pending_review")
+          .gte("start_date", dashCutoff).lte("start_date", pendingHorizon)).collect()
+    : await ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+        q.eq("status", "pending_review").gte("start_date", dashCutoff)
+          .lte("start_date", pendingHorizon)).collect();
+
+  // A scoped page still needs to surface arrivals that landed in another
+  // account so they are visible and the owner can switch to All accounts.
+  const pendingRowsForArrivalNotice = accountSlug
+    ? await ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+        q.eq("status", "pending_review").gte("start_date", dashCutoff)
+          .lte("start_date", pendingHorizon)).collect()
+    : pendingReviewRows;
+  const otherAccountNewBookingCount = accountSlug
+    ? dedupByLogicalRental(pendingRowsForArrivalNotice.filter((row) =>
+        !row.is_obsolete && row.account_slug !== accountSlug &&
+        row._creationTime >= now.getTime() - 24 * 60 * 60 * 1000,
+      )).length
+    : 0;
+  const scopedPendingReview = dedupByLogicalRental(pendingReviewRows.filter((row) =>
+    !row.is_obsolete && (!accountSlug || row.account_slug === accountSlug),
+  ));
+  const rentals = scopedPendingReview
+    .map((row) => {
+      const rowAny = row as typeof row & { hygglo_items?: Array<{ name?: string; qty?: number }> };
+      const names = Array.isArray(rowAny.hygglo_items)
+        ? rowAny.hygglo_items.filter((item) => item?.name && !/insurance/i.test(item.name)).map((item) =>
+            item.qty && item.qty > 1 ? `${item.name} ×${item.qty}` : item.name as string)
+        : ((row.items ?? []).map((item) => item.item_name).filter(Boolean));
+      return {
+        reservation_id: row.v1_rental_id ?? row.hygglo_order_id ?? row._id,
+        calendar_reservation_id: row._id,
+        created_at: row._creationTime,
+        renter_name: row.renter_name ?? null,
+        account_slug: row.account_slug ?? "",
+        start_date: row.start_date ?? null,
+        end_date: row.end_date ?? null,
+        pickup_date: row.pickup_date ?? row.start_date ?? null,
+        pickup_time: row.pickup_time ?? null,
+        return_date: row.return_date ?? row.end_date ?? null,
+        return_time: row.return_time ?? null,
+        items: names,
+        item_names_summary: names.join(", ") || "(no item)",
+        duration_days: row.duration_days ?? (row.start_date && row.end_date ? inclusiveRentalDays(row.start_date, row.end_date) : null),
+        net_gbp: row.net_to_owner_gbp ?? null,
+        order_step: row.order_step ?? null,
+        kind: "review" as const,
+        is_ongoing: false as const,
+      };
+    })
+    .sort((a, b) => b.created_at - a.created_at)
+    .slice(0, 30);
+  const value = scopedPendingReview.reduce((sum, row) => sum + netOf(row), 0);
+  const monthValue = scopedPendingReview
+    .filter((row) => effectiveDate(row)?.slice(0, 7) === monthKey)
+    .reduce((sum, row) => sum + netOf(row), 0);
+
+  return {
+    count: scopedPendingReview.length,
+    value_gbp: Math.round(value * 100) / 100,
+    month_value_gbp: Math.round(monthValue * 100) / 100,
+    rentals,
+    other_account_new_booking_count: otherAccountNewBookingCount,
+  };
+}
+
 /**
  * Small, reactive source for the two rental headline metrics. The full stats
  * drawer snapshot does broad reporting reads and can exceed Convex's query
  * time limit; these values need only the confirmed date window and current
  * booking month, so they stay live independently of that snapshot refresh.
  */
+async function loadRentalHeadlineStats(
+  ctx: QueryCtx,
+  accountSlug: string | null,
+) {
+  const now = new Date();
+  const today = londonToday();
+  const time = londonTime(now);
+  const [year, monthNumber] = today.split("-").map(Number);
+  const monthKey = today.slice(0, 7);
+  const monthStart = `${monthKey}-01`;
+  const monthEnd = new Date(Date.UTC(year, monthNumber, 0)).toISOString().slice(0, 10);
+  const projectionStart = new Date(Date.UTC(year, monthNumber - 4, 1)).toISOString().slice(0, 10);
+  // Full confirmed chains are required before grouping: an older adjacent
+  // member can determine the group's identity, span and value. The status
+  // index currently contains 31 rows (~81 KB, 16 Oct 2026), and one read
+  // avoids four overlapping date scans without reading completed history.
+  const allConfirmedRows = await (accountSlug
+    ? ctx.db.query("reservations").withIndex("by_account_status_start_date", (q) =>
+        q.eq("account_slug", accountSlug).eq("status", "confirmed")).collect()
+    : ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+        q.eq("status", "confirmed")).collect());
+  const pendingReviewStats = {
+    count: 0,
+    value_gbp: 0,
+    month_value_gbp: 0,
+    rentals: [],
+    other_account_new_booking_count: 0,
+  };
+  let confirmedRows = confirmedHeadlineOrder(allConfirmedRows, today);
+  if (confirmedRows === null) {
+    // A fully tied index key is rare. Retain exact database ordering then.
+    const groups = await Promise.all([
+      ctx.db.query("reservations").withIndex("by_status_end_date", (q) => q.eq("status", "confirmed").gte("end_date", today)).collect(),
+      ctx.db.query("reservations").withIndex("by_status_return_date", (q) => q.eq("status", "confirmed").gte("return_date", today)).collect(),
+      ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) => q.eq("status", "confirmed").gte("pickup_date", today)).collect(),
+      ctx.db.query("reservations").withIndex("by_status_start_date", (q) => q.eq("status", "confirmed").gte("start_date", today)).collect(),
+    ]);
+    const ordered = new Map<string, (typeof allConfirmedRows)[number]>();
+    for (const row of groups.flat()) if (!accountSlug || row.account_slug === accountSlug) ordered.set(String(row._id), row);
+    for (const row of allConfirmedRows) if (!ordered.has(String(row._id))) ordered.set(String(row._id), row);
+    confirmedRows = [...ordered.values()];
+  }
+  const scopedConfirmed = accountSlug
+    ? confirmedRows.filter((row) => row.account_slug === accountSlug)
+    : confirmedRows;
+  const { ongoingRows, upcomingRows } = groupActiveRentals(
+    scopedConfirmed,
+    today,
+    time,
+  );
+  // Effective revenue date prefers pickup_date, otherwise start_date. Read
+  // the current and three trailing months through bounded indexed windows
+  // so both the booked total and its projection stay live without waiting
+  // for the expensive all-dashboard snapshot.
+  // The confirmed start-date window is already present in confirmedRows.
+  // Monthly revenue accepts only confirmed/completed rows; reading cancelled
+  // pickup history again cannot contribute to the total or its baseline.
+  const confirmedMonthRows = confirmedRows.filter((row) =>
+    row.start_date !== undefined && row.start_date >= projectionStart && row.start_date <= monthEnd,
+  );
+  const [completedMonthRows, confirmedPickupRows] = await Promise.all([
+    loadCompletedMonthlyRows(ctx, projectionStart, monthEnd, accountSlug),
+    accountSlug
+      ? ctx.db.query("reservations").withIndex("by_account_status_pickup_date", (q) =>
+          q.eq("account_slug", accountSlug).eq("status", "confirmed")
+            .gte("pickup_date", projectionStart).lte("pickup_date", monthEnd)).collect()
+      : ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
+          q.eq("status", "confirmed").gte("pickup_date", projectionStart).lte("pickup_date", monthEnd)).collect(),
+  ]);
+  const pickupMonthRows: ReservationRow[] = [...confirmedPickupRows, ...completedMonthRows.pickupRows].sort((a, b) =>
+    (a.pickup_date ?? "").localeCompare(b.pickup_date ?? "") || a._creationTime - b._creationTime,
+  );
+  const monthRowsById = new Map<string, ReservationRow>();
+  for (const row of [...confirmedMonthRows, ...completedMonthRows.startRows, ...pickupMonthRows]) {
+    if (!accountSlug || row.account_slug === accountSlug) monthRowsById.set(row._id, row);
+  }
+  const projectionRows = Array.from(monthRowsById.values());
+  const monthly = realisedMonthRevenue(projectionRows, monthKey, accountSlug);
+  const projectionInputs = rentalMonthProjectionInputs(projectionRows, today, accountSlug);
+  const projection = projectCurrentMonth(projectionInputs);
+  const remainingDays = projectionInputs.daysInMonth - projectionInputs.daysElapsed;
+  const elapsedCalendarDays = new Date().getDate();
+  const earnedThisMonth = monthly.rentals
+    .filter((row) => {
+      const date = effectiveDate(row);
+      return date !== undefined && date <= today && isPostPickupRental(row);
+    })
+    .reduce((sum, row) => sum + netOf(row), 0);
+  const activeRentals = [...ongoingRows.map((row) => ({ row, kind: "ongoing" as const })),
+    ...upcomingRows.map((row) => ({ row, kind: "upcoming" as const }))]
+    .map(({ row, kind }) => {
+      const rowAny = row as typeof row & { hygglo_items?: Array<{ name?: string; qty?: number }> };
+      const names = Array.isArray(rowAny.hygglo_items)
+        ? rowAny.hygglo_items.filter((item) => item?.name && !/insurance/i.test(item.name)).map((item) =>
+            item.qty && item.qty > 1 ? `${item.name} ×${item.qty}` : item.name as string)
+        : ((row.items ?? []).map((item) => item.item_name).filter(Boolean));
+      const summary = names.join(", ") || "(no item)";
+      return {
+        reservation_id: row.v1_rental_id ?? row.hygglo_order_id ?? row._id,
+        calendar_reservation_id: row._id,
+        renter_name: row.renter_name ?? null,
+        account_slug: row.account_slug ?? "",
+        start_date: row.start_date ?? null,
+        end_date: row.end_date ?? null,
+        pickup_date: row.pickup_date ?? row.start_date ?? null,
+        pickup_time: row.pickup_time ?? null,
+        return_date: row.return_date ?? row.end_date ?? null,
+        return_time: row.return_time ?? null,
+        items: names,
+        item_names_summary: summary,
+        item_image_tiles: [] as Array<{ image_url: string; name: string; names_in_group: string[]; qty: number }>,
+        extra_text_items: [] as string[],
+        photo_url: null,
+        master_image_url: null,
+        duration_days: row.duration_days ?? (row.start_date && row.end_date ? inclusiveRentalDays(row.start_date, row.end_date) : null),
+        net_gbp: row.net_to_owner_gbp ?? null,
+        order_step: row.order_step ?? null,
+        kind,
+        is_ongoing: kind === "ongoing",
+      };
+    }).slice(0, 30);
+
+  return {
+    active: {
+      total: ongoingRows.length + upcomingRows.length,
+      ongoing_count: ongoingRows.length,
+      upcoming_count: upcomingRows.length,
+      pending_review_count: pendingReviewStats.count,
+      pending_review_value_gbp: pendingReviewStats.value_gbp,
+      pending_review_rentals: pendingReviewStats.rentals,
+      other_account_new_booking_count: pendingReviewStats.other_account_new_booking_count,
+      rentals: activeRentals,
+    },
+    monthly: {
+      confirmed_revenue: monthly.netGbp,
+      pending_review_value_gbp: pendingReviewStats.month_value_gbp,
+      projected: projection.projected,
+      target_gbp: projection.target,
+      pct_of_target: pctOfTarget(monthly.netGbp, projection.target),
+      expected_additional_gbp: Math.max(0, projection.projected - monthly.netGbp),
+      committed_gbp: projection.committed,
+      projection_basis: projection.basis,
+      baseline_gbp: projection.target,
+      days_remaining: Math.max(0, projectionInputs.daysInMonth - elapsedCalendarDays),
+      days_in_month: projectionInputs.daysInMonth,
+      days_elapsed: elapsedCalendarDays,
+      avg_daily_rate: elapsedCalendarDays > 0 ? Math.round((earnedThisMonth / elapsedCalendarDays) * 100) / 100 : 0,
+      current_earnings: Math.round(earnedThisMonth * 100) / 100,
+    },
+    generatedAt: now.getTime(),
+  };
+}
+
 export const getRentalHeadlineStats = query({
   args: { accountSlug: v.union(v.string(), v.null()) },
   handler: async (ctx, { accountSlug }) => {
-    const now = new Date();
-    const today = londonToday();
-    const time = londonTime(now);
-    const dashCutoffDate = new Date(now);
-    dashCutoffDate.setDate(now.getDate() - 365);
-    const dashCutoff = dashCutoffDate.toISOString().slice(0, 10);
-    const [year, monthNumber] = today.split("-").map(Number);
-    const monthKey = today.slice(0, 7);
-    const monthStart = `${monthKey}-01`;
-    const monthEnd = new Date(Date.UTC(year, monthNumber, 0)).toISOString().slice(0, 10);
-    const projectionStart = new Date(Date.UTC(year, monthNumber - 4, 1)).toISOString().slice(0, 10);
-    const pendingHorizonDate = new Date(`${today}T00:00:00.000Z`);
-    pendingHorizonDate.setUTCDate(pendingHorizonDate.getUTCDate() + 365);
-    const pendingHorizon = pendingHorizonDate.toISOString().slice(0, 10);
-
-    // Active totals require complete confirmed chains, including old starts.
-    // Pending-review reservations retain their separate bounded display window.
-    const statusDateWindow = (status: string, from: string, to?: string) => {
-      if (accountSlug) {
-        return ctx.db.query("reservations").withIndex("by_account_status_start_date", (q) => {
-          const range = q.eq("account_slug", accountSlug).eq("status", status).gte("start_date", from);
-          return to === undefined ? range : range.lte("start_date", to);
-        }).collect();
-      }
-      return ctx.db.query("reservations").withIndex("by_status_start_date", (q) => {
-        const range = q.eq("status", status).gte("start_date", from);
-        return to === undefined ? range : range.lte("start_date", to);
-      }).collect();
-    };
-    // Full confirmed chains are required before grouping: an older adjacent
-    // member can determine the group's identity, span and value. The status
-    // index currently contains 31 rows (~81 KB, 16 Oct 2026), and one read
-    // avoids four overlapping date scans without reading completed history.
-    const [allConfirmedRows, pendingReviewRows] = await Promise.all([
-      accountSlug
-        ? ctx.db.query("reservations").withIndex("by_account_status_start_date", (q) =>
-            q.eq("account_slug", accountSlug).eq("status", "confirmed")).collect()
-        : ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
-            q.eq("status", "confirmed")).collect(),
-      statusDateWindow("pending_review", dashCutoff, pendingHorizon),
+    const [headline, pending] = await Promise.all([
+      loadRentalHeadlineStats(ctx, accountSlug),
+      loadPendingReviewHeadlineStats(ctx, accountSlug),
     ]);
-    let confirmedRows = confirmedHeadlineOrder(allConfirmedRows, today);
-    if (confirmedRows === null) {
-      // A fully tied index key is rare. Retain exact database ordering then.
-      const groups = await Promise.all([
-        ctx.db.query("reservations").withIndex("by_status_end_date", (q) => q.eq("status", "confirmed").gte("end_date", today)).collect(),
-        ctx.db.query("reservations").withIndex("by_status_return_date", (q) => q.eq("status", "confirmed").gte("return_date", today)).collect(),
-        ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) => q.eq("status", "confirmed").gte("pickup_date", today)).collect(),
-        ctx.db.query("reservations").withIndex("by_status_start_date", (q) => q.eq("status", "confirmed").gte("start_date", today)).collect(),
-      ]);
-      const ordered = new Map<string, (typeof allConfirmedRows)[number]>();
-      for (const row of groups.flat()) if (!accountSlug || row.account_slug === accountSlug) ordered.set(String(row._id), row);
-      for (const row of allConfirmedRows) if (!ordered.has(String(row._id))) ordered.set(String(row._id), row);
-      confirmedRows = [...ordered.values()];
-    }
-    // Account filtering can otherwise hide a just-arrived booking from the
-    // owner's dashboard with no indication why. When scoped to one account,
-    // do one bounded indexed read of the small pending-review set so the page
-    // can offer a direct switch to All accounts for arrivals elsewhere.
-    const pendingRowsForArrivalNotice = accountSlug
-      ? await ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
-          q.eq("status", "pending_review").gte("start_date", dashCutoff).lte("start_date", pendingHorizon),
-        ).collect()
-      : pendingReviewRows;
-    const newBookingsInOtherAccounts = accountSlug
-      ? dedupByLogicalRental(pendingRowsForArrivalNotice.filter((row) =>
-          !row.is_obsolete && row.account_slug !== accountSlug &&
-          row._creationTime >= now.getTime() - 24 * 60 * 60 * 1000,
-        ))
-      : [];
-    const scopedConfirmed = accountSlug
-      ? confirmedRows.filter((row) => row.account_slug === accountSlug)
-      : confirmedRows;
-    const scopedPendingReview = dedupByLogicalRental(pendingReviewRows.filter((row) =>
-      !row.is_obsolete && (!accountSlug || row.account_slug === accountSlug),
-    ));
-    const { ongoingRows, upcomingRows } = groupActiveRentals(
-      scopedConfirmed,
-      today,
-      time,
-    );
-    const pendingReviewRentals = scopedPendingReview
-      .map((row) => {
-        const rowAny = row as typeof row & { hygglo_items?: Array<{ name?: string; qty?: number }> };
-        const names = Array.isArray(rowAny.hygglo_items)
-          ? rowAny.hygglo_items.filter((item) => item?.name && !/insurance/i.test(item.name)).map((item) =>
-              item.qty && item.qty > 1 ? `${item.name} ×${item.qty}` : item.name as string)
-          : ((row.items ?? []).map((item) => item.item_name).filter(Boolean));
-        return {
-          reservation_id: row.v1_rental_id ?? row.hygglo_order_id ?? row._id,
-          calendar_reservation_id: row._id,
-          created_at: row._creationTime,
-          renter_name: row.renter_name ?? null,
-          account_slug: row.account_slug ?? "",
-          start_date: row.start_date ?? null,
-          end_date: row.end_date ?? null,
-          pickup_date: row.pickup_date ?? row.start_date ?? null,
-          pickup_time: row.pickup_time ?? null,
-          return_date: row.return_date ?? row.end_date ?? null,
-          return_time: row.return_time ?? null,
-          items: names,
-          item_names_summary: names.join(", ") || "(no item)",
-          duration_days: row.duration_days ?? (row.start_date && row.end_date ? inclusiveRentalDays(row.start_date, row.end_date) : null),
-          net_gbp: row.net_to_owner_gbp ?? null,
-          order_step: row.order_step ?? null,
-          kind: "review" as const,
-          is_ongoing: false,
-        };
-      })
-      .sort((a, b) => b.created_at - a.created_at)
-      .slice(0, 30);
-    const pendingReviewValue = scopedPendingReview.reduce((sum, row) => sum + netOf(row), 0);
-    const pendingReviewMonthValue = scopedPendingReview
-      .filter((row) => effectiveDate(row)?.slice(0, 7) === monthKey)
-      .reduce((sum, row) => sum + netOf(row), 0);
-
-    // Effective revenue date prefers pickup_date, otherwise start_date. Read
-    // the current and three trailing months through bounded indexed windows
-    // so both the booked total and its projection stay live without waiting
-    // for the expensive all-dashboard snapshot.
-    // The confirmed start-date window is already present in confirmedRows.
-    // Monthly revenue accepts only confirmed/completed rows; reading cancelled
-    // pickup history again cannot contribute to the total or its baseline.
-    const confirmedMonthRows = confirmedRows.filter((row) =>
-      row.start_date !== undefined && row.start_date >= projectionStart && row.start_date <= monthEnd,
-    );
-    const [completedMonthRows, confirmedPickupRows] = await Promise.all([
-      loadCompletedMonthlyRows(ctx, projectionStart, monthEnd, accountSlug),
-      accountSlug
-        ? ctx.db.query("reservations").withIndex("by_account_status_pickup_date", (q) =>
-            q.eq("account_slug", accountSlug).eq("status", "confirmed")
-              .gte("pickup_date", projectionStart).lte("pickup_date", monthEnd)).collect()
-        : ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
-            q.eq("status", "confirmed").gte("pickup_date", projectionStart).lte("pickup_date", monthEnd)).collect(),
-    ]);
-    const pickupMonthRows: ReservationRow[] = [...confirmedPickupRows, ...completedMonthRows.pickupRows].sort((a, b) =>
-      (a.pickup_date ?? "").localeCompare(b.pickup_date ?? "") || a._creationTime - b._creationTime,
-    );
-    const monthRowsById = new Map<string, ReservationRow>();
-    for (const row of [...confirmedMonthRows, ...completedMonthRows.startRows, ...pickupMonthRows]) {
-      if (!accountSlug || row.account_slug === accountSlug) monthRowsById.set(row._id, row);
-    }
-    const projectionRows = Array.from(monthRowsById.values());
-    const monthly = realisedMonthRevenue(projectionRows, monthKey, accountSlug);
-    const projectionInputs = rentalMonthProjectionInputs(projectionRows, today, accountSlug);
-    const projection = projectCurrentMonth(projectionInputs);
-    const remainingDays = projectionInputs.daysInMonth - projectionInputs.daysElapsed;
-    const elapsedCalendarDays = new Date().getDate();
-    const earnedThisMonth = monthly.rentals
-      .filter((row) => {
-        const date = effectiveDate(row);
-        return date !== undefined && date <= today && isPostPickupRental(row);
-      })
-      .reduce((sum, row) => sum + netOf(row), 0);
-    const activeRentals = [...ongoingRows.map((row) => ({ row, kind: "ongoing" as const })),
-      ...upcomingRows.map((row) => ({ row, kind: "upcoming" as const }))]
-      .map(({ row, kind }) => {
-        const rowAny = row as typeof row & { hygglo_items?: Array<{ name?: string; qty?: number }> };
-        const names = Array.isArray(rowAny.hygglo_items)
-          ? rowAny.hygglo_items.filter((item) => item?.name && !/insurance/i.test(item.name)).map((item) =>
-              item.qty && item.qty > 1 ? `${item.name} ×${item.qty}` : item.name as string)
-          : ((row.items ?? []).map((item) => item.item_name).filter(Boolean));
-        const summary = names.join(", ") || "(no item)";
-        return {
-          reservation_id: row.v1_rental_id ?? row.hygglo_order_id ?? row._id,
-          calendar_reservation_id: row._id,
-          renter_name: row.renter_name ?? null,
-          account_slug: row.account_slug ?? "",
-          start_date: row.start_date ?? null,
-          end_date: row.end_date ?? null,
-          pickup_date: row.pickup_date ?? row.start_date ?? null,
-          pickup_time: row.pickup_time ?? null,
-          return_date: row.return_date ?? row.end_date ?? null,
-          return_time: row.return_time ?? null,
-          items: names,
-          item_names_summary: summary,
-          item_image_tiles: [] as Array<{ image_url: string; name: string; names_in_group: string[]; qty: number }>,
-          extra_text_items: [] as string[],
-          photo_url: null,
-          master_image_url: null,
-          duration_days: row.duration_days ?? (row.start_date && row.end_date ? inclusiveRentalDays(row.start_date, row.end_date) : null),
-          net_gbp: row.net_to_owner_gbp ?? null,
-          order_step: row.order_step ?? null,
-          kind,
-          is_ongoing: kind === "ongoing",
-        };
-      }).slice(0, 30);
-
     return {
+      ...headline,
       active: {
-        total: ongoingRows.length + upcomingRows.length,
-        ongoing_count: ongoingRows.length,
-        upcoming_count: upcomingRows.length,
-        pending_review_count: scopedPendingReview.length,
-        pending_review_value_gbp: Math.round(pendingReviewValue * 100) / 100,
-        pending_review_rentals: pendingReviewRentals,
-        other_account_new_booking_count: newBookingsInOtherAccounts.length,
-        rentals: activeRentals,
+        ...headline.active,
+        pending_review_count: pending.count,
+        pending_review_value_gbp: pending.value_gbp,
+        pending_review_rentals: pending.rentals,
+        other_account_new_booking_count: pending.other_account_new_booking_count,
       },
-      monthly: {
-        confirmed_revenue: monthly.netGbp,
-        pending_review_value_gbp: Math.round(pendingReviewMonthValue * 100) / 100,
-        projected: projection.projected,
-        target_gbp: projection.target,
-        pct_of_target: pctOfTarget(monthly.netGbp, projection.target),
-        expected_additional_gbp: Math.max(0, projection.projected - monthly.netGbp),
-        committed_gbp: projection.committed,
-        projection_basis: projection.basis,
-        baseline_gbp: projection.target,
-        days_remaining: Math.max(0, projectionInputs.daysInMonth - elapsedCalendarDays),
-        days_in_month: projectionInputs.daysInMonth,
-        days_elapsed: elapsedCalendarDays,
-        avg_daily_rate: elapsedCalendarDays > 0 ? Math.round((earnedThisMonth / elapsedCalendarDays) * 100) / 100 : 0,
-        current_earnings: Math.round(earnedThisMonth * 100) / 100,
-      },
-      generatedAt: now.getTime(),
+      monthly: { ...headline.monthly, pending_review_value_gbp: pending.month_value_gbp },
     };
   },
+});
+
+export const getRentalHeadlineCoreStats = query({
+  args: { accountSlug: v.union(v.string(), v.null()) },
+  handler: (ctx, { accountSlug }) => loadRentalHeadlineStats(ctx, accountSlug),
+});
+
+export const getRentalPendingReviewStats = query({
+  args: { accountSlug: v.union(v.string(), v.null()) },
+  handler: (ctx, { accountSlug }) => loadPendingReviewHeadlineStats(ctx, accountSlug),
 });
 
 export const __service_getStatsDrawerData = internalQueryOf(getStatsDrawerData);
