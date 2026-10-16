@@ -19,4 +19,9 @@ describe("confirmed headline input order", () => {
   it("requests the original indexes for fully tied keys", () => {
     expect(confirmedHeadlineOrder([row("2", { _creationTime: 1 }), row("1")], "2026-10-16")).toBeNull();
   });
+  it("uses the pickup index's start-date suffix before creation time", () => {
+    const rows = [row("1", { start_date: "2026-10-18", end_date: "2026-10-01", pickup_date: "2026-10-20" }),
+      row("2", { start_date: "2026-10-17", end_date: "2026-10-01", pickup_date: "2026-10-20" })];
+    expect(confirmedHeadlineOrder(rows, "2026-10-16")?.map((r) => r._id)).toEqual(["2", "1"]);
+  });
 });

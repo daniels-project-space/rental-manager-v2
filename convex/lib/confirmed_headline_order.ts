@@ -8,7 +8,12 @@ export function confirmedHeadlineOrder<T extends ReservationRow>(rows: T[], toda
   for (const field of fields) {
     const compare = (a: T, b: T) => {
       const av = a[field]!, bv = b[field]!;
-      return (av < bv ? -1 : av > bv ? 1 : 0) || a._creationTime - b._creationTime;
+      const primary = av < bv ? -1 : av > bv ? 1 : 0;
+      // The pickup indexes include start_date before _creationTime.
+      const as = a.start_date, bs = b.start_date;
+      const secondary = field !== "pickup_date" || as === bs ? 0
+        : as === undefined ? -1 : bs === undefined ? 1 : as < bs ? -1 : 1;
+      return primary || secondary || a._creationTime - b._creationTime;
     };
     const eligible = rows.filter((row) => row[field] !== undefined && row[field]! >= today).sort(compare);
     // Preserve the database's tie order rather than inferring it from IDs.
