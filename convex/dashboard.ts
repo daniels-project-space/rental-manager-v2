@@ -810,7 +810,9 @@ export const getStatsDrawerData = query({
     const monthTotal = monthEarned.reduce((s, r) => s + netOf(r), 0);
 
     // Per-account earnings breakdown (net)
-    const accountSlugs = [...new Set(allRes.map((r) => r.account_slug).filter(Boolean))] as string[];
+    // Keep zero-activity configured accounts in the breakdown even though the
+    // reservation preload intentionally omits their cancelled-only history.
+    const accountSlugs = [...ACCOUNT_SLUGS];
     const byAccount = accountSlugs.map((slug) => {
       const todayAcc = todayEarned
         .filter((r) => r.account_slug === slug)
