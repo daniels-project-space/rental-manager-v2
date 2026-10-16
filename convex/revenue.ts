@@ -209,13 +209,21 @@ export const getInvestmentScorecard = query({
     const roiScorecardCutoff = new Date(Date.now() - 730 * 86400000)
       .toISOString()
       .slice(0, 10);
-    let reservations = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", roiScorecardCutoff))
-      .collect();
+    let reservations = accountSlug
+      ? await ctx.db
+          .query("reservations")
+          .withIndex("by_account_status", (q) => q.eq("account_slug", accountSlug))
+          .collect()
+      : await ctx.db
+          .query("reservations")
+          .withIndex("by_start_date", (q) => q.gte("start_date", roiScorecardCutoff))
+          .collect();
+    // The account-prefixed index avoids reading every other account's rental
+    // history for each per-account MV row. Keep the same 730-day cutoff after
+    // the indexed account read; the prefix also preserves any future status.
     if (accountSlug) {
       reservations = reservations.filter(
-        (r) => r.account_slug === accountSlug
+        (r) => r.start_date != null && r.start_date >= roiScorecardCutoff,
       );
     }
     // REVENUE-SUM CANON (order_step_semantics.ts): exclude
@@ -315,13 +323,21 @@ export const getLifetimeByMonth = query({
     // full history. The cost-watch ratchet allows this once flagged:
     // a future PR should back this with an MV (one row per (month, account)
     // refreshed nightly). // check-patterns:ok
-    const allReservations = await ctx.db.query("reservations").collect(); // check-patterns:ok — lifetime aggregate; TODO back with an MV
+    const allReservations = accountSlug
+      ? await ctx.db
+          .query("reservations")
+          .withIndex("by_account_status", (q) => q.eq("account_slug", accountSlug))
+          .collect()
+      : await ctx.db.query("reservations").collect(); // check-patterns:ok — lifetime aggregate; TODO back with an MV
 
     // ── AI attribution source data (Wave AI-BE) ──────────────────
     // Single fetch each (no N+1) — classification happens in-memory.
-    const allAiDecisions = (await ctx.db
-      .query("ai_decision")
-      .collect()) as unknown as AiDecisionLite[];
+    const allAiDecisions = (accountSlug
+      ? await ctx.db
+          .query("ai_decision")
+          .withIndex("by_account_status", (q) => q.eq("account_slug", accountSlug))
+          .collect()
+      : await ctx.db.query("ai_decision").collect()) as unknown as AiDecisionLite[];
     const allAiAudits = (await ctx.db
       .query("ai_decision_audit")
       .collect()) as unknown as AiDecisionAuditLite[];
@@ -349,10 +365,22 @@ export const getLifetimeByMonth = query({
       .map((r) => r.start_date as string)
       .sort();
 
+    // Per-account chart rows still span the same global history as the
+    // all-account chart. Read only its earliest indexed date instead of
+    // collecting every other account's reservations to discover that bound.
+    const firstGlobalReservation = accountSlug
+      ? await ctx.db.query("reservations").withIndex("by_start_date").first()
+      : null;
+
     // Determine the earliest month across live reservations AND historical data
     const histMonths = [...histByMonth.keys()].sort();
     const firstHistMonth = histMonths[0] ?? null;
-    const firstResMonth = allDates.length > 0 ? allDates[0].slice(0, 7) : null;
+    const firstReservationDate = accountSlug
+      ? firstGlobalReservation?.start_date
+      : allDates[0];
+    const firstResMonth = firstReservationDate
+      ? firstReservationDate.slice(0, 7)
+      : null;
 
     const firstMonth =
       firstResMonth && firstHistMonth
