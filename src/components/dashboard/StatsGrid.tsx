@@ -19,7 +19,7 @@ import {
 } from "@dnd-kit/sortable";
 import { api } from "../../../convex/_generated/api";
 import { useQuery } from "convex/react";
-import { makeFunctionReference, type FunctionReturnType } from "convex/server";
+import { makeFunctionReference } from "convex/server";
 import { useAccount } from "@/lib/account-context";
 import { useEditMode } from "@/lib/dashboard/edit-mode-context";
 import { STAT_WIDGETS, HERO_IDS, HERO_SPANS } from "@/lib/dashboard/widget-registry";
@@ -70,8 +70,6 @@ type ScannerFreshness = {
   last_run_succeeded: boolean | null;
   rows_upserted_last: number;
 };
-
-type RentalHeadlineStats = FunctionReturnType<typeof api.dashboard.getRentalHeadlineStats>;
 
 function fmtGbp(n: number): string {
   if (n >= 1000) return "£" + (n / 1000).toFixed(1) + "k";
@@ -183,18 +181,16 @@ function PendingReviewPanel({ rentals, otherAccountNewBookingCount }: { rentals:
 }>; otherAccountNewBookingCount: number }) {
   const { activeAccountSlug, setActiveAccountSlug } = useAccount();
   const [showAll, setShowAll] = useState(false);
-  if (!rentals.length && (!activeAccountSlug || otherAccountNewBookingCount === 0)) return null;
   const previewLimit = 8;
   const visibleRentals = showAll ? rentals : rentals.slice(0, previewLimit);
 
   return (
-    <section className="mt-4 rounded-xl border border-sky-500/20 bg-sky-500/[0.04] p-4" aria-label="Bookings awaiting confirmation">
-      {rentals.length > 0 && (
-        <div className="mb-3 flex items-center justify-between gap-3">
+    <section className="rounded-xl border border-sky-500/20 bg-sky-500/[0.04] p-4" aria-label="Bookings awaiting confirmation">
+      <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-xs font-bold uppercase tracking-wider text-sky-300">Bookings awaiting confirmation</h2>
           <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[11px] font-semibold text-sky-300">{rentals.length}</span>
-        </div>
-      )}
+      </div>
+      {!rentals.length && !otherAccountNewBookingCount && <p className="text-xs text-slate-400">No bookings awaiting confirmation</p>}
       {activeAccountSlug && otherAccountNewBookingCount > 0 && (
         <div className={`flex items-center justify-between gap-3 text-xs text-sky-100 ${rentals.length ? "mb-3 border-b border-sky-500/10 pb-3" : ""}`} role="status">
           <span>{otherAccountNewBookingCount} new booking{otherAccountNewBookingCount === 1 ? "" : "s"} arrived in other accounts in the last 24 hours.</span>
@@ -243,109 +239,12 @@ function PendingReviewPanel({ rentals, otherAccountNewBookingCount }: { rentals:
   );
 }
 
-function RentalHeadlineCards({ data }: { data: RentalHeadlineStats | undefined }) {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  if (!data) {
-    return (
-      <div className="grid grid-cols-2 gap-4 mt-4" aria-label="Live rental totals">
-        <ExpandableStatCard id="active" label="Active Rentals" value="…" valueColor="blue" accentColor="blue" isExpanded={false} onToggle={() => undefined} subtitle="Loading live rental data" />
-        <ExpandableStatCard id="monthly" label="Expected Monthly" value="…" valueColor="green" accentColor="green" isExpanded={false} onToggle={() => undefined} subtitle="Loading live rental data" />
-      </div>
-    );
-  }
-
-  return (
-    <>
-      <div className="grid grid-cols-2 gap-4 mt-4" aria-label="Live rental totals">
-        <ExpandableStatCard
-          id="active"
-          label="Active Rentals"
-          value={data.active.total}
-          valueColor="blue"
-          accentColor="blue"
-          isExpanded={expandedId === "active"}
-          onToggle={() => setExpandedId((id) => id === "active" ? null : "active")}
-          subtitle={
-            <span className="inline-flex flex-wrap items-center gap-2 text-[11px]">
-              <span>{data.active.ongoing_count} ongoing</span>
-              <span className="text-slate-600">+</span>
-              <span>{data.active.upcoming_count} upcoming</span>
-              {(data.active.pending_review_count ?? 0) > 0 && (
-                <><span className="text-slate-600">+</span><span className="text-sky-300">{data.active.pending_review_count} awaiting confirmation</span></>
-              )}
-            </span>
-          }
-        >
-          <div className="space-y-2 text-xs text-slate-300">
-            {data.active.rentals.map((rental) => (
-              <div key={rental.calendar_reservation_id} className="flex justify-between gap-3">
-                <span className="truncate">{rental.renter_name || rental.item_names_summary}</span>
-                <span className="shrink-0 text-slate-500">{rental.start_date} · {rental.kind}</span>
-              </div>
-            ))}
-            {data.active.pending_review_rentals?.length > 0 && (
-              <div className="space-y-1 border-t border-slate-700/60 pt-2">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-sky-300">Awaiting confirmation</div>
-                {data.active.pending_review_rentals.map((rental) => (
-                  <div key={rental.calendar_reservation_id} className="flex justify-between gap-3">
-                    <span className="truncate">{rental.renter_name || rental.item_names_summary}</span>
-                    <span className="shrink-0 text-slate-500">{rental.start_date || "Date pending"}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </ExpandableStatCard>
-        <ExpandableStatCard
-          id="monthly"
-          label="Expected Monthly"
-          value={fmtGbpFull(data.monthly.projected)}
-          valueColor="green"
-          accentColor="green"
-          isExpanded={expandedId === "monthly"}
-          onToggle={() => setExpandedId((id) => id === "monthly" ? null : "monthly")}
-          subtitle={
-            <span className="block">
-              <span>Confirmed: {fmtGbpFull(data.monthly.confirmed_revenue)}</span>
-              {(data.monthly.pending_review_value_gbp ?? 0) > 0 && (
-                <span className="ml-2 text-sky-300">· {fmtGbpFull(data.monthly.pending_review_value_gbp)} awaiting confirmation this month</span>
-              )}
-            </span>
-          }
-          headerExtra={
-            <div className="text-[11px] text-slate-400">
-              {data.monthly.pct_of_target}% of usual month · {fmtGbpFull(data.monthly.expected_additional_gbp)} additional bookings expected
-            </div>
-          }
-        >
-          <div className="text-xs text-slate-400">
-            Live rental totals · {data.monthly.days_remaining} days remaining this month
-          </div>
-        </ExpandableStatCard>
-      </div>
-      <PendingReviewPanel
-        rentals={data.active.pending_review_rentals ?? []}
-        otherAccountNewBookingCount={data.active.other_account_new_booking_count ?? 0}
-      />
-    </>
-  );
-}
-
 export function StatsGrid() {
   return (
     <WidgetErrorBoundary label="Other dashboard stats">
       <StatsGridDetails />
     </WidgetErrorBoundary>
   );
-}
-
-export function RentalHeadlinePanel() {
-  const { activeAccountSlug } = useAccount();
-  const rentalHeadlines = useQuery(api.dashboard.getRentalHeadlineStats, {
-    accountSlug: activeAccountSlug,
-  });
-  return <RentalHeadlineCards data={rentalHeadlines} />;
 }
 
 function StatsGridDetails() {
@@ -473,6 +372,10 @@ function StatsGridDetails() {
       setExpandedId((prev) => (prev === id ? null : id));
 
     return {
+      pending_review: <PendingReviewPanel
+        rentals={livePendingReviewRentals}
+        otherAccountNewBookingCount={rentalHeadlines?.active.other_account_new_booking_count ?? 0}
+      />,
       channel_response_rates: <ChannelResponseRateCard />,
       conversation_funnel: <ConversationFunnel compact />,
       active: (
@@ -948,7 +851,7 @@ function StatsGridDetails() {
   }
 
   const visibleIds = layout.statOrder.filter(
-    (id) => cards[id] && !["active", "monthly"].includes(id) && !isStatHidden(id),
+    (id) => cards[id] && !isStatHidden(id),
   );
 
   const handleDragEnd = (e: DragEndEvent) => {
@@ -964,10 +867,7 @@ function StatsGridDetails() {
     <>
       <CriticalAlerts
         conflicts={(rawData as any)?.conflicts ?? []}
-        unmapped_listings={[]}
         blacklist_alerts={(rawData as any)?.blacklist_alerts ?? []}
-        qty_drift_count={(rawData as any)?.qty_drift_count ?? 0}
-        qty_drift_sample={(rawData as any)?.qty_drift_sample ?? []}
       />
       <DndContext
         sensors={sensors}
@@ -1003,7 +903,11 @@ function StatsGridDetails() {
                 label={label}
                 className={spanClass}
               >
-                <div data-packing-content className="flow-root">{cards[id]}</div>
+                <div data-packing-content className="flow-root">{
+                  ["active", "monthly", "pending_review"].includes(id) && !hasLiveRentalHeadlines
+                    ? <ExpandableStatCard id={id} label={label} value="…" isExpanded={false} onToggle={() => undefined} subtitle="Loading live rental data" />
+                    : cards[id]
+                }</div>
               </EditableWidget>
             );
           })}
