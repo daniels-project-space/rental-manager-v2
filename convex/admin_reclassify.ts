@@ -1,3 +1,5 @@
+
+import { patchRevenueReservation } from "./lib/reservation_revenue";
 /**
  * ──────────────────────────────────────────────────────────────────────────
  *  Admin Reclassify — Phase 3a backfill mutation
@@ -213,7 +215,7 @@ export const reclassifyBatch = mutation({
         patch.denial_actor = result.outcome;
       }
 
-      await ctx.db.patch(r._id, patch);
+      await patchRevenueReservation(ctx, r._id, patch);
 
       processed++;
       byOutcome[result.outcome] = (byOutcome[result.outcome] ?? 0) + 1;

@@ -32,6 +32,7 @@ function fixture(tables: Record<string, Row[]>) {
         reads.push({ table, index, rows: data.length });
         return data;
       },
+      async first() { return (await q.collect())[0] ?? null; },
     };
     return q;
   } } };
@@ -116,6 +117,24 @@ describe("indexed handoff candidates", () => {
       expect(result.monthly.confirmed_revenue).toBe(37);
       expect(reads.some((read) => read.index === "by_pickup_date")).toBe(false);
     } finally { vi.useRealTimers(); }
+  });
+
+  it("includes a past confirmed rental with no negotiated pickup in current revenue", async () => {
+    vi.useFakeTimers();vi.setSystemTime(new Date("2026-10-16T12:00:00Z"));
+    try {
+      const {ctx}=fixture({reservations:[row("past-confirmed",{start_date:"2026-10-01",end_date:"2026-10-02",net_to_owner_gbp:37,order_step:"REVIEWED"})]});
+      expect((await(getRentalHeadlineStats as any)._handler(ctx,{accountSlug:null})).monthly.confirmed_revenue).toBe(37);
+    }finally{vi.useRealTimers();}
+  });
+
+  it("keeps older adjacent members when grouping the span, identity and net of an active rental", async () => {
+    vi.useFakeTimers();vi.setSystemTime(new Date("2026-10-16T12:00:00Z"));
+    try {
+      const shared={renter_id:"same-renter",resolved_items:[{item_id:"camera",qty:1}],order_step:"DELIVERED"};
+      const {ctx}=fixture({reservations:[row("older-member",{...shared,start_date:"2026-10-01",end_date:"2026-10-09",net_to_owner_gbp:90}),row("active-member",{...shared,start_date:"2026-10-10",end_date:"2026-10-20",net_to_owner_gbp:110})]});
+      const result=await(getRentalHeadlineStats as any)._handler(ctx,{accountSlug:null});
+      expect(result.active.rentals).toHaveLength(1);expect(result.active.rentals[0]).toMatchObject({calendar_reservation_id:"older-member",start_date:"2026-10-01",return_date:"2026-10-20",net_gbp:200});
+    }finally{vi.useRealTimers();}
   });
 
   it.runIf(!!process.env.RM_HEADLINE_SOURCE_SNAPSHOT)("preserves all five captured production headline outputs", async () => {

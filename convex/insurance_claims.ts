@@ -1,3 +1,5 @@
+
+import { patchRevenueReservation } from "./lib/reservation_revenue";
 import { websiteCaseView } from "./lib/websiteCases";
 import { mutation, query } from "./owner_functions";
 import { v } from "convex/values";
@@ -174,7 +176,7 @@ export const openCaseFromReservation = mutation({
     // Pull the rental(s) out of the Return Hub.
     const ids = Array.from(new Set([reservationId, ...(memberIds ?? [])]));
     for (const id of ids) {
-      await ctx.db.patch(id, { case_open: true, case_id: claimId });
+      await patchRevenueReservation(ctx, id, { case_open: true, case_id: claimId });
     }
 
     // The Return Hub reads the mv_due_returns cache (refreshed hourly by the
@@ -283,7 +285,7 @@ export const remove = mutation({
     const linked = (await ctx.db.query("reservations").collect()).filter( // check-patterns:ok — rare operator action; case_id has no index
       (r) => (r as { case_id?: string }).case_id === (id as string),
     );
-    for (const r of linked) await ctx.db.patch(r._id, { case_open: undefined, case_id: undefined });
+    for (const r of linked) await patchRevenueReservation(ctx, r._id, { case_open: undefined, case_id: undefined });
     await ctx.db.delete(id);
     // Same reason as openCaseFromReservation: refresh the Return Hub cache now so
     // the released rental reappears immediately instead of after the hourly cron.

@@ -1,3 +1,5 @@
+
+import { patchRevenueReservation } from "./lib/reservation_revenue";
 import { v } from "convex/values";
 import { mutation } from "./owner_functions";
 
@@ -14,7 +16,7 @@ export const clearAllOrderSteps = mutation({
     let cleared = 0;
     for (const r of rows) {
       if ((r as any).order_step !== undefined) {
-        await ctx.db.patch(r._id, { order_step: undefined });
+        await patchRevenueReservation(ctx, r._id, { order_step: undefined });
         cleared++;
       }
     }

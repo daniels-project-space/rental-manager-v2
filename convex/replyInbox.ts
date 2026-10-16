@@ -1,3 +1,5 @@
+
+import { patchRevenueReservation } from "./lib/reservation_revenue";
 import {orderedReplyMessages} from "./lib/reply_message_order";
 import { renterMessageWatermark } from "./lib/renter_message_watermark";
 import {requestedImageItems} from "./lib/quick_reply_requested_items";
@@ -2326,7 +2328,7 @@ export const setOwnerActionState = internalMutation({
       .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", thread_id))
       .first();
     if (!r) return { ok: false };
-    await ctx.db.patch(r._id, { can_accept, can_deny });
+    await patchRevenueReservation(ctx, r._id, { can_accept, can_deny });
     // Approve/decline change the tile's action buttons (accept→decline-only, or
     // none) — reflect it in the cached reply queue instantly rather than waiting
     // for the next poller cycle to re-trip the cron's clean-check.

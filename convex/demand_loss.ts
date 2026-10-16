@@ -1,3 +1,5 @@
+
+import { patchRevenueReservation } from "./lib/reservation_revenue";
 /**
  * Phase 10 — Demand-Loss Classifier
  *
@@ -225,7 +227,7 @@ export const classifyObsoleteReservations = internalMutation({
       }
 
       byClass[cls]++;
-      await ctx.db.patch(r._id, {
+      await patchRevenueReservation(ctx, r._id, {
         demand_loss_class: cls,
         demand_loss_classified_at: now,
         ...(estimated !== undefined ? { demand_loss_estimated_gbp: estimated } : {}),

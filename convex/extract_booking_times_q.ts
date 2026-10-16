@@ -1,3 +1,5 @@
+
+import { patchRevenueReservation } from "./lib/reservation_revenue";
 /**
  * Internal queries/mutations for the booking-time extractor action.
  * Action runs in Node; these run in the Convex runtime.
@@ -39,7 +41,7 @@ async function persistTimes(ctx:MutationCtx,id:Id<"reservations">,hash:string,pa
   return proof.time===time&&proof.date===date&&!messages.some(m=>(m.hygglo_sent_at??0)>proof.confirmedAt&&context.test(m.body_text)&&/\d|morning|evening|afternoon|noon|midday|midnight|day|tonight|tomorrow/i.test(m.body_text))?proof:undefined;
  };
  pickup??=keep(row.pickup_time_provenance,"pickup");returned??=keep(row.return_time_provenance,"return");
- await ctx.db.patch(id,{...patch,pickup_time_provenance:pickup,return_time_provenance:returned,...(stampExtraction?{times_transcript_hash:hash,times_extracted_at:Date.now()}:{} )});
+ await patchRevenueReservation(ctx, id, {...patch,pickup_time_provenance:pickup,return_time_provenance:returned,...(stampExtraction?{times_transcript_hash:hash,times_extracted_at:Date.now()}:{} )});
  const confirmedNext={...next,pickup_time_provenance:pickup,return_time_provenance:returned};
  const event=rentalTimeChangedEvent(row,confirmedNext,Date.now(),true);
  if(event)await queueNotificationEvents(ctx,[event]);

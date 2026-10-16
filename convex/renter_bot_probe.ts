@@ -1,3 +1,5 @@
+
+import { deleteRevenueReservation } from "./lib/reservation_revenue";
 /**
  * renter_bot_probe (2026-07-03) — TEST-ONLY harness to run the REAL generateDraft
  * pipeline against synthetic dbcinema/leo inquiry threads, for the v1-vs-v2
@@ -318,7 +320,7 @@ export const isolateLegacyBookings = internalMutation({
         const { _id, _creationTime, ...facts } = row;
         await ctx.db.insert("renter_bot_lab_bookings", facts);
       }
-      await ctx.db.delete(row._id);
+      await deleteRevenueReservation(ctx, row._id);
       moved++;
     }
     return { moved, real_reservations_changed: 0 };

@@ -1,3 +1,5 @@
+
+import { patchRevenueReservation } from "./lib/reservation_revenue";
 /**
  * Per-order pickup/meetup location (2026-06-27, reworked).
  *
@@ -69,7 +71,7 @@ export const patchLocation = internalMutation({
     }),
   },
   handler: async (ctx, { reservation_id, loc }) => {
-    await ctx.db.patch(reservation_id, { ...loc, loc_resolved_at: Date.now() });
+    await patchRevenueReservation(ctx, reservation_id, { ...loc, loc_resolved_at: Date.now() });
   },
 });
 

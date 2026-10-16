@@ -1,3 +1,5 @@
+
+import { patchRevenueReservation } from "./lib/reservation_revenue";
 /**
  * Wave 4 — ai_decision accessors.
  *
@@ -172,7 +174,7 @@ export const recordApproval = mutation({
     if (args.action !== "decline" && args.hygglo.status === "sent") {
       const reservation = await ctx.db.get(decision.reservation_id);
       if (reservation && reservation.status === "pending_review") {
-        await ctx.db.patch(decision.reservation_id, { status: "confirmed" });
+        await patchRevenueReservation(ctx, decision.reservation_id, { status: "confirmed" });
         reservationAdvanced = true;
       }
     }
