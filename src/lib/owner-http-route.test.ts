@@ -9,7 +9,7 @@ vi.mock("convex/browser", () => ({ ConvexHttpClient: class {
 import { withOwnerRoute, withServiceRoute } from "./owner-http-route";
 
 const request = () => new Request("https://example.invalid/api/chat", { method: "POST" });
-beforeEach(() => { vi.clearAllMocks(); vi.stubEnv("OWNER_AUTH_REQUIRED", "true"); vi.stubEnv("CONVEX_URL", "https://hearty-oyster-600.convex.cloud"); });
+beforeEach(() => { vi.clearAllMocks(); vi.stubEnv("RENTAL_MANAGER_ACCESS", "owner"); vi.stubEnv("CONVEX_URL", "https://hearty-oyster-600.convex.cloud"); });
 afterEach(() => vi.unstubAllEnvs());
 
 describe("owner API boundary", () => {
@@ -48,17 +48,18 @@ describe("owner API boundary", () => {
     const handler = vi.fn(async () => new Response("should not run"));
     mocks.getToken.mockRejectedValue(new Error("auth unavailable"));
     expect((await withOwnerRoute(handler)(request())).status).toBe(503);
-    vi.stubEnv("OWNER_AUTH_REQUIRED", "tru");
+    vi.stubEnv("RENTAL_MANAGER_ACCESS", "tru");
     expect((await withOwnerRoute(handler)(request())).status).toBe(503);
     expect(handler).not.toHaveBeenCalled();
   });
 
   it("retains anonymous compatibility only while the rollout switch is disabled", async () => {
-    vi.stubEnv("OWNER_AUTH_REQUIRED", "false");
-    mocks.getToken.mockResolvedValue(undefined);
-    const handler = vi.fn(async () => new Response("transition"));
+    vi.stubEnv("RENTAL_MANAGER_ACCESS", "open");
+    mocks.getToken.mockRejectedValue(new Error("stale auth service"));
+    const handler = vi.fn(async () => new Response("direct"));
     expect((await withOwnerRoute(handler)(request())).status).toBe(200);
     expect(mocks.query).not.toHaveBeenCalled();
+    expect(mocks.getToken).not.toHaveBeenCalled();
     expect(mocks.setAdminAuth).not.toHaveBeenCalled();
   });
 

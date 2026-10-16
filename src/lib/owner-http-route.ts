@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
-import { ownerEnforcementRequired } from "../../convex/lib/owner_authorization";
+import { managerSessionRequired } from "../../convex/lib/owner_authorization";
 import { getToken } from "./auth-server";
 import { createConvexServiceClient } from "./convex-service";
 import { withConvexClientFactory, type ConvexClientFactory } from "./convex-request-context";
@@ -15,9 +15,12 @@ class OwnerRequestError extends Error {
 
 /** Verify owner membership once; never substitute a service credential for a user. */
 export async function ownerClientFactory(): Promise<ConvexClientFactory> {
-  const required = ownerEnforcementRequired(process.env.OWNER_AUTH_REQUIRED);
+  const required = managerSessionRequired(process.env.RENTAL_MANAGER_ACCESS);
   const url = process.env.CONVEX_URL ?? RENTAL_CONVEX_URL;
   if (url !== RENTAL_CONVEX_URL) throw new Error("Unexpected rental Convex deployment");
+  // Direct dashboard access must also work when an old auth cookie is expired
+  // or the optional account service is unavailable. Never elevate to admin.
+  if (!required) return () => new ConvexHttpClient(url);
   const token = await getToken();
   const factory = () => {
     const client = new ConvexHttpClient(url);
@@ -25,9 +28,7 @@ export async function ownerClientFactory(): Promise<ConvexClientFactory> {
     return client;
   };
   if (!token) {
-    if (required) throw new OwnerRequestError(401, "owner_login_required");
-    // Transitional compatibility until owner onboarding and all callers are ready.
-    return factory;
+    throw new OwnerRequestError(401, "owner_login_required");
   }
   const state = await factory().query(api.auth.state, {});
   if (!state.authenticated) throw new OwnerRequestError(401, "owner_session_expired");

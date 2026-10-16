@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { authorizeOwner, ownerEnforcementRequired, OWNER_SERVICE_ISSUER, OWNER_SERVICE_SUBJECT } from "./owner_authorization";
+import { authorizeOwner, managerSessionRequired, ownerEnforcementRequired, OWNER_SERVICE_ISSUER, OWNER_SERVICE_SUBJECT } from "./owner_authorization";
 
 describe("backend owner authorization", () => {
   const issuer = "https://example.convex.site";
@@ -31,4 +31,10 @@ describe("backend owner authorization", () => {
     expect(ownerEnforcementRequired("true")).toBe(true);
     for (const value of ["", "TRUE", "1", "enabled"]) expect(() => ownerEnforcementRequired(value)).toThrow("Invalid");
   });
+});
+
+it("defaults to direct access in production and ignores the legacy rollout flag",()=>{
+ vi.stubEnv("NODE_ENV","production");vi.stubEnv("OWNER_AUTH_REQUIRED","true");
+ expect(managerSessionRequired(undefined)).toBe(false);expect(managerSessionRequired("open")).toBe(false);expect(managerSessionRequired("owner")).toBe(true);
+ expect(()=>managerSessionRequired("bad")).toThrow("Invalid");vi.unstubAllEnvs();
 });

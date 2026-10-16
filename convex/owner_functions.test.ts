@@ -1,9 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./auth", () => ({ authComponent: { safeGetAuthUser: vi.fn() } }));
 import { authComponent } from "./auth";
-import { query, mutation, action, internalQuery, internalQueryOf, internalMutationOf, internalActionOf } from "./owner_functions";
+import { requireOwner, query, mutation, action, internalQuery, internalQueryOf, internalMutationOf, internalActionOf } from "./owner_functions";
 import { internalQuery as originalInternalQuery } from "./_generated/server";
 import { v } from "convex/values";
+
+beforeEach(() => vi.stubEnv("RENTAL_MANAGER_ACCESS", "owner"));
 
 afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); });
 
@@ -55,9 +57,17 @@ describe("actual registered owner handlers", () => {
     expect(internalQuery).toBe(originalInternalQuery);
   });
   it("rejects malformed enforcement configuration rather than falling back to anonymous access", async () => {
-    vi.stubEnv("OWNER_AUTH_REQUIRED", "TRUE");
+    vi.stubEnv("RENTAL_MANAGER_ACCESS", "TRUE");
     const handler = vi.fn();
     await expect((query({ handler }) as any)._handler({}, {})).rejects.toThrow("Invalid");
     expect(handler).not.toHaveBeenCalled();
   });
+});
+
+it("opens normal dashboard calls without auth but preserves explicitly protected operations", async () => {
+ vi.stubEnv("RENTAL_MANAGER_ACCESS","open");
+ const ctx={auth:{getUserIdentity:vi.fn(async()=>null)}};
+ const fn=query({handler:()=>"dashboard"});
+ expect(await (fn as any)._handler(ctx,{})).toBe("dashboard");expect(ctx.auth.getUserIdentity).not.toHaveBeenCalled();
+ await expect(requireOwner(ctx as any,true)).rejects.toThrow("OWNER_AUTH_REQUIRED");
 });
