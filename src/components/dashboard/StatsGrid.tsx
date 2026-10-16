@@ -297,7 +297,92 @@ function StatsGridDetails() {
   const scannerLive = useStableQuery(scannerFreshnessRef, {}) as ScannerFreshness | undefined;
 
   const cards = useMemo<Record<string, ReactElement> | null>(() => {
-    if (!rawData) return null;
+    // The broad drawer snapshot can exceed Convex's read/time limits as the
+    // reservation history grows. The two headline cards have their own small,
+    // reactive queries; let those cards render from that source even when the
+    // unrelated snapshot is still loading or has failed. Otherwise a failure
+    // in the broad report made Active Rentals and Expected Monthly disappear
+    // together, despite their live queries already having fresh results.
+    if (!rawData) {
+      if (!rentalHeadlines) return null;
+
+      const active = {
+        ...rentalHeadlines.active,
+        pending_review_count: rentalPendingReview?.count ?? 0,
+        pending_review_value_gbp: rentalPendingReview?.value_gbp ?? 0,
+        pending_review_rentals: rentalPendingReview?.rentals ?? [],
+        pending_count: 0,
+        pending_next_month_count: 0,
+      };
+      const monthly = {
+        ...rentalHeadlines.monthly,
+        pending_review_value_gbp: rentalPendingReview?.month_value_gbp ?? 0,
+        missed: verificationLosses,
+      };
+      const toggle = (id: string) =>
+        setExpandedId((prev) => (prev === id ? null : id));
+
+      const fallbackCards: Record<string, ReactElement> = {
+        active: (
+          <ExpandableStatCard
+            id="active"
+            label="Active Rentals"
+            value={active.total}
+            valueColor="blue"
+            accentColor="blue"
+            hero
+            isExpanded={expandedId === "active"}
+            onToggle={() => toggle("active")}
+            subtitle={(
+              <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
+                <span className="inline-flex items-center gap-1 text-amber-300"><Dot color="#f59e0b" />{active.ongoing_count} ongoing</span>
+                <span className="text-slate-600">+</span>
+                <span className="inline-flex items-center gap-1 text-violet-300"><Dot color="#a78bfa" />{active.upcoming_count} upcoming</span>
+                {active.pending_review_count > 0 && <>
+                  <span className="text-slate-600">+</span>
+                  <span className="inline-flex items-center gap-1 text-sky-300"><Dot color="#38bdf8" />{active.pending_review_count} awaiting confirmation</span>
+                </>}
+              </span>
+            )}
+            headerExtra={<SegmentedBar ongoing={active.ongoing_count} upcoming={active.upcoming_count} pending={0} />}
+          >
+            <ActiveDrawer data={active as any} />
+          </ExpandableStatCard>
+        ),
+        monthly: (
+          <ExpandableStatCard
+            id="monthly"
+            label="Expected Monthly"
+            value={fmtGbpFull(monthly.projected)}
+            valueColor="green"
+            accentColor="green"
+            subtitle={<div>£{Math.round(monthly.avg_daily_rate)}/day avg · {monthly.days_remaining}d left</div>}
+            isExpanded={expandedId === "monthly"}
+            onToggle={() => toggle("monthly")}
+            headerExtra={(
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="text-slate-400">Confirmed: <span className="text-emerald-300 font-semibold">{fmtGbpFull(monthly.confirmed_revenue)}</span></span>
+                  <span className="text-slate-400"><span className="text-emerald-300 font-semibold">{monthly.pct_of_target}%</span> of usual month</span>
+                </div>
+                {(monthly.pending_review_value_gbp ?? 0) > 0 && <div className="text-right text-[10px] text-sky-300">{fmtGbpFull(monthly.pending_review_value_gbp)} in bookings awaiting confirmation this month</div>}
+                <ProgressBar pct={monthly.pct_of_target} />
+                <div className="text-[10px] text-slate-500">{fmtGbpFull(monthly.expected_additional_gbp ?? Math.max(0, monthly.projected - monthly.confirmed_revenue))} additional bookings expected</div>
+              </div>
+            )}
+          >
+            <MonthlyDrawer data={monthly as any} />
+          </ExpandableStatCard>
+        ),
+      };
+      if (rentalPendingReview) {
+        fallbackCards.pending_review = <PendingReviewPanel
+          rentals={rentalPendingReview.rentals}
+          otherAccountNewBookingCount={rentalPendingReview.other_account_new_booking_count}
+        />;
+      }
+      return fallbackCards;
+    }
     // Merge the split rentals back into the data shape that drawer
     // components expect (data.active.rentals, etc.). Four states:
     //   1. Drawer collapsed: rentalsRow is "skip" → empty arrays (unused).
