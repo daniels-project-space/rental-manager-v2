@@ -1013,20 +1013,40 @@ export const getReplyQueue = query({
       if (!prev || c._creationTime < prev._creationTime)
         convByThread.set(c.thread_id, c);
     }
-    // Pass 2's request collects, hoisted above Pass 1 so their rows also feed
-    // the reservation cache (a REQUEST thread in Pass 1 shouldn't re-read its
-    // fat reservation doc). Pure reads — hoisting changes nothing semantically.
-    const [byStep, byAction] = await Promise.all([
+    // Pass 2 only emits requests whose creation or latest conversation is
+    // inside this queue window. Index that request set by source creation time;
+    // recent conversation reservations are also recovered by the point reads
+    // below, so historical REQUEST rows never need a full-table sweep.
+    const [stepByCreatedAt, actionByCreatedAt, recentlyInserted] = await Promise.all([
       ctx.db
         .query("reservations")
-        .withIndex("by_order_step", (q) => q.eq("order_step", "REQUEST"))
-        .collect(),
-      ctx.db
-        .query("reservations")
-        .withIndex("by_awaiting_owner_action", (q) =>
-          q.eq("awaiting_owner_action", true),
+        .withIndex("by_order_step_created_at", (q) =>
+          q.eq("order_step", "REQUEST").gte("created_at", cutoff),
         )
         .collect(),
+      ctx.db
+        .query("reservations")
+        .withIndex("by_awaiting_owner_action_created_at", (q) =>
+          q.eq("awaiting_owner_action", true).gte("created_at", cutoff),
+        )
+        .collect(),
+      // Preserve late-imported requests: their source created_at may be old,
+      // while Convex's immutable creation time proves they entered this live
+      // database inside the queue window.
+      ctx.db
+        .query("reservations")
+        .withIndex("by_creation_time", (q) => q.gte("_creationTime", cutoff))
+        .collect(),
+    ]);
+    const dedupeReservations = (rows: typeof stepByCreatedAt) =>
+      [...new Map(rows.map((row) => [String(row._id), row])).values()];
+    const byStep = dedupeReservations([
+      ...stepByCreatedAt,
+      ...recentlyInserted.filter((row) => row.order_step === "REQUEST"),
+    ]);
+    const byAction = dedupeReservations([
+      ...actionByCreatedAt,
+      ...recentlyInserted.filter((row) => row.awaiting_owner_action === true),
     ]);
     // No stock scan for an empty cohort batch. Each batch reads the shared
     // fleet once, including bookings from the other accounts in that batch.
