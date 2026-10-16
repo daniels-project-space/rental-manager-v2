@@ -188,6 +188,20 @@ export async function computeMissedRevenue(
   const accountPromise = accountSlug
     ? ctx.db.query("accounts").withIndex("by_slug", (q) => q.eq("slug", accountSlug)).first()
     : Promise.resolve(null);
+  // Read only denials in the requested window. On the dashboard this query
+  // used to collect the full lifetime denial table (1,081 rows in production)
+  // on every reactive update, then discard all but the last 30/90 days. Keep
+  // the account lookup, denial scan, and cancellation scan concurrent while
+  // selecting the narrower compound index when the account is known.
+  const denialRowsPromise: Promise<Doc<"denial_records">[]> = pre?.denialRows
+    ? Promise.resolve(pre.denialRows)
+    : accountPromise.then((account) => accountSlug && account
+      ? ctx.db.query("denial_records").withIndex("by_account_created_at", (q) =>
+          q.eq("account_id", account._id).gte("created_at", cutoffMs),
+        ).collect()
+      : ctx.db.query("denial_records").withIndex("by_created_at", (q) =>
+          q.gte("created_at", cutoffMs),
+        ).collect());
   const cancellationPromise = pre?.reservations && pre.reservations.gteStartDate <= cutoffStr
     ? Promise.resolve(pre.reservations.rows.filter(
         (r) => typeof r.start_date === "string" && r.start_date >= cutoffStr,
@@ -206,7 +220,7 @@ export async function computeMissedRevenue(
 
   const [account, denialRows, cancellationRows] = await Promise.all([
     accountPromise,
-    pre?.denialRows ?? ctx.db.query("denial_records").collect(),
+    denialRowsPromise,
     cancellationPromise,
   ]);
   const accountId = account?._id;
@@ -216,7 +230,17 @@ export async function computeMissedRevenue(
   if (accountId) denials = denials.filter((d) => d.account_id === accountId);
   denials = denials.filter((d) => d.created_at >= cutoffMs);
   const needsPricingFallback = denials.some((d) => (d.estimated_value ?? 0) === 0 && Boolean(d.item_name));
-  const pricing = needsPricingFallback ? await ctx.db.query("pricing_catalog").collect() : [];
+  const pricing = needsPricingFallback
+    ? (await Promise.all(
+        [...new Set(denials.flatMap((d) =>
+          (d.estimated_value ?? 0) === 0 && d.item_name ? [d.item_name] : [],
+        ))].map((itemName) =>
+          ctx.db.query("pricing_catalog")
+            .withIndex("by_name", (q) => q.eq("item_name_canonical", itemName))
+            .collect(),
+        ),
+      )).flat()
+    : [];
   const priceByName = new Map(pricing.map((p) => [p.item_name_canonical, p.daily_price_min]));
   const denialLosses: DenialLoss[] = denials.map((d) => {
     let gross = d.estimated_value ?? 0;
