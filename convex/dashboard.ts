@@ -522,28 +522,51 @@ export const getStatsDrawerData = query({
       status: string,
       from: string,
       through?: string,
-    ) => ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) => {
-      const range = q.eq("status", status).gte("pickup_date", from);
-      return through === undefined ? range : range.lte("pickup_date", through);
-    }).collect();
+    ) => accountSlug
+      ? ctx.db.query("reservations").withIndex("by_account_status_pickup_date", (q) => {
+          const range = q.eq("account_slug", accountSlug).eq("status", status).gte("pickup_date", from);
+          return through === undefined ? range : range.lte("pickup_date", through);
+        }).collect()
+      : ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) => {
+          const range = q.eq("status", status).gte("pickup_date", from);
+          return through === undefined ? range : range.lte("pickup_date", through);
+        }).collect();
+    // Effective revenue dates are pickup_date ?? start_date. Read dated rows
+    // from the pickup index and only use the start-date fallback range when
+    // pickup_date is absent, so a reservation cannot be read through both paths.
+    const reservationsByStatusAndEffectiveDate = async (
+      status: string,
+      from: string,
+      through?: string,
+    ) => {
+      const [withPickupDate, withoutPickupDate] = await Promise.all([
+        reservationsByStatusAndPickupDate(status, from, through),
+        accountSlug
+          ? ctx.db.query("reservations").withIndex("by_account_status_pickup_date", (q) => {
+              const range = q.eq("account_slug", accountSlug).eq("status", status)
+                .eq("pickup_date", undefined).gte("start_date", from);
+              return through === undefined ? range : range.lte("start_date", through);
+            }).collect()
+          : ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) => {
+              const range = q.eq("status", status).eq("pickup_date", undefined).gte("start_date", from);
+              return through === undefined ? range : range.lte("start_date", through);
+            }).collect(),
+      ]);
+      return [...withPickupDate, ...withoutPickupDate];
+    };
 
-    // Effective revenue uses pickup_date when present, so include both indexed
-    // windows. Extend these confirmed ranges forward and reuse them for upcoming
-    // active rentals; clip them to monthEnd when building monthly revenue inputs
-    // below. This avoids a second start/pickup read of the same confirmed rows.
+    // Read each confirmed/completed reservation through exactly one effective
+    // date index: pickup_date when present, otherwise start_date. The confirmed
+    // range extends forward and is also reused for active-rental candidates.
     const [
-      confirmedStartWindow,
-      confirmedPickupWindow,
-      completedStartWindow,
-      completedPickupWindow,
+      confirmedDateWindow,
+      completedDateWindow,
       pendingReviewRows,
       activeByEndDate,
       activeByReturnDate,
     ] = await Promise.all([
-      reservationsByStatusAndStartDate("confirmed", projectionStart),
-      reservationsByStatusAndPickupDate("confirmed", projectionStart),
-      reservationsByStatusAndStartDate("completed", projectionStart, monthEnd),
-      reservationsByStatusAndPickupDate("completed", projectionStart, monthEnd),
+      reservationsByStatusAndEffectiveDate("confirmed", projectionStart),
+      reservationsByStatusAndEffectiveDate("completed", projectionStart, monthEnd),
       ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
         q.eq("status", "pending_review").gte("start_date", dashCutoff),
       ).collect(),
@@ -559,15 +582,15 @@ export const getStatsDrawerData = query({
     // unions cover the same live rows as the old 365-day scan, but only read
     // date-index candidates and retain its original start-date cutoff.
     // projectionStart is always earlier than activeToday. Reuse the forward
-    // confirmed start/pickup ranges collected above instead of issuing duplicate
-    // activeCandidates scans against those same indexes.
-    const confirmedActiveByPickup = confirmedPickupWindow.filter((row) =>
+    // confirmed effective-date range; the start-date fallback contains only
+    // rows without pickup_date, so these candidate sets do not overlap.
+    const confirmedActiveByPickup = confirmedDateWindow.filter((row) =>
       row.pickup_date && row.pickup_date >= activeToday,
     );
-    const confirmedActiveByStart = confirmedStartWindow.filter((row) =>
-      row.start_date && row.start_date >= activeToday,
+    const confirmedActiveByStart = confirmedDateWindow.filter((row) =>
+      !row.pickup_date && row.start_date && row.start_date >= activeToday,
     );
-    const activeConfirmedById = new Map<string, (typeof confirmedStartWindow)[number]>();
+    const activeConfirmedById = new Map<string, (typeof confirmedDateWindow)[number]>();
     for (const row of [
       ...activeByEndDate,
       ...activeByReturnDate,
@@ -579,12 +602,13 @@ export const getStatsDrawerData = query({
       }
     }
     const activeConfirmedRows = [...activeConfirmedById.values()];
-    const allResById = new Map<string, (typeof confirmedStartWindow)[number]>();
+    const allResById = new Map<string, (typeof confirmedDateWindow)[number]>();
     for (const row of [
-      ...confirmedStartWindow.filter((row) => row.start_date && row.start_date <= monthEnd),
-      ...confirmedPickupWindow.filter((row) => row.pickup_date && row.pickup_date <= monthEnd),
-      ...completedStartWindow,
-      ...completedPickupWindow,
+      ...confirmedDateWindow.filter((row) => {
+        const date = row.pickup_date ?? row.start_date;
+        return date !== undefined && date <= monthEnd;
+      }),
+      ...completedDateWindow,
       ...pendingReviewRows,
       ...activeConfirmedRows,
     ]) {
