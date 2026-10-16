@@ -4,6 +4,7 @@
 import { v } from "convex/values";
 import { query, internalQueryOf } from "./owner_functions";
 import { readWidgetMv } from "./lib/widget_mv";
+import { liveReservationsEndingSince } from "./lib/live_reservation_window";
 import type { Doc, Id } from "./_generated/dataModel";
 import { isPaid } from "./order_step_semantics";
 import {
@@ -580,17 +581,12 @@ export const getActiveConflicts = query({
       (await ctx.db.query("conflict_dismissals").collect()).map((d) => d.conflict_key),
     );
 
-    // Pass 8c (2026-05-25): replaced unindexed full-table .collect() with a
-    // by_start_date indexed range scan. Any rental with end_date >= 14d_ago
-    // has start_date >= ~60d_ago (rentals typically last <30 days). The
-    // 60d cutoff is a safe over-fetch that drops the scan from ~1700 rows
-    // to ~250. Subscribed by WallESignals so it re-evals on every
-    // reservation mutation — this is the highest-impact WallE fix.
+    // Use the status/end index to read only confirmed/completed reservations
+    // ending within the recent window. Preserve the prior 60-day start bound
+    // to keep the result set exact, while avoiding the 1k+ unrelated rows in
+    // the start-date range scan.
     const conflictsCutoff = isoNDaysAgoUtc(60);
-    const recentRes = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", conflictsCutoff))
-      .collect();
+    const recentRes = await liveReservationsEndingSince(ctx, conflictsCutoff, lookback);
     const live = recentRes.filter(
       (r) =>
         isLiveStatus(r.status) &&
@@ -694,15 +690,11 @@ export const getUtilizationDelta = query({
     const start14 = isoNDaysAgoUtc(14);
     const start7 = isoNDaysAgoUtc(7);
 
-    // Pass 8c (2026-05-25): by_start_date indexed scan w/ 60d cutoff to
-    // bound the read (any rental whose end_date intersects last 14d had
-    // start_date within ~45d ago). Same WallE re-eval fix as
-    // getActiveConflicts.
+    // Share the status/end-date bounded source with conflict detection. Keep
+    // the same 60-day start guard and the original in-memory eligibility
+    // predicates below for exact output parity.
     const utilCutoff = isoNDaysAgoUtc(60);
-    const recentRes = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", utilCutoff))
-      .collect();
+    const recentRes = await liveReservationsEndingSince(ctx, utilCutoff, start14);
     const recent = recentRes.filter(
       (r) =>
         isLiveStatus(r.status) &&

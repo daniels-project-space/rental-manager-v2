@@ -4,7 +4,9 @@
 // convex/lib/*.test.ts cover pure helpers only). We mirror that pattern:
 // extract the date-math invariants and verify them directly.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import type { QueryCtx } from "./_generated/server";
+import { liveReservationsEndingSince } from "./lib/live_reservation_window";
 
 // Inclusive day-count (Hygglo convention) — must match overlapDays used in
 // getUtilizationDelta + streamContext.
@@ -95,5 +97,52 @@ describe("dashboard_insights — revenue MTD day-range clamp", () => {
 
   it("does not clamp when prev month has enough days", () => {
     expect(clampPrevDay(15, 2026, 0)).toBe(15); // Jan 2026
+  });
+});
+
+describe("liveReservationsEndingSince — indexed source window", () => {
+  it("uses status/end-date ranges and keeps the original start-date cutoff", async () => {
+    const confirmed = [
+      { id: "inside-confirmed", start_date: "2026-08-17" },
+      { id: "too-old", start_date: "2026-08-16" },
+      { id: "missing-start" },
+    ];
+    const completed = [{ id: "inside-completed", start_date: "2026-10-02" }];
+    const reads: Array<{ table: string; index: string; status: string; endCutoff: string }> = [];
+    const query = vi.fn((table: string) => ({
+      withIndex: vi.fn((index: string, range: (q: any) => any) => {
+        const bounds: { status?: string; endCutoff?: string } = {};
+        const q = {
+          eq: (field: string, value: string) => {
+            if (field === "status") bounds.status = value;
+            return q;
+          },
+          gte: (field: string, value: string) => {
+            if (field === "end_date") bounds.endCutoff = value;
+            return q;
+          },
+        };
+        range(q);
+        reads.push({
+          table,
+          index,
+          status: bounds.status ?? "",
+          endCutoff: bounds.endCutoff ?? "",
+        });
+        return { collect: async () => bounds.status === "confirmed" ? confirmed : completed };
+      }),
+    }));
+    const ctx = { db: { query } } as unknown as QueryCtx;
+
+    const rows = await liveReservationsEndingSince(ctx, "2026-08-17", "2026-10-02");
+
+    expect(rows.map((row) => (row as unknown as { id: string }).id).sort()).toEqual([
+      "inside-completed",
+      "inside-confirmed",
+    ]);
+    expect(reads).toEqual([
+      { table: "reservations", index: "by_status_end_date", status: "confirmed", endCutoff: "2026-10-02" },
+      { table: "reservations", index: "by_status_end_date", status: "completed", endCutoff: "2026-10-02" },
+    ]);
   });
 });
