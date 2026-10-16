@@ -98,7 +98,8 @@ describe("monthly failed-verification reader", () => {
         lt(key: string, value: number) { predicates.push((row) => typeof row[key] === "number" && (row[key] as number) < value); return range; },
       };
       build(range);
-      return { collect: async () => rows.filter((row) => predicates.every((test) => test(row))) };
+      const matching = () => rows.filter((row) => predicates.every((test) => test(row)));
+      return { collect: async () => matching(), take: async (n: number) => matching().slice(0, n) };
     } }) },
   } as unknown as QueryCtx;
 
