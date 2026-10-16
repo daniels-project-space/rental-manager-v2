@@ -1,5 +1,6 @@
 
 import { deleteRevenueReservation, insertRevenueReservation, patchRevenueReservation } from "./lib/reservation_revenue";
+import { deleteWeeklyMetric } from "./lib/weekly_input_cache";
 import { parseWebsiteVerification, type WebsiteVerification } from "./lib/websiteVerification";
 /**
  * DB Cinema WEB profile sync (2026-06-25).
@@ -535,7 +536,7 @@ export const adminPurgeWebData = internalMutation({
     let weekly_metrics = 0;
     for (const m of await ctx.db.query("weekly_metrics").collect()) {
       if ((m as { account_slug?: string }).account_slug !== WEB_SLUG) continue;
-      await ctx.db.delete(m._id);
+      await deleteWeeklyMetric(ctx, m._id, m);
       weekly_metrics++;
     }
     return { reservations, weekly_metrics };

@@ -26,6 +26,9 @@
  */
 
 import { v } from "convex/values";
+import type { MutationCtx } from "./_generated/server";
+import type { WithoutSystemFields } from "convex/server";
+import { patchWeeklyMetric, insertWeeklyMetric } from "./lib/weekly_input_cache";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalAction, internalMutation, mutation, query, internalMutationOf } from "./owner_functions";
 import { internal } from "./_generated/api";
@@ -155,7 +158,7 @@ type CtxLike = {
 };
 
 async function upsertRow(
-  ctx: CtxLike,
+  ctx: MutationCtx,
   args: {
     week: WeekRange;
     account_slug: AccountSlug;
@@ -231,7 +234,7 @@ async function upsertRow(
     return "skipped";
   }
 
-  const patch: Partial<Doc<"weekly_metrics">> = {
+  const patch: Partial<WithoutSystemFields<Doc<"weekly_metrics">>> & Pick<Doc<"weekly_metrics">, "algorithm_version" | "computed_at"> = {
     // Phase 5a-owned fields. Phase 5b never touches these.
     revenue_gross_gbp: revenue.revenue_gross_gbp,
     revenue_attributed_gbp: revenue.revenue_attributed_gbp,
@@ -252,10 +255,10 @@ async function upsertRow(
   };
 
   if (row) {
-    await ctx.db.patch(row._id, patch);
+    await patchWeeklyMetric(ctx, row._id, patch, row);
     return "patched";
   }
-  await ctx.db.insert("weekly_metrics", {
+  await insertWeeklyMetric(ctx, {
     week_start: args.week.week_start,
     week_end: args.week.week_end,
     account_slug: args.account_slug,

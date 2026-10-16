@@ -23,6 +23,7 @@
  */
 
 import { v } from "convex/values";
+import { patchWeeklyMetric } from "./lib/weekly_input_cache";
 import { action, internalAction, internalMutation, internalQuery, internalActionOf } from "./owner_functions";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -227,7 +228,7 @@ export const _patchGlobalRow = internalMutation({
       .first();
     if (!row) return { ok: false, reason: "no_5a_row" };
     const { week_start: _w, account_slug: _a, ...patch } = args;
-    await ctx.db.patch(row._id, { ...patch, computed_at: Date.now() });
+    await patchWeeklyMetric(ctx, row._id, { ...patch, computed_at: Date.now() }, row);
     return { ok: true };
   },
 });
@@ -266,7 +267,7 @@ export const _patchItemRow = internalMutation({
       .first();
     if (!row) return { ok: false, reason: "no_5a_row" };
     const { week_start: _w, account_slug: _a, item_id: _i, ...patch } = args;
-    await ctx.db.patch(row._id, { ...patch, computed_at: Date.now() });
+    await patchWeeklyMetric(ctx, row._id, { ...patch, computed_at: Date.now() }, row);
     return { ok: true };
   },
 });
