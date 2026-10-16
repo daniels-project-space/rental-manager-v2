@@ -74,10 +74,10 @@ export function ownerAvailabilityReview(items: Doc<"items">[], products: Doc<"hy
     const absentKit=/\bAmaran\s*300\s*c\b|\bARLES\b|\bSenn?heiser\b[^|]*\bG\s*3\b/i.test(name);
     return absentGimbal||absentLens||absentKit;
   });
-  const repairedA7=products.filter(p=>/Sony.*(?:A7\s*V\b|Alpha\s*7\s*V\b)/i.test(p.name??"")&&p.masterItemId!==a7v._id)
-    .map(p=>({id:p._id,account:p.accountSlug,productId:p.productId,name:p.name,patch:{masterItemId:a7v._id}}));
-  const repairedPyro=products.filter(p=>/Hollyland.*Pyro\s*S\b/i.test(p.name??"") && p.masterItemId!==pyro._id)
-    .map(p=>({id:p._id,account:p.accountSlug,productId:p.productId,name:p.name,patch:{masterItemId:pyro._id}}));
+  const repairedA7=products.filter(p=>/Sony.*(?:A7\s*V\b|Alpha\s*7\s*V\b)/i.test(p.name??"")&&(p.masterItemId!==a7v._id||p.stockIdentityOverride?.itemId!==a7v._id||p.stockIdentityOverride?.title!==p.name))
+    .map(p=>({id:p._id,account:p.accountSlug,productId:p.productId,name:p.name,patch:{masterItemId:a7v._id,stockIdentityOverride:{itemId:a7v._id,title:p.name!,source:"Daniel confirmed A7 V kit identity, 16 October 2026"}}}));
+  const repairedPyro=products.filter(p=>/Hollyland.*Pyro\s*S\b/i.test(p.name??"") && (p.masterItemId!==pyro._id||p.stockIdentityOverride?.itemId!==pyro._id||p.stockIdentityOverride?.title!==p.name))
+    .map(p=>({id:p._id,account:p.accountSlug,productId:p.productId,name:p.name,patch:{masterItemId:pyro._id,stockIdentityOverride:{itemId:pyro._id,title:p.name!,source:pyroSource}}}));
   return {items:patches.filter(p=>Object.entries(p.patch).some(([key,value])=>JSON.stringify(stable(items.find(i=>i._id===p.id)?.[key as keyof Doc<"items">]))!==JSON.stringify(stable(value)))),
     products:[...repairedA7,...repairedPyro,...notOwned.filter(p=>p.isMarketingOnlyOverride!==true||p.isMarketingOnly!==true).map(p=>({id:p._id,account:p.accountSlug,productId:p.productId,name:p.name,patch:{isMarketingOnly:true,isMarketingOnlyOverride:true}}))]};
 }
