@@ -765,6 +765,8 @@ const operationalSchema = defineSchema({
     // Account-specific dashboard totals and materialized-view refreshes must
     // not read every account's full reservation documents before filtering.
     .index("by_account_status_start_date", ["account_slug", "status", "start_date"])
+    .index("by_account_status_end_date", ["account_slug", "status", "end_date"])
+    .index("by_account_status_return_date", ["account_slug", "status", "return_date"])
     .index("by_account_pickup_date", ["account_slug", "pickup_date"])
     .index("by_account_status_pickup_date", ["account_slug", "status", "pickup_date"])
     // Reconciliation can load terminal reservations by the same bounded
