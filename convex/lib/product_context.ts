@@ -2,6 +2,7 @@ import type { WithoutSystemFields } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { cataloguePatchChanges, invalidateCatalogue } from "./catalogue_read_cache";
+import { disableProductReadModel, syncProductReadRecord } from "./product_read_model";
 
 export type ProductContext = {
   account_slug: string;
@@ -99,26 +100,44 @@ export async function patchProduct(
   if (!before || before._id !== id) throw new Error("Product patch requires its matching source record");
   const previousAccount = before.accountSlug, previousId = before.productId;
   if (cataloguePatchChanges(before, patch)) await invalidateCatalogue(ctx, [previousAccount, patch.accountSlug ?? previousAccount]);
-  await ctx.db.patch(id, patch);
-  await refreshProductContext(ctx, previousAccount, previousId);
-  const nextAccount = patch.accountSlug ?? previousAccount;
-  const nextId = patch.productId ?? previousId;
-  if (nextAccount !== previousAccount || nextId !== previousId) {
-    await refreshProductContext(ctx, nextAccount, nextId);
+  try {
+    await ctx.db.patch(id, patch);
+    await refreshProductContext(ctx, previousAccount, previousId);
+    const nextAccount = patch.accountSlug ?? previousAccount;
+    const nextId = patch.productId ?? previousId;
+    if (nextAccount !== previousAccount || nextId !== previousId) {
+      await refreshProductContext(ctx, nextAccount, nextId);
+    }
+    await syncProductReadRecord(ctx, id);
+  } catch (error) {
+    await disableProductReadModel(ctx);
+    throw error;
   }
 }
 
 export async function insertProduct(ctx: MutationCtx, value: WithoutSystemFields<Doc<"hygglo_products">>) {
   await invalidateCatalogue(ctx, [value.accountSlug]);
-  const id = await ctx.db.insert("hygglo_products", value);
-  await refreshProductContext(ctx, value.accountSlug, value.productId);
-  return id;
+  try {
+    const id = await ctx.db.insert("hygglo_products", value);
+    await refreshProductContext(ctx, value.accountSlug, value.productId);
+    await syncProductReadRecord(ctx, id);
+    return id;
+  } catch (error) {
+    await disableProductReadModel(ctx);
+    throw error;
+  }
 }
 
 export async function deleteProduct(ctx: MutationCtx, id: Id<"hygglo_products">) {
   const before = await ctx.db.get(id);
   if (!before) return;
   await invalidateCatalogue(ctx, [before.accountSlug]);
-  await ctx.db.delete(id);
-  await refreshProductContext(ctx, before.accountSlug, before.productId);
+  try {
+    await ctx.db.delete(id);
+    await refreshProductContext(ctx, before.accountSlug, before.productId);
+    await syncProductReadRecord(ctx, id);
+  } catch (error) {
+    await disableProductReadModel(ctx);
+    throw error;
+  }
 }
