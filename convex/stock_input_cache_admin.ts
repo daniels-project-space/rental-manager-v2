@@ -9,7 +9,12 @@ import { __service_sharedStockForStorefront } from "./items";
 export const status = internalQuery({ args: {}, handler: async (ctx) => {
   const state = await ctx.db.query("stock_input_cache_state").withIndex("by_key", (q) => q.eq("key", STOCK_INPUT_KEY)).unique();
   const blob = await ctx.db.query("stock_input_cache_blobs").withIndex("by_key", (q) => q.eq("key", STOCK_INPUT_KEY)).unique();
-  return { state, blob: blob ? { revision: blob.revision, sha256: blob.sha256, packed_sha256: blob.packed_sha256, bytes: blob.data.byteLength } : null };
+  const shared = await ctx.db.query("stock_shared_snapshot_cache").withIndex("by_key", (q) => q.eq("key", "shared-stock:v1")).unique();
+  return {
+    state,
+    blob: blob ? { revision: blob.revision, sha256: blob.sha256, packed_sha256: blob.packed_sha256, bytes: blob.data.byteLength } : null,
+    shared: shared ? { revision: shared.revision, sha256: shared.sha256, packed_sha256: shared.packed_sha256, bytes: shared.data.byteLength, generated_at: shared.generated_at } : null,
+  };
 } });
 export const snapshot = internalQuery({ args: { token: v.number() }, handler: async (ctx, { token }) => {
   const state = await ctx.db.query("stock_input_cache_state").withIndex("by_key", (q) => q.eq("key", STOCK_INPUT_KEY)).unique();
@@ -37,6 +42,37 @@ export const publish = internalMutation({
     return true;
   },
 });
+export const publishSharedSnapshot = internalMutation({
+  args: {
+    token: v.number(), revision: v.number(), data: v.bytes(), sha256: v.string(),
+    packed_sha256: v.string(), generated_at: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const state = await ctx.db.query("stock_input_cache_state")
+      .withIndex("by_key", (q) => q.eq("key", STOCK_INPUT_KEY))
+      .unique();
+    // A stock write may invalidate the source cache while the materialized
+    // snapshot is being assembled. Never publish a snapshot for an old input
+    // revision; the next source-cache refresh will rebuild it.
+    if (!state || state.job_token !== args.token || state.revision !== args.revision ||
+        state.ready_revision !== args.revision) return false;
+    const prior = await ctx.db.query("stock_shared_snapshot_cache")
+      .withIndex("by_key", (q) => q.eq("key", "shared-stock:v1"))
+      .unique();
+    const value = {
+      key: "shared-stock:v1" as const,
+      version: 1 as const,
+      revision: args.revision,
+      data: args.data,
+      sha256: args.sha256,
+      packed_sha256: args.packed_sha256,
+      generated_at: args.generated_at,
+    };
+    if (prior) await ctx.db.replace(prior._id, value);
+    else await ctx.db.insert("stock_shared_snapshot_cache", value);
+    return true;
+  },
+});
 export const failed = internalMutation({ args: { token: v.number(), error: v.string() }, handler: async (ctx, { token, error }) => {
   const state = await ctx.db.query("stock_input_cache_state").withIndex("by_key", (q) => q.eq("key", STOCK_INPUT_KEY)).unique();
   if (!state?.queued || state.job_token !== token) return;
@@ -52,7 +88,28 @@ export const refresh = internalAction({ args: { token: v.number() }, handler: as
     const data = packCacheValue(snapshot.inputs);
     if (canonicalCacheJson(snapshot.inputs) !== canonicalCacheJson(unpackCacheValue(data))) throw Error("permanent: stock codec audit failed");
     const sha256 = await cacheValueDigest(snapshot.inputs), packed_sha256 = await cacheByteDigest(data);
-    return { published: await ctx.runMutation(anyApi.stock_input_cache_admin.publish, { token, revision: snapshot.revision, data, sha256, packed_sha256 }), bytes: data.byteLength, sha256 };
+    const published = await ctx.runMutation(anyApi.stock_input_cache_admin.publish, { token, revision: snapshot.revision, data, sha256, packed_sha256 });
+    if (!published) return { published: false, sharedStockPublished: false, bytes: data.byteLength, sha256 };
+    let sharedStockPublished = false;
+    try {
+      const [sharedValue] = await ctx.runQuery(anyApi.items.__service_sharedStockForStorefront, {});
+      const sharedData = packCacheValue(sharedValue);
+      const sharedSha256 = await cacheValueDigest(sharedValue);
+      const sharedPackedSha256 = await cacheByteDigest(sharedData);
+      sharedStockPublished = await ctx.runMutation(anyApi.stock_input_cache_admin.publishSharedSnapshot, {
+        token,
+        revision: snapshot.revision,
+        data: sharedData,
+        sha256: sharedSha256,
+        packed_sha256: sharedPackedSha256,
+        generated_at: Date.now(),
+      });
+    } catch (error) {
+      // The input cache remains valid and the reader falls back to live
+      // computation until a later source refresh can rebuild this projection.
+      console.error("[stock_input_cache] shared stock projection failed", String(error));
+    }
+    return { published: true, sharedStockPublished, bytes: data.byteLength, sha256 };
   } catch (error) {
     await ctx.runMutation(anyApi.stock_input_cache_admin.failed, { token, error: String(error) });
     return { published: false, error: String(error) };

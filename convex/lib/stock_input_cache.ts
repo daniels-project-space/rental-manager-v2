@@ -77,6 +77,7 @@ export async function beforeReservationStockDelete(ctx: MutationCtx, id: Reserva
 }
 
 const reads = new WeakMap<object, Promise<StockInputSnapshot | null>>();
+const states = new WeakMap<object, Promise<Doc<"stock_input_cache_state"> | null>>();
 const prepared = new WeakSet<object>();
 const sourceOnly = new WeakSet<object>();
 export async function withSourceStockInputs<T>(ctx: QueryCtx, work: () => Promise<T>): Promise<T> {
@@ -87,13 +88,22 @@ export async function withPreparedStockInputs<T>(ctx: QueryCtx, work: () => Prom
   await loadStockInputCache(ctx);
   return work();
 }
+export function loadStockInputCacheState(ctx: QueryCtx): Promise<Doc<"stock_input_cache_state"> | null> {
+  const existing = states.get(ctx);
+  if (existing) return existing;
+  const pending = ctx.db.query("stock_input_cache_state")
+    .withIndex("by_key", (q) => q.eq("key", STOCK_INPUT_KEY))
+    .unique();
+  states.set(ctx, pending);
+  return pending;
+}
 export function loadStockInputCache(ctx: QueryCtx): Promise<StockInputSnapshot | null> {
   if (sourceOnly.has(ctx)) return Promise.resolve(null);
   const existing = reads.get(ctx); if (existing) return existing;
   const pending = (async () => {
     const strict = prepared.has(ctx);
     try {
-      const state = await ctx.db.query("stock_input_cache_state").withIndex("by_key", (q) => q.eq("key", STOCK_INPUT_KEY)).unique();
+      const state = await loadStockInputCacheState(ctx);
       if (!state || (!state.enabled && !strict) || state.ready_revision !== state.revision) throw Error("Stock inputs are not current");
       const blob = await ctx.db.query("stock_input_cache_blobs").withIndex("by_key", (q) => q.eq("key", STOCK_INPUT_KEY)).unique();
       if (!blob || blob.version !== 1 || blob.revision !== state.revision || await cacheByteDigest(blob.data) !== blob.packed_sha256) throw Error("Stock input artifact mismatch");
