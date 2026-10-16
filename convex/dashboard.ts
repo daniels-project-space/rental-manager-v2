@@ -3104,17 +3104,26 @@ export const getRentalHeadlineStats = query({
     // the current and three trailing months through bounded indexed windows
     // so both the booked total and its projection stay live without waiting
     // for the expensive all-dashboard snapshot.
-    const [confirmedMonthRows, completedMonthRows, pickupMonthRows] = await Promise.all([
-      statusDateWindow("confirmed", projectionStart, monthEnd),
+    // The confirmed start-date window is already present in confirmedRows.
+    // Monthly revenue accepts only confirmed/completed rows; reading cancelled
+    // pickup history again cannot contribute to the total or its baseline.
+    const confirmedMonthRows = confirmedRows.filter((row) =>
+      row.start_date !== undefined && row.start_date >= projectionStart && row.start_date <= monthEnd,
+    );
+    const [completedMonthRows, pickupGroups] = await Promise.all([
       statusDateWindow("completed", projectionStart, monthEnd),
-      accountSlug
-        ? ctx.db.query("reservations").withIndex("by_account_pickup_date", (q) =>
-            q.eq("account_slug", accountSlug).gte("pickup_date", projectionStart).lte("pickup_date", monthEnd),
+      Promise.all(["confirmed", "completed"].map((status) => accountSlug
+        ? ctx.db.query("reservations").withIndex("by_account_status_pickup_date", (q) =>
+            q.eq("account_slug", accountSlug).eq("status", status)
+              .gte("pickup_date", projectionStart).lte("pickup_date", monthEnd),
           ).collect()
-        : ctx.db.query("reservations").withIndex("by_pickup_date", (q) =>
-            q.gte("pickup_date", projectionStart).lte("pickup_date", monthEnd),
-          ).collect(),
+        : ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
+            q.eq("status", status).gte("pickup_date", projectionStart).lte("pickup_date", monthEnd),
+          ).collect())),
     ]);
+    const pickupMonthRows = pickupGroups.flat().sort((a, b) =>
+      (a.pickup_date ?? "").localeCompare(b.pickup_date ?? "") || a._creationTime - b._creationTime,
+    );
     const monthRowsById = new Map<string, (typeof confirmedRows)[number]>();
     for (const row of [...confirmedMonthRows, ...completedMonthRows, ...pickupMonthRows]) {
       if (!accountSlug || row.account_slug === accountSlug) monthRowsById.set(row._id, row);

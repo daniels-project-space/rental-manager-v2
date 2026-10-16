@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../auth", () => ({ authComponent: { safeGetAuthUser: vi.fn() } }));
-import { getNextRentals } from "../dashboard";
+import { getNextRentals, getRentalHeadlineStats } from "../dashboard";
 import { loadHandoffReservations } from "./handoff_reservations";
 
 type Row = Record<string, any>;
@@ -23,6 +23,7 @@ function fixture(tables: Record<string, Row[]>) {
         const range: any = {
           eq(key: string, value: any) { data = data.filter((r) => r[key] === value); return range; },
           gte(key: string, value: any) { data = data.filter((r) => r[key] !== undefined && r[key] >= value); return range; },
+          lte(key: string, value: any) { data = data.filter((r) => r[key] !== undefined && r[key] <= value); return range; },
         };
         select(range);
         return q;
@@ -99,6 +100,33 @@ describe("indexed handoff candidates", () => {
       const { ctx } = fixture(snapshot);
       for (const [key, expected] of Object.entries(before)) {
         expect(await (getNextRentals as any)._handler(ctx, JSON.parse(key)), key).toEqual(expected);
+      }
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("keeps negotiated current-month revenue outside the source start-date window", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-16T12:00:00Z"));
+    try {
+      const { ctx, reads } = fixture({ reservations: [
+        row("old-start", { start_date: "2025-01-01", end_date: "2026-10-15", pickup_date: "2026-10-14", status: "completed", order_step: "REVIEWED", net_to_owner_gbp: 37 }),
+        row("cancelled-income", { pickup_date: "2026-10-14", status: "cancelled", order_step: "REVIEWED", net_to_owner_gbp: 999 }),
+      ] });
+      const result = await (getRentalHeadlineStats as any)._handler(ctx, { accountSlug: null });
+      expect(result.monthly.confirmed_revenue).toBe(37);
+      expect(reads.some((read) => read.index === "by_pickup_date")).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it.runIf(!!process.env.RM_HEADLINE_SOURCE_SNAPSHOT)("preserves all five captured production headline outputs", async () => {
+    const snapshot = JSON.parse(fs.readFileSync(process.env.RM_HEADLINE_SOURCE_SNAPSHOT!, "utf8"));
+    const before = JSON.parse(fs.readFileSync(process.env.RM_HEADLINE_BEFORE_RESULTS!, "utf8"));
+    vi.useFakeTimers();
+    try {
+      for (const [key, expected] of Object.entries(before)) {
+        vi.setSystemTime(new Date((expected as any).generatedAt));
+        const { ctx } = fixture(snapshot);
+        expect(await (getRentalHeadlineStats as any)._handler(ctx, JSON.parse(key)), key).toEqual(expected);
       }
     } finally { vi.useRealTimers(); }
   });

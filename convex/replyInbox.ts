@@ -240,6 +240,12 @@ async function loadPriceIndex(ctx: QueryCtx): Promise<PriceIndex> {
   return out;
 }
 
+/** A queue shares one price read, and priced bookings never need that read. */
+export function createPriceIndexLoader(ctx: QueryCtx): () => Promise<PriceIndex> {
+  let loaded: Promise<PriceIndex> | undefined;
+  return () => loaded ??= loadPriceIndex(ctx);
+}
+
 /**
  * True if `key` occurs in `item` NOT immediately followed by another digit — so
  * a model key like "sonyfx3" won't match inside a longer model number
@@ -545,7 +551,7 @@ export async function assembleTile(
   conv: Doc<"conversations"> | null,
   reservation: BotBooking | null,
   threadId: string,
-  priceIndex?: PriceIndex,
+  priceIndex?: PriceIndex | (() => Promise<PriceIndex>),
   availCtx?: AvailCtx,
   hub?: HubBook,
   display?: Awaited<ReturnType<typeof listingDisplayCatalog>>,
@@ -645,9 +651,10 @@ export async function assembleTile(
     estimateDays = inclusiveRentalDays(simOrder.start_date, simOrder.end_date);
     estimateGbp = estimateDays === null ? null : summarise(simOrder.items, simOrder.start_date, simOrder.end_date).total_gbp;
   } else if (priceIndex && richItems.length > 0 && reservation?.gross_paid_gbp == null) {
+    const prices = typeof priceIndex === "function" ? await priceIndex() : priceIndex;
     if (reservation?.start_date && reservation?.end_date) {
       const est = computeEstimate(
-        priceIndex,
+        prices,
         richItems,
         reservation.start_date,
         reservation.end_date,
@@ -656,7 +663,7 @@ export async function assembleTile(
       estimateDays = est.days;
     } else {
       const days = parseMentionedDays(latestMsg?.body_text) ?? 1;
-      estimateGbp = estimateForDays(priceIndex, richItems, days);
+      estimateGbp = estimateForDays(prices, richItems, days);
       estimateDays = estimateGbp != null ? days : null;
     }
   }
@@ -1022,9 +1029,14 @@ export const getReplyQueue = query({
       !windowConvos.length &&
       ![...byStep, ...byAction].some(inPartition)
     ) return [];
-    const [priceIndex,settingsRow,hub,display]=await Promise.all([loadPriceIndex(ctx),ctx.db.query("settings").first(),loadHubBook(ctx),listingDisplayCatalog(ctx)]);
+    const priceIndex = createPriceIndexLoader(ctx);
+    const [settingsRow,hub]=await Promise.all([ctx.db.query("settings").first(),loadHubBook(ctx)]);
     const incPending=includePending??settingsRow?.availability_include_pending??false;
     const availCtx=await loadAvailCtx(ctx,incPending);
+    const display = await listingDisplayCatalog(ctx, accountSlug, {
+      items: availCtx.stockSources.items,
+      mappings: availCtx.stockSources.rawOverrides,
+    });
     // Reservation-by-order-id cache: loadAvailCtx's confirmed/pending rows plus
     // the request rows above — every reservation already read this execution.
     // See AvailCtx.byOrderId for why a hit is exactly `.first()`'s answer.
@@ -1268,7 +1280,7 @@ export const getThreadById = query({
     const reservation = await getBotBooking(ctx, thread_id);
     if (!conv && !reservation) return null;
     const slug=reservation?.account_slug??conv?.account_slug??(conv?.account_id?(await ctx.db.get(conv.account_id))?.slug:undefined);
-    const priceIndex = await loadPriceIndex(ctx);
+    const priceIndex = createPriceIndexLoader(ctx);
     const settingsRow = await ctx.db.query("settings").first();
     const incPending = settingsRow?.availability_include_pending ?? false;
     const availCtx = await loadAvailCtx(ctx, incPending);
@@ -1281,7 +1293,10 @@ export const getThreadById = query({
       priceIndex,
       availCtx,
       await loadHubBook(ctx),
-      await listingDisplayCatalog(ctx),
+      await listingDisplayCatalog(ctx, slug, {
+        items: availCtx.stockSources.items,
+        mappings: availCtx.stockSources.rawOverrides,
+      }),
     );
   },
 });

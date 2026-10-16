@@ -102,6 +102,7 @@ export function evaluateStockWindow(args: {
 }
 
 type StockSources = { items:Doc<"items">[]; reservations:Doc<"reservations">[]; productIndex:Map<string,string>;overrides:OverrideMap;
+  rawOverrides?: Doc<"listing_resolution_override">[];
   claims:Doc<"insurance_claims">[];blackouts:Doc<"owner_unavailability">[];vacations:Doc<"vacation_periods">[];
   checkoutHolds?:Doc<"storefront_checkout_stock">["rows"];reservationUnits?:Map<string,Map<string,number>>;
   occupancyCache?:{signature?:unknown[];byItem:Map<string,Occupancy[]>} };
@@ -126,7 +127,7 @@ export async function loadStockSources(ctx: QueryCtx):Promise<StockSources> {
     reservationUnits.set(String(r._id),reservationItemUnits(r,productIndex,allocation,items));
   const paidWebsite=new Set(reservations.filter(r=>r.account_slug==="dbcinema_web").map(r=>r.hygglo_order_id?.replace(/^dbcinema[_:-]/,"")));
   const checkoutHolds=(checkoutStock?.rows??[]).filter(h=>h.expiresAt>Date.now()&&!paidWebsite.has(h.bookingId));
-  return {checkoutHolds,items,reservations,productIndex,overrides:allocation,claims,blackouts,vacations,reservationUnits,occupancyCache:{byItem:new Map()}};
+  return {checkoutHolds,items,reservations,productIndex,overrides:allocation,rawOverrides:overrides,claims,blackouts,vacations,reservationUnits,occupancyCache:{byItem:new Map()}};
 }
 
 export function resolveStockItem(name: string, items: Doc<"items">[]) {
