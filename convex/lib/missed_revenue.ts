@@ -107,14 +107,18 @@ function rollup(rows: { name: string; value: number }[]): MissedItem[] {
  * overlap a requested date. Effective dates are rechecked with the exact same
  * pickup/return fallbacks as bookedUnitsOnDate before a row is retained.
  */
-async function confirmedForDemandWindow(
+export async function confirmedForDemandWindow(
   ctx: QueryCtx,
   from: string,
   to: string,
 ): Promise<Doc<"reservations">[]> {
   const [byStart, byPickup, byReturn, byEnd] = await Promise.all([
-    ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
-      q.eq("status", "confirmed").gte("start_date", from).lte("start_date", to),
+    // The start-date fallback only needs rows that lack a negotiated pickup
+    // date. The pickup index has start_date as its third field, so this stays
+    // bounded without rereading the rows handled by byPickup.
+    ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
+      q.eq("status", "confirmed").eq("pickup_date", undefined)
+        .gte("start_date", from).lte("start_date", to),
     ).collect(),
     ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
       q.eq("status", "confirmed").gte("pickup_date", from).lte("pickup_date", to),
@@ -122,8 +126,11 @@ async function confirmedForDemandWindow(
     ctx.db.query("reservations").withIndex("by_status_return_date", (q) =>
       q.eq("status", "confirmed").gte("return_date", from),
     ).collect(),
-    ctx.db.query("reservations").withIndex("by_status_end_date", (q) =>
-      q.eq("status", "confirmed").gte("end_date", from),
+    // Same rule for the legacy return-date fallback: query end_date only when
+    // return_date is absent. This avoids reading the same reservation through
+    // both indexes while retaining older long-term rentals in the overlap set.
+    ctx.db.query("reservations").withIndex("by_status_return_end_date", (q) =>
+      q.eq("status", "confirmed").eq("return_date", undefined).gte("end_date", from),
     ).collect(),
   ]);
 

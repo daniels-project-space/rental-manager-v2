@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("./auth", () => ({ authComponent: { safeGetAuthUser: vi.fn() } }));
 
 import { getStatsDrawerData } from "./dashboard";
+import { confirmedForDemandWindow } from "./lib/missed_revenue";
 
 type FilterSet = Record<string, Array<{ op: string; value: unknown }>>;
 
@@ -132,5 +133,104 @@ describe("getStatsDrawerData reservation read sharing", () => {
     // No reservation in the four-month attribution window has a decision in
     // this fixture, so no historical audit rows should be read at all.
     expect(collectedReads.filter(({ table }) => table === "ai_decision_audit")).toEqual([]);
+  });
+});
+
+function reservation(
+  id: string,
+  dates: { start_date: string; pickup_date?: string; end_date: string; return_date?: string },
+) {
+  return { _id: id, status: "confirmed", ...dates } as any;
+}
+
+describe("missed-revenue capacity reservation reads", () => {
+  it("uses negotiated dates first and reads source-date fallbacks only when absent", async () => {
+    const negotiatedDates = reservation("pickup-return", {
+      start_date: "2026-09-10",
+      pickup_date: "2026-09-12",
+      end_date: "2026-10-10",
+      return_date: "2026-10-12",
+    });
+    const sourceDates = reservation("start-end", {
+      start_date: "2026-09-18",
+      end_date: "2026-10-04",
+    });
+    const returnOnly = reservation("return-only", {
+      start_date: "2026-08-12",
+      pickup_date: "2026-08-14",
+      end_date: "2026-10-01",
+      return_date: "2026-10-03",
+    });
+    const endOnly = reservation("end-only", {
+      start_date: "2026-08-15",
+      end_date: "2026-10-05",
+    });
+
+    const reads: Array<{ index: string; filters: FilterSet }> = [];
+    const ctx = {
+      db: {
+        query() {
+          let index = "table_scan";
+          const filters: FilterSet = {};
+          const builder = {
+            eq(field: string, value: unknown) {
+              (filters[field] ??= []).push({ op: "eq", value });
+              return builder;
+            },
+            gte(field: string, value: unknown) {
+              (filters[field] ??= []).push({ op: "gte", value });
+              return builder;
+            },
+            lte(field: string, value: unknown) {
+              (filters[field] ??= []).push({ op: "lte", value });
+              return builder;
+            },
+          };
+          const query = {
+            withIndex(name: string, range?: (q: typeof builder) => unknown) {
+              index = name;
+              range?.(builder);
+              return query;
+            },
+            async collect() {
+              reads.push({ index, filters: structuredClone(filters) });
+              if (index === "by_status_pickup_date") {
+                return filters.pickup_date?.some(({ op, value }) => op === "eq" && value === undefined)
+                  ? [sourceDates]
+                  : [negotiatedDates];
+              }
+              if (index === "by_status_return_date") return [negotiatedDates, returnOnly];
+              if (index === "by_status_return_end_date") return [sourceDates, endOnly];
+              throw new Error(`Unexpected reservation index: ${index}`);
+            },
+          };
+          return query;
+        },
+      },
+    } as any;
+
+    const rows = await confirmedForDemandWindow(ctx, "2026-09-01", "2026-09-30");
+
+    expect(rows.map((row) => String(row._id)).sort()).toEqual([
+      "end-only",
+      "pickup-return",
+      "return-only",
+      "start-end",
+    ]);
+    expect(reads).toHaveLength(4);
+    expect(reads.filter(({ index }) => index === "by_status_pickup_date")).toHaveLength(2);
+    expect(reads.find(({ index, filters }) =>
+      index === "by_status_pickup_date" &&
+      filters.pickup_date?.some(({ op, value }) => op === "eq" && value === undefined),
+    )?.filters.start_date).toEqual([
+      { op: "gte", value: "2026-09-01" },
+      { op: "lte", value: "2026-09-30" },
+    ]);
+    expect(reads.find(({ index }) => index === "by_status_return_end_date")?.filters)
+      .toEqual({
+        status: [{ op: "eq", value: "confirmed" }],
+        return_date: [{ op: "eq", value: undefined }],
+        end_date: [{ op: "gte", value: "2026-09-01" }],
+      });
   });
 });
