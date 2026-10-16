@@ -2748,7 +2748,9 @@ export function ReplyModal({
       dockTarget.style.setProperty("--quick-reply-viewport-height",`${visible?.height ?? window.innerHeight}px`);
       if(window.innerWidth<900 && visible) {
         const top=dockTarget.getBoundingClientRect().top;
-        const desired=visible.offsetTop+16;
+        // Keep touch controls below a sticky manager header in landscape too.
+        const headerBottom=document.querySelector('[data-manager-header]')?.getBoundingClientRect().bottom??0;
+        const desired=Math.max(visible.offsetTop+16,headerBottom+16);
         if(Math.abs(top-desired)>2)window.scrollBy({top:top-desired,behavior:"instant"});
       }
       const visibleTop=visible?.offsetTop??0;
