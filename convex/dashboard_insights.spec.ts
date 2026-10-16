@@ -119,7 +119,13 @@ describe("dashboard_insights — batched recent widget reads", () => {
     const indexReads: Array<{ index: string; gte?: [string, string] }> = [];
     const idReads: string[] = [];
     const db = {
-      query: vi.fn((table: string) => ({
+      query: vi.fn((table: string) => table === "weekly_input_cache_state" ? {
+        withIndex: (index: string, select: (q: any) => unknown) => {
+          expect(index).toBe("by_key");
+          const q = { eq: (field: string, value: string) => { expect([field, value]).toEqual(["key", "recent:v1"]); return q; } };
+          select(q); return { unique: async () => null };
+        },
+      } : ({
         withIndex: (index: string, select: (q: any) => unknown) => {
           const bounds: { gte?: [string, string] } = {};
           const q = { gte: (field: string, value: string) => { bounds.gte = [field, value]; return q; } };
@@ -143,7 +149,7 @@ describe("dashboard_insights — batched recent widget reads", () => {
       );
 
       expect(indexReads).toEqual([{ index: "by_week_account_granularity", gte: ["week_start", "2026-07-18"] }]);
-      expect(db.query).toHaveBeenCalledTimes(1);
+      expect(db.query.mock.calls.map(([table]) => table)).toEqual(["weekly_input_cache_state", "weekly_metrics"]);
       expect(idReads).toEqual(["item-a"]);
       expect(result.voluntaryDenyHotList[0]).toMatchObject({ item_id: "item-b", count: 2, gbp: 250 });
       expect(result.capacityGapAlert[0]).toMatchObject({ item_id: "item-a", count: 2, gbp: 100 });

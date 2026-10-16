@@ -146,6 +146,7 @@ export default defineConfig({
       "convex/lib/profile_readonly.test.ts",
       "convex/lib/catalogue_read_cache.test.ts",
       "convex/lib/stock_input_cache.test.ts",
+      "convex/lib/weekly_input_cache.test.ts",
       "convex/lib/reservations/itemUnits.test.ts",
       "convex/lib/rental_stage.test.ts",
       "convex/lib/booking_reply_claims.test.ts",

@@ -18,6 +18,7 @@ import {
 import { OWNER_SHARE } from "./mv/constants";
 import { ACCOUNT_SLUGS } from "./lib/reservations/accounts";
 import type { QueryCtx } from "./_generated/server";
+import { loadWeeklyMetricRows, sourceWeeklyRows } from "./lib/weekly_input_cache";
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -39,7 +40,7 @@ type Row = Doc<"weekly_metrics">;
  * and sum.
  */
 async function fetchWindow(
-  ctx: { db: { query: any } },
+  ctx: Pick<QueryCtx, "db">,
   args: { accountSlug: string | null; days: number; granularity: "global" | "item" | "kind" },
 ): Promise<Row[]> {
   const cutoff = isoDaysAgo(args.days);
@@ -47,9 +48,7 @@ async function fetchWindow(
   // Bound the scan at the leading week_start field, then filter the smaller
   // account/granularity slice in memory. Older history is not needed by these
   // recent dashboard widgets.
-  const all = (await ctx.db.query("weekly_metrics")
-    .withIndex("by_week_account_granularity", (q: any) => q.gte("week_start", cutoff))
-    .collect()) as Row[];
+  const all = args.days <= 90 ? await loadWeeklyMetricRows(ctx, cutoff) : await sourceWeeklyRows(ctx, cutoff);
   return all.filter(
     (r) =>
       r.granularity === args.granularity &&
@@ -166,9 +165,7 @@ function weeklyRevenueSparkline(rows: Row[], weeks: number) {
 export const getDashboardInsightBundle = query({
   args: { accountSlug: v.union(v.string(), v.null()) },
   handler: async (ctx, { accountSlug }) => {
-    const rows = (await ctx.db.query("weekly_metrics")
-      .withIndex("by_week_account_granularity", (q) => q.gte("week_start", isoDaysAgo(90)))
-      .collect()) as Row[];
+    const rows = await loadWeeklyMetricRows(ctx, isoDaysAgo(90));
     const scoped = rows.filter((row) => accountSlug === null || row.account_slug === accountSlug);
     const itemRows = scoped.filter((row) => row.granularity === "item");
     const globalRows = scoped.filter((row) => row.granularity === "global");
