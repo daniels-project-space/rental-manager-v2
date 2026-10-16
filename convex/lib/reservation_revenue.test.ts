@@ -64,7 +64,7 @@ describe("completed reservation revenue projection",()=>{
     const f=fixture([source("one")]);await refreshReservationRevenue(f.ctx,source("one")._id);
     f.reads.length=0;f.writes.length=0;
     await patchRevenueReservation(f.ctx,source("one")._id,{last_polled_at:55} as any);
-    expect(f.reads).toEqual(["stock_input_cache_state"]);expect(f.writes).toEqual(["reservations"]);
+    expect(f.reads).toEqual(["stock_input_cache_state","reservation_read_gate"]);expect(f.writes).toEqual(["reservations"]);
     const {_id,_creationTime,...row}=source("new",{status:"confirmed"});await insertRevenueReservation(f.ctx,row);
     expect(f.tables.reservation_revenue_facts).toHaveLength(1);
   });

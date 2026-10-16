@@ -30,6 +30,6 @@ describe("storefront custody feed", () => {
     expect(result).toHaveLength(3);
     expect(result.find((r: any) => r._id === "old-away")).toMatchObject({ end_date: "2026-08-02", order_step: "DELIVERED" });
     expect(result.some((r: any) => "renter_email" in r)).toBe(false);
-    expect(indexes).toEqual(["by_account_end", "by_account_order_step", "by_account_product"]);
+    expect(indexes).toEqual(["by_account_end", "by_key", "by_account_order_step", "by_account_product"]);
   });
 });

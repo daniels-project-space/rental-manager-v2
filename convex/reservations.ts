@@ -1,3 +1,4 @@
+import { useReservationReadModel } from "./lib/reservation_read_queries";
 
 import { patchRevenueReservation } from "./lib/reservation_revenue";
 import { loadCanonicalListingAllocation, reservedListingKeys } from "./lib/canonical_listing_allocation";
@@ -79,6 +80,7 @@ export const getDueReturns = query({
     _bypassMv: v.optional(v.boolean()),
   },
   handler: async (ctx, { accountSlug, _bypassMv }) => {
+    useReservationReadModel(ctx);
     const today = TODAY();
     // London wall-clock "YYYY-MM-DD HH:MM:SS". Convex runs in UTC, so comparing
     // a London return time as a UTC Date was an hour off in summer (BST). Compare
@@ -898,6 +900,7 @@ export const getPipelineCounts = internalQuery({
 export const listForReconcile = query({
   args: { account_slug: v.string() },
   handler: async (ctx, { account_slug }) => {
+    useReservationReadModel(ctx);
     const lookback = new Date();
     lookback.setDate(lookback.getDate() - 400);
     const lookbackStr = lookback.toISOString().slice(0, 10);
@@ -933,6 +936,7 @@ export const listForReconcile = query({
 export const listActiveForStorefront = query({
   args: { account_slug: v.string() },
   handler: async (ctx, { account_slug }) => {
+    useReservationReadModel(ctx);
     const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
     const dated = await ctx.db
       .query("reservations")
