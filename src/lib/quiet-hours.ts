@@ -34,9 +34,9 @@ export function isWithinUkQuietHours(now: Date = new Date()): boolean {
  * POLL_ACTIVE_START_MIN / POLL_ACTIVE_END_MIN (minutes since midnight;
  * defaults: 480 = 08:00, 1380 = 23:00). Honours BYPASS_QUIET_HOURS=1.
  *
- * Hard token-saving break: polling is ALWAYS skipped 01:00–08:00 UK (Daniel,
- * 2026-06-26), enforced independently of the configurable window so widening
- * the window can never re-enable overnight polls.
+ * Hard token-saving break: the regular poll cadence is skipped 01:00–08:00 UK
+ * (Daniel, 2026-06-26), enforced independently of the configurable window.
+ * `shouldRunHyggloPoll` retains only its hourly safety poll in this period.
  */
 const POLL_BREAK_START_MIN = 1 * 60; // 01:00 inclusive
 const POLL_BREAK_END_MIN = 8 * 60; // 08:00 exclusive
@@ -57,8 +57,10 @@ export function isOutsidePollActiveWindow(now: Date = new Date()): boolean {
  * The normal 15-minute cadence remains limited to 08:00–23:00 London, but a
  * complete overnight blackout can hide a late-paid, next-morning rental from
  * both Active Rentals and the calendar until 08:00. Outside the active window
- * we therefore keep one top-of-hour safety poll. This adds only nine reads per
- * night while bounding overnight staleness to one hour instead of nine.
+ * we therefore keep one hourly safety poll. The clock runs every two minutes
+ * and may land just after minute zero, so the first two minute values in each
+ * hour count as the same hourly slot. This adds only nine reads per night while
+ * bounding overnight staleness to one hour instead of nine.
  *
  * Manual invocations always run: an operator-triggered repair must not turn
  * into a successful no-op merely because it was launched outside office hours.
@@ -69,7 +71,10 @@ export function shouldRunHyggloPoll(
 ): boolean {
   if (manual) return true;
   if (!isOutsidePollActiveWindow(now)) return true;
-  return londonMinutesSinceMidnight(now) % 60 === 0;
+  // Convex's two-minute cron does not promise to align on :00 (production
+  // ticks currently land at :01/:03/...); accept the first two minute values
+  // so each hourly slot is reached regardless of the cron's phase.
+  return londonMinutesSinceMidnight(now) % 60 <= 1;
 }
 
 export type HyggloPollMode = "full" | "operational" | "skip";

@@ -363,9 +363,12 @@ export const refreshSlugs = query({
  * public calendar queries with _bypassMv once per {view, slug} — up to 10
  * SEPARATE query executions per rebuild (selective = 4), and Convex cannot
  * share reads across executions, so EACH one independently collected the same
- * ~750-row reservations window + 120-day lookback + FOUR full tables
- * (~2.6-3.4MB per execution). This internalQuery collects the UNION coverage
- * once — one reservations by_start_date collect over
+ * ~750-row cross-status reservation window + 120-day lookback + FOUR full
+ * tables (historically several MB per execution). In the 16 Oct production
+ * snapshot, 3,569 reservations occupy the 365-day range, but only 30 are
+ * confirmed and 27 pending_review; the calendar predicate can retain only those
+ * candidates. This internalQuery collects the UNION coverage once with two
+ * bounded by_status_start_date ranges over
  * [min(anchor)-120d, max(viewEnd)+7d] (contains every compute's padded window
  * AND lookback), one calendar_holds by_date collect over
  * [min(anchor), max(viewEnd)] (both computes read holds), one collect per
@@ -413,16 +416,42 @@ export const computeViews = internalQuery({
     const holdsFrom = minS(weekAnchor, stripAnchor);
     const holdsTo = maxS(weekEnd, stripEnd);
 
+    // The calendar's existing commitment predicate keeps confirmed rentals and
+    // verified dbcinema_web website bookings only. Cancelled, obsolete, completed,
+    // and other pending rows are discarded later. Read only the two candidate
+    // statuses through the bounded composite index, then restore by_start_date
+    // order so deduplication and stable calendar ordering remain unchanged.
+    const [confirmedRows, pendingReviewRows] = await Promise.all([
+      ctx.db
+        .query("reservations")
+        .withIndex("by_status_start_date", (q) =>
+          q
+            .eq("status", "confirmed")
+            .gte("start_date", resFrom)
+            .lte("start_date", resTo),
+        )
+        .collect(),
+      ctx.db
+        .query("reservations")
+        .withIndex("by_status_start_date", (q) =>
+          q
+            .eq("status", "pending_review")
+            .gte("start_date", resFrom)
+            .lte("start_date", resTo),
+        )
+        .collect(),
+    ]);
+    const reservationWindowRows = [...confirmedRows, ...pendingReviewRows].sort(
+      (a, b) =>
+        (a.start_date ?? "").localeCompare(b.start_date ?? "") ||
+        a._creationTime - b._creationTime,
+    );
+
     const pre: CalendarComputePreload = {
       reservationsWindow: {
         from: resFrom,
         to: resTo,
-        rows: await ctx.db
-          .query("reservations")
-          .withIndex("by_start_date", (q) =>
-            q.gte("start_date", resFrom).lte("start_date", resTo),
-          )
-          .collect(),
+        rows: reservationWindowRows,
       },
       holds: {
         from: holdsFrom,
