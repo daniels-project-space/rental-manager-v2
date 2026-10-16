@@ -6,13 +6,15 @@
  * dashboard mutation with a single indexed row read; the caller slices the
  * stored buckets[] tail to the requested months/weeks window.
  *
- * Refreshed by master.refreshFast (hourly). Past months/weeks are immutable
- * once closed, but the current bucket changes whenever a fresh confirmed
- * reservation lands — hourly refresh keeps the chart within an hour of
- * truth.
+ * Booking changes update their affected monthly/weekly buckets directly.
+ * The daily slow refresh remains a full reconciliation for changes made by
+ * other reservation writers and for calendar-window rollover.
  */
 import { v } from "convex/values";
 import { query, internalMutation } from "../owner_functions";
+import type { MutationCtx } from "../_generated/server";
+import type { Doc } from "../_generated/dataModel";
+import { internal } from "../_generated/api";
 import { ACCOUNTS, ACCOUNT_ALL } from "./constants";
 import { effectiveDate, isLive } from "../lib/reservations/predicates";
 import { OWNER_SHARE } from "../lib/missed_revenue";
@@ -31,6 +33,17 @@ type ReservationLike = {
   pickup_date?: string;
   gross_paid_gbp?: number;
   net_to_owner_gbp?: number;
+};
+
+export type EarningsContribution = {
+  accountSlug: string | null;
+  date: string;
+  revenue: number;
+};
+
+export type EarningsContributionChange = {
+  before: EarningsContribution | null;
+  after: EarningsContribution | null;
 };
 
 type Bucket = { period: string; revenue: number; bookings: number };
@@ -57,6 +70,150 @@ function isoWeeklyKey(dateStr: string): string {
   const jan1 = new Date(thursday.getFullYear(), 0, 1);
   const weekNum = 1 + Math.round((thursday.getTime() - jan1.getTime()) / 604_800_000);
   return thursday.getFullYear() + "-W" + String(weekNum).padStart(2, "0");
+}
+
+/** Preserve the exact inclusion and value rules used by the full MV rebuild. */
+export function getEarningsContribution(
+  reservation: ReservationLike,
+): EarningsContribution | null {
+  if (!isLive(reservation as Parameters<typeof isLive>[0])) return null;
+  const date = effectiveDate(reservation);
+  if (!date) return null;
+  return {
+    accountSlug: reservation.account_slug ?? null,
+    date,
+    revenue: reservation.net_to_owner_gbp ??
+      (reservation.gross_paid_gbp ?? 0) * OWNER_SHARE,
+  };
+}
+
+/**
+ * Apply booking-level deltas to already-computed buckets. A null result means
+ * the existing snapshot cannot safely accept a delta and needs a full rebuild.
+ */
+export function applyEarningsContributionChanges(
+  currentRows: EarningsRow[],
+  changes: EarningsContributionChange[],
+  generatedAt: number,
+): EarningsRow[] | null {
+  const expectedAccounts = [ACCOUNT_ALL, ...ACCOUNTS];
+  const rowsByKey = new Map(currentRows.map((row) => [`${row.account}:${row.granularity}`, row]));
+  for (const account of expectedAccounts) {
+    for (const granularity of GRANULARITIES) {
+      if (!rowsByKey.has(`${account}:${granularity}`)) return null;
+    }
+  }
+
+  const cutoffDate = new Date(generatedAt);
+  cutoffDate.setMonth(cutoffDate.getMonth() - RETENTION_MONTHS);
+  const cutoffISO = cutoffDate.toISOString().slice(0, 10);
+  const currentMonth = new Date(generatedAt).toISOString().slice(0, 7);
+  const deltas = new Map<string, Map<string, { revenue: number; bookings: number }>>();
+
+  const addContribution = (contribution: EarningsContribution | null, sign: 1 | -1) => {
+    if (!contribution || contribution.date < cutoffISO || contribution.date.slice(0, 7) > currentMonth) return;
+    const accountScopes = new Set<string>([ACCOUNT_ALL]);
+    if (contribution.accountSlug && ACCOUNTS.includes(contribution.accountSlug as (typeof ACCOUNTS)[number])) {
+      accountScopes.add(contribution.accountSlug);
+    }
+    for (const account of accountScopes) {
+      for (const granularity of GRANULARITIES) {
+        const rowKey = `${account}:${granularity}`;
+        const period = granularity === "monthly"
+          ? isoMonthlyKey(contribution.date)
+          : isoWeeklyKey(contribution.date);
+        const buckets = deltas.get(rowKey) ?? new Map<string, { revenue: number; bookings: number }>();
+        const delta = buckets.get(period) ?? { revenue: 0, bookings: 0 };
+        delta.revenue += sign * contribution.revenue;
+        delta.bookings += sign;
+        if (delta.revenue === 0 && delta.bookings === 0) buckets.delete(period);
+        else buckets.set(period, delta);
+        if (buckets.size === 0) deltas.delete(rowKey);
+        else deltas.set(rowKey, buckets);
+      }
+    }
+  };
+
+  for (const change of changes) {
+    addContribution(change.before, -1);
+    addContribution(change.after, 1);
+  }
+
+  if (deltas.size === 0) return currentRows;
+
+  const updated: EarningsRow[] = [];
+  for (const row of currentRows) {
+    const bucketDeltas = deltas.get(`${row.account}:${row.granularity}`);
+    if (!bucketDeltas) {
+      updated.push(row);
+      continue;
+    }
+    const buckets = new Map(row.buckets.map((bucket) => [bucket.period, { ...bucket }]));
+    for (const [period, delta] of bucketDeltas) {
+      const existing = buckets.get(period) ?? { period, revenue: 0, bookings: 0 };
+      const next = {
+        period,
+        revenue: existing.revenue + delta.revenue,
+        bookings: existing.bookings + delta.bookings,
+      };
+      if (next.bookings < 0 || (next.bookings === 0 && Math.abs(next.revenue) > 0.01)) return null;
+      if (next.bookings === 0) buckets.delete(period);
+      else buckets.set(period, next);
+    }
+    updated.push({
+      ...row,
+      generatedAt,
+      buckets: Array.from(buckets.values()).sort((a, b) => a.period.localeCompare(b.period)),
+    });
+  }
+  return updated;
+}
+
+/** Keep the chart current on booking writes without collecting reservations. */
+export async function applyReservationEarningsChanges(
+  ctx: MutationCtx,
+  changes: EarningsContributionChange[],
+  generatedAt = Date.now(),
+): Promise<void> {
+  if (changes.length === 0) return;
+  const accounts = [ACCOUNT_ALL, ...ACCOUNTS];
+  const storedRows: Doc<"mv_earnings_by_period">[] = [];
+  for (const account of accounts) {
+    for (const granularity of GRANULARITIES) {
+      const row = await ctx.db
+        .query("mv_earnings_by_period")
+        .withIndex("by_account_granularity", (q) =>
+          q.eq("account", account).eq("granularity", granularity),
+        )
+        .first();
+      if (row) storedRows.push(row);
+    }
+  }
+  const currentRows = storedRows.map(({ account, granularity, generatedAt: rowAt, buckets }) => ({
+    account,
+    granularity,
+    generatedAt: rowAt,
+    buckets,
+  })) as EarningsRow[];
+  const nextRows = applyEarningsContributionChanges(currentRows, changes, generatedAt);
+
+  // Do not put the exceptional full source scan in the booking transaction:
+  // it could make a normal poll exceed its read budget as the table grows.
+  // The existing standalone refresh owns this recovery scan and retries safely.
+  if (!nextRows) {
+    await ctx.scheduler.runAfter(0, internal.mv.earnings_by_period.refresh, {});
+    return;
+  }
+  const storedByKey = new Map(storedRows.map((row) => [`${row.account}:${row.granularity}`, row]));
+  for (const row of nextRows) {
+    const prior = storedByKey.get(`${row.account}:${row.granularity}`);
+    if (
+      prior &&
+      JSON.stringify(row.buckets) === JSON.stringify(prior.buckets)
+    ) continue;
+    if (prior) await ctx.db.patch(prior._id, { generatedAt: row.generatedAt, buckets: row.buckets });
+    else await ctx.db.insert("mv_earnings_by_period", row);
+  }
 }
 
 /**
