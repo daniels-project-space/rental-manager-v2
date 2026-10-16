@@ -249,7 +249,10 @@ export function StatsGrid() {
 
 function StatsGridDetails() {
   const { activeAccountSlug } = useAccount();
-  const rentalHeadlines = useQuery(api.dashboard.getRentalHeadlineStats, {
+  const rentalHeadlines = useQuery(api.dashboard.getRentalHeadlineCoreStats, {
+    accountSlug: activeAccountSlug,
+  });
+  const rentalPendingReview = useQuery(api.dashboard.getRentalPendingReviewStats, {
     accountSlug: activeAccountSlug,
   });
   const { layout, isStatHidden, reorderStats } = useEditMode();
@@ -313,7 +316,7 @@ function StatsGridDetails() {
     };
     const snapshotActiveRentals = pickRentals("active") as Array<Record<string, any> & { reservation_id?: string; kind?: string }>;
     const liveActiveRentals = rentalHeadlines?.active.rentals;
-    const livePendingReviewRentals = rentalHeadlines?.active.pending_review_rentals ?? [];
+    const livePendingReviewRentals = rentalPendingReview?.rentals ?? [];
     const cachedActiveById = new Map(
       snapshotActiveRentals.filter((row) => row.reservation_id).map((row) => [row.reservation_id, row]),
     );
@@ -347,11 +350,14 @@ function StatsGridDetails() {
         ...rawAsAny.monthly,
         ...(rentalHeadlines?.monthly ?? {}),
         confirmed_revenue: rentalHeadlines?.monthly.confirmed_revenue ?? rawAsAny.monthly.confirmed_revenue,
+        pending_review_value_gbp: rentalPendingReview?.month_value_gbp ?? 0,
         missed: verificationLosses ?? rawAsAny.monthly.missed,
       },
       active: {
         ...rawAsAny.active,
         ...(rentalHeadlines?.active ?? {}),
+        pending_review_count: rentalPendingReview?.count ?? 0,
+        pending_review_value_gbp: rentalPendingReview?.value_gbp ?? 0,
         rentals: activeRentals,
       },
       ongoing: { ...rawAsAny.ongoing, rentals: pickRentals("ongoing") },
@@ -374,7 +380,7 @@ function StatsGridDetails() {
     return {
       pending_review: <PendingReviewPanel
         rentals={livePendingReviewRentals}
-        otherAccountNewBookingCount={rentalHeadlines?.active.other_account_new_booking_count ?? 0}
+        otherAccountNewBookingCount={rentalPendingReview?.other_account_new_booking_count ?? 0}
       />,
       channel_response_rates: <ChannelResponseRateCard />,
       conversation_funnel: <ConversationFunnel compact />,
@@ -844,7 +850,7 @@ function StatsGridDetails() {
       walle: <WallE accountSlug={activeAccountSlug} />,
       todos: <TodoWidget />,
     };
-  }, [rawData, rentalsRow, scannerLive, verificationLosses, rentalHeadlines, expandedId, activeAccountSlug, catVolExpanded]);
+  }, [rawData, rentalsRow, scannerLive, verificationLosses, rentalHeadlines, rentalPendingReview, expandedId, activeAccountSlug, catVolExpanded]);
 
   if (!cards) {
     return <StatsGridSkeleton />;

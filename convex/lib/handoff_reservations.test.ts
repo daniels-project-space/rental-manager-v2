@@ -1,7 +1,12 @@
 import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../auth", () => ({ authComponent: { safeGetAuthUser: vi.fn() } }));
-import { getNextRentals, getRentalHeadlineStats } from "../dashboard";
+import {
+  getNextRentals,
+  getRentalHeadlineCoreStats,
+  getRentalHeadlineStats,
+  getRentalPendingReviewStats,
+} from "../dashboard";
 import { loadHandoffReservations } from "./handoff_reservations";
 
 type Row = Record<string, any>;
@@ -13,23 +18,25 @@ const row = (id: string, fields: Row = {}): Row => ({
 });
 
 function fixture(tables: Record<string, Row[]>) {
-  const reads: Array<{ table: string; index: string; rows: number }> = [];
+  const reads: Array<{ table: string; index: string; rows: number; equals: Record<string, any> }> = [];
   const ctx: any = { db: { query(table: string) {
     let data = [...(tables[table] ?? [])];
     let index = "";
     const q: any = {
       withIndex(name: string, select: (range: any) => any) {
         index = name;
+        const equals: Record<string, any> = {};
         const range: any = {
-          eq(key: string, value: any) { data = data.filter((r) => r[key] === value); return range; },
+          eq(key: string, value: any) { equals[key] = value; data = data.filter((r) => r[key] === value); return range; },
           gte(key: string, value: any) { data = data.filter((r) => r[key] !== undefined && r[key] >= value); return range; },
           lte(key: string, value: any) { data = data.filter((r) => r[key] !== undefined && r[key] <= value); return range; },
         };
         select(range);
+        q.equals = equals;
         return q;
       },
       async collect() {
-        reads.push({ table, index, rows: data.length });
+        reads.push({ table, index, rows: data.length, equals: { ...(q.equals ?? {}) } });
         return data;
       },
       async first() { return (await q.collect())[0] ?? null; },
@@ -125,6 +132,48 @@ describe("indexed handoff candidates", () => {
       const {ctx}=fixture({reservations:[row("past-confirmed",{start_date:"2026-10-01",end_date:"2026-10-02",net_to_owner_gbp:37,order_step:"REVIEWED"})]});
       expect((await(getRentalHeadlineStats as any)._handler(ctx,{accountSlug:null})).monthly.confirmed_revenue).toBe(37);
     }finally{vi.useRealTimers();}
+  });
+
+  it("keeps confirmed and pending-review subscriptions on separate reservation status ranges", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-16T12:00:00Z"));
+    try {
+      const data = { reservations: [
+        row("confirmed", { net_to_owner_gbp: 80, order_step: "DELIVERED" }),
+        row("pending", { status: "pending_review", net_to_owner_gbp: 45, start_date: "2026-10-20", end_date: "2026-10-21" }),
+      ] };
+      const core = fixture(data);
+      const coreResult = await (getRentalHeadlineCoreStats as any)._handler(core.ctx, { accountSlug: null });
+      expect(coreResult.active.total).toBe(1);
+      expect(coreResult.active.pending_review_count).toBe(0);
+      expect(core.reads.some((read) => read.equals.status === "pending_review")).toBe(false);
+
+      const pending = fixture(data);
+      const pendingResult = await (getRentalPendingReviewStats as any)._handler(pending.ctx, { accountSlug: null });
+      expect(pendingResult).toMatchObject({ count: 1, value_gbp: 45, month_value_gbp: 45 });
+      expect(pendingResult.rentals.map((r: any) => r.reservation_id)).toEqual(["pending"]);
+      expect(pending.reads.every((read) => read.equals.status === "pending_review")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows recent pending arrivals from other accounts without reading confirmed rentals", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-16T12:00:00Z"));
+    try {
+      const { ctx, reads } = fixture({ reservations: [
+        row("own-pending", { status: "pending_review", net_to_owner_gbp: 45, start_date: "2026-10-20" }),
+        row("other-pending", { status: "pending_review", account_slug: "leo", _creationTime: Date.now() - 1000, start_date: "2026-10-21" }),
+        row("confirmed", { account_slug: "leo" }),
+      ] });
+      const result = await (getRentalPendingReviewStats as any)._handler(ctx, { accountSlug: "diogo" });
+      expect(result.count).toBe(1);
+      expect(result.other_account_new_booking_count).toBe(1);
+      expect(reads.every((read) => read.equals.status === "pending_review")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps older adjacent members when grouping the span, identity and net of an active rental", async () => {
