@@ -1,5 +1,6 @@
 import { useReservationReadModel } from "./lib/reservation_read_queries";
 import { readFullInventory } from "./lib/inventory_read";
+import { loadVisibleClosePending } from "./lib/current_close_pending";
 
 import { patchRevenueReservation } from "./lib/reservation_revenue";
 import { loadCanonicalListingAllocation, reservedListingKeys } from "./lib/canonical_listing_allocation";
@@ -94,21 +95,10 @@ export const getDueReturns = query({
           .collect()
       : await ctx.db.query("hygglo_current_order_presence").collect();
     const newestPresenceAt = presenceRows.reduce((max, row) => Math.max(max, row.observedAt), 0);
-    // This indexed slice is intentionally read on every subscription. It is
-    // normally tiny and makes a completed-but-not-closed return reactive at
-    // once, without scanning the entire completed reservation history.
-    const pendingCloseRows = await ctx.db
-      .query("reservations")
-      .withIndex("by_status_close_pending", (q) =>
-        q.eq("status", "completed").eq("platform_close_pending", true),
-      )
-      .collect();
-    const visiblePendingCloseRows = pendingCloseRows.filter(
-      (row) =>
-        (!accountSlug || row.account_slug === accountSlug) &&
-        isOutstandingReturnState(row, today) &&
-        isInCurrentOrderPresence(row, presenceRows),
-    );
+    // Current-feed membership is required for completed close-pending returns.
+    // Read those exact IDs, keeping the original indexed slice as a fallback.
+    // Both the membership snapshot and matching reservations stay reactive.
+    const visiblePendingCloseRows = await loadVisibleClosePending(ctx, accountSlug, today, presenceRows);
 
     if (!_bypassMv) {
       const accountKey = accountSlug ?? "all";
