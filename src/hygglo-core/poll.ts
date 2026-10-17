@@ -36,6 +36,7 @@
 import { createHyggloCore, type HyggloCore } from "./index";
 import type { HyggloAccount } from "./auth-account";
 import { ALL_FILTERS } from "./orders";
+import { prefetchInOrder } from "./ordered-prefetch";
 import { providerReturnCompleted } from "../lib/provider-return-evidence";
 import {
   orderToReservation,
@@ -388,11 +389,9 @@ export async function corePoll(
     sourceFilter: string;
     latest_activity?: number | string;
   }> = [];
-  for (const filter of ALL_FILTERS) {
-    let listed;
-    try {
-      listed = await core.listOrders(filter);
-    } catch (err) {
+  for await (const { input: filter, result } of prefetchInOrder(ALL_FILTERS, filter => core.listOrders(filter))) {
+    if (result.status === "rejected") {
+      const err: unknown = result.reason;
       // Mirror poll-hygglo: a failed filter is skipped, not fatal — but logged
       // + counted (B4), never swallowed.
       listFilterErrors++;
@@ -403,6 +402,7 @@ export async function corePoll(
       );
       continue;
     }
+    const listed = result.value;
     for (const o of listed) {
       if (seen.has(o.id)) continue;
       seen.add(o.id);
@@ -468,12 +468,19 @@ export async function corePoll(
   }
 
   // 2-4. Per-order detail fetch → mappers → batch-level field append.
-  for (const order of selectedOrders) {
+  const skipDetail = (order: (typeof selectedOrders)[number]) => {
     const stored = storedActivity[String(order.id)];
-    if (
+    return (
       order.sourceFilter !== "current" && !custodyReconciliation.has(order.id) && stored?.has_order_step === true &&
       activityStampUnchanged(stored.latest_activity, order.latest_activity)
-    ) {
+    );
+  };
+  // Only provider GETs overlap, at most two at a time. Consume in the original
+  // order so filter precedence, renter deduplication, diagnostics and downstream
+  // account mutations retain their existing ordering.
+  const details = prefetchInOrder(selectedOrders, async order => skipDetail(order) ? undefined : core.getOrder(order.id));
+  for await (const { input: order, result } of details) {
+    if (skipDetail(order)) {
       // Current rentals must always re-read their workflow: an external return
       // may leave the list endpoint's chat activity timestamp unchanged.
       // Other buckets retain the unchanged-activity optimisation.
@@ -491,10 +498,8 @@ export async function corePoll(
       continue;
     }
 
-    let detail: HyggloOrderDetail;
-    try {
-      detail = await core.getOrder(order.id);
-    } catch (err) {
+    if (result.status === "rejected") {
+      const err: unknown = result.reason;
       // Mirror poll-hygglo: a failed detail GET (`!detailRes.ok`) is skipped —
       // but logged + counted (B4), never swallowed.
       detailFetchErrors++;
@@ -505,6 +510,8 @@ export async function corePoll(
       );
       continue;
     }
+    // A successful unskipped read has the same provider payload as before.
+    const detail = result.value as HyggloOrderDetail;
     ordersWithDetail++;
 
     // ── renter (dedup by hygglo_user_id ?? lowercased name) ──
