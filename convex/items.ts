@@ -1,3 +1,4 @@
+import { readFullInventory } from "./lib/inventory_read";
 import { loadPricingRows } from "./lib/pricing_input_cache";
 import { patchStockInput } from "./lib/stock_input_writes";
 import { shortItemName } from "./lib/item_display_name";
@@ -820,7 +821,7 @@ export const listActive = query({
 export const listForReconcile = query({
   args: {},
   handler: async (ctx) => {
-    const all = await ctx.db.query("items").collect();
+    const all = await readFullInventory(ctx);
     return all.map((i) => ({
       _id: i._id as string,
       name: i.name_canonical,
