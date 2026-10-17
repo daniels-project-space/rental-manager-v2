@@ -7,7 +7,7 @@ import { sourceReservationReadContext, preparedReservationReadContext } from "./
 import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
-import { RESERVATION_READ_KEY, reservationReadGate, reservationReadProgress, syncReservationReadRecord, reservationReadRecordMatches } from "./lib/reservation_read_model";
+import { RESERVATION_READ_KEY, reservationReadGate, reservationReadProgress, syncReservationReadRecord, reservationReadRecordMatches, reservationActivityMatches } from "./lib/reservation_read_model";
 
 export const status = internalQuery({ args: {}, handler: async ctx => ({ gate: await reservationReadGate(ctx), progress: await reservationReadProgress(ctx) }) });
 export const start = internalMutation({ args: {}, handler: async ctx => {
@@ -53,7 +53,7 @@ export const step = internalMutation({ args: {}, handler: async ctx => {
   for (const source of page.page) {
     const record = await ctx.db.query("reservation_read_records").withIndex("by_source", q => q.eq("source_id", source._id)).unique();
     const presence = await ctx.db.query("reservation_order_presence").withIndex("by_source", q => q.eq("source_id", source._id)).unique();
-    if (!presence || presence.hygglo_order_id !== source.hygglo_order_id || !await reservationReadRecordMatches(record, source)) throw Error("Reservation read-model source audit failed");
+    if (!reservationActivityMatches(presence, source) || !await reservationReadRecordMatches(record, source)) throw Error("Reservation read-model source audit failed");
     if (record && !record.valid) fallbackCount++;
   }
   await ctx.db.patch(progress._id, { audited_count: progress.audited_count + page.page.length, audited_fallback_count: progress.audited_fallback_count + fallbackCount, cursor: page.isDone ? null : page.continueCursor, stage: page.isDone ? "prepared" : "audit" });

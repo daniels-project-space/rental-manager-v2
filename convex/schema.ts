@@ -3118,12 +3118,15 @@ export default defineSchema({
   product_read_gate: defineTable({ key: v.literal("full:v1"), version: v.literal(1), enabled: v.boolean(), ready: v.boolean(), accounts: v.optional(v.array(v.object({ accountSlug: v.string(), count: v.number() }))) }).index("by_key", ["key"]),
   product_read_progress: defineTable({ accounts: v.array(v.object({ accountSlug: v.string(), count: v.number() })), key: v.literal("full:v1"), revision: v.number(), stage: v.union(v.literal("backfill"), v.literal("prune"), v.literal("audit"), v.literal("prepared")), cursor: v.union(v.string(), v.null()), audited_revision: v.optional(v.number()), audited_count: v.number(), audited_fallback_count: v.number(), copied_count: v.number(), pruned_count: v.number() }).index("by_key", ["key"]),
   reservation_read_records: reservationReadTable,
-  reservation_order_presence: defineTable({ source_id: v.id("reservations"), hygglo_order_id: operationalSchema.tables.reservations.validator.fields.hygglo_order_id })
+  reservation_order_presence: defineTable({ source_id: v.id("reservations"), hygglo_order_id: operationalSchema.tables.reservations.validator.fields.hygglo_order_id,
+    activity_version: v.optional(v.literal(1)), latest_activity: operationalSchema.tables.reservations.validator.fields.latest_activity,
+    order_step: operationalSchema.tables.reservations.validator.fields.order_step, paid: operationalSchema.tables.reservations.validator.fields.paid,
+    platform_booking_confirmed: operationalSchema.tables.reservations.validator.fields.platform_booking_confirmed })
     .index("by_source", ["source_id"]).index("by_order", ["hygglo_order_id"]),
   // Runtime gates stay stable during normal writes; migration/revision updates
   // must not invalidate every reservation query.
-  reservation_read_gate: defineTable({key:v.literal("full:v1"),version:v.literal(1),enabled:v.boolean(),ready:v.boolean()}).index("by_key",["key"]),
-  reservation_read_progress: defineTable({key:v.literal("full:v1"),revision:v.number(),stage:v.union(v.literal("backfill"),v.literal("prune"),v.literal("prunePresence"),v.literal("audit"),v.literal("prepared")),cursor:v.union(v.string(),v.null()),audited_revision:v.optional(v.number()),audited_count:v.number(),audited_fallback_count:v.number(),copied_count:v.number(),pruned_count:v.number()}).index("by_key",["key"]),
+  reservation_read_gate: defineTable({key:v.literal("full:v1"),version:v.literal(1),enabled:v.boolean(),ready:v.boolean(),activity_enabled:v.optional(v.boolean())}).index("by_key",["key"]),
+  reservation_read_progress: defineTable({key:v.literal("full:v1"),revision:v.number(),stage:v.union(v.literal("backfill"),v.literal("prune"),v.literal("prunePresence"),v.literal("audit"),v.literal("prepared")),cursor:v.union(v.string(),v.null()),audited_revision:v.optional(v.number()),audited_count:v.number(),audited_fallback_count:v.number(),copied_count:v.number(),pruned_count:v.number(),activity_stage:v.optional(v.union(v.literal("backfill"),v.literal("prune"),v.literal("prepared"))),activity_cursor:v.optional(v.union(v.string(),v.null()))}).index("by_key",["key"]),
   quick_reply_swaps: defineTable({thread_id:v.string(),request_id:v.string(),snapshot:v.string(),state:v.union(v.literal("running"),v.literal("applied"),v.literal("failed"),v.literal("attention")),at:v.number()}).index("by_thread",["thread_id"]).index("by_request",["request_id"]),
 
   ...operationalSchema.tables,

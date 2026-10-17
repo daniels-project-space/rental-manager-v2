@@ -10,6 +10,8 @@ import { syncReservationReadRecord, decodeReservationRead, reservationReadRecord
 import { useReservationReadModel, sourceReservationReadContext, preparedReservationReadContext, hasReservationByOrder } from "./reservation_read_queries";
 import { patchRevenueReservation, insertRevenueReservation, deleteRevenueReservation } from "./reservation_revenue";
 import * as admin from "../reservation_read_admin";
+import * as activityAdmin from "../reservation_activity_admin";
+import { readLatestReservationActivity, setReservationActivityMode } from "./reservation_activity_queries";
 
 class Range {
   #operations: any[];
@@ -66,6 +68,99 @@ async function prepare(f: ReturnType<typeof fixture>, enabled = true) {
   expect(f.tables.reservation_read_gate[0].ready).toBe(true);
   if (enabled) await (admin.enable as any)._handler(f.context(), { revision: f.tables.reservation_read_progress[0].revision, count: f.tables.reservation_read_progress[0].audited_count });
 }
+async function prepareActivity(f: ReturnType<typeof fixture>, enable = true) {
+  await (activityAdmin.start as any)._handler(f.context(), {});
+  for (let n = 0; n < 20 && f.tables.reservation_read_progress[0].activity_stage !== "prepared"; n++) await (activityAdmin.step as any)._handler(f.context(), {});
+  const audit = await (activityAdmin.audit as any)._handler(f.context(), {});
+  if (enable) await (activityAdmin.enable as any)._handler(f.context(), audit);
+  return audit;
+}
+
+describe("exact poller activity metadata", () => {
+  it.each(Array.from({ length: 8 }, (_, bits) => bits))("preserves every populated-field combination %s", async bits => {
+    const f = fixture([{ _id: "r1", _creationTime: 1, status: "confirmed", created_at: 1, v1_updated_at: 1, hygglo_order_id: "one", latest_activity: 1,
+      ...(bits & 1 ? { order_step: "REQUEST" } : {}), ...(bits & 2 ? { paid: false } : {}), ...(bits & 4 ? { platform_booking_confirmed: false } : {}) }]);
+    await prepare(f); await prepareActivity(f);
+    expect(await readLatestReservationActivity(f.context(), ["one"])).toEqual({ one: { latest_activity: 1, has_order_step: bits === 7 } });
+  });
+  it.each([-0, NaN, Infinity, -Infinity, 0.30000000000000004])("retains the exact numeric activity value %s", async latest_activity => {
+    const f = fixture([{ _id: "r1", _creationTime: 1, status: "confirmed", created_at: 1, v1_updated_at: 1, hygglo_order_id: "one", latest_activity }]);
+    await prepare(f); await prepareActivity(f);
+    const value = await readLatestReservationActivity(f.context(), ["one"]);
+    expect(Object.is(value.one.latest_activity, latest_activity)).toBe(true);
+  });
+  it("preserves populated false flags, missing fields, strings, floats and duplicate order semantics", async () => {
+    const f = fixture([
+      { _id: "r1", _creationTime: 1, status: "confirmed", created_at: 1, v1_updated_at: 1, hygglo_order_id: "zero", latest_activity: 0, order_step: "REQUEST", paid: false, platform_booking_confirmed: false },
+      { _id: "r2", _creationTime: 2, status: "ongoing", created_at: 2, v1_updated_at: 2, hygglo_order_id: "stamp", latest_activity: "2026-10-17T00:00:00.123Z", order_step: "REQUEST", paid: true },
+      { _id: "r3", _creationTime: 3, status: "cancelled", created_at: 3, v1_updated_at: 3, hygglo_order_id: "duplicate" },
+      { _id: "r4", _creationTime: 4, status: "confirmed", created_at: 4, v1_updated_at: 4, hygglo_order_id: "duplicate", latest_activity: 99, order_step: "REQUEST", paid: true, platform_booking_confirmed: true },
+      { _id: "r5", _creationTime: 5, status: "confirmed", created_at: 5, v1_updated_at: 5, hygglo_order_id: "float", latest_activity: 0.30000000000000004, order_step: "REQUEST", paid: true, platform_booking_confirmed: true },
+    ]);
+    const ids = ["stamp", "zero", "duplicate", "absent", "float", "zero"];
+    const before = await readLatestReservationActivity(f.context(), ids);
+    expect(before).toEqual({ stamp: { latest_activity: "2026-10-17T00:00:00.123Z", has_order_step: false }, zero: { latest_activity: 0, has_order_step: true }, float: { latest_activity: 0.30000000000000004, has_order_step: true } });
+    await prepare(f); await prepareActivity(f); f.reads.length = 0;
+    expect(await readLatestReservationActivity(f.context(), ids)).toEqual(before);
+    expect(f.reads.filter(r => r.startsWith("reservations:"))).toEqual(["reservations:by_hygglo_order_id"]);
+    expect(await (activityAdmin.read as any)._handler(f.context(), { mode: "prepared", hygglo_order_ids: ids })).toEqual(before);
+  });
+  it("prepares and prunes derived rows without changing source documents or compressed records", async () => {
+    const f = fixture(); await prepare(f); const before = structuredClone(f.tables.reservations); f.writes.length = 0;
+    f.tables.reservation_order_presence.push({ _id: "orphan", _creationTime: 999, source_id: "ghost", hygglo_order_id: "ghost", activity_version: 1, latest_activity: 1, order_step: "REQUEST", paid: true, platform_booking_confirmed: true });
+    const result = await prepareActivity(f, false);
+    expect(result.count).toBe(before.length); expect(f.tables.reservations).toEqual(before);
+    expect(f.writes).not.toContain("reservations"); expect(f.writes).not.toContain("reservation_read_records");
+    expect(f.tables.reservation_read_gate[0].activity_enabled).not.toBe(true);
+    expect(f.tables.reservation_order_presence.some(r => r.source_id === "ghost")).toBe(false);
+  });
+  it("maintains activity through actual source edits, order moves, insertions and deletion", async () => {
+    const f = fixture(); await prepare(f); await prepareActivity(f);
+    await patchRevenueReservation(f.context(), "r2" as any, { latest_activity: 5, order_step: "REQUEST", paid: false, platform_booking_confirmed: false });
+    expect(await readLatestReservationActivity(f.context(), ["order2"])).toEqual({ order2: { latest_activity: 5, has_order_step: true } });
+    await patchRevenueReservation(f.context(), "r2" as any, { latest_activity: "updated", paid: undefined, hygglo_order_id: "moved" });
+    expect(await readLatestReservationActivity(f.context(), ["order2", "moved"])).toEqual({ moved: { latest_activity: "updated", has_order_step: false } });
+    const id = await insertRevenueReservation(f.context(), { status: "confirmed", created_at: 40, v1_updated_at: 40, hygglo_order_id: "new", latest_activity: 7 });
+    expect(await readLatestReservationActivity(f.context(), ["new"])).toEqual({ new: { latest_activity: 7, has_order_step: false } });
+    await deleteRevenueReservation(f.context(), id);
+    expect(await readLatestReservationActivity(f.context(), ["new"])).toEqual({});
+  });
+  it("avoids metadata writes for source changes unrelated to poller skip decisions", async () => {
+    const f = fixture(); await prepare(f); await prepareActivity(f); f.writes.length = 0;
+    await patchRevenueReservation(f.context(), "r2" as any, { notes: "unchanged activity", last_polled_at: 100 });
+    expect(f.writes).not.toContain("reservation_order_presence");
+  });
+  it("falls back for legacy metadata and disabled or dirty gates; prepared mode fails closed", async () => {
+    const f = fixture(); await prepare(f); await prepareActivity(f);
+    await patchRevenueReservation(f.context(), "r2" as any, { latest_activity: 12 });
+    const expected = { order2: { latest_activity: 12, has_order_step: false } };
+    delete f.tables.reservation_order_presence.find(r => r.source_id === "r2").activity_version;
+    expect(await readLatestReservationActivity(f.context(), ["order2"])).toEqual(expected);
+    const strict = f.context(); setReservationActivityMode(strict, "prepared");
+    await expect(readLatestReservationActivity(strict, ["order2"])).rejects.toThrow("unavailable");
+    for (const field of ["ready", "enabled", "activity_enabled"]) {
+      const gate = f.tables.reservation_read_gate[0], old = gate[field]; gate[field] = false; f.reads.length = 0;
+      expect(await readLatestReservationActivity(f.context(), ["order2"])).toEqual(expected);
+      expect(f.reads).toContain("reservations:by_hygglo_order_id"); gate[field] = old;
+    }
+  });
+  it("rejects stale activation and a forged activity index value", async () => {
+    const f = fixture(); await prepare(f); const audit = await prepareActivity(f, false);
+    await patchRevenueReservation(f.context(), "r2" as any, { latest_activity: 44 });
+    await expect((activityAdmin.enable as any)._handler(f.context(), audit)).rejects.toThrow("changed");
+    f.tables.reservation_order_presence.find(r => r.source_id === "r2").latest_activity = 999;
+    await expect((activityAdmin.audit as any)._handler(f.context(), {})).rejects.toThrow("mismatch");
+    expect(f.tables.reservation_read_gate[0].activity_enabled).not.toBe(true);
+  });
+  it("keeps source mode independent and qualification bounded without clipping runtime results", async () => {
+    const f = fixture(); await prepare(f); await prepareActivity(f);
+    const ctx = f.context(); setReservationActivityMode(ctx, "source"); f.reads.length = 0;
+    expect(await readLatestReservationActivity(ctx, ["order1", "absent"])).toEqual({});
+    expect(f.reads).toEqual(["reservations:by_hygglo_order_id", "reservations:by_hygglo_order_id"]);
+    f.tables.reservations = Array.from({ length: 6001 }, (_, i) => ({ ...f.tables.reservations[0], _id: "r" + i }));
+    await expect((activityAdmin.audit as any)._handler(f.context(), {})).rejects.toThrow("bound");
+  });
+});
 
 describe("full lossless reservation read model", () => {
   it("uses the installed Convex SDK range builder without replaying clock callbacks", () => {
