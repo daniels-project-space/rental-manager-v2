@@ -26,6 +26,9 @@ export class AssetCache {
     const request = Promise.resolve().then(loader).then(value => {
       this.expire();
       if (value.byteLength <= this.limits.maxBytes && this.limits.maxEntries > 0) {
+        // Overflow loads are deliberately not retained in the pending-key map.
+        // If two finish for one key, replace its accounting before insertion.
+        this.remove(key);
         while (this.entries.size && (this.entries.size >= this.limits.maxEntries || this.retainedBytes + value.byteLength > this.limits.maxBytes)) this.remove(this.entries.keys().next().value!);
         this.entries.set(key, { value, expiresAt: this.now() + this.limits.ttlMs });
         this.retainedBytes += value.byteLength;

@@ -37,4 +37,18 @@ describe("bounded render asset cache", () => {
     const cache = new AssetCache(limits); for (let i = 0; i < 10; i++) await cache.load(String(i), async () => Buffer.alloc(0));
     expect(cache.retained).toEqual({ entries: 2, bytes: 0, pending: 0 });
   });
+  it("counts a replaced key once when pending-key tracking is full", async () => {
+    const cache = new AssetCache(limits);
+    const release: Array<(value: Buffer) => void> = [];
+    const held = ["held-a", "held-b"].map(key => cache.load(key, () => new Promise<Buffer>(resolve => release.push(resolve))));
+    try {
+      const values = await Promise.all([cache.load("overflow", async () => Buffer.from("xx")), cache.load("overflow", async () => Buffer.from("xx"))]);
+      expect(values).toEqual([Buffer.from("xx"), Buffer.from("xx")]);
+      expect(cache.retained).toEqual({ entries: 1, bytes: 2, pending: 2 });
+    } finally {
+      release.forEach(resolve => resolve(Buffer.alloc(0)));
+      await Promise.all(held);
+    }
+    expect(cache.retained).toEqual({ entries: 2, bytes: 0, pending: 0 });
+  });
 });

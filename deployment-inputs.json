@@ -908,6 +908,7 @@
       "src/hygglo-core/domain/index.ts",
       "src/hygglo-core/guards.ts",
       "src/hygglo-core/index.ts",
+      "src/hygglo-core/ordered-prefetch.ts",
       "src/hygglo-core/orders.ts",
       "src/hygglo-core/poll.ts",
       "src/hygglo-core/shape.ts",

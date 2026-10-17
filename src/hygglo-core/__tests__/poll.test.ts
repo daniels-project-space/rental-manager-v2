@@ -23,6 +23,7 @@ import {
   type StoredActivityEntry,
 } from "../poll";
 import type { HyggloCore } from "../index";
+import { prefetchInOrder } from "../ordered-prefetch";
 import type {
   HyggloOrderDetail,
   HyggloOrderFilter,
@@ -84,6 +85,66 @@ function makeMockCore(opts: {
   };
   return mock as unknown as HyggloCore;
 }
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+describe("bounded provider read prefetch", () => {
+  it("keeps two reads in flight and consumes errors/results in original order", async () => {
+    const gates = [deferred<number>(), deferred<number>(), deferred<number>(), deferred<number>()];
+    const started: number[] = [], consumed: Array<PromiseSettledResult<number>> = [];
+    let active = 0, peak = 0;
+    const consume = (async () => {
+      for await (const { result } of prefetchInOrder([0, 1, 2, 3], async index => {
+        started.push(index); active++; peak = Math.max(peak, active);
+        try { return await gates[index].promise; } finally { active--; }
+      })) consumed.push(result);
+    })();
+    await vi.waitFor(() => expect(started).toEqual([0, 1]));
+    const error = new Error("second read failed before the first completed");
+    gates[1].reject(error);
+    await Promise.resolve();
+    expect(consumed).toEqual([]);
+    gates[0].resolve(10);
+    await vi.waitFor(() => expect(started).toEqual([0, 1, 2, 3]));
+    gates[3].resolve(40); gates[2].resolve(30);
+    await consume;
+    expect(peak).toBe(2); expect(active).toBe(0);
+    expect(consumed).toEqual([{ status: "fulfilled", value: 10 }, { status: "rejected", reason: error }, { status: "fulfilled", value: 30 }, { status: "fulfilled", value: 40 }]);
+  });
+  it("does not issue reads for empty input", async () => {
+    const read = vi.fn(async () => 1);
+    for await (const _entry of prefetchInOrder([], read)) throw new Error("Unexpected empty-input result");
+    expect(read).not.toHaveBeenCalled();
+  });
+  it("wires overlapping list/detail GETs without changing filter precedence or renter deduplication", async () => {
+    const lists = Object.fromEntries(["pending", "current", "future", "obsolete"].map(filter => [filter, deferred<OrderWithFilter[]>()]));
+    const details = [deferred<HyggloOrderDetail>(), deferred<HyggloOrderDetail>()];
+    const core = makeMockCore({ ordersByFilter: {}, details: {} });
+    const listStarted: string[] = [], detailStarted: number[] = [];
+    vi.mocked(core.listOrders).mockImplementation(async filter => { listStarted.push(filter); return lists[filter].promise; });
+    vi.mocked(core.getOrder).mockImplementation(async id => { detailStarted.push(Number(id)); return details[Number(id) - 1].promise; });
+    const output = corePoll("test-account", { core, fetchedAt: 123 });
+    await vi.waitFor(() => expect(listStarted).toEqual(["pending", "current"]));
+    lists.current.resolve([{ id: 1, sourceFilter: "current" }, { id: 2, sourceFilter: "current" }]);
+    lists.pending.resolve([{ id: 1, sourceFilter: "pending" }]);
+    await vi.waitFor(() => expect(listStarted).toEqual(["pending", "current", "future", "obsolete"]));
+    lists.obsolete.resolve([]); lists.future.resolve([]);
+    await vi.waitFor(() => expect(detailStarted).toEqual([1, 2]));
+    const first = makeOrderDetail(1), second = makeOrderDetail(2);
+    first.users!.otherPart!.name = "First Renter";
+    second.users!.otherPart!.name = "Second Renter";
+    details[1].resolve(second); details[0].resolve(first);
+    const result = await output;
+    expect(result.reservations.map(row => [row.hygglo_order_id, row.sourceFilter])).toEqual([["1", "pending"], ["2", "current"]]);
+    expect(result.renters).toEqual([{ hygglo_user_id: "999", display_name: "First Renter" }]);
+    expect(result.meta.list_filter_errors).toBe(0); expect(result.meta.detail_fetch_errors).toBe(0);
+  });
+});
 
 describe("bounded stale-custody reconciliation",()=>{
   it("refreshes archived custody outside list buckets and recognises a completed funnel",async()=>{
