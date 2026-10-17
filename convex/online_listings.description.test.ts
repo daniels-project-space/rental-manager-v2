@@ -20,7 +20,7 @@ describe('actual authoritative listing description callers',()=>{
  });
  it('retains provider newline structure and long tails through lazy backfill',async()=>{
   const source=descriptions[0].description;let saved:any;const row:any={_id:'listing'};const audit=vi.fn();
-  const query:any={withIndex:()=>query,unique:async()=>row};const ctx:any={db:{query:()=>query,patch:async(_:any,patch:any)=>{saved=patch;Object.assign(row,patch)},insert:audit}};
+  const query:any={withIndex:()=>query,unique:async()=>row};const ctx:any={db:{query:(table:string)=>table==='stock_input_cache_state'?{withIndex(){return this},unique:async()=>null}:query,patch:async(_:any,patch:any)=>{saved=patch;Object.assign(row,patch)},insert:audit}};
   await (setDescription as any)._handler(ctx,{account_slug:'dbcinema',product_id:973616,description:source});
   expect(saved.description).toBe(source);expect(saved.description).toContain('\n1x Uv Filter\n');
   await (setDescription as any)._handler(ctx,{account_slug:'dbcinema',product_id:973616,description:source});expect(audit).toHaveBeenCalledTimes(1);expect(audit.mock.calls[0][0]).toBe('audit_log');

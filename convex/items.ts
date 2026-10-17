@@ -2,10 +2,7 @@ import { loadPricingRows } from "./lib/pricing_input_cache";
 import { patchStockInput } from "./lib/stock_input_writes";
 import { shortItemName } from "./lib/item_display_name";
 import { mutation, query, internalQuery, internalQueryOf } from "./owner_functions";
-import { loadStockSources } from "./lib/renter_stock";
-import { sharedStockSnapshot } from "./lib/storefront_stock";
-import { loadStockInputCacheState } from "./lib/stock_input_cache";
-import { cacheByteDigest, unpackCacheValue } from "./lib/lossless_cache_codec";
+import { readSharedStock } from "./lib/shared_stock_cache";
 import { isPaid } from "./order_step_semantics";
 import { v } from "convex/values";
 
@@ -1131,29 +1128,6 @@ export const __service_listForStorefront = internalQueryOf(listForReconcile);
 
 /** Authenticated storefront-only shared stock, with no renter/case details. */
 export const __service_sharedStockForStorefront = internalQuery({
-  args:{},
-  handler: async (ctx) => {
-    const state = await loadStockInputCacheState(ctx);
-    if (state?.enabled && state.ready_revision === state.revision) {
-      const cached = await ctx.db.query("stock_shared_snapshot_cache")
-        .withIndex("by_key", (q) => q.eq("key", "shared-stock:v1"))
-        .unique();
-      if (cached?.revision === state.revision &&
-          await cacheByteDigest(cached.data) === cached.packed_sha256) {
-        // Preserve the checkout-hold fail-closed contract even though the
-        // materialized occupancy snapshot intentionally excludes hold rows.
-        if (process.env.REQUIRE_WEBSITE_STOCK_HOLDS_SYNC === "true") {
-          const checkoutStock = await ctx.db.query("storefront_checkout_stock")
-            .withIndex("by_key", (q) => q.eq("key", "website"))
-            .first();
-          if (!checkoutStock || Date.now() - checkoutStock.receivedAt > 180_000) {
-            throw Error("Website checkout stock snapshot needs refresh; availability cannot be confirmed.");
-          }
-        }
-        const value = unpackCacheValue(cached.data) as ReturnType<typeof sharedStockSnapshot>;
-        return [{ ...value, checkedAt: Date.now() }];
-      }
-    }
-    return [sharedStockSnapshot(await loadStockSources(ctx), Date.now())];
-  },
+  args: {},
+  handler: async ctx => [await readSharedStock(ctx)],
 });
