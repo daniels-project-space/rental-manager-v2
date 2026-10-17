@@ -1,3 +1,5 @@
+import { listingDisplayCatalog } from "./listing_display_catalog";
+import { listForReconcile } from "../items";
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
@@ -94,5 +96,40 @@ describe("complete packed physical inventory", () => {
   it("has no producer work for an unqueued rebuild",async()=>{const f=fixture();await prepared(f,true);expect(await run(rebuild)(f.mutation(),{})).toEqual({rebuilt:false});expect(f.reads).not.toContain("items");});
   it.runIf(!!process.env.RM_INVENTORY_READ_FIXTURE)("matches every field of the real private inventory snapshot",async()=>{
     const d=JSON.parse(fs.readFileSync(process.env.RM_INVENTORY_READ_FIXTURE!,"utf8"));const f=fixture(d.items);await prepared(f,true);const a=await readFullInventory(f.query());expect(await cacheValueDigest(a)).toBe(await cacheValueDigest(await f.query().db.query("items").collect()));expect(f.tables.inventory_read_blob[0].data.byteLength).toBeLessThan(30000);
+  });
+});
+
+
+describe("existing packed inventory in display and reconciliation readers", () => {
+  it("preserves the complete display catalogue, image stripping and item-map values", async () => {
+    const f=fixture(); await prepared(f,true); const source=f.query();setInventoryReadMode(source,"source");
+    const a=await listingDisplayCatalog(source);f.reads.length=0;const b=await listingDisplayCatalog(f.query());
+    expect(b.items).toEqual(a.items);expect(b.imageItems).toEqual(a.imageItems);expect(b.itemMap).toEqual(a.itemMap);expect(b.mappingMap).toEqual(a.mappingMap);
+    expect(f.reads).not.toContain("items");expect(f.reads).toContain("inventory_read_blob");
+  });
+  it("preserves the real complete reconciliation response", async () => {
+    const f=fixture();await prepared(f,true);const source=f.query();setInventoryReadMode(source,"source");
+    const a=await run(listForReconcile)(source as MutationCtx,{});f.reads.length=0;
+    expect(await run(listForReconcile)(f.query() as MutationCtx,{})).toEqual(a);expect(f.reads).not.toContain("items");
+  });
+  it("retains preloaded inventory without extra artifact reads", async () => {
+    const f=fixture();await prepared(f,true);const rows=structuredClone(f.tables.items);const result=await listingDisplayCatalog(f.query(),undefined,{items:rows});
+    expect(result.items).toBe(rows);expect(f.reads).not.toContain("items");expect(f.reads).not.toContain("inventory_read_gate");
+  });
+  it.each(["disabled","stale"])("retains exact live source rows when %s",async(reason)=>{
+    const f=fixture();await prepared(f,true);if(reason==="disabled")f.tables.inventory_read_gate[0].enabled=false;else f.tables.inventory_read_gate[0].revision++;
+    f.tables.items[0].qty=7;const a=await listingDisplayCatalog(f.query());const b=await run(listForReconcile)(f.query() as MutationCtx,{});
+    expect(a.items.find(r=>String(r._id)==="item:a")?.qty).toBe(7);expect(b.find((r:any)=>r._id==="item:a").qty).toBe(7);expect(f.reads).toContain("items");
+  });
+  it("shares one validated query snapshot while isolating caller values", async()=>{
+    const f=fixture();await prepared(f,true);const q=f.query();const display=await listingDisplayCatalog(q);display.items[0].qty=99;
+    const result=await run(listForReconcile)(q as MutationCtx,{});expect(result[0].qty).toBe(1.25);expect(f.reads.filter(t=>t==="inventory_read_gate")).toHaveLength(1);expect(f.reads.filter(t=>t==="inventory_read_blob")).toHaveLength(1);
+  });
+  it("keeps the full private real-inventory reconciliation and display values", async()=>{
+    if(!process.env.RM_INVENTORY_READ_FIXTURE)return;
+    const items=JSON.parse(fs.readFileSync(process.env.RM_INVENTORY_READ_FIXTURE,"utf8"));const rows=Array.isArray(items)?items:items.items;
+    expect(Array.isArray(rows)).toBe(true);expect(rows.length).toBeGreaterThan(0);const f=fixture(rows);await prepared(f,true);const source=f.query();setInventoryReadMode(source,"source");
+    const a=await listingDisplayCatalog(source), b=await listingDisplayCatalog(f.query());expect(b.items).toEqual(a.items);expect(b.imageItems).toEqual(a.imageItems);expect(b.itemMap).toEqual(a.itemMap);
+    const q=f.query();setInventoryReadMode(q,"source");expect(await run(listForReconcile)(f.query() as MutationCtx,{})).toEqual(await run(listForReconcile)(q as MutationCtx,{}));
   });
 });

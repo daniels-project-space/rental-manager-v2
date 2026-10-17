@@ -11,7 +11,7 @@ describe("actual storefront master-stock projection", () => {
       {_id:"retired",name_canonical:"Retired body",qty:5,status:"inactive",is_marketing_only:false},
       {_id:"marketing",name_canonical:"Marketing body",qty:1,status:"active",is_marketing_only:true,private_notes:"Private owner note"},
     ];
-    const result = await (listForReconcile as any)._handler({db:{query:(table:string)=>{expect(table).toBe("items");return {collect:async()=>rows}}}},{});
+    const result = await (listForReconcile as any)._handler({db:{query:(table:string)=>{if(table==="inventory_read_gate")return {unique:async()=>null};expect(table).toBe("items");return {collect:async()=>rows}}}},{});
     expect(result.map((r:any)=>[r._id,r.qty,r.status,r.is_marketing_only])).toEqual([
       ["owned",2,"active",false],["zero",0,"active",false],["retired",5,"inactive",false],["marketing",1,"active",true],
     ]);

@@ -1,3 +1,4 @@
+import { readFullInventory } from "./inventory_read";
 import { requestedDisplayMatch } from "./quick_reply_requested_items";
 import type { QueryCtx } from "../_generated/server";
 import type { Doc } from "../_generated/dataModel";
@@ -41,7 +42,7 @@ export async function listingDisplayCatalog(
   preloaded?: { items?: Doc<"items">[]; mappings?: Doc<"listing_resolution_override">[]; productContextCache?: ProductContextCache },
 ) {
   const [items, mappings, names] = await Promise.all([
-    preloaded?.items ?? ctx.db.query("items").collect(),
+    preloaded?.items ?? readFullInventory(ctx),
     preloaded?.mappings
       ? preloaded.mappings.filter((mapping) => !account || mapping.account_slug === account)
       : account
