@@ -23,7 +23,11 @@ export const acquire = internalMutation({
     validateOwner(args.owner, args.sourceCommit);
     const now = Date.now();
     const row = await ctx.db.query("deployment_leases").withIndex("by_resource", q => q.eq("resource", RESOURCE)).unique();
-    if (row && row.owner !== args.owner && row.expiresAt > now) return { acquired: false, expiresAt: row.expiresAt };
+    // The source commit is part of ownership, just as in renew/release. A
+    // reused process identifier cannot replace a live lease for another source.
+    if (row && row.expiresAt > now && (row.owner !== args.owner || row.sourceCommit !== args.sourceCommit)) {
+      return { acquired: false, expiresAt: row.expiresAt };
+    }
     const fields = { resource: RESOURCE, ...args, expiresAt: now + LEASE_MS };
     if (row) await ctx.db.patch(row._id, fields);
     else await ctx.db.insert("deployment_leases", fields);

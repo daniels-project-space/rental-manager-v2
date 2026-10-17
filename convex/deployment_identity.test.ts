@@ -37,6 +37,16 @@ describe("one bounded backend publication lease", () => {
     expect(await call(renew, f.ctx, "first", "b".repeat(40))).toEqual({ renewed: false });
     expect(await call(renew, f.ctx, "second")).toEqual({ renewed: false });
   });
+  it("cannot reacquire a live owner identifier for a different source commit", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(1000); const f = fixture();
+    const first = await call(acquire, f.ctx, "same-process");
+    expect(await call(acquire, f.ctx, "same-process", "b".repeat(40))).toEqual({ acquired: false, expiresAt: first.expiresAt });
+    expect(f.state().sourceCommit).toBe(commit);
+    expect((await call(acquire, f.ctx, "same-process")).acquired).toBe(true);
+    vi.setSystemTime(first.expiresAt);
+    expect((await call(acquire, f.ctx, "same-process", "b".repeat(40))).acquired).toBe(true);
+    expect(f.inserts()).toBe(1);
+  });
   it("recovers after expiry and fences a stale owner's renewal/release", async () => {
     vi.useFakeTimers(); vi.setSystemTime(1000); const f = fixture();
     const first = await call(acquire, f.ctx, "first"); vi.setSystemTime(first.expiresAt);
