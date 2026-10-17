@@ -1,3 +1,5 @@
+import { computeRentalVolumeByCategory } from "../dashboard";
+import { rentalVolumeWindowFromInputs, type RentalVolumeInput } from "../lib/rental_volume";
 /**
  * MV: mv_rental_volume_by_category (pass 11d, 2026-05-25)
  *
@@ -24,6 +26,7 @@ export const refresh = internalAction({
 export async function refreshAll(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctx: any,
+  captured?: RentalVolumeInput,
 ): Promise<{ ok: true; written: number; durationMs: number }> {
   const startedAt = Date.now();
   const slugs: Array<{ key: string; arg: string | null }> = [
@@ -33,11 +36,11 @@ export async function refreshAll(
   let written = 0;
   for (const { key, arg } of slugs) {
     for (const days of STANDARD_WINDOWS) {
-      const payload = await ctx.runQuery(internal.dashboard.__service_getRentalVolumeByCategory, {
-        accountSlug: arg,
-        days,
-        _bypassMv: true,
-      });
+      const payload = captured
+        ? computeRentalVolumeByCategory(rentalVolumeWindowFromInputs(captured, arg, days), days)
+        : await ctx.runQuery(internal.dashboard.__service_getRentalVolumeByCategory, {
+            accountSlug: arg, days, _bypassMv: true,
+          });
       await ctx.runMutation(anyApi.mv.rental_volume_by_category.write, {
         account: key,
         days,

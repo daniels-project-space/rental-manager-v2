@@ -1,3 +1,4 @@
+import { startDateWindow, accountStatusRows, type ItemAnalyticsInputs } from "./lib/analytics_source_order";
 import { loadPricingRows } from "./lib/pricing_input_cache";
 import { query, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
@@ -170,6 +171,93 @@ export const getMissedRevenue = query({
 /**
  * W15 Investment Scorecard — ROI using items.acquisition_cost_gbp
  */
+export function computeInvestmentScorecard(input: ItemAnalyticsInputs, accountSlug: string | null, now = Date.now()) {
+  const allItems = input.items;
+  // Only count active non-marketing items WITH known acquisition cost (null items excluded, not treated as 0)
+  const itemsWithCost = allItems.filter(
+    (i) => !i.is_marketing_only && i.status !== "inactive" && i.status !== "archived" &&
+           i.acquisition_cost_gbp != null && i.acquisition_cost_gbp > 0
+  );
+  const totalInvested = itemsWithCost.reduce((sum, i) => sum + (i.acquisition_cost_gbp ?? 0), 0);
+  const itemsWithCostCount = itemsWithCost.length;
+  const itemsMissingCostCount = allItems.filter(
+    (i) => !i.is_marketing_only && i.status === "active" && (i.acquisition_cost_gbp == null || i.acquisition_cost_gbp === 0)
+  ).length;
+
+  // 2-year window for lifetime ROI scorecard. Same trade-off as
+  // intel.ts:getItemROIRanking — forward-safe today, migrate to MV when
+  // history > 2y.
+  const roiScorecardCutoff = new Date(now - 730 * 86400000)
+    .toISOString()
+    .slice(0, 10);
+  let reservations = accountSlug
+    ? accountStatusRows(input.reservations, accountSlug)
+    : startDateWindow(input.reservations, roiScorecardCutoff);
+  // The account-prefixed index avoids reading every other account's rental
+  // history for each per-account MV row. Keep the same 730-day cutoff after
+  // the indexed account read; the prefix also preserves any future status.
+  if (accountSlug) {
+    reservations = reservations.filter(
+      (r) => r.start_date != null && r.start_date >= roiScorecardCutoff,
+    );
+  }
+  // REVENUE-SUM CANON (order_step_semantics.ts): exclude
+  //   • obsolete / cancelled / declined rows,
+  //   • future-dated rows (haven't earned yet),
+  //   • rows where the renter has not paid escrow yet (APPROVED /
+  //     FUNDS_RESERVED carry poller-populated gross_paid_gbp but it's
+  //     a would-pay projection, not a cash event).
+  // Older rows imported from v1 have null order_step + status="completed"
+  // — those ARE realised revenue, so accept them via the v1-legacy escape
+  // hatch (mirrors isPaidWithV1Legacy in predicates.ts).
+  const todayStr = new Date(now).toISOString().slice(0, 10);
+  const realisedReservations = reservations.filter((r) => {
+    if (r.is_obsolete) return false;
+    if (r.status === "cancelled" || r.status === "declined") return false;
+    const startDate = r.start_date as string | undefined;
+    if (startDate && startDate > todayStr) return false;
+    if (r.order_step) return isPaid(r.order_step);
+    // v1 imports: no order_step, but status="completed" on every paid row.
+    return r.status === "confirmed" || r.status === "completed";
+  });
+  // NET take-home (post ~36% Hygglo fee) to match every other revenue widget.
+  // Previously summed GROSS, which inflated revenue + ROI ~1.5x.
+  const totalRevenue = realisedReservations.reduce(
+    (sum, r) => sum + (r.net_to_owner_gbp ?? (r.gross_paid_gbp ?? 0) * OWNER_SHARE),
+    0
+  );
+
+  const netProfit = totalRevenue - totalInvested;
+  const roiPct =
+    totalInvested > 0 ? (netProfit / totalInvested) * 100 : 0;
+
+  // Monthly rate from earliest reservation
+  const sortedDates = realisedReservations
+    .filter((r) => r.start_date)
+    .map((r) => r.start_date as string)
+    .sort();
+  const earliestDate =
+    sortedDates.length > 0 ? new Date(sortedDates[0]) : new Date(now);
+  const monthsElapsed = Math.max(
+    1,
+    (now - earliestDate.getTime()) / (1000 * 60 * 60 * 24 * 30)
+  );
+  const monthlyRate = totalRevenue / monthsElapsed;
+  const paybackMonths =
+    monthlyRate > 0 ? totalInvested / monthlyRate : Infinity;
+
+  return {
+    totalInvested,
+    totalRevenue,
+    netProfit,
+    roiPct,
+    paybackMonths: isFinite(paybackMonths) ? paybackMonths : null,
+    monthlyRate,
+    itemsWithCostCount,
+    itemsMissingCostCount,
+  };
+}
+
 export const getInvestmentScorecard = query({
   args: {
     accountSlug: v.union(v.string(), v.null()),
@@ -192,96 +280,13 @@ export const getInvestmentScorecard = query({
         return row.payload;
       }
     }
-    const allItems = await ctx.db.query("items").collect();
-    // Only count active non-marketing items WITH known acquisition cost (null items excluded, not treated as 0)
-    const itemsWithCost = allItems.filter(
-      (i) => !i.is_marketing_only && i.status !== "inactive" && i.status !== "archived" &&
-             i.acquisition_cost_gbp != null && i.acquisition_cost_gbp > 0
-    );
-    const totalInvested = itemsWithCost.reduce((sum, i) => sum + (i.acquisition_cost_gbp ?? 0), 0);
-    const itemsWithCostCount = itemsWithCost.length;
-    const itemsMissingCostCount = allItems.filter(
-      (i) => !i.is_marketing_only && i.status === "active" && (i.acquisition_cost_gbp == null || i.acquisition_cost_gbp === 0)
-    ).length;
+    const items = await ctx.db.query("items").collect();
+    const cutoff = new Date(Date.now() - 730 * 86400000).toISOString().slice(0,10);
+    const reservations = accountSlug
+      ? await ctx.db.query("reservations").withIndex("by_account_status", q => q.eq("account_slug", accountSlug)).collect()
+      : await ctx.db.query("reservations").withIndex("by_start_date", q => q.gte("start_date", cutoff)).collect();
+    return computeInvestmentScorecard({ reservations, items }, accountSlug);
 
-    // 2-year window for lifetime ROI scorecard. Same trade-off as
-    // intel.ts:getItemROIRanking — forward-safe today, migrate to MV when
-    // history > 2y.
-    const roiScorecardCutoff = new Date(Date.now() - 730 * 86400000)
-      .toISOString()
-      .slice(0, 10);
-    let reservations = accountSlug
-      ? await ctx.db
-          .query("reservations")
-          .withIndex("by_account_status", (q) => q.eq("account_slug", accountSlug))
-          .collect()
-      : await ctx.db
-          .query("reservations")
-          .withIndex("by_start_date", (q) => q.gte("start_date", roiScorecardCutoff))
-          .collect();
-    // The account-prefixed index avoids reading every other account's rental
-    // history for each per-account MV row. Keep the same 730-day cutoff after
-    // the indexed account read; the prefix also preserves any future status.
-    if (accountSlug) {
-      reservations = reservations.filter(
-        (r) => r.start_date != null && r.start_date >= roiScorecardCutoff,
-      );
-    }
-    // REVENUE-SUM CANON (order_step_semantics.ts): exclude
-    //   • obsolete / cancelled / declined rows,
-    //   • future-dated rows (haven't earned yet),
-    //   • rows where the renter has not paid escrow yet (APPROVED /
-    //     FUNDS_RESERVED carry poller-populated gross_paid_gbp but it's
-    //     a would-pay projection, not a cash event).
-    // Older rows imported from v1 have null order_step + status="completed"
-    // — those ARE realised revenue, so accept them via the v1-legacy escape
-    // hatch (mirrors isPaidWithV1Legacy in predicates.ts).
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const realisedReservations = reservations.filter((r) => {
-      if (r.is_obsolete) return false;
-      if (r.status === "cancelled" || r.status === "declined") return false;
-      const startDate = r.start_date as string | undefined;
-      if (startDate && startDate > todayStr) return false;
-      if (r.order_step) return isPaid(r.order_step);
-      // v1 imports: no order_step, but status="completed" on every paid row.
-      return r.status === "confirmed" || r.status === "completed";
-    });
-    // NET take-home (post ~36% Hygglo fee) to match every other revenue widget.
-    // Previously summed GROSS, which inflated revenue + ROI ~1.5x.
-    const totalRevenue = realisedReservations.reduce(
-      (sum, r) => sum + (r.net_to_owner_gbp ?? (r.gross_paid_gbp ?? 0) * OWNER_SHARE),
-      0
-    );
-
-    const netProfit = totalRevenue - totalInvested;
-    const roiPct =
-      totalInvested > 0 ? (netProfit / totalInvested) * 100 : 0;
-
-    // Monthly rate from earliest reservation
-    const sortedDates = realisedReservations
-      .filter((r) => r.start_date)
-      .map((r) => r.start_date as string)
-      .sort();
-    const earliestDate =
-      sortedDates.length > 0 ? new Date(sortedDates[0]) : new Date();
-    const monthsElapsed = Math.max(
-      1,
-      (Date.now() - earliestDate.getTime()) / (1000 * 60 * 60 * 24 * 30)
-    );
-    const monthlyRate = totalRevenue / monthsElapsed;
-    const paybackMonths =
-      monthlyRate > 0 ? totalInvested / monthlyRate : Infinity;
-
-    return {
-      totalInvested,
-      totalRevenue,
-      netProfit,
-      roiPct,
-      paybackMonths: isFinite(paybackMonths) ? paybackMonths : null,
-      monthlyRate,
-      itemsWithCostCount,
-      itemsMissingCostCount,
-    };
   },
 });
 

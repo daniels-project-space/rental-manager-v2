@@ -1,3 +1,5 @@
+import { computeInvestmentInsights } from "../ai_insights";
+import type { ItemAnalyticsInputs } from "../lib/analytics_source_order";
 /**
  * MV: mv_ai_insights (2026-07-07)
  *
@@ -35,6 +37,7 @@ export const refresh = internalAction({
 export async function refreshAll(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctx: any,
+  captured?: ItemAnalyticsInputs,
 ): Promise<{ ok: true; written: number; durationMs: number }> {
   const startedAt = Date.now();
   const slugs: Array<{ key: string; arg: string | null }> = [
@@ -44,7 +47,7 @@ export async function refreshAll(
   let written = 0;
   for (const { key, arg } of slugs) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const payload: any = await ctx.runQuery(internal.ai_insights.__service_getInsights, {
+    const payload: any = captured ? computeInvestmentInsights(captured, arg) : await ctx.runQuery(internal.ai_insights.__service_getInsights, {
       accountSlug: arg,
       _bypassMv: true,
     });

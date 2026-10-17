@@ -1,3 +1,5 @@
+import { startDateWindow } from "./lib/analytics_source_order";
+import type { Doc } from "./_generated/dataModel";
 import { query, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
 import {
@@ -51,6 +53,81 @@ function matchToBundle(
   return bestMatch;
 }
 
+export type BundleRankingInput = {
+  reservations: readonly Doc<"reservations">[];
+  bundles: readonly Doc<"bundles">[];
+  bundleItems: readonly Doc<"bundle_items">[];
+};
+
+/** Both callers supply authoritative source order for complete creation-time
+ * ties. Reproduce the old start-date index order before accumulating floats.
+ * The daily action reuses its real history snapshot; the public loader keeps
+ * its original indexed query and cache gate. No source rows are mutated. */
+export function computeTopBundleRankings(
+  input: BundleRankingInput,
+  accountSlug: string | null,
+  days: number,
+  now = Date.now(),
+): BundleRankRow[] {
+  // Build { name, items[] } map from Convex rows
+  const itemsByBundleId = new Map<string, string[]>();
+  for (const bi of input.bundleItems) {
+    const existing = itemsByBundleId.get(bi.bundle_id) ?? [];
+    for (let i = 0; i < (bi.qty ?? 1); i++) {
+      existing.push(bi.item_name_canonical);
+    }
+    itemsByBundleId.set(bi.bundle_id, existing);
+  }
+  const bundleDefs = input.bundles.map((b) => ({
+    name: b.bundle_name,
+    items: itemsByBundleId.get(b._id) ?? [],
+  }));
+
+  const cutoff = new Date(now);
+  cutoff.setDate(cutoff.getDate() - days);
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
+  let reservations = startDateWindow(input.reservations, cutoffStr);
+  if (accountSlug) {
+    reservations = reservations.filter((r) => r.account_slug === accountSlug);
+  }
+  reservations = reservations.filter(
+    (r) => r.status !== "cancelled" && r.status !== "denied" && (r.items ?? []).length >= 2
+  );
+  const byBundle = new Map<string, { revenue: number; count: number; totalDays: number; items: string[] }>();
+  for (const res of reservations) {
+    // Use resolved_items canonical names (no fuzzy match) so 'A7 II Kit'
+    // and 'A7 III Kit' don't collide.
+    type ResolverEntry = { item_name_canonical: string };
+    const expanded = ((res as { expanded_items?: ResolverEntry[] }).expanded_items) ?? [];
+    const resolved = ((res as { resolved_items?: ResolverEntry[] }).resolved_items) ?? [];
+    const source = expanded.length > 0 ? expanded : resolved;
+    const canonicalItems = source.map((x) => x.item_name_canonical);
+    if (canonicalItems.length < 2) continue;
+    const bundleName = matchToBundle(canonicalItems, bundleDefs);
+    if (!bundleName) continue;
+    const gross = res.gross_paid_gbp ?? 0;
+    const dur = res.duration_days ?? 0;
+    const existing = byBundle.get(bundleName) ?? {
+      revenue: 0, count: 0, totalDays: 0,
+      items: bundleDefs.find((b) => b.name === bundleName)?.items ?? [],
+    };
+    existing.revenue += gross;
+    existing.count += 1;
+    existing.totalDays += dur;
+    byBundle.set(bundleName, existing);
+  }
+  return Array.from(byBundle.entries())
+    .map(([name, stats]) => ({
+      name,
+      totalRevenue: Math.round(stats.revenue * 100) / 100,
+      rentalCount: stats.count,
+      totalDays: stats.totalDays,
+      avgValue: stats.count > 0 ? Math.round((stats.revenue / stats.count) * 100) / 100 : 0,
+      items: stats.items,
+    }))
+    .sort((a, b) => b.totalRevenue - a.totalRevenue);
+}
+
 export const getTopBundles = query({
   args: {
     accountSlug: v.union(v.string(), v.null()),
@@ -74,66 +151,13 @@ export const getTopBundles = query({
     const bundleRows = await ctx.db.query("bundles").collect();
     const bundleItemRows = await ctx.db.query("bundle_items").collect();
 
-    // Build { name, items[] } map from Convex rows
-    const itemsByBundleId = new Map<string, string[]>();
-    for (const bi of bundleItemRows) {
-      const existing = itemsByBundleId.get(bi.bundle_id) ?? [];
-      for (let i = 0; i < (bi.qty ?? 1); i++) {
-        existing.push(bi.item_name_canonical);
-      }
-      itemsByBundleId.set(bi.bundle_id, existing);
-    }
-    const bundleDefs = bundleRows.map((b) => ({
-      name: b.bundle_name,
-      items: itemsByBundleId.get(b._id) ?? [],
-    }));
-
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - days);
-    const cutoffStr = cutoff.toISOString().slice(0, 10);
-    let reservations = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
+    const reservations = await ctx.db.query("reservations")
+      .withIndex("by_start_date", q => q.gte("start_date", cutoff.toISOString().slice(0,10)))
       .collect();
-    if (accountSlug) {
-      reservations = reservations.filter((r) => r.account_slug === accountSlug);
-    }
-    reservations = reservations.filter(
-      (r) => r.status !== "cancelled" && r.status !== "denied" && (r.items ?? []).length >= 2
-    );
-    const byBundle = new Map<string, { revenue: number; count: number; totalDays: number; items: string[] }>();
-    for (const res of reservations) {
-      // Use resolved_items canonical names (no fuzzy match) so 'A7 II Kit'
-      // and 'A7 III Kit' don't collide.
-      type ResolverEntry = { item_name_canonical: string };
-      const expanded = ((res as { expanded_items?: ResolverEntry[] }).expanded_items) ?? [];
-      const resolved = ((res as { resolved_items?: ResolverEntry[] }).resolved_items) ?? [];
-      const source = expanded.length > 0 ? expanded : resolved;
-      const canonicalItems = source.map((x) => x.item_name_canonical);
-      if (canonicalItems.length < 2) continue;
-      const bundleName = matchToBundle(canonicalItems, bundleDefs);
-      if (!bundleName) continue;
-      const gross = res.gross_paid_gbp ?? 0;
-      const dur = res.duration_days ?? 0;
-      const existing = byBundle.get(bundleName) ?? {
-        revenue: 0, count: 0, totalDays: 0,
-        items: bundleDefs.find((b) => b.name === bundleName)?.items ?? [],
-      };
-      existing.revenue += gross;
-      existing.count += 1;
-      existing.totalDays += dur;
-      byBundle.set(bundleName, existing);
-    }
-    return Array.from(byBundle.entries())
-      .map(([name, stats]) => ({
-        name,
-        totalRevenue: Math.round(stats.revenue * 100) / 100,
-        rentalCount: stats.count,
-        totalDays: stats.totalDays,
-        avgValue: stats.count > 0 ? Math.round((stats.revenue / stats.count) * 100) / 100 : 0,
-        items: stats.items,
-      }))
-      .sort((a, b) => b.totalRevenue - a.totalRevenue);
+    return computeTopBundleRankings({ reservations, bundles: bundleRows, bundleItems: bundleItemRows }, accountSlug, days);
+
   },
 });
 

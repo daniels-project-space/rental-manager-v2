@@ -1,3 +1,5 @@
+import type { Doc } from "../_generated/dataModel";
+import { startDateWindow } from "./analytics_source_order";
 import { loadPricingRows } from "./pricing_input_cache";
 /**
  * Shared rental-volume attribution pipeline (Wave 9 dedup).
@@ -61,19 +63,19 @@ type AttributionLine = ReturnType<typeof attributeRevenue>[number];
  * queries run against a single consistent snapshot, so ordering carries no
  * semantic weight, but it is preserved to keep the diff auditable.
  */
-export async function loadRentalVolumeWindow(
-  ctx: QueryCtx,
-  accountSlug: string | null,
-  days: number,
-) {
-  const cutoff = new Date();
+export type RentalVolumeInput = {
+  reservations: readonly Doc<"reservations">[];
+  pricing: readonly Doc<"pricing_catalog">[];
+  items: readonly Doc<"items">[];
+  overrides: readonly Doc<"listing_resolution_override">[];
+};
+
+export function rentalVolumeWindowFromInputs(input: RentalVolumeInput, accountSlug: string | null, days: number, now = Date.now()) {
+  const cutoff = new Date(now);
   cutoff.setDate(cutoff.getDate() - days);
   const cutoffStr = cutoff.toISOString().slice(0, 10);
 
-  let reservations = await ctx.db
-    .query("reservations")
-    .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
-    .collect();
+  let reservations = startDateWindow(input.reservations, cutoffStr);
   if (accountSlug) {
     reservations = reservations.filter((r) => r.account_slug === accountSlug);
   }
@@ -81,19 +83,19 @@ export async function loadRentalVolumeWindow(
   // collapse v1/Hygglo duplicates, then restrict to effectiveDate window.
   reservations = reservations.filter(isLive);
   reservations = dedupByLogicalRental(reservations);
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = new Date(now).toISOString().slice(0, 10);
   reservations = reservations.filter((r) => {
     const d = effectiveDate(r);
     return d !== undefined && d >= cutoffStr && d <= todayStr;
   });
 
   // Pricing catalog for revenue split weights (canonical → daily_price_min).
-  const pricingAll = await loadPricingRows(ctx);
+  const pricingAll = input.pricing;
   const priceByCanonical = new Map<string, number>(
     pricingAll.map((p) => [p.item_name_canonical, p.daily_price_min]),
   );
 
-  const items = await ctx.db.query("items").collect();
+  const items = [...input.items];
 
   // Phase 6 — attribution engine is the only path. Maps built once, reused.
   const itemById = new Map<typeof items[number]["_id"], typeof items[number]>();
@@ -106,7 +108,7 @@ export async function loadRentalVolumeWindow(
   const nameByIdStr = new Map<string, string>();
   for (const it of items) { const nmx = (it as { name_canonical?: string }).name_canonical; if (nmx) nameByIdStr.set(String(it._id), nmx); }
   const overrideByProduct = new Map<string, Array<{ item_id: string; qty: number }>>();
-  for (const o of await ctx.db.query("listing_resolution_override").collect()) overrideByProduct.set(`${o.account_slug}#${o.product_id}`, o.components.map((c) => ({ item_id: String(c.item_id), qty: c.qty })));
+  for (const o of input.overrides) overrideByProduct.set(`${o.account_slug}#${o.product_id}`, o.components.map((c) => ({ item_id: String(c.item_id), qty: c.qty })));
 
   return {
     cutoffStr,
@@ -118,6 +120,17 @@ export async function loadRentalVolumeWindow(
     nameByIdStr,
     overrideByProduct,
   };
+}
+
+export async function loadRentalVolumeWindow(ctx: QueryCtx, accountSlug: string | null, days: number) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - days);
+  const reservations = await ctx.db.query("reservations")
+    .withIndex("by_start_date", q => q.gte("start_date", cutoff.toISOString().slice(0,10))).collect();
+  const pricing = await loadPricingRows(ctx);
+  const items = await ctx.db.query("items").collect();
+  const overrides = await ctx.db.query("listing_resolution_override").collect();
+  return rentalVolumeWindowFromInputs({ reservations, pricing, items, overrides }, accountSlug, days);
 }
 
 export type RentalVolumeWindow = Awaited<ReturnType<typeof loadRentalVolumeWindow>>;

@@ -1,3 +1,5 @@
+
+import { startDateWindow, type ItemAnalyticsInputs, type PricingAnalyticsInputs } from "./lib/analytics_source_order";
 import { readFullInventory } from "./lib/inventory_read";
 import { loadPricingRows } from "./lib/pricing_input_cache";
 import { patchStockInput } from "./lib/stock_input_writes";
@@ -603,6 +605,96 @@ export const getOutOfStockItems = query({
  * Groups by name_canonical so multiple units of the same model appear as ONE row
  * (mirrors v1 sell-recommender.service.ts which groups by item_name before scoring).
  */
+export async function computeSellRecommendations(input: ItemAnalyticsInputs, accountSlug: string | null, priceFor: (name: string) => Promise<Doc<"pricing_catalog"> | null>, now = Date.now()) {
+  const LOOKBACK_DAYS = 90;
+  // utilizationPct below is a 0–100 percent, so the threshold is 25(%), NOT 0.25.
+  // Was 0.25 → `utilizationPct > 0.25` was true for any item with >0.25% util,
+  // so the low-demand filter never fired and young low-demand items were missed.
+  const UTIL_THRESHOLD = 25;
+
+  const cutoff = new Date(now);
+  cutoff.setDate(cutoff.getDate() - LOOKBACK_DAYS);
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+  let reservations = startDateWindow(input.reservations, cutoffStr);
+  if (accountSlug) {
+    reservations = reservations.filter((r) => r.account_slug === accountSlug);
+  }
+
+  const allItems = input.items;
+  const activeGroups = allItems.filter((i) => i.status === "active" && !i.is_marketing_only);
+  const sellCanonSet = new Set<string>(activeGroups.map((i) => i.name_canonical));
+
+  // Build rental-days per canonical name from LLM-resolved + bundle-expanded
+  // items only. Strict id-based match (no substring fuzz, no A7-II↔A7-III
+  // confusion). Qty multiplied through so 2× per reservation counts twice.
+  const rentalDaysMap = new Map<string, number>();
+  for (const r of reservations) {
+    const items = readResolverItems(r);
+    for (const x of items) {
+      if (!sellCanonSet.has(x.item_name_canonical)) continue;
+      rentalDaysMap.set(
+        x.item_name_canonical,
+        (rentalDaysMap.get(x.item_name_canonical) ?? 0) + (r.duration_days ?? 0) * x.qty,
+      );
+    }
+  }
+
+  // Group by name_canonical — multiple unit rows collapse to one recommendation
+  type GroupEntry = {
+    representative_id: string;
+    name_canonical: string;
+    total_qty: number;
+    earliest_created_at: number;
+  };
+  const groups = new Map<string, GroupEntry>();
+  for (const i of allItems) {
+    if (i.status !== "active" || i.is_marketing_only) continue;
+    const existing = groups.get(i.name_canonical);
+    if (!existing) {
+      groups.set(i.name_canonical, {
+        representative_id: i._id,
+        name_canonical: i.name_canonical,
+        total_qty: i.qty,
+        earliest_created_at: i.created_at,
+      });
+    } else {
+      existing.total_qty += i.qty;
+      if (i.created_at < existing.earliest_created_at) {
+        existing.earliest_created_at = i.created_at;
+      }
+    }
+  }
+
+  const flagged = await Promise.all(
+    Array.from(groups.values()).map(async (g) => {
+      const rentalDays = rentalDaysMap.get(g.name_canonical) ?? 0;
+      const qty = g.total_qty ?? 1;
+      const utilizationPct = LOOKBACK_DAYS > 0 && qty > 0 ? Math.min(100, (rentalDays / (qty * LOOKBACK_DAYS)) * 100) : 0;
+      const ageMonths =
+        (now - g.earliest_created_at) / (1000 * 60 * 60 * 24 * 30);
+
+      if (utilizationPct > UTIL_THRESHOLD && ageMonths < 24) return null;
+
+      const priceRow = await priceFor(g.name_canonical);
+      const estResaleValue = priceRow ? priceRow.daily_price_min * 30 : null;
+      const reason = utilizationPct <= UTIL_THRESHOLD ? "Low demand" : "High age";
+
+      return {
+        itemId: g.representative_id,
+        name: shortItemName(g),
+        qty: g.total_qty,
+        utilizationPct,
+        ageMonths,
+        estResaleValue,
+        reason,
+      };
+    })
+  );
+
+  return flagged.filter((r) => r !== null);
+}
+
 export const getSellRecommendations = query({
   args: {
     accountSlug: v.union(v.string(), v.null()),
@@ -620,105 +712,83 @@ export const getSellRecommendations = query({
       );
       if (cached !== null) return cached as SellRecoRow[];
     }
-    const LOOKBACK_DAYS = 90;
-    // utilizationPct below is a 0–100 percent, so the threshold is 25(%), NOT 0.25.
-    // Was 0.25 → `utilizationPct > 0.25` was true for any item with >0.25% util,
-    // so the low-demand filter never fired and young low-demand items were missed.
-    const UTIL_THRESHOLD = 25;
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 90);
+    const reservations = await ctx.db.query("reservations")
+      .withIndex("by_start_date", q => q.gte("start_date", cutoff.toISOString().slice(0,10))).collect();
+    const items = await ctx.db.query("items").collect();
+    return computeSellRecommendations({ reservations, items }, accountSlug, name =>
+      ctx.db.query("pricing_catalog").withIndex("by_name", q => q.eq("item_name_canonical", name)).first());
 
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - LOOKBACK_DAYS);
-    const cutoffStr = cutoff.toISOString().slice(0, 10);
-
-    let reservations = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
-      .collect();
-    if (accountSlug) {
-      reservations = reservations.filter((r) => r.account_slug === accountSlug);
-    }
-
-    const allItems = await ctx.db.query("items").collect();
-    const activeGroups = allItems.filter((i) => i.status === "active" && !i.is_marketing_only);
-    const sellCanonSet = new Set<string>(activeGroups.map((i) => i.name_canonical));
-
-    // Build rental-days per canonical name from LLM-resolved + bundle-expanded
-    // items only. Strict id-based match (no substring fuzz, no A7-II↔A7-III
-    // confusion). Qty multiplied through so 2× per reservation counts twice.
-    const rentalDaysMap = new Map<string, number>();
-    for (const r of reservations) {
-      const items = readResolverItems(r);
-      for (const x of items) {
-        if (!sellCanonSet.has(x.item_name_canonical)) continue;
-        rentalDaysMap.set(
-          x.item_name_canonical,
-          (rentalDaysMap.get(x.item_name_canonical) ?? 0) + (r.duration_days ?? 0) * x.qty,
-        );
-      }
-    }
-
-    // Group by name_canonical — multiple unit rows collapse to one recommendation
-    type GroupEntry = {
-      representative_id: string;
-      name_canonical: string;
-      total_qty: number;
-      earliest_created_at: number;
-    };
-    const groups = new Map<string, GroupEntry>();
-    for (const i of allItems) {
-      if (i.status !== "active" || i.is_marketing_only) continue;
-      const existing = groups.get(i.name_canonical);
-      if (!existing) {
-        groups.set(i.name_canonical, {
-          representative_id: i._id,
-          name_canonical: i.name_canonical,
-          total_qty: i.qty,
-          earliest_created_at: i.created_at,
-        });
-      } else {
-        existing.total_qty += i.qty;
-        if (i.created_at < existing.earliest_created_at) {
-          existing.earliest_created_at = i.created_at;
-        }
-      }
-    }
-
-    const flagged = await Promise.all(
-      Array.from(groups.values()).map(async (g) => {
-        const rentalDays = rentalDaysMap.get(g.name_canonical) ?? 0;
-        const qty = g.total_qty ?? 1;
-        const utilizationPct = LOOKBACK_DAYS > 0 && qty > 0 ? Math.min(100, (rentalDays / (qty * LOOKBACK_DAYS)) * 100) : 0;
-        const ageMonths =
-          (Date.now() - g.earliest_created_at) / (1000 * 60 * 60 * 24 * 30);
-
-        if (utilizationPct > UTIL_THRESHOLD && ageMonths < 24) return null;
-
-        const priceRow = await ctx.db
-          .query("pricing_catalog")
-          .withIndex("by_name", (q) => q.eq("item_name_canonical", g.name_canonical))
-          .first();
-        const estResaleValue = priceRow ? priceRow.daily_price_min * 30 : null;
-        const reason = utilizationPct <= UTIL_THRESHOLD ? "Low demand" : "High age";
-
-        return {
-          itemId: g.representative_id,
-          name: shortItemName(g),
-          qty: g.total_qty,
-          utilizationPct,
-          ageMonths,
-          estResaleValue,
-          reason,
-        };
-      })
-    );
-
-    return flagged.filter((r) => r !== null);
   },
 });
 
 /**
  * W17 Price Recommendations - demand-signal based price suggestions
  */
+export function computePriceRecommendations(input: PricingAnalyticsInputs, accountSlug: string | null, now = Date.now()) {
+  const LOOKBACK_DAYS = 30;
+  const cutoff = new Date(now);
+  cutoff.setDate(cutoff.getDate() - LOOKBACK_DAYS);
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+  let reservations = startDateWindow(input.reservations, cutoffStr);
+  if (accountSlug) {
+    reservations = reservations.filter((r) => r.account_slug === accountSlug);
+  }
+
+  // Count bookings per CANONICAL item name. Was keyed on the RAW Hygglo
+  // item_name but looked up below by item_name_canonical → the lookup almost
+  // always returned 0, so nearly every item was told to "cut price 10%".
+  // readResolverItems resolves raw listings → canonical (bundle-expanded),
+  // exactly like getSellRecommendations. One rental counts once per item.
+  const freqMap = new Map<string, number>();
+  for (const r of reservations) {
+    const seen = new Set<string>();
+    for (const x of readResolverItems(r)) {
+      if (seen.has(x.item_name_canonical)) continue;
+      seen.add(x.item_name_canonical);
+      freqMap.set(x.item_name_canonical, (freqMap.get(x.item_name_canonical) ?? 0) + 1);
+    }
+  }
+
+  const allPricingRows = input.pricing;
+
+  // BF-01: deduplicate — one row per name_canonical, keep highest updated_at
+  const bestByName = new Map<string, typeof allPricingRows[0]>();
+  for (const p of allPricingRows) {
+    if (p.is_bundle || p.marketing_only) continue;
+    const existing = bestByName.get(p.item_name_canonical);
+    if (!existing || p.created_at > existing.created_at) {
+      bestByName.set(p.item_name_canonical, p);
+    }
+  }
+
+  return Array.from(bestByName.values()).map((p) => {
+    const bookings = freqMap.get(p.item_name_canonical) ?? 0;
+    const currentRate = p.daily_price_min;
+    if (bookings >= 3) {
+      return {
+        itemId: p.item_id,
+        name: p.item_name_canonical,
+        currentRate,
+        suggestedRate: parseFloat((currentRate * 1.15).toFixed(2)),
+        pctChange: 15,
+        demandSignal: bookings + " bookings this month",
+      };
+    } else if (bookings <= 1) {
+      return {
+        itemId: p.item_id,
+        name: p.item_name_canonical,
+        currentRate,
+        suggestedRate: parseFloat((currentRate * 0.9).toFixed(2)),
+        pctChange: -10,
+        demandSignal: bookings === 0 ? "No bookings this month" : "Low demand",
+      };
+    }
+    return null;
+  }).filter((r): r is NonNullable<typeof r> => r !== null);
+}
+
 export const getPriceRecommendations = query({
   args: {
     accountSlug: v.union(v.string(), v.null()),
@@ -734,70 +804,12 @@ export const getPriceRecommendations = query({
       );
       if (cached !== null) return cached as PriceRecoRow[];
     }
-    const LOOKBACK_DAYS = 30;
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - LOOKBACK_DAYS);
-    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 30);
+    const reservations = await ctx.db.query("reservations")
+      .withIndex("by_start_date", q => q.gte("start_date", cutoff.toISOString().slice(0,10))).collect();
+    const pricing = await loadPricingRows(ctx);
+    return computePriceRecommendations({ reservations, pricing }, accountSlug);
 
-    let reservations = await ctx.db
-      .query("reservations")
-      .withIndex("by_start_date", (q) => q.gte("start_date", cutoffStr))
-      .collect();
-    if (accountSlug) {
-      reservations = reservations.filter((r) => r.account_slug === accountSlug);
-    }
-
-    // Count bookings per CANONICAL item name. Was keyed on the RAW Hygglo
-    // item_name but looked up below by item_name_canonical → the lookup almost
-    // always returned 0, so nearly every item was told to "cut price 10%".
-    // readResolverItems resolves raw listings → canonical (bundle-expanded),
-    // exactly like getSellRecommendations. One rental counts once per item.
-    const freqMap = new Map<string, number>();
-    for (const r of reservations) {
-      const seen = new Set<string>();
-      for (const x of readResolverItems(r)) {
-        if (seen.has(x.item_name_canonical)) continue;
-        seen.add(x.item_name_canonical);
-        freqMap.set(x.item_name_canonical, (freqMap.get(x.item_name_canonical) ?? 0) + 1);
-      }
-    }
-
-    const allPricingRows = await loadPricingRows(ctx);
-
-    // BF-01: deduplicate — one row per name_canonical, keep highest updated_at
-    const bestByName = new Map<string, typeof allPricingRows[0]>();
-    for (const p of allPricingRows) {
-      if (p.is_bundle || p.marketing_only) continue;
-      const existing = bestByName.get(p.item_name_canonical);
-      if (!existing || p.created_at > existing.created_at) {
-        bestByName.set(p.item_name_canonical, p);
-      }
-    }
-
-    return Array.from(bestByName.values()).map((p) => {
-      const bookings = freqMap.get(p.item_name_canonical) ?? 0;
-      const currentRate = p.daily_price_min;
-      if (bookings >= 3) {
-        return {
-          itemId: p.item_id,
-          name: p.item_name_canonical,
-          currentRate,
-          suggestedRate: parseFloat((currentRate * 1.15).toFixed(2)),
-          pctChange: 15,
-          demandSignal: bookings + " bookings this month",
-        };
-      } else if (bookings <= 1) {
-        return {
-          itemId: p.item_id,
-          name: p.item_name_canonical,
-          currentRate,
-          suggestedRate: parseFloat((currentRate * 0.9).toFixed(2)),
-          pctChange: -10,
-          demandSignal: bookings === 0 ? "No bookings this month" : "Low demand",
-        };
-      }
-      return null;
-    }).filter((r): r is NonNullable<typeof r> => r !== null);
   },
 });
 

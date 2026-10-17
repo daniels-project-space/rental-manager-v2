@@ -2790,6 +2790,76 @@ function readResolverItems(r: {
   }));
 }
 
+export function computeRentalVolumeByCategory(window: Awaited<ReturnType<typeof loadRentalVolumeWindow>>, effectiveDays: number) {
+  const cutoffStr = window.cutoffStr;
+  const entries = aggregateKindEntries(window);
+
+  // Pre-truncation totals.
+  const totals = {
+    count: entries.reduce((s, e) => s + e.count, 0),
+    revenue: Math.round(entries.reduce((s, e) => s + e.revenue, 0) * 100) / 100,
+  };
+
+  // Phase 6 — extract `unknown` to its own "Unresolved" slice. Sits OUTSIDE
+  // the top-6/Other split below.
+  let unresolvedEntry: typeof entries[number] | null = null;
+  let topPool = entries;
+  const idx = entries.findIndex((e) => e.kind === "unknown");
+  if (idx >= 0) {
+    const e = entries[idx];
+    if (e.revenue > 0 || e.count > 0) {
+      unresolvedEntry = { ...e, label: "Unresolved" };
+    }
+    topPool = entries.filter((_, i) => i !== idx);
+  }
+
+  // Top 6 + Other.
+  const top = topPool.slice(0, 6);
+  const rest = topPool.slice(6);
+  const slices: Array<{
+    kind: string;
+    label: string;
+    count: number;
+    revenue: number;
+    color: string;
+  }> = top.map((e, i) => ({
+    kind: e.kind,
+    label: e.label,
+    count: e.count,
+    revenue: Math.round(e.revenue * 100) / 100,
+    color: CATEGORY_PALETTE[i] ?? OTHER_COLOR,
+  }));
+  if (rest.length > 0) {
+    const otherCount = rest.reduce((s, e) => s + e.count, 0);
+    const otherRevenue = rest.reduce((s, e) => s + e.revenue, 0);
+    if (otherCount > 0) {
+      slices.push({
+        kind: "other",
+        label: "Other",
+        count: otherCount,
+        revenue: Math.round(otherRevenue * 100) / 100,
+        color: OTHER_COLOR,
+      });
+    }
+  }
+  if (unresolvedEntry && (unresolvedEntry.revenue > 0 || unresolvedEntry.count > 0)) {
+    slices.push({
+      kind: "unknown",
+      label: "Unresolved",
+      count: unresolvedEntry.count,
+      revenue: Math.round(unresolvedEntry.revenue * 100) / 100,
+      color: "#9ca3af",
+    });
+  }
+
+  return {
+    days: effectiveDays,
+    periodStart: cutoffStr,
+    slices,
+    totals,
+  };
+}
+
 export const getRentalVolumeByCategory = query({
   args: {
     accountSlug: v.union(v.string(), v.null()),
@@ -2810,73 +2880,8 @@ export const getRentalVolumeByCategory = query({
     }
     // Shared pipeline: reservation window + attribution → per-kind entries.
     const window = await loadRentalVolumeWindow(ctx, accountSlug, effectiveDays);
-    const cutoffStr = window.cutoffStr;
-    const entries = aggregateKindEntries(window);
+    return computeRentalVolumeByCategory(window, effectiveDays);
 
-    // Pre-truncation totals.
-    const totals = {
-      count: entries.reduce((s, e) => s + e.count, 0),
-      revenue: Math.round(entries.reduce((s, e) => s + e.revenue, 0) * 100) / 100,
-    };
-
-    // Phase 6 — extract `unknown` to its own "Unresolved" slice. Sits OUTSIDE
-    // the top-6/Other split below.
-    let unresolvedEntry: typeof entries[number] | null = null;
-    let topPool = entries;
-    const idx = entries.findIndex((e) => e.kind === "unknown");
-    if (idx >= 0) {
-      const e = entries[idx];
-      if (e.revenue > 0 || e.count > 0) {
-        unresolvedEntry = { ...e, label: "Unresolved" };
-      }
-      topPool = entries.filter((_, i) => i !== idx);
-    }
-
-    // Top 6 + Other.
-    const top = topPool.slice(0, 6);
-    const rest = topPool.slice(6);
-    const slices: Array<{
-      kind: string;
-      label: string;
-      count: number;
-      revenue: number;
-      color: string;
-    }> = top.map((e, i) => ({
-      kind: e.kind,
-      label: e.label,
-      count: e.count,
-      revenue: Math.round(e.revenue * 100) / 100,
-      color: CATEGORY_PALETTE[i] ?? OTHER_COLOR,
-    }));
-    if (rest.length > 0) {
-      const otherCount = rest.reduce((s, e) => s + e.count, 0);
-      const otherRevenue = rest.reduce((s, e) => s + e.revenue, 0);
-      if (otherCount > 0) {
-        slices.push({
-          kind: "other",
-          label: "Other",
-          count: otherCount,
-          revenue: Math.round(otherRevenue * 100) / 100,
-          color: OTHER_COLOR,
-        });
-      }
-    }
-    if (unresolvedEntry && (unresolvedEntry.revenue > 0 || unresolvedEntry.count > 0)) {
-      slices.push({
-        kind: "unknown",
-        label: "Unresolved",
-        count: unresolvedEntry.count,
-        revenue: Math.round(unresolvedEntry.revenue * 100) / 100,
-        color: "#9ca3af",
-      });
-    }
-
-    return {
-      days: effectiveDays,
-      periodStart: cutoffStr,
-      slices,
-      totals,
-    };
   },
 });
 
