@@ -64,6 +64,7 @@ import { v } from "convex/values";
 import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
 import { currentDraftApproval, currentDraftReview, draftContextKey, sameDraftApproval } from "./lib/draft_review";
 import { replyStockWindow, replyStockWindowEnvelope, type ReplyStockWindow } from "./lib/reply_stock_dates";
+import { loadReplyQueueRequestRows } from "./lib/reply_queue_requests";
 import { replyPartitionKey, compareReplyQueue } from "./lib/reply_queue_partitions";
 import type { ResolvableRes } from "./lib/reservations/itemUnits";
 import { loadReservationsForStockWindow, loadStockSources, resolveStockItem, stockForRentalItem, type StockDateWindow } from "./lib/renter_stock";
@@ -1030,41 +1031,9 @@ export const getReplyQueue = query({
       if (!prev || c._creationTime < prev._creationTime)
         convByThread.set(c.thread_id, c);
     }
-    // Pass 2 only emits requests whose creation or latest conversation is
-    // inside this queue window. Index that request set by source creation time;
-    // recent conversation reservations are also recovered by the point reads
-    // below, so historical REQUEST rows never need a full-table sweep.
-    const [stepByCreatedAt, actionByCreatedAt, recentlyInserted] = await Promise.all([
-      ctx.db
-        .query("reservations")
-        .withIndex("by_order_step_created_at", (q) =>
-          q.eq("order_step", "REQUEST").gte("created_at", cutoff),
-        )
-        .collect(),
-      ctx.db
-        .query("reservations")
-        .withIndex("by_awaiting_owner_action_created_at", (q) =>
-          q.eq("awaiting_owner_action", true).gte("created_at", cutoff),
-        )
-        .collect(),
-      // Preserve late-imported requests: their source created_at may be old,
-      // while Convex's immutable creation time proves they entered this live
-      // database inside the queue window.
-      ctx.db
-        .query("reservations")
-        .withIndex("by_creation_time", (q) => q.gte("_creationTime", cutoff))
-        .collect(),
-    ]);
-    const dedupeReservations = (rows: typeof stepByCreatedAt) =>
-      [...new Map(rows.map((row) => [String(row._id), row])).values()];
-    const byStep = dedupeReservations([
-      ...stepByCreatedAt,
-      ...recentlyInserted.filter((row) => row.order_step === "REQUEST"),
-    ]);
-    const byAction = dedupeReservations([
-      ...actionByCreatedAt,
-      ...recentlyInserted.filter((row) => row.awaiting_owner_action === true),
-    ]);
+    // Source timestamps and immutable insertion timestamps both admit late
+    // requests. Equality indexes exclude unrelated recent reservation imports.
+    const { byStep, byAction } = await loadReplyQueueRequestRows(ctx, cutoff);
     // No stock scan for an empty cohort batch. Each batch reads the shared
     // fleet once, including bookings from the other accounts in that batch.
     if (
