@@ -11,6 +11,7 @@
 
 import { readFileSync, statSync } from "node:fs";
 import { S3Client, PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { backupChecksum, verifyBackupHead } from "./backup-checksum.mjs";
 
 const BUCKET = "rental-manager-v2";
 
@@ -60,6 +61,7 @@ async function main() {
     console.error(`ERROR: cannot read local file ${localPath}: ${err.message}`);
     process.exit(1);
   }
+  const checksum = backupChecksum(fileBody);
 
   // Upload
   console.log(`Uploading ${localPath} (${localBytes} bytes) → s3://${BUCKET}/${r2Key}`);
@@ -70,6 +72,10 @@ async function main() {
         Key: r2Key,
         Body: fileBody,
         ContentLength: localBytes,
+        // R2 validates Content-MD5 for this single PutObject. Keep a SHA-256
+        // source receipt alongside it, verified by the existing HeadObject.
+        ContentMD5: checksum.contentMD5,
+        Metadata: { sha256: checksum.sha256 },
       })
     );
   } catch (err) {
@@ -99,8 +105,10 @@ async function main() {
     );
     process.exit(1);
   }
+  verifyBackupHead(head, checksum);
 
   console.log(`OK: verified ${remoteBytes} bytes at s3://${BUCKET}/${r2Key}`);
+  console.log(JSON.stringify({ bucket: BUCKET, key: r2Key, bytes: remoteBytes, sha256: checksum.sha256, contentMD5: checksum.contentMD5, etag: head.ETag, sourceHashMetadataVerified: true }));
 }
 
 main().catch((err) => {
