@@ -2,42 +2,63 @@ name: Backup Convex → R2
 
 on:
   workflow_dispatch:
+    inputs:
+      verify_storage_only:
+        description: Resolve current vault storage credentials without exporting or uploading data
+        type: boolean
+        default: false
   schedule:
     # Daily at 03:17 UTC (off-peak, avoids :00 thundering-herd)
     - cron: '17 3 * * *'
+
+concurrency:
+  group: rental-backup-production
+  cancel-in-progress: false
 
 jobs:
   backup-convex:
     name: Export Convex and upload to R2
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate the current backup credential source before exporting
+        run: node --input-type=module -e 'import { loadBackupStorage } from "./scripts/backup-to-r2.mjs"; await loadBackupStorage(); console.log("Current application backup credentials resolved; this preflight did not export or upload data.");'
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+
       - name: Setup pnpm
+        if: ${{ !inputs.verify_storage_only }}
         uses: pnpm/action-setup@v4
         with:
           version: 11.5.1
 
       - name: Setup Node 22
+        if: ${{ !inputs.verify_storage_only }}
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'pnpm'
 
       - name: Install dependencies
+        if: ${{ !inputs.verify_storage_only }}
         run: pnpm install --frozen-lockfile
 
       - name: Export Convex snapshot (hearty-oyster-600)
+        if: ${{ !inputs.verify_storage_only }}
         # Pass the deploy key via env (it contains a `|` that breaks inline shell assignment).
-        run: npx convex export --path /tmp/convex.zip
+        run: node node_modules/convex/bin/main.js export --path /tmp/convex.zip
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
 
       - name: Upload snapshot to R2
-        run: node scripts/ci-r2-upload.mjs /tmp/convex.zip "backups/rmv2/$(date +%Y%m%d)/convex-hearty-oyster-600.zip"
+        if: ${{ !inputs.verify_storage_only }}
+        run: node scripts/backup-to-r2.mjs /tmp/convex.zip "backups/rmv2/$(date +%Y%m%d)/convex-hearty-oyster-600.zip"
         env:
-          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+
+      - name: Remove the exported runner snapshot
+        if: always() && !inputs.verify_storage_only
+        run: rm -f /tmp/convex.zip
