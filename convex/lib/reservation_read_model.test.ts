@@ -140,6 +140,51 @@ describe("full lossless reservation read model", () => {
     expect(await ctx.db.get("r2" as any)).toEqual(f.tables.reservations[1]);
     await f.db.delete("r2"); await syncReservationReadRecord(f.context(), "r2" as any); expect(await useReservationReadModel(f.context()).db.get("r2" as any)).toBeNull();
   });
+  it("reuses complete cohort rows only after proving a unique order identity", async () => {
+    const f = fixture(); await prepare(f); const ctx = useReservationReadModel(f.context());
+    const cohort = await ctx.db.query("reservations").withIndex("by_status", q => q.eq("status", "ongoing")).collect();
+    cohort[0].notes = "caller mutation"; f.reads.length = 0;
+    const first = await ctx.db.query("reservations").withIndex("by_hygglo_order_id", q => q.eq("hygglo_order_id", "order2")).first();
+    expect(first).toEqual(f.tables.reservations[1]);
+    expect(f.reads).toEqual(["reservation_order_presence:by_order"]);
+    first!.notes = "another caller mutation"; f.reads.length = 0;
+    expect(await ctx.db.get("r2" as any)).toEqual(f.tables.reservations[1]);
+    expect(await ctx.db.query("reservations").withIndex("by_hygglo_order_id", q => q.eq("hygglo_order_id", "order2")).first()).toEqual(f.tables.reservations[1]);
+    expect(f.reads).toEqual([]);
+  });
+  it("never treats a partial cohort as proof of the first duplicate", async () => {
+    const f = fixture(); await prepare(f); const ctx = useReservationReadModel(f.context());
+    await ctx.db.query("reservations").withIndex("by_status", q => q.eq("status", "cancelled")).collect(); f.reads.length = 0;
+    expect(await ctx.db.query("reservations").withIndex("by_hygglo_order_id", q => q.eq("hygglo_order_id", "order1")).first()).toEqual(f.tables.reservations[0]);
+    expect(f.reads).toEqual(["reservation_order_presence:by_order", "reservation_read_records:by_hygglo_order_id"]);
+    expect(await ctx.db.query("reservations").withIndex("by_hygglo_order_id", q => q.eq("hygglo_order_id", "order1")).order("desc").first()).toEqual(f.tables.reservations[2]);
+  });
+  it("coalesces identical first reads and keeps missing results independent of get", async () => {
+    const f = fixture(); await prepare(f); const ctx = useReservationReadModel(f.context()); f.reads.length = 0;
+    const get = () => ctx.db.query("reservations").withIndex("by_hygglo_order_id", q => q.eq("hygglo_order_id", "order2")).first();
+    const [a, b] = await Promise.all([get(), get()]); expect(a).toEqual(b); expect(a).not.toBe(b);
+    expect(f.reads.filter(r => r === "reservation_read_records:by_hygglo_order_id")).toHaveLength(1);
+    expect(await ctx.db.query("reservations").withIndex("by_hygglo_order_id", q => q.eq("hygglo_order_id", "absent")).first()).toBeNull();
+    expect(await ctx.db.get("r1" as any)).toEqual(f.tables.reservations[0]);
+  });
+  it("falls back if a presence key is unavailable, and isolates request snapshots", async () => {
+    const f = fixture(); await prepare(f); const ctx = useReservationReadModel(f.context());
+    await ctx.db.query("reservations").collect(); f.tables.reservation_order_presence.length = 0; f.reads.length = 0;
+    expect(await ctx.db.query("reservations").withIndex("by_hygglo_order_id", q => q.eq("hygglo_order_id", "order2")).first()).toEqual(f.tables.reservations[1]);
+    expect(f.reads).toContain("reservation_read_records:by_hygglo_order_id");
+    await patchRevenueReservation(f.context(), "r2" as any, { notes: "new committed snapshot" });
+    const next = useReservationReadModel(f.context());
+    expect(await next.db.get("r2" as any)).toEqual(f.tables.reservations[1]);
+  });
+  it("does not reuse rows for bounded order ranges or disabled models", async () => {
+    const f = fixture(); await prepare(f); const ctx = useReservationReadModel(f.context());
+    await ctx.db.query("reservations").collect(); f.reads.length = 0;
+    expect(await ctx.db.query("reservations").withIndex("by_hygglo_order_id", q => q.eq("hygglo_order_id", "order1").gt("_creationTime", 15)).first()).toEqual(f.tables.reservations[2]);
+    expect(f.reads).not.toContain("reservation_order_presence:by_order");
+    f.tables.reservation_read_gate[0].enabled = false; f.reads.length = 0;
+    expect(await useReservationReadModel(f.context()).db.query("reservations").withIndex("by_hygglo_order_id", q => q.eq("hygglo_order_id", "order2")).first()).toEqual(f.tables.reservations[1]);
+    expect(f.reads).toContain("reservations:by_hygglo_order_id");
+  });
   it("requires strict prepared reads and preserves existing context identity", async () => {
     const f = fixture(); const original = f.context(); expect(useReservationReadModel(original)).toBe(original);
     await expect(preparedReservationReadContext(f.context()).db.query("reservations").collect()).rejects.toThrow("unavailable");
