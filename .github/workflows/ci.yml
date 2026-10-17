@@ -44,7 +44,7 @@ jobs:
       - name: Check deployment dependency boundaries and publisher contracts
         run: |
           node scripts/deployment-inputs.mjs
-          node --test scripts/deployment-impact.test.mjs scripts/backend-publisher.test.mjs scripts/backup-to-r2.test.mjs
+          node --test scripts/deployment-impact.test.mjs scripts/backend-publisher.test.mjs .github/scripts/backup-to-r2.test.mjs
       - name: Classify changed deployment inputs
         id: impact
         env:

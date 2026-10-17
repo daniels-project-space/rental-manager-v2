@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Validate the current backup credential source before exporting
-        run: node --input-type=module -e 'import { loadBackupStorage } from "./scripts/backup-to-r2.mjs"; await loadBackupStorage(); console.log("Current application backup credentials resolved; this preflight did not export or upload data.");'
+        run: node --input-type=module -e 'import { loadBackupStorage } from "./.github/scripts/backup-to-r2.mjs"; await loadBackupStorage(); console.log("Current application backup credentials resolved; this preflight did not export or upload data.");'
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
 
@@ -55,7 +55,7 @@ jobs:
 
       - name: Upload snapshot to R2
         if: ${{ !inputs.verify_storage_only }}
-        run: node scripts/backup-to-r2.mjs /tmp/convex.zip "backups/rmv2/$(date +%Y%m%d)/convex-hearty-oyster-600.zip"
+        run: node .github/scripts/backup-to-r2.mjs /tmp/convex.zip "backups/rmv2/$(date +%Y%m%d)/convex-hearty-oyster-600.zip"
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
 

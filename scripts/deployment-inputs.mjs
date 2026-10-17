@@ -10,7 +10,10 @@ export const isNonRuntime = file => isTest(file) || /^(?:docs|graphify-out|\.ser
 const source = file => /\.[cm]?[jt]sx?$/.test(file) && !file.endsWith(".d.ts");
 const workerRoot = file => file.startsWith("src/trigger/") && source(file) && !isTest(file);
 const backendRoot = file => file.startsWith("convex/") && source(file) && !isTest(file);
-const specialFiles = new Set(["package.json", "pnpm-lock.yaml", "tsconfig.json", ".npmrc", "pnpm-workspace.yaml", "scripts/deployment-inputs.mjs", "scripts/deployment-impact.mjs"]);
+// Package/compiler settings affect every runtime. Release-control scripts are
+// traced through their actual build/publisher consumers; they are not worker
+// application inputs merely because CI executes them.
+const specialFiles = new Set(["package.json", "pnpm-lock.yaml", "tsconfig.json", ".npmrc", "pnpm-workspace.yaml"]);
 
 /** Derive this repository's boundaries; no hand-maintained list of worker
  * helpers. Type-only imports are checked by CI, and do not emit website code. */
