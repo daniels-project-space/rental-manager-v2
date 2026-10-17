@@ -86,3 +86,24 @@ cadence, latency, recovery and publication gates. Keep the approved team blockin
 budget and pause policy. Use Git deployments, inspect their exact source and
 alias, and avoid duplicate CLI builds. Report observed compute separately from
 estimates or realized billing savings.
+
+## Qualified operational checks, 17 October 2026
+
+- An actual backend-only release skipped Vercel installation and compilation,
+  while CI published the new backend and retained the unchanged website artifact.
+- The website build path also completed while reusing an unchanged served
+  backend. Both canonical alias and actual backend fingerprint were checked.
+- A normal hourly poll completed in 30.939 seconds of provider-reported compute,
+  compared with 45.383 seconds for the preceding hourly run. All three accounts
+  succeeded with similar message counts; naturally arriving traffic differs.
+  This observation is not a universal runtime or invoice saving guarantee.
+- The recovered daily backup was read back from its private R2 object. Its
+  complete SHA-256 matched the source receipt and all ZIP entries passed CRC
+  validation. Runner export cleanup succeeded; no backup file was retained on
+  the VPS. Credential-only preflight did not export or upload data.
+- The three guarded VPS maintenance timers were active. The approved team
+  blocking budget and pause threshold were read back unchanged.
+
+Local contracts include the installed SDK's actual serialized request headers
+and the current project manifest, alongside offline production-data fixtures.
+Operator acceptance still requires native provider and object evidence.
