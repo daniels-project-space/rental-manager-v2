@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import type { MutationCtx } from "../_generated/server";
+import { sharedStockImplementation } from "./shared_stock_version";
 import { STOCK_INPUT_KEY, stockStaticTables, captureStockInputs, loadStockInputCache, withSourceStockInputs, withPreparedStockInputs, type StockInputSnapshot } from "./stock_input_cache";
 import { cacheByteDigest, cacheValueDigest, canonicalCacheJson, packCacheValue } from "./lossless_cache_codec";
 import { loadReservationsForStockWindow, loadStockSources } from "./renter_stock";
@@ -40,7 +41,7 @@ function fixture(input?: StockInputSnapshot) {
 }
 async function ready(f: ReturnType<typeof fixture>, enabled = true) {
   const inputs = await captureStockInputs(f.context()), data = packCacheValue(inputs);
-  f.tables.stock_input_cache_state.push({ _id: "state", _creationTime: 1, key: STOCK_INPUT_KEY, revision: 1, ready_revision: 1, enabled, queued: false, job_token: 0, attempts: 0, updated_at: 1 });
+  f.tables.stock_input_cache_state.push({ _id: "state", _creationTime: 1, key: STOCK_INPUT_KEY, implementation: await sharedStockImplementation(), revision: 1, ready_revision: 1, enabled, queued: false, job_token: 0, attempts: 0, updated_at: 1 });
   f.tables.stock_input_cache_blobs.push({ _id: "blob", _creationTime: 1, key: STOCK_INPUT_KEY, version: 1, revision: 1, data, sha256: await cacheValueDigest(inputs), packed_sha256: await cacheByteDigest(data) });
   return inputs;
 }

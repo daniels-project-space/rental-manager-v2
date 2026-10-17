@@ -2,6 +2,7 @@ import { anyApi } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { QueryCtx, MutationCtx } from "../_generated/server";
 import { cacheByteDigest, canonicalCacheJson, unpackCacheValue } from "./lossless_cache_codec";
+import { sharedStockImplementation } from "./shared_stock_version";
 
 export const STOCK_INPUT_KEY = "inputs:v1" as const;
 export const stockStaticTables = ["items", "hygglo_product_index", "listing_resolution_override", "insurance_claims", "owner_unavailability", "vacation_periods"] as const;
@@ -46,6 +47,7 @@ export function invalidateStockWhen(ctx: MutationCtx, changes: () => boolean | P
     await ctx.db.patch(state._id, { revision: state.revision + 1, updated_at: Date.now(),
       ...(queue ? { queued: true, job_token: token, attempts: 0, error: undefined } : {}) });
     reads.delete(ctx);
+    states.delete(ctx);
     if (queue) await ctx.scheduler.runAfter(0, anyApi.stock_input_cache_admin.refresh, { token });
     current.dirty = true;
   });
@@ -77,8 +79,19 @@ export async function beforeReservationStockDelete(ctx: MutationCtx, id: Reserva
 }
 
 const reads = new WeakMap<object, Promise<StockInputSnapshot | null>>();
+const states = new WeakMap<object, Promise<Doc<"stock_input_cache_state"> | null>>();
 const prepared = new WeakSet<object>();
 const sourceOnly = new WeakSet<object>();
+/** The refresh query just read these complete inputs in this transaction. */
+export async function withCapturedStockInputs<T>(ctx: QueryCtx, inputs: StockInputSnapshot, work: () => Promise<T>): Promise<T> {
+  const previous = reads.get(ctx), wasSource = sourceOnly.has(ctx);
+  sourceOnly.delete(ctx); reads.set(ctx, Promise.resolve(inputs));
+  try { return await work(); }
+  finally {
+    if (previous) reads.set(ctx, previous); else reads.delete(ctx);
+    if (wasSource) sourceOnly.add(ctx);
+  }
+}
 export async function withSourceStockInputs<T>(ctx: QueryCtx, work: () => Promise<T>): Promise<T> {
   sourceOnly.add(ctx); reads.delete(ctx); return work();
 }
@@ -87,14 +100,23 @@ export async function withPreparedStockInputs<T>(ctx: QueryCtx, work: () => Prom
   await loadStockInputCache(ctx);
   return work();
 }
+export function loadStockInputCacheState(ctx: QueryCtx): Promise<Doc<"stock_input_cache_state"> | null> {
+  const existing = states.get(ctx);
+  if (existing) return existing;
+  const pending = ctx.db.query("stock_input_cache_state")
+    .withIndex("by_key", (q) => q.eq("key", STOCK_INPUT_KEY))
+    .unique();
+  states.set(ctx, pending);
+  return pending;
+}
 export function loadStockInputCache(ctx: QueryCtx): Promise<StockInputSnapshot | null> {
   if (sourceOnly.has(ctx)) return Promise.resolve(null);
   const existing = reads.get(ctx); if (existing) return existing;
   const pending = (async () => {
     const strict = prepared.has(ctx);
     try {
-      const state = await ctx.db.query("stock_input_cache_state").withIndex("by_key", (q) => q.eq("key", STOCK_INPUT_KEY)).unique();
-      if (!state || (!state.enabled && !strict) || state.ready_revision !== state.revision) throw Error("Stock inputs are not current");
+      const state = await loadStockInputCacheState(ctx);
+      if (!state || (!state.enabled && !strict) || state.ready_revision !== state.revision || state.implementation !== await sharedStockImplementation()) throw Error("Stock inputs are not current");
       const blob = await ctx.db.query("stock_input_cache_blobs").withIndex("by_key", (q) => q.eq("key", STOCK_INPUT_KEY)).unique();
       if (!blob || blob.version !== 1 || blob.revision !== state.revision || await cacheByteDigest(blob.data) !== blob.packed_sha256) throw Error("Stock input artifact mismatch");
       const value = unpackCacheValue(blob.data) as unknown as StockInputSnapshot;

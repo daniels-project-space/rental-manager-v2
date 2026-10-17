@@ -460,10 +460,15 @@ const operationalSchema = defineSchema({
   }).index("by_key", ["key"]),
   stock_input_cache_state: defineTable({
     key: v.literal("inputs:v1"), revision: v.number(), ready_revision: v.optional(v.number()),
+    implementation: v.optional(v.string()), shared_error: v.optional(v.string()), shared_failed_implementation: v.optional(v.string()), shared_failed_revision: v.optional(v.number()),
     enabled: v.boolean(), queued: v.boolean(), job_token: v.number(), attempts: v.number(), error: v.optional(v.string()), updated_at: v.number(),
   }).index("by_key", ["key"]),
   stock_input_cache_blobs: defineTable({
     key: v.literal("inputs:v1"), version: v.literal(1), revision: v.number(), data: v.bytes(), sha256: v.string(), packed_sha256: v.string(),
+  }).index("by_key", ["key"]),
+  stock_shared_snapshot_cache: defineTable({
+    key: v.literal("shared-stock:v2"), version: v.literal(2), revision: v.number(), implementation: v.string(), enabled: v.boolean(),
+    data: v.bytes(), sha256: v.string(), packed_sha256: v.string(), generated_at: v.number(),
   }).index("by_key", ["key"]),
   catalogue_cache_state: defineTable({
     key: v.literal("dbcinema:v1"), revision: v.number(), ready_revision: v.optional(v.number()),

@@ -37,6 +37,7 @@ jobs:
         run: |
           node scripts/check-owner-boundary.mjs
           node scripts/check-product-projection.mjs
+          node scripts/check-shared-stock-implementation.mjs
       - name: Typecheck (script if defined, else tsc --noEmit)
         run: |
           if node -e "process.exit(require('./package.json').scripts?.typecheck?0:1)"; then

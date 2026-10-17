@@ -6,18 +6,48 @@ import {getCustodyReconciliationIds} from "./hygglo";
 import {update as updateClaim, list as listClaims, advanceStage as advanceClaim} from "./insurance_claims";
 import {repairHeldUnits} from "./lib/availability";
 import {loadStockSources,stockForItem} from "./lib/renter_stock";
+import {sharedStockImplementation} from "./lib/shared_stock_version";
+import {cacheByteDigest,packCacheValue} from "./lib/lossless_cache_codec";
 import {getFunctionName} from "convex/server";
 import {londonStockInstant} from "./lib/confirmed_schedule";
 const ms=(date:string)=>londonStockInstant(date,"end");
 function fixture(){
  const items:any[]=[{_id:"body",name_canonical:"Sony FX3",kind:"camera_body",status:"active",is_marketing_only:false,qty:3}];
- const tables:any={items,reservations:[],hygglo_product_index:[],listing_resolution_override:[],insurance_claims:[],owner_unavailability:[],vacation_periods:[]};
+ const tables:any={items,reservations:[],hygglo_product_index:[],listing_resolution_override:[],insurance_claims:[],owner_unavailability:[],vacation_periods:[],stock_input_cache_state:[],stock_shared_snapshot_cache:[],storefront_checkout_stock:[]};
  const reads:string[]=[];const db:any={query:(table:string)=>{reads.push(table);let rows=tables[table]??[];const q:any={withIndex:(_:string,fn:any)=>{const s:any={eq:(k:string,v:any)=>{rows=rows.filter((r:any)=>r[k]===v);return s}};fn(s);return q},collect:async()=>rows,first:async()=>rows[0]??null,unique:async()=>{if(rows.length>1)throw Error("Duplicate fixture key");return rows[0]??null;}};return q}};
  const rental=(extra:any={})=>({_id:"booking",_creationTime:1,account_slug:"other-owned-account",status:"confirmed",start_date:"2027-01-01",end_date:"2027-01-02",resolved_items:[{item_id:"body",qty:1}],...extra});
  const run=async()=>((snapshot as any)._handler({db},{})).then((rows:any)=>rows[0]);return {tables,db,reads,rental,run};
 }
 afterEach(()=>{vi.unstubAllEnvs();vi.useRealTimers()});
 describe("actual private shared-stock snapshot",()=>{
+ it("serves the revision-matched materialized stock view without loading source tables",async()=>{
+  vi.stubEnv("REQUIRE_WEBSITE_STOCK_HOLDS_SYNC","false");
+  const f=fixture();const checkedAt=1;
+  const value={version:2,turnaroundBufferMinutes:60,checkedAt,units:[{masterItemId:"body",active:true,quantityOwned:3,windows:[]}]};
+  const data=packCacheValue(value);
+  f.tables.stock_input_cache_state.push({_id:"state",_creationTime:1,key:"inputs:v1",implementation:await sharedStockImplementation(),revision:7,ready_revision:7,enabled:true,queued:false,job_token:4,attempts:0,updated_at:1});
+  f.tables.stock_shared_snapshot_cache.push({_id:"shared",_creationTime:1,key:"shared-stock:v2",version:2,implementation:await sharedStockImplementation(),enabled:true,revision:7,data,sha256:"unused-by-reader",packed_sha256:await cacheByteDigest(data),generated_at:1});
+  const result=await f.run();
+  expect(result.units).toEqual(value.units);expect(result.checkedAt).toBeGreaterThan(checkedAt);
+  expect(f.reads).toEqual(["stock_input_cache_state","stock_shared_snapshot_cache"]);
+ });
+ it("falls back to live inputs when the materialized revision is stale",async()=>{
+  vi.stubEnv("REQUIRE_WEBSITE_STOCK_HOLDS_SYNC","false");
+  const f=fixture();f.tables.reservations=[f.rental()];
+  const data=packCacheValue({version:2,turnaroundBufferMinutes:60,checkedAt:1,units:[{masterItemId:"body",active:true,quantityOwned:99,windows:[]}]});
+  f.tables.stock_input_cache_state.push({_id:"state",_creationTime:1,key:"inputs:v1",implementation:await sharedStockImplementation(),revision:8,ready_revision:8,enabled:true,queued:false,job_token:4,attempts:0,updated_at:1});
+  f.tables.stock_shared_snapshot_cache.push({_id:"shared",_creationTime:1,key:"shared-stock:v2",version:2,implementation:await sharedStockImplementation(),enabled:true,revision:7,data,sha256:"unused-by-reader",packed_sha256:await cacheByteDigest(data),generated_at:1});
+  const result=await f.run();
+  expect(result.units[0].quantityOwned).toBe(3);expect(f.reads).toContain("reservations");
+ });
+ it("keeps the checkout-hold freshness guard on materialized reads",async()=>{
+  vi.stubEnv("REQUIRE_WEBSITE_STOCK_HOLDS_SYNC","true");
+  const f=fixture();const value={version:2,turnaroundBufferMinutes:60,checkedAt:1,units:[]};const data=packCacheValue(value);
+  f.tables.stock_input_cache_state.push({_id:"state",_creationTime:1,key:"inputs:v1",implementation:await sharedStockImplementation(),revision:7,ready_revision:7,enabled:true,queued:false,job_token:4,attempts:0,updated_at:1});
+  f.tables.stock_shared_snapshot_cache.push({_id:"shared",_creationTime:1,key:"shared-stock:v2",version:2,implementation:await sharedStockImplementation(),enabled:true,revision:7,data,sha256:"unused-by-reader",packed_sha256:await cacheByteDigest(data),generated_at:1});
+  f.tables.storefront_checkout_stock.push({key:"website",receivedAt:Date.now()-180_001,revision:1,rows:[]});
+  await expect(f.run()).rejects.toThrow("Website checkout stock snapshot needs refresh");
+ });
  it.each(["2026-08-22","2026-07-13"])("projects booked days when historical pickup contradicts return (%s)",async date=>{
   const f=fixture();const pickup=new Date(Date.parse(date+"T00:00Z")+86400000).toISOString().slice(0,10);
   const row=f.rental({order_step:"RETURNED",start_date:date,end_date:date,pickup_date:pickup,return_date:date});f.tables.reservations=[row];

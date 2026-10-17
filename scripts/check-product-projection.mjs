@@ -15,6 +15,8 @@ const checker = program.getTypeChecker();
 const failures = [], writers = [], reviewed = new Map();
 const projectionOwners = new Map([
   ["hygglo_products", "convex/lib/product_context.ts"],
+  ["hygglo_product_context", "convex/lib/product_context.ts"],
+  ["online_listings", "convex/lib/stock_listing_writes.ts"],
   ["reservations", "convex/lib/reservation_revenue.ts"],
   ["weekly_metrics", "convex/lib/weekly_input_cache.ts"],
   ["pricing_catalog", "convex/lib/pricing_input_cache.ts"],
