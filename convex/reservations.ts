@@ -1,4 +1,5 @@
 import { useReservationReadModel } from "./lib/reservation_read_queries";
+import { readFullInventory } from "./lib/inventory_read";
 
 import { patchRevenueReservation } from "./lib/reservation_revenue";
 import { loadCanonicalListingAllocation, reservedListingKeys } from "./lib/canonical_listing_allocation";
@@ -220,7 +221,7 @@ export const getDueReturns = query({
     // (listing_short_names keyed by account#product_id). No extra processing.
     const listingKeys = reservedListingKeys(candidates as ResolvableRes[]);
     const [unitInventory, overrideRows, shortRows, productIndexRows] = await Promise.all([
-      ctx.db.query("items").collect(),
+      readFullInventory(ctx),
       Promise.all(listingKeys.map(key => ctx.db.query("listing_resolution_override")
         .withIndex("by_account_product", q => q.eq("account_slug", key.account).eq("product_id", key.productId)).first()))
         .then(rows => rows.filter((row): row is NonNullable<typeof row> => row !== null)),

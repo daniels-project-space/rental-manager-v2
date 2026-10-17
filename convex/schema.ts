@@ -458,6 +458,13 @@ const operationalSchema = defineSchema({
   weekly_input_cache_blobs: defineTable({
     key: v.literal("recent:v1"), version: v.literal(1), revision: v.number(), covered_from: v.string(), data: v.bytes(), sha256: v.string(), packed_sha256: v.string(),
   }).index("by_key", ["key"]),
+  inventory_read_gate: defineTable({
+    key: v.literal("full:v1"), revision: v.number(), ready_revision: v.optional(v.number()), count: v.optional(v.number()),
+    enabled: v.boolean(), queued: v.boolean(), error: v.optional(v.string()),
+  }).index("by_key", ["key"]),
+  inventory_read_blob: defineTable({
+    key: v.literal("full:v1"), version: v.literal(1), revision: v.number(), data: v.bytes(), source_sha256: v.string(), packed_sha256: v.string(),
+  }).index("by_key", ["key"]),
   stock_input_cache_state: defineTable({
     key: v.literal("inputs:v1"), revision: v.number(), ready_revision: v.optional(v.number()),
     implementation: v.optional(v.string()), shared_error: v.optional(v.string()), shared_failed_implementation: v.optional(v.string()), shared_failed_revision: v.optional(v.number()),

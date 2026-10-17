@@ -81,8 +81,10 @@ describe("atomic BG30 catalogue correction", () => {
     };
     const writes: string[] = [];
     const db = {
+      normalizeId(table: string, id: string) { return rows[table]?.some(row => row._id === id) ? id : null; },
+      async get(id: string) { return structuredClone(Object.values(rows).flat().find(row => row._id === id) ?? null); },
       query(table: string) {
-        let selected = rows[table];
+        let selected = rows[table] ?? [];
         const query = { withIndex(_name: string, callback: any) { const index = { eq(key: string, value: unknown) { selected = selected.filter(row => row[key] === value); return index; } }; callback(index); return query; }, async take(n: number) { return selected.slice(0, n); }, async first() { return selected[0] ?? null; }, async unique() { if(selected.length>1)throw Error("Duplicate fixture key");return selected[0]??null; } };
         return query;
       },
