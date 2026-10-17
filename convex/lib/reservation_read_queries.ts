@@ -147,6 +147,7 @@ export function sourceReservationReadContext(ctx: QueryCtx): QueryCtx {
 export function preparedReservationReadContext(ctx: QueryCtx): QueryCtx {
   return useReservationReadModel({ ...ctx, db: originals.get(ctx.db) ?? ctx.db, [modeKey]: undefined } as ReadContext, true);
 }
+export function isReservationReadSourceContext(ctx: QueryCtx) { return (ctx as ReadContext)[modeKey] === "source"; }
 
 const presenceGates = new WeakMap<object, Promise<Awaited<ReturnType<typeof reservationReadGate>>>>();
 /** Boolean existence needs neither a complete record nor its compressed body. */
