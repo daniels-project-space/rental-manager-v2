@@ -148,6 +148,7 @@ export default defineConfig({
       "convex/lib/catalogue_read_cache.test.ts",
       "convex/lib/stock_input_cache.test.ts",
       "convex/lib/gantt_listing_inputs.test.ts",
+      "convex/lib/inventory_read.test.ts",
       "convex/lib/shared_stock_cache.test.ts",
       "convex/lib/weekly_input_cache.test.ts",
       "convex/lib/pricing_input_cache.test.ts",

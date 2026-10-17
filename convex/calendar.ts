@@ -1,4 +1,5 @@
 import { useReservationReadModel } from "./lib/reservation_read_queries";
+import { readFullInventory } from "./lib/inventory_read";
 import { loadCanonicalListingAllocation } from "./lib/canonical_listing_allocation";
 import { loadGanttListingInputs } from "./lib/gantt_listing_inputs";
 import { calendarClock, confirmedClock } from "./lib/confirmed_schedule";
@@ -1530,7 +1531,7 @@ export const getGanttWeek = query({
 
     // --- Items table: load all for fuzzy resolver + shared-blacklist guard ---
     type GanttItemDoc = { _id?: string; name_canonical?: string; name?: string; aliases?: string[]; image_url?: string; account_slug?: string; kind?: string };
-    const inventoryForGantt = await ctx.db.query("items").collect();
+    const inventoryForGantt = await readFullInventory(ctx);
     const allItems = inventoryForGantt as GanttItemDoc[];
     const sharedBlacklistGantt = buildSharedImageBlacklist(allItems);
     // Override-resolved item names per reservation (memoized) — Gantt rows key

@@ -1,4 +1,5 @@
 import { useReservationReadModel } from "./lib/reservation_read_queries";
+import { readFullInventory } from "./lib/inventory_read";
 import { websiteCaseView, type WebsiteCaseRow } from "./lib/websiteCases";
 import { loadHandoffReservations } from "./lib/handoff_reservations";
 import { listingDisplayName, shortItemName, shortListingTitle } from "./lib/item_display_name";
@@ -2632,7 +2633,7 @@ export const getNextRentals = query({
 
     // Build item-image lookup + shared-image blacklist once for this query.
     // Both feed the shared `buildItemTilesShared` helper (top of file).
-    const items = await ctx.db.query("items").collect();
+    const items = await readFullInventory(ctx);
     const itemImageById = new Map<string, { name: string; image_url: string | null }>();
     for (const it of items) {
       const id = (it as { item_id?: string }).item_id ?? (it._id as unknown as string);
@@ -2750,6 +2751,8 @@ export const getNextRentals = query({
     };
   },
 });
+
+export const __service_getNextRentals = internalQueryOf(getNextRentals);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Category Rental-Volume Pie widget — this-month deduped confirmed reservations

@@ -125,7 +125,7 @@ describe("bounded source custody recovery",()=>{
 describe("neutral claim closure",()=>{
  it("retains claim estimate and evidence, releases repair stock and audits without recording money",async()=>{
   const row:any={_id:"claim",stage:"in_for_repair",status:"open",amount_gbp:2500,description:"Original evidence",repair_item_ids:["body"]},audits:any[]=[];
-  const ctx:any={db:{get:async()=>row,patch:async(_id:string,fields:any)=>Object.assign(row,fields),insert:async(table:string,record:any)=>{expect(table).toBe("audit_log");audits.push(record)},query:(table:string)=>{const q:any={withIndex:()=>q,order:()=>q,unique:async()=>{if(table!=="stock_input_cache_state")throw Error("Unexpected unique query");return null;},take:async()=>[row]};return q}}};
+  const ctx:any={db:{normalizeId:(table:string,id:string)=>table==="insurance_claims"&&id==="claim"?id:null,get:async()=>row,patch:async(_id:string,fields:any)=>Object.assign(row,fields),insert:async(table:string,record:any)=>{expect(table).toBe("audit_log");audits.push(record)},query:(table:string)=>{const q:any={withIndex:()=>q,order:()=>q,unique:async()=>{if(table!=="stock_input_cache_state")throw Error("Unexpected unique query");return null;},take:async()=>[row]};return q}}};
   expect(repairHeldUnits([row],"body" as any)).toBe(1);
   await (updateClaim as any)._handler(ctx,{id:"claim",status:"closed"});
   expect(row).toMatchObject({status:"closed",stage:"closed",amount_gbp:2500,description:"Original evidence",repair_item_ids:[]});
