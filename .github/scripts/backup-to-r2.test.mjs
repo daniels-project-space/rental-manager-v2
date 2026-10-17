@@ -6,6 +6,7 @@ import path from "node:path";
 import { loadBackupStorage, uploadBackup } from "./backup-to-r2.mjs";
 import { backupChecksum, verifyBackupHead, backupChecksumClientOptions } from "./backup-checksum.mjs";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { classifyChanges } from "../../scripts/deployment-impact.mjs";
 
 const account = "b".repeat(32);
 const endpoint = `https://${account}.r2.cloudflarestorage.com`;
@@ -108,4 +109,15 @@ test("the installed SDK sends only the explicit validated MD5 checksum to R2", a
     assert.equal(headers["x-amz-meta-sha256"], checksum.sha256);
     assert.deepEqual(Object.keys(headers).filter(key => key.startsWith("x-amz-checksum-")), []);
   } finally { client.destroy(); }
+});
+
+test("the published project manifest preserves the actual runtime consumers of CI helpers", () => {
+  const manifest = JSON.parse(fs.readFileSync(new URL("../../deployment-inputs.json", import.meta.url), "utf8"));
+  for (const file of [".github/scripts/backup-to-r2.mjs", ".github/scripts/ci-r2-upload.mjs", ".github/scripts/backup-checksum.mjs"]) {
+    const actual = classifyChanges([file], manifest, manifest);
+    for (const layer of ["website", "backend", "trigger"]) {
+      const expected = manifest.globals.includes(file) || manifest[layer].files.includes(file);
+      assert.equal(actual[layer], expected, `${file}: preserve recorded ${layer} consumers`);
+    }
+  }
 });
