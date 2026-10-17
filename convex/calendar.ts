@@ -1,8 +1,9 @@
 import { useReservationReadModel } from "./lib/reservation_read_queries";
 import { loadCanonicalListingAllocation } from "./lib/canonical_listing_allocation";
+import { loadGanttListingInputs } from "./lib/gantt_listing_inputs";
 import { calendarClock, confirmedClock } from "./lib/confirmed_schedule";
 import { shortItemName } from "./lib/item_display_name";
-import { mutation, query, type QueryCtx } from "./owner_functions";
+import { mutation, query, internalQueryOf, type QueryCtx } from "./owner_functions";
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import {
@@ -12,7 +13,7 @@ import {
   renterPeriodGroupIds,
   type ReservationRow,
 } from "./lib/reservations/predicates";
-import { websiteCalendarPeriods, websiteDayIntervals, reservationItemUnits, buildProductIndexMap, isStandardAccessory } from "./lib/reservations/itemUnits";
+import { websiteCalendarPeriods, websiteDayIntervals, reservationItemUnits, buildProductIndexMap, isStandardAccessory, type ResolvableRes } from "./lib/reservations/itemUnits";
 import {
   isTrackableLine,
   lineResolvesToSomething,
@@ -1534,8 +1535,16 @@ export const getGanttWeek = query({
     const sharedBlacklistGantt = buildSharedImageBlacklist(allItems);
     // Override-resolved item names per reservation (memoized) — Gantt rows key
     // off the corrected inventory items, not raw listing/item-name strings.
-    const productIndexG = buildProductIndexMap(await ctx.db.query("hygglo_product_index").collect());
-    const overrideMapG = await loadCanonicalListingAllocation(ctx,undefined,undefined,reservations);
+    const listingInputsG = await loadGanttListingInputs(ctx, inventoryForGantt, reservations as unknown as ResolvableRes[]);
+    const productIndexG = buildProductIndexMap(listingInputsG.productIndexRows);
+    // Reuse the inventory already loaded for Gantt name and image resolution.
+    // Both lookup tables are scoped to the reservation listings in this window.
+    const overrideMapG = await loadCanonicalListingAllocation(
+      ctx,
+      listingInputsG.inventory,
+      listingInputsG.overrideRows,
+      reservations,
+    );
     const itemByIdG = new Map<string, GanttItemDoc>(allItems.filter((it) => it._id).map((it) => [String(it._id), it]));
     const resolvedNamesByRes = new Map<string, Set<string>>();
     for (const r of reservations) {
@@ -1765,6 +1774,8 @@ export const getGanttWeek = query({
     };
   },
 });
+
+export const __service_getGanttWeek = internalQueryOf(getGanttWeek);
 
 /**
  * W08 Gantt search — inventory-driven search + per-day availability.
