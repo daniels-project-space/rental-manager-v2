@@ -2,6 +2,8 @@ import type { WithoutSystemFields } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { cataloguePatchChanges, invalidateCatalogue } from "./catalogue_read_cache";
+import { disableProductReadModel, syncProductReadRecord } from "./product_read_model";
+import { invalidateStockWhen } from "./stock_input_cache";
 
 export type ProductContext = {
   account_slug: string;
@@ -72,6 +74,7 @@ export async function refreshProductContext(
     if (existing) {
       const rows = await ctx.db.query("hygglo_product_context").withIndex("by_account_product", (q) =>
         q.eq("account_slug", account).eq("product_id", productId)).collect();
+      await invalidateStockWhen(ctx, () => true);
       for (const row of rows) await ctx.db.delete(row._id);
       return "updated";
     }
@@ -79,12 +82,16 @@ export async function refreshProductContext(
   }
   const next = projectProduct(source);
   if (!existing) {
+    await invalidateStockWhen(ctx, () => true);
     await ctx.db.insert("hygglo_product_context", next);
     return "inserted";
   }
   if (Object.entries(next).every(([key, value]) => JSON.stringify(existing[key as keyof typeof existing]) === JSON.stringify(value))) {
     return "unchanged";
   }
+  await invalidateStockWhen(ctx, () => existing.projection_version !== 2 || existing.source_product_id === undefined || existing.image_urls === undefined ||
+    ["account_slug", "product_id", "name", "description", "master_item_id"].some(key =>
+      existing[key as keyof typeof existing] !== next[key as keyof typeof next]));
   await ctx.db.patch(existing._id, next);
   return "updated";
 }
@@ -99,26 +106,47 @@ export async function patchProduct(
   if (!before || before._id !== id) throw new Error("Product patch requires its matching source record");
   const previousAccount = before.accountSlug, previousId = before.productId;
   if (cataloguePatchChanges(before, patch)) await invalidateCatalogue(ctx, [previousAccount, patch.accountSlug ?? previousAccount]);
-  await ctx.db.patch(id, patch);
-  await refreshProductContext(ctx, previousAccount, previousId);
-  const nextAccount = patch.accountSlug ?? previousAccount;
-  const nextId = patch.productId ?? previousId;
-  if (nextAccount !== previousAccount || nextId !== previousId) {
-    await refreshProductContext(ctx, nextAccount, nextId);
+  try {
+    await ctx.db.patch(id, patch);
+    await refreshProductContext(ctx, previousAccount, previousId);
+    const nextAccount = patch.accountSlug ?? previousAccount;
+    const nextId = patch.productId ?? previousId;
+    if (nextAccount !== previousAccount || nextId !== previousId) {
+      await refreshProductContext(ctx, nextAccount, nextId);
+    }
+    await syncProductReadRecord(ctx, id);
+  } catch (error) {
+    await invalidateStockWhen(ctx, () => true);
+    await disableProductReadModel(ctx);
+    throw error;
   }
 }
 
 export async function insertProduct(ctx: MutationCtx, value: WithoutSystemFields<Doc<"hygglo_products">>) {
   await invalidateCatalogue(ctx, [value.accountSlug]);
-  const id = await ctx.db.insert("hygglo_products", value);
-  await refreshProductContext(ctx, value.accountSlug, value.productId);
-  return id;
+  try {
+    const id = await ctx.db.insert("hygglo_products", value);
+    await refreshProductContext(ctx, value.accountSlug, value.productId);
+    await syncProductReadRecord(ctx, id);
+    return id;
+  } catch (error) {
+    await invalidateStockWhen(ctx, () => true);
+    await disableProductReadModel(ctx);
+    throw error;
+  }
 }
 
 export async function deleteProduct(ctx: MutationCtx, id: Id<"hygglo_products">) {
   const before = await ctx.db.get(id);
   if (!before) return;
   await invalidateCatalogue(ctx, [before.accountSlug]);
-  await ctx.db.delete(id);
-  await refreshProductContext(ctx, before.accountSlug, before.productId);
+  try {
+    await ctx.db.delete(id);
+    await refreshProductContext(ctx, before.accountSlug, before.productId);
+    await syncProductReadRecord(ctx, id);
+  } catch (error) {
+    await invalidateStockWhen(ctx, () => true);
+    await disableProductReadModel(ctx);
+    throw error;
+  }
 }

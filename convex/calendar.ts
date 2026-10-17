@@ -1,3 +1,4 @@
+import { useReservationReadModel } from "./lib/reservation_read_queries";
 import { loadCanonicalListingAllocation, reservedListingKeys } from "./lib/canonical_listing_allocation";
 import { calendarClock, confirmedClock } from "./lib/confirmed_schedule";
 import { shortItemName } from "./lib/item_display_name";
@@ -1472,6 +1473,7 @@ export const getGanttWeek = query({
     accountSlug: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, { weekStartIso, accountSlug }) => {
+    useReservationReadModel(ctx);
     // Resolve weekStart — default to the Monday of the current London-business
     // week so the Gantt anchors on the same calendar day as the Active tab /
     // strip (which now also use London). Date-string arithmetic off

@@ -2,8 +2,7 @@ import { loadPricingRows } from "./lib/pricing_input_cache";
 import { patchStockInput } from "./lib/stock_input_writes";
 import { shortItemName } from "./lib/item_display_name";
 import { mutation, query, internalQuery, internalQueryOf } from "./owner_functions";
-import { loadStockSources } from "./lib/renter_stock";
-import { sharedStockSnapshot } from "./lib/storefront_stock";
+import { readSharedStock } from "./lib/shared_stock_cache";
 import { isPaid } from "./order_step_semantics";
 import { v } from "convex/values";
 
@@ -1129,6 +1128,6 @@ export const __service_listForStorefront = internalQueryOf(listForReconcile);
 
 /** Authenticated storefront-only shared stock, with no renter/case details. */
 export const __service_sharedStockForStorefront = internalQuery({
-  args:{},
-  handler:async ctx=>[sharedStockSnapshot(await loadStockSources(ctx),Date.now())],
+  args: {},
+  handler: async ctx => [await readSharedStock(ctx)],
 });

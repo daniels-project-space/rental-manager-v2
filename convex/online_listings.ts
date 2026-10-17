@@ -13,6 +13,7 @@
  */
 import { query, internalMutation, internalQuery, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
+import { patchOnlineListing, replaceOnlineListingRows } from "./lib/stock_listing_writes";
 import { retainedListingDescription } from "./lib/listing_description";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 
@@ -119,7 +120,7 @@ export const setDescription = internalMutation({
     // token optimisation, it is data loss.
     const retained=retainedListingDescription(description);
     if (row && row.description !== retained) {
-      await ctx.db.patch(row._id, { description: retained });
+      await patchOnlineListing(ctx, row._id, { description: retained });
       await ctx.db.insert("audit_log",{table_name:"online_listings",actor:"provider-sync",op:"update",count:1,source_file:"online_listings.setDescription",
         note:JSON.stringify({account_slug,product_id,previousLength:row.description?.length??0,retainedLength:retained.length}),ts:Date.now()});
     }
@@ -167,25 +168,7 @@ export const replaceForAccount = internalMutation({
     ),
   },
   handler: async (ctx, { account_slug, listings }) => {
-    const existing = await ctx.db
-      .query("online_listings")
-      .withIndex("by_account", (q) => q.eq("account_slug", account_slug))
-      .collect();
-    for (const row of existing) await ctx.db.delete(row._id);
-    const now = Date.now();
-    for (const l of listings) {
-      await ctx.db.insert("online_listings", {
-        account_slug,
-        product_id: l.product_id,
-        name: l.name,
-        image: l.image,
-        daily_price: l.daily_price,
-        is_published: l.is_published,
-        public_url: l.public_url,
-        description: l.description,
-        updated_at: now,
-      });
-    }
+    const now = await replaceOnlineListingRows(ctx, account_slug, listings);
     // Upsert the per-account sync marker.
     const meta = await ctx.db
       .query("online_listings_sync")

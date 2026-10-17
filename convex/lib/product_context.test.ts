@@ -16,9 +16,10 @@ function fixture(source: Record<string, any>[] = [], compact: Record<string, any
         build(range); return q;
       }, async collect() {
         reads.push(table);
-        return rows[table].filter((row) => predicates.every((test) => test(row)))
+        return (rows[table] ?? []).filter((row) => predicates.every((test) => test(row)))
           .sort((a,b) => a._creationTime - b._creationTime);
       }, async first() { return (await q.collect())[0] ?? null; },
+      async unique() { const found = await q.collect(); if (found.length > 1) throw Error("Non-unique fixture index"); return found[0] ?? null; },
       async paginate(options: {cursor: string|null; numItems: number}) {
         const all = await q.collect(), offset = Number(options.cursor ?? 0), end = offset + options.numItems;
         return { page: all.slice(offset,end), continueCursor:String(end), isDone:end>=all.length };
