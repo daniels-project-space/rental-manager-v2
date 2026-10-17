@@ -4,7 +4,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import { classifyChanges, impactSince, assertCurrentInputs } from "./deployment-impact.mjs";
+import { classifyChanges, impactSince, assertCurrentInputs, sourceRepository } from "./deployment-impact.mjs";
+
+test("Vercel production verifies the pinned public repository without requiring clone-local origin", () => {
+  assert.equal(sourceRepository({ VERCEL_ENV: "production" }), "https://github.com/daniels-project-space/rental-manager-v2.git");
+  assert.equal(sourceRepository({ VERCEL_ENV: "production", RM_SOURCE_REMOTE: "https://untrusted.example" }), "https://github.com/daniels-project-space/rental-manager-v2.git");
+  assert.equal(sourceRepository({ VERCEL_ENV: "preview" }), "origin");
+  assert.equal(sourceRepository({ GITHUB_ACTIONS: "true" }), "origin");
+});
 
 const manifest = () => ({ version: 1, globals: ["package.json", "pnpm-lock.yaml"], website: { files: ["src/app/page.tsx", "convex/lib/shared.ts"], uncertain: [] }, backend: { files: ["convex/query.ts", "convex/lib/shared.ts"], uncertain: [] }, trigger: { files: ["src/trigger/poll.ts", "src/lib/worker.ts", "convex/lib/shared.ts"], uncertain: [] } });
 function roles(files, before = manifest(), after = manifest()) {

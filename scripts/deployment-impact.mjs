@@ -6,6 +6,13 @@ const manifestName = "deployment-inputs.json";
 const nonRuntime = file => /(?:^|\/)__tests__\//.test(file) || /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file) || /^(?:docs|graphify-out|\.serena|\.agents|\.codex|coverage|\.github)\//.test(file) || /(?:^|\/)(?:README|AGENTS)\.md$/.test(file);
 const all = reason => ({ website: true, backend: true, trigger: true, reason });
 
+/** Vercel's source snapshot need not retain a usable origin remote. This
+ * project is public: pin its trusted repository for production freshness
+ * checks instead of relying on clone-local remote configuration. */
+export function sourceRepository(env = process.env) {
+  return env.VERCEL_ENV === "production" ? "https://github.com/daniels-project-space/rental-manager-v2.git" : "origin";
+}
+
 /** Node built-ins only: this also runs in Vercel's pre-install ignore step. */
 export function classifyChanges(files, before, after) {
   if (!before || !after || before.version !== 1 || after.version !== 1) return all("missing_or_unknown_dependency_manifest");
@@ -46,21 +53,25 @@ export function impactSince(base, root = process.cwd()) {
 /** An older queued publisher may still finish when newer commits touch only
  * another layer or docs. It must never replace newer inputs for its own layer.
  * Missing history/manifests are not evidence that publication is safe. */
-export function assertCurrentInputs(commit, layer, root = process.cwd()) {
+export function assertCurrentInputs(commit, layer, root = process.cwd(), env = process.env) {
   if (!/^[a-f0-9]{40}$/.test(commit) || !["website", "backend", "trigger"].includes(layer)) throw Error("Invalid production source identity");
   function git(args) { return execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 20_000 }); }
-  let latest, result;
+  const repository = sourceRepository(env);
+  let latest, result, stage = "read_main_ref";
   try {
-    latest = git(["ls-remote", "origin", "refs/heads/main"]).split(/\s/)[0];
+    latest = git(["ls-remote", repository, "refs/heads/main"]).split(/\s/)[0];
     if (!/^[a-f0-9]{40}$/.test(latest)) throw Error("Main ref unavailable");
     if (latest === commit) return;
-    git(["fetch", "--no-tags", "origin", latest]);
+    stage = "fetch_main";
+    git(["fetch", "--no-tags", repository, latest]);
+    stage = "verify_ancestry";
     git(["merge-base", "--is-ancestor", commit, latest]);
+    stage = "compare_inputs";
     const before = JSON.parse(git(["show", `${commit}:${manifestName}`]));
     const after = JSON.parse(git(["show", `${latest}:${manifestName}`]));
     const files = git(["diff", "--no-renames", "--name-only", "-z", commit, latest]).split("\0").filter(Boolean);
     result = classifyChanges(files, before, after);
-  } catch { throw Error("Cannot verify production source inputs against current main"); }
+  } catch { throw Error(`Cannot verify production source inputs against current main (${stage})`); }
   if (result[layer]) throw Error(`Production ${layer} inputs are superseded; use the latest qualified Git release`);
 }
 
