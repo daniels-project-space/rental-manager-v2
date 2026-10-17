@@ -1,3 +1,5 @@
+import { computeInvestmentScorecard } from "../revenue";
+import type { ItemAnalyticsInputs } from "../lib/analytics_source_order";
 /**
  * MV: mv_investment_scorecard (pass 11b, 2026-05-25)
  *
@@ -23,6 +25,7 @@ export const refresh = internalAction({
 export async function refreshAll(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctx: any,
+  captured?: ItemAnalyticsInputs,
 ): Promise<{ ok: true; written: number; durationMs: number }> {
   const startedAt = Date.now();
   const slugs: Array<{ key: string; arg: string | null }> = [
@@ -31,7 +34,7 @@ export async function refreshAll(
   ];
   let written = 0;
   for (const { key, arg } of slugs) {
-    const payload = await ctx.runQuery(internal.revenue.__service_getInvestmentScorecard, {
+    const payload = captured ? computeInvestmentScorecard(captured, arg) : await ctx.runQuery(internal.revenue.__service_getInvestmentScorecard, {
       accountSlug: arg,
       _bypassMv: true,
     });

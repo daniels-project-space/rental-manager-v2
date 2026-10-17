@@ -1,3 +1,5 @@
+import { startDateWindow } from "../lib/analytics_source_order";
+import type { RentalVolumeInput } from "../lib/rental_volume";
 import { loadPricingRows } from "../lib/pricing_input_cache";
 /**
  * MV: mv_rental_volume_kind_breakdown
@@ -61,12 +63,13 @@ export const refresh = internalAction({
 export async function refreshAll(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctx: any,
+  captured?:RentalVolumeInput,
 ): Promise<{ ok: true; written: number; durationMs: number }> {
   const startedAt = Date.now();
-  const { reservations, items, pricing, overrideRows } = await ctx.runQuery(
-    anyApi.mv.rental_volume_kind_breakdown.collectInputs,
-    {},
-  );
+  const { reservations, items, pricing, overrideRows } = captured ? {
+    reservations:startDateWindow(captured.reservations,new Date(Date.now()-365*86400000).toISOString().slice(0,10)),
+    items:[...captured.items],pricing:[...captured.pricing],overrideRows:[...captured.overrides],
+  } : await ctx.runQuery(anyApi.mv.rental_volume_kind_breakdown.collectInputs,{});
 
   // Build shared maps ONCE (re-used across every combo).
   const priceByCanonical = new Map<string, number>(

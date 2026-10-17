@@ -1,3 +1,6 @@
+import { loadSlowAnalyticsSnapshot } from "./slow_inputs";
+import { startDateWindow, requireSnapshot } from "../lib/analytics_source_order";
+import { useReservationReadModel } from "../lib/reservation_read_queries";
 import { loadPricingRows } from "../lib/pricing_input_cache";
 /**
  * Phase 18.3 — MV master refresher with shared-collect.
@@ -36,14 +39,11 @@ import { loadPricingRows } from "../lib/pricing_input_cache";
  * 90d (daily_briefing) + 30d (top_earners) + full table (churn_risk) +
  * denials/items/pricing/accounts (purchase_signals).
  *
- * Estimated reservations-row reads/day AFTER refactor:
- *   • refreshFast: 2 collects per cron run (7d slice + confirmed-status).
- *     30 min cadence → 48 runs/day → 48 * 2 = 96 table scans/day.
- *     The 7d slice (Pass 13, was 90d) is far smaller per scan now that
- *     missed_revenue no longer needs the wide window in the fast batch.
- *   • refreshSlow: 2 collects per cron run (full table + items + denials
- *     + pricing + accounts). 1 run/day → 1 full-table scan/day ≈ 1767 rows.
- *   • TOTAL ≈ ~27k reservations row reads/day (was ~3.5M). > 100x reduction.
+ * Daily analytics now capture coupled inputs atomically and reuse the full
+ * reservation snapshot across all account/window variants. Encoded records
+ * are validated/decoded in the action rather than the one-second query VM.
+ * This replaces the repeated scans observed in the 17 Oct 2026 daily cycle.
+ * No refresh schedule or source-field precision changes.
  *
  * If any MV throws inside its `write<MV>` mutation, the OTHER MVs in the
  * batch still complete — failures are surfaced per-MV in the returned
@@ -90,6 +90,7 @@ import { refreshFastWidgets, refreshSlowWidgets } from "./widgets";
 export const collectReservationsSince = internalQuery({
   args: { cutoff: v.string() },
   handler: async (ctx, { cutoff }) => {
+    useReservationReadModel(ctx);
     return await ctx.db.query("reservations")
       .withIndex("by_start_date", (q) => q.gte("start_date", cutoff))
       .collect();
@@ -100,6 +101,7 @@ export const collectReservationsSince = internalQuery({
 export const collectConfirmedReservations = internalQuery({
   args: {},
   handler: async (ctx) => {
+    useReservationReadModel(ctx);
     return await ctx.db.query("reservations")
       .withIndex("by_status", (q) => q.eq("status", "confirmed"))
       .collect();
@@ -456,23 +458,14 @@ export const refreshSlow = internalAction({
     // by pickup_date/start_date >= 30d cutoff in-memory).
     const cutoff90 = isoDaysAgo(90);
 
-    const [
-      reservations90,
-      allReservations,
-      items,
-      renters,
-      denials,
-      pricing,
-      accounts,
-    ] = await Promise.all([
-      ctx.runQuery(internal.mv.master.collectReservationsSince, { cutoff: cutoff90 }),
-      ctx.runQuery(internal.mv.master.collectAllReservations, {}),
-      ctx.runQuery(internal.mv.master.collectItems, {}),
+    const [analytics,renters,denials,accounts] = await Promise.all([
+      loadSlowAnalyticsSnapshot(ctx),
       ctx.runQuery(internal.mv.master.collectRenters, {}),
       ctx.runQuery(internal.mv.master.collectDenials, {}),
-      ctx.runQuery(internal.mv.master.collectPricing, {}),
       ctx.runQuery(internal.mv.master.collectAccounts, {}),
     ]);
+    const {reservations:allReservations,items,pricing}=analytics;
+    const reservations90=startDateWindow(allReservations,cutoff90);
 
     const results: StepResult[] = [];
 
@@ -632,20 +625,22 @@ export const refreshSlow = internalAction({
     // Second-biggest cost (24.27 GB/day + 62K calls). 8 kinds × 3 windows
     // × 3 accounts = 72 rows pre-computed daily.
     results.push(await safeStep(ctx, "rental_volume_kind_breakdown", async () => {
-      await refreshRentalVolumeKindBreakdown(ctx);
+      const overrides=requireSnapshot(analytics.attributionOverrides);
+      await refreshRentalVolumeKindBreakdown(ctx,{reservations:allReservations,items,pricing,overrides});
     }));
 
     // Pass 11 (2026-05-25): 4 additional wrap-and-cache MVs to eliminate
     // the gigabyte-scale per-call bandwidth on heavy aggregation queries.
     // Lifetime history has its own once-daily reporting-boundary cron.
     results.push(await safeStep(ctx, "investment_scorecard", async () => {
-      await refreshInvestmentScorecard(ctx);
+      await refreshInvestmentScorecard(ctx, { reservations: allReservations, items });
     }));
     results.push(await safeStep(ctx, "conversion_funnel", async () => {
       await refreshConversionFunnel(ctx);
     }));
     results.push(await safeStep(ctx, "rental_volume_by_category", async () => {
-      await refreshRentalVolumeByCategory(ctx);
+      const overrides=requireSnapshot(analytics.attributionOverrides);
+      await refreshRentalVolumeByCategory(ctx, { reservations: allReservations, items, pricing, overrides });
     }));
 
     // Pass 11h (2026-05-25): unified WallE-widget signals (active
@@ -661,7 +656,7 @@ export const refreshSlow = internalAction({
     // invisible, while it removes a reactive full-year fat-reservation scan that
     // re-ran on every poller write × every open tab (~24 GB/mo).
     results.push(await safeStep(ctx, "ai_insights", async () => {
-      await refreshAiInsights(ctx);
+      await refreshAiInsights(ctx, { reservations: allReservations, items });
     }));
 
     // 2026-07-12 cost audit: sell/price recommendations, bundle rankings
@@ -669,7 +664,7 @@ export const refreshSlow = internalAction({
     // queries per account scope (see mv/widgets.ts). All slow-moving
     // aggregates that were live-reactive per open tab.
     results.push(await safeStep(ctx, "widgets_slow", async () => {
-      await refreshSlowWidgets(ctx);
+      await refreshSlowWidgets(ctx, analytics);
     }));
 
     return { batch: "slow", results };

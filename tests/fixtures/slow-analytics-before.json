@@ -1,0 +1,1270 @@
+{
+  "clock": 1792211400000,
+  "cases": [
+    {
+      "kind": "bundles",
+      "args": {
+        "accountSlug": null,
+        "_bypassMv": true,
+        "days": 30
+      },
+      "value": [
+        {
+          "avgValue": 33.94,
+          "items": [
+            "Camera",
+            "Lens"
+          ],
+          "name": "Camera kit",
+          "rentalCount": 16,
+          "totalDays": 32,
+          "totalRevenue": 543.1
+        }
+      ]
+    },
+    {
+      "kind": "bundles",
+      "args": {
+        "accountSlug": null,
+        "_bypassMv": true,
+        "days": 90
+      },
+      "value": [
+        {
+          "avgValue": 24.35,
+          "items": [
+            "Camera",
+            "Lens"
+          ],
+          "name": "Camera kit",
+          "rentalCount": 24,
+          "totalDays": 48,
+          "totalRevenue": 584.3
+        }
+      ]
+    },
+    {
+      "kind": "bundles",
+      "args": {
+        "accountSlug": null,
+        "_bypassMv": true,
+        "days": 365
+      },
+      "value": [
+        {
+          "avgValue": 31.29,
+          "items": [
+            "Camera",
+            "Lens"
+          ],
+          "name": "Camera kit",
+          "rentalCount": 36,
+          "totalDays": 72,
+          "totalRevenue": 1126.6
+        }
+      ]
+    },
+    {
+      "kind": "bundles",
+      "args": {
+        "accountSlug": "leo",
+        "_bypassMv": true,
+        "days": 30
+      },
+      "value": [
+        {
+          "avgValue": 33.94,
+          "items": [
+            "Camera",
+            "Lens"
+          ],
+          "name": "Camera kit",
+          "rentalCount": 4,
+          "totalDays": 8,
+          "totalRevenue": 135.78
+        }
+      ]
+    },
+    {
+      "kind": "bundles",
+      "args": {
+        "accountSlug": "leo",
+        "_bypassMv": true,
+        "days": 90
+      },
+      "value": [
+        {
+          "avgValue": 24.35,
+          "items": [
+            "Camera",
+            "Lens"
+          ],
+          "name": "Camera kit",
+          "rentalCount": 6,
+          "totalDays": 12,
+          "totalRevenue": 146.07
+        }
+      ]
+    },
+    {
+      "kind": "bundles",
+      "args": {
+        "accountSlug": "leo",
+        "_bypassMv": true,
+        "days": 365
+      },
+      "value": [
+        {
+          "avgValue": 31.29,
+          "items": [
+            "Camera",
+            "Lens"
+          ],
+          "name": "Camera kit",
+          "rentalCount": 9,
+          "totalDays": 18,
+          "totalRevenue": 281.65
+        }
+      ]
+    },
+    {
+      "kind": "bundles",
+      "args": {
+        "accountSlug": "diogo",
+        "_bypassMv": true,
+        "days": 30
+      },
+      "value": [
+        {
+          "avgValue": 33.94,
+          "items": [
+            "Camera",
+            "Lens"
+          ],
+          "name": "Camera kit",
+          "rentalCount": 4,
+          "totalDays": 8,
+          "totalRevenue": 135.78
+        }
+      ]
+    },
+    {
+      "kind": "bundles",
+      "args": {
+        "accountSlug": "diogo",
+        "_bypassMv": true,
+        "days": 90
+      },
+      "value": [
+        {
+          "avgValue": 24.35,
+          "items": [
+            "Camera",
+            "Lens"
+          ],
+          "name": "Camera kit",
+          "rentalCount": 6,
+          "totalDays": 12,
+          "totalRevenue": 146.07
+        }
+      ]
+    },
+    {
+      "kind": "bundles",
+      "args": {
+        "accountSlug": "diogo",
+        "_bypassMv": true,
+        "days": 365
+      },
+      "value": [
+        {
+          "avgValue": 31.29,
+          "items": [
+            "Camera",
+            "Lens"
+          ],
+          "name": "Camera kit",
+          "rentalCount": 9,
+          "totalDays": 18,
+          "totalRevenue": 281.65
+        }
+      ]
+    },
+    {
+      "kind": "bundles",
+      "args": {
+        "accountSlug": "dbcinema",
+        "_bypassMv": true,
+        "days": 30
+      },
+      "value": [
+        {
+          "avgValue": 33.94,
+          "items": [
+            "Camera",
+            "Lens"
+          ],
+          "name": "Camera kit",
+          "rentalCount": 4,
+          "totalDays": 8,
+          "totalRevenue": 135.78
+        }
+      ]
+    },
+    {
+      "kind": "bundles",
+      "args": {
+        "accountSlug": "dbcinema",
+        "_bypassMv": true,
+        "days": 90
+      },
+      "value": [
+        {
+          "avgValue": 24.35,
+          "items": [
+            "Camera",
+            "Lens"
+          ],
+          "name": "Camera kit",
+          "rentalCount": 6,
+          "totalDays": 12,
+          "totalRevenue": 146.07
+        }
+      ]
+    },
+    {
+      "kind": "bundles",
+      "args": {
+        "accountSlug": "dbcinema",
+        "_bypassMv": true,
+        "days": 365
+      },
+      "value": [
+        {
+          "avgValue": 31.29,
+          "items": [
+            "Camera",
+            "Lens"
+          ],
+          "name": "Camera kit",
+          "rentalCount": 9,
+          "totalDays": 18,
+          "totalRevenue": 281.65
+        }
+      ]
+    },
+    {
+      "kind": "bundles",
+      "args": {
+        "accountSlug": "dbcinema_web",
+        "_bypassMv": true,
+        "days": 30
+      },
+      "value": [
+        {
+          "avgValue": 33.94,
+          "items": [
+            "Camera",
+            "Lens"
+          ],
+          "name": "Camera kit",
+          "rentalCount": 4,
+          "totalDays": 8,
+          "totalRevenue": 135.78
+        }
+      ]
+    },
+    {
+      "kind": "bundles",
+      "args": {
+        "accountSlug": "dbcinema_web",
+        "_bypassMv": true,
+        "days": 90
+      },
+      "value": [
+        {
+          "avgValue": 24.35,
+          "items": [
+            "Camera",
+            "Lens"
+          ],
+          "name": "Camera kit",
+          "rentalCount": 6,
+          "totalDays": 12,
+          "totalRevenue": 146.07
+        }
+      ]
+    },
+    {
+      "kind": "bundles",
+      "args": {
+        "accountSlug": "dbcinema_web",
+        "_bypassMv": true,
+        "days": 365
+      },
+      "value": [
+        {
+          "avgValue": 31.29,
+          "items": [
+            "Camera",
+            "Lens"
+          ],
+          "name": "Camera kit",
+          "rentalCount": 9,
+          "totalDays": 18,
+          "totalRevenue": 281.65
+        }
+      ]
+    },
+    {
+      "kind": "volume",
+      "args": {
+        "accountSlug": null,
+        "_bypassMv": true,
+        "days": 30
+      },
+      "value": {
+        "days": 30,
+        "periodStart": "2026-09-17",
+        "slices": [
+          {
+            "color": "#60a5fa",
+            "count": 20,
+            "kind": "camera_body",
+            "label": "Camera_body",
+            "revenue": 326.32
+          },
+          {
+            "color": "#34d399",
+            "count": 20,
+            "kind": "lens",
+            "label": "Lenses",
+            "revenue": 217.56
+          }
+        ],
+        "totals": {
+          "count": 40,
+          "revenue": 543.88
+        }
+      }
+    },
+    {
+      "kind": "volume",
+      "args": {
+        "accountSlug": null,
+        "_bypassMv": true,
+        "days": 90
+      },
+      "value": {
+        "days": 90,
+        "periodStart": "2026-07-19",
+        "slices": [
+          {
+            "color": "#60a5fa",
+            "count": 32,
+            "kind": "camera_body",
+            "label": "Camera_body",
+            "revenue": 351.28
+          },
+          {
+            "color": "#34d399",
+            "count": 32,
+            "kind": "lens",
+            "label": "Lenses",
+            "revenue": 234.2
+          }
+        ],
+        "totals": {
+          "count": 64,
+          "revenue": 585.48
+        }
+      }
+    },
+    {
+      "kind": "volume",
+      "args": {
+        "accountSlug": null,
+        "_bypassMv": true,
+        "days": 365
+      },
+      "value": {
+        "days": 365,
+        "periodStart": "2025-10-17",
+        "slices": [
+          {
+            "color": "#60a5fa",
+            "count": 44,
+            "kind": "camera_body",
+            "label": "Camera_body",
+            "revenue": 676.64
+          },
+          {
+            "color": "#34d399",
+            "count": 44,
+            "kind": "lens",
+            "label": "Lenses",
+            "revenue": 451.12
+          }
+        ],
+        "totals": {
+          "count": 88,
+          "revenue": 1127.76
+        }
+      }
+    },
+    {
+      "kind": "volume",
+      "args": {
+        "accountSlug": "leo",
+        "_bypassMv": true,
+        "days": 30
+      },
+      "value": {
+        "days": 30,
+        "periodStart": "2026-09-17",
+        "slices": [
+          {
+            "color": "#60a5fa",
+            "count": 5,
+            "kind": "camera_body",
+            "label": "Camera_body",
+            "revenue": 81.58
+          },
+          {
+            "color": "#34d399",
+            "count": 5,
+            "kind": "lens",
+            "label": "Lenses",
+            "revenue": 54.39
+          }
+        ],
+        "totals": {
+          "count": 10,
+          "revenue": 135.97
+        }
+      }
+    },
+    {
+      "kind": "volume",
+      "args": {
+        "accountSlug": "leo",
+        "_bypassMv": true,
+        "days": 90
+      },
+      "value": {
+        "days": 90,
+        "periodStart": "2026-07-19",
+        "slices": [
+          {
+            "color": "#60a5fa",
+            "count": 8,
+            "kind": "camera_body",
+            "label": "Camera_body",
+            "revenue": 87.82
+          },
+          {
+            "color": "#34d399",
+            "count": 8,
+            "kind": "lens",
+            "label": "Lenses",
+            "revenue": 58.55
+          }
+        ],
+        "totals": {
+          "count": 16,
+          "revenue": 146.37
+        }
+      }
+    },
+    {
+      "kind": "volume",
+      "args": {
+        "accountSlug": "leo",
+        "_bypassMv": true,
+        "days": 365
+      },
+      "value": {
+        "days": 365,
+        "periodStart": "2025-10-17",
+        "slices": [
+          {
+            "color": "#60a5fa",
+            "count": 11,
+            "kind": "camera_body",
+            "label": "Camera_body",
+            "revenue": 169.16
+          },
+          {
+            "color": "#34d399",
+            "count": 11,
+            "kind": "lens",
+            "label": "Lenses",
+            "revenue": 112.78
+          }
+        ],
+        "totals": {
+          "count": 22,
+          "revenue": 281.94
+        }
+      }
+    },
+    {
+      "kind": "volume",
+      "args": {
+        "accountSlug": "diogo",
+        "_bypassMv": true,
+        "days": 30
+      },
+      "value": {
+        "days": 30,
+        "periodStart": "2026-09-17",
+        "slices": [
+          {
+            "color": "#60a5fa",
+            "count": 5,
+            "kind": "camera_body",
+            "label": "Camera_body",
+            "revenue": 81.58
+          },
+          {
+            "color": "#34d399",
+            "count": 5,
+            "kind": "lens",
+            "label": "Lenses",
+            "revenue": 54.39
+          }
+        ],
+        "totals": {
+          "count": 10,
+          "revenue": 135.97
+        }
+      }
+    },
+    {
+      "kind": "volume",
+      "args": {
+        "accountSlug": "diogo",
+        "_bypassMv": true,
+        "days": 90
+      },
+      "value": {
+        "days": 90,
+        "periodStart": "2026-07-19",
+        "slices": [
+          {
+            "color": "#60a5fa",
+            "count": 8,
+            "kind": "camera_body",
+            "label": "Camera_body",
+            "revenue": 87.82
+          },
+          {
+            "color": "#34d399",
+            "count": 8,
+            "kind": "lens",
+            "label": "Lenses",
+            "revenue": 58.55
+          }
+        ],
+        "totals": {
+          "count": 16,
+          "revenue": 146.37
+        }
+      }
+    },
+    {
+      "kind": "volume",
+      "args": {
+        "accountSlug": "diogo",
+        "_bypassMv": true,
+        "days": 365
+      },
+      "value": {
+        "days": 365,
+        "periodStart": "2025-10-17",
+        "slices": [
+          {
+            "color": "#60a5fa",
+            "count": 11,
+            "kind": "camera_body",
+            "label": "Camera_body",
+            "revenue": 169.16
+          },
+          {
+            "color": "#34d399",
+            "count": 11,
+            "kind": "lens",
+            "label": "Lenses",
+            "revenue": 112.78
+          }
+        ],
+        "totals": {
+          "count": 22,
+          "revenue": 281.94
+        }
+      }
+    },
+    {
+      "kind": "volume",
+      "args": {
+        "accountSlug": "dbcinema",
+        "_bypassMv": true,
+        "days": 30
+      },
+      "value": {
+        "days": 30,
+        "periodStart": "2026-09-17",
+        "slices": [
+          {
+            "color": "#60a5fa",
+            "count": 5,
+            "kind": "camera_body",
+            "label": "Camera_body",
+            "revenue": 81.58
+          },
+          {
+            "color": "#34d399",
+            "count": 5,
+            "kind": "lens",
+            "label": "Lenses",
+            "revenue": 54.39
+          }
+        ],
+        "totals": {
+          "count": 10,
+          "revenue": 135.97
+        }
+      }
+    },
+    {
+      "kind": "volume",
+      "args": {
+        "accountSlug": "dbcinema",
+        "_bypassMv": true,
+        "days": 90
+      },
+      "value": {
+        "days": 90,
+        "periodStart": "2026-07-19",
+        "slices": [
+          {
+            "color": "#60a5fa",
+            "count": 8,
+            "kind": "camera_body",
+            "label": "Camera_body",
+            "revenue": 87.82
+          },
+          {
+            "color": "#34d399",
+            "count": 8,
+            "kind": "lens",
+            "label": "Lenses",
+            "revenue": 58.55
+          }
+        ],
+        "totals": {
+          "count": 16,
+          "revenue": 146.37
+        }
+      }
+    },
+    {
+      "kind": "volume",
+      "args": {
+        "accountSlug": "dbcinema",
+        "_bypassMv": true,
+        "days": 365
+      },
+      "value": {
+        "days": 365,
+        "periodStart": "2025-10-17",
+        "slices": [
+          {
+            "color": "#60a5fa",
+            "count": 11,
+            "kind": "camera_body",
+            "label": "Camera_body",
+            "revenue": 169.16
+          },
+          {
+            "color": "#34d399",
+            "count": 11,
+            "kind": "lens",
+            "label": "Lenses",
+            "revenue": 112.78
+          }
+        ],
+        "totals": {
+          "count": 22,
+          "revenue": 281.94
+        }
+      }
+    },
+    {
+      "kind": "volume",
+      "args": {
+        "accountSlug": "dbcinema_web",
+        "_bypassMv": true,
+        "days": 30
+      },
+      "value": {
+        "days": 30,
+        "periodStart": "2026-09-17",
+        "slices": [
+          {
+            "color": "#60a5fa",
+            "count": 5,
+            "kind": "camera_body",
+            "label": "Camera_body",
+            "revenue": 81.58
+          },
+          {
+            "color": "#34d399",
+            "count": 5,
+            "kind": "lens",
+            "label": "Lenses",
+            "revenue": 54.39
+          }
+        ],
+        "totals": {
+          "count": 10,
+          "revenue": 135.97
+        }
+      }
+    },
+    {
+      "kind": "volume",
+      "args": {
+        "accountSlug": "dbcinema_web",
+        "_bypassMv": true,
+        "days": 90
+      },
+      "value": {
+        "days": 90,
+        "periodStart": "2026-07-19",
+        "slices": [
+          {
+            "color": "#60a5fa",
+            "count": 8,
+            "kind": "camera_body",
+            "label": "Camera_body",
+            "revenue": 87.82
+          },
+          {
+            "color": "#34d399",
+            "count": 8,
+            "kind": "lens",
+            "label": "Lenses",
+            "revenue": 58.55
+          }
+        ],
+        "totals": {
+          "count": 16,
+          "revenue": 146.37
+        }
+      }
+    },
+    {
+      "kind": "volume",
+      "args": {
+        "accountSlug": "dbcinema_web",
+        "_bypassMv": true,
+        "days": 365
+      },
+      "value": {
+        "days": 365,
+        "periodStart": "2025-10-17",
+        "slices": [
+          {
+            "color": "#60a5fa",
+            "count": 11,
+            "kind": "camera_body",
+            "label": "Camera_body",
+            "revenue": 169.16
+          },
+          {
+            "color": "#34d399",
+            "count": 11,
+            "kind": "lens",
+            "label": "Lenses",
+            "revenue": 112.78
+          }
+        ],
+        "totals": {
+          "count": 22,
+          "revenue": 281.94
+        }
+      }
+    },
+    {
+      "kind": "insights",
+      "args": {
+        "accountSlug": null,
+        "_bypassMv": true
+      },
+      "value": [
+        {
+          "body": "Rolling 30d: \u00a3544 vs prior 30d: \u00a3542. Revenue is broadly stable over rolling 30 days.",
+          "headline": "Revenue up 0% vs prior 30 days",
+          "kind": "revenue_trend"
+        },
+        {
+          "body": "Leading earners: Camera (\u00a3544), Lens (\u00a3544). High concentration means risk if any one item is unavailable.",
+          "headline": "Top 5 items drive 100% of revenue (90 days)",
+          "kind": "top_performers"
+        },
+        {
+          "body": "Total lifetime revenue: \u00a31630. Average booking value of \u00a327 suggests room to upsell bundles or accessories.",
+          "headline": "40 bookings in last 90 days (avg \u00a327)",
+          "kind": "booking_stats"
+        }
+      ]
+    },
+    {
+      "kind": "insights",
+      "args": {
+        "accountSlug": "leo",
+        "_bypassMv": true
+      },
+      "value": [
+        {
+          "body": "Rolling 30d: \u00a3136 vs prior 30d: \u00a3135. Revenue is broadly stable over rolling 30 days.",
+          "headline": "Revenue up 0% vs prior 30 days",
+          "kind": "revenue_trend"
+        },
+        {
+          "body": "Leading earners: Camera (\u00a3136), Lens (\u00a3136). High concentration means risk if any one item is unavailable.",
+          "headline": "Top 5 items drive 100% of revenue (90 days)",
+          "kind": "top_performers"
+        },
+        {
+          "body": "Total lifetime revenue: \u00a3407. Average booking value of \u00a327 suggests room to upsell bundles or accessories.",
+          "headline": "10 bookings in last 90 days (avg \u00a327)",
+          "kind": "booking_stats"
+        }
+      ]
+    },
+    {
+      "kind": "insights",
+      "args": {
+        "accountSlug": "diogo",
+        "_bypassMv": true
+      },
+      "value": [
+        {
+          "body": "Rolling 30d: \u00a3136 vs prior 30d: \u00a3135. Revenue is broadly stable over rolling 30 days.",
+          "headline": "Revenue up 0% vs prior 30 days",
+          "kind": "revenue_trend"
+        },
+        {
+          "body": "Leading earners: Camera (\u00a3136), Lens (\u00a3136). High concentration means risk if any one item is unavailable.",
+          "headline": "Top 5 items drive 100% of revenue (90 days)",
+          "kind": "top_performers"
+        },
+        {
+          "body": "Total lifetime revenue: \u00a3407. Average booking value of \u00a327 suggests room to upsell bundles or accessories.",
+          "headline": "10 bookings in last 90 days (avg \u00a327)",
+          "kind": "booking_stats"
+        }
+      ]
+    },
+    {
+      "kind": "insights",
+      "args": {
+        "accountSlug": "dbcinema",
+        "_bypassMv": true
+      },
+      "value": [
+        {
+          "body": "Rolling 30d: \u00a3136 vs prior 30d: \u00a3135. Revenue is broadly stable over rolling 30 days.",
+          "headline": "Revenue up 0% vs prior 30 days",
+          "kind": "revenue_trend"
+        },
+        {
+          "body": "Leading earners: Camera (\u00a3136), Lens (\u00a3136). High concentration means risk if any one item is unavailable.",
+          "headline": "Top 5 items drive 100% of revenue (90 days)",
+          "kind": "top_performers"
+        },
+        {
+          "body": "Total lifetime revenue: \u00a3407. Average booking value of \u00a327 suggests room to upsell bundles or accessories.",
+          "headline": "10 bookings in last 90 days (avg \u00a327)",
+          "kind": "booking_stats"
+        }
+      ]
+    },
+    {
+      "kind": "insights",
+      "args": {
+        "accountSlug": "dbcinema_web",
+        "_bypassMv": true
+      },
+      "value": [
+        {
+          "body": "Rolling 30d: \u00a3136 vs prior 30d: \u00a3135. Revenue is broadly stable over rolling 30 days.",
+          "headline": "Revenue up 0% vs prior 30 days",
+          "kind": "revenue_trend"
+        },
+        {
+          "body": "Leading earners: Camera (\u00a3136), Lens (\u00a3136). High concentration means risk if any one item is unavailable.",
+          "headline": "Top 5 items drive 100% of revenue (90 days)",
+          "kind": "top_performers"
+        },
+        {
+          "body": "Total lifetime revenue: \u00a3407. Average booking value of \u00a327 suggests room to upsell bundles or accessories.",
+          "headline": "10 bookings in last 90 days (avg \u00a327)",
+          "kind": "booking_stats"
+        }
+      ]
+    },
+    {
+      "kind": "sell",
+      "args": {
+        "accountSlug": null,
+        "_bypassMv": true
+      },
+      "value": [
+        {
+          "ageMonths": 30,
+          "estResaleValue": 300,
+          "itemId": "camera",
+          "name": "Camera",
+          "qty": 2,
+          "reason": "High age",
+          "utilizationPct": 44.44444444444444
+        },
+        {
+          "ageMonths": 30,
+          "estResaleValue": 240,
+          "itemId": "lens",
+          "name": "Lens",
+          "qty": 1,
+          "reason": "High age",
+          "utilizationPct": 88.88888888888889
+        }
+      ]
+    },
+    {
+      "kind": "sell",
+      "args": {
+        "accountSlug": "leo",
+        "_bypassMv": true
+      },
+      "value": [
+        {
+          "ageMonths": 30,
+          "estResaleValue": 300,
+          "itemId": "camera",
+          "name": "Camera",
+          "qty": 2,
+          "reason": "Low demand",
+          "utilizationPct": 11.11111111111111
+        },
+        {
+          "ageMonths": 30,
+          "estResaleValue": 240,
+          "itemId": "lens",
+          "name": "Lens",
+          "qty": 1,
+          "reason": "Low demand",
+          "utilizationPct": 22.22222222222222
+        }
+      ]
+    },
+    {
+      "kind": "sell",
+      "args": {
+        "accountSlug": "diogo",
+        "_bypassMv": true
+      },
+      "value": [
+        {
+          "ageMonths": 30,
+          "estResaleValue": 300,
+          "itemId": "camera",
+          "name": "Camera",
+          "qty": 2,
+          "reason": "Low demand",
+          "utilizationPct": 11.11111111111111
+        },
+        {
+          "ageMonths": 30,
+          "estResaleValue": 240,
+          "itemId": "lens",
+          "name": "Lens",
+          "qty": 1,
+          "reason": "Low demand",
+          "utilizationPct": 22.22222222222222
+        }
+      ]
+    },
+    {
+      "kind": "sell",
+      "args": {
+        "accountSlug": "dbcinema",
+        "_bypassMv": true
+      },
+      "value": [
+        {
+          "ageMonths": 30,
+          "estResaleValue": 300,
+          "itemId": "camera",
+          "name": "Camera",
+          "qty": 2,
+          "reason": "Low demand",
+          "utilizationPct": 11.11111111111111
+        },
+        {
+          "ageMonths": 30,
+          "estResaleValue": 240,
+          "itemId": "lens",
+          "name": "Lens",
+          "qty": 1,
+          "reason": "Low demand",
+          "utilizationPct": 22.22222222222222
+        }
+      ]
+    },
+    {
+      "kind": "sell",
+      "args": {
+        "accountSlug": "dbcinema_web",
+        "_bypassMv": true
+      },
+      "value": [
+        {
+          "ageMonths": 30,
+          "estResaleValue": 300,
+          "itemId": "camera",
+          "name": "Camera",
+          "qty": 2,
+          "reason": "Low demand",
+          "utilizationPct": 11.11111111111111
+        },
+        {
+          "ageMonths": 30,
+          "estResaleValue": 240,
+          "itemId": "lens",
+          "name": "Lens",
+          "qty": 1,
+          "reason": "Low demand",
+          "utilizationPct": 22.22222222222222
+        }
+      ]
+    },
+    {
+      "kind": "price",
+      "args": {
+        "accountSlug": null,
+        "_bypassMv": true
+      },
+      "value": [
+        {
+          "currentRate": 12,
+          "demandSignal": "24 bookings this month",
+          "itemId": "camera",
+          "name": "Camera",
+          "pctChange": 15,
+          "suggestedRate": 13.8
+        },
+        {
+          "currentRate": 8,
+          "demandSignal": "24 bookings this month",
+          "itemId": "lens",
+          "name": "Lens",
+          "pctChange": 15,
+          "suggestedRate": 9.2
+        }
+      ]
+    },
+    {
+      "kind": "price",
+      "args": {
+        "accountSlug": "leo",
+        "_bypassMv": true
+      },
+      "value": [
+        {
+          "currentRate": 12,
+          "demandSignal": "6 bookings this month",
+          "itemId": "camera",
+          "name": "Camera",
+          "pctChange": 15,
+          "suggestedRate": 13.8
+        },
+        {
+          "currentRate": 8,
+          "demandSignal": "6 bookings this month",
+          "itemId": "lens",
+          "name": "Lens",
+          "pctChange": 15,
+          "suggestedRate": 9.2
+        }
+      ]
+    },
+    {
+      "kind": "price",
+      "args": {
+        "accountSlug": "diogo",
+        "_bypassMv": true
+      },
+      "value": [
+        {
+          "currentRate": 12,
+          "demandSignal": "6 bookings this month",
+          "itemId": "camera",
+          "name": "Camera",
+          "pctChange": 15,
+          "suggestedRate": 13.8
+        },
+        {
+          "currentRate": 8,
+          "demandSignal": "6 bookings this month",
+          "itemId": "lens",
+          "name": "Lens",
+          "pctChange": 15,
+          "suggestedRate": 9.2
+        }
+      ]
+    },
+    {
+      "kind": "price",
+      "args": {
+        "accountSlug": "dbcinema",
+        "_bypassMv": true
+      },
+      "value": [
+        {
+          "currentRate": 12,
+          "demandSignal": "6 bookings this month",
+          "itemId": "camera",
+          "name": "Camera",
+          "pctChange": 15,
+          "suggestedRate": 13.8
+        },
+        {
+          "currentRate": 8,
+          "demandSignal": "6 bookings this month",
+          "itemId": "lens",
+          "name": "Lens",
+          "pctChange": 15,
+          "suggestedRate": 9.2
+        }
+      ]
+    },
+    {
+      "kind": "price",
+      "args": {
+        "accountSlug": "dbcinema_web",
+        "_bypassMv": true
+      },
+      "value": [
+        {
+          "currentRate": 12,
+          "demandSignal": "6 bookings this month",
+          "itemId": "camera",
+          "name": "Camera",
+          "pctChange": 15,
+          "suggestedRate": 13.8
+        },
+        {
+          "currentRate": 8,
+          "demandSignal": "6 bookings this month",
+          "itemId": "lens",
+          "name": "Lens",
+          "pctChange": 15,
+          "suggestedRate": 9.2
+        }
+      ]
+    },
+    {
+      "kind": "score",
+      "args": {
+        "accountSlug": null,
+        "_bypassMv": true
+      },
+      "value": {
+        "itemsMissingCostCount": 0,
+        "itemsWithCostCount": 2,
+        "monthlyRate": 10.789009672173254,
+        "netProfit": 82.60000000000025,
+        "paybackMonths": 16.68364432597104,
+        "roiPct": 45.88888888888903,
+        "totalInvested": 180,
+        "totalRevenue": 262.60000000000025
+      }
+    },
+    {
+      "kind": "score",
+      "args": {
+        "accountSlug": "leo",
+        "_bypassMv": true
+      },
+      "value": {
+        "itemsMissingCostCount": 0,
+        "itemsWithCostCount": 2,
+        "monthlyRate": 2.6972524180433104,
+        "netProfit": -114.35000000000001,
+        "paybackMonths": 66.73457730388425,
+        "roiPct": -63.527777777777786,
+        "totalInvested": 180,
+        "totalRevenue": 65.64999999999999
+      }
+    },
+    {
+      "kind": "score",
+      "args": {
+        "accountSlug": "diogo",
+        "_bypassMv": true
+      },
+      "value": {
+        "itemsMissingCostCount": 0,
+        "itemsWithCostCount": 2,
+        "monthlyRate": 2.6972524180433104,
+        "netProfit": -114.35000000000001,
+        "paybackMonths": 66.73457730388425,
+        "roiPct": -63.527777777777786,
+        "totalInvested": 180,
+        "totalRevenue": 65.64999999999999
+      }
+    },
+    {
+      "kind": "score",
+      "args": {
+        "accountSlug": "dbcinema",
+        "_bypassMv": true
+      },
+      "value": {
+        "itemsMissingCostCount": 0,
+        "itemsWithCostCount": 2,
+        "monthlyRate": 2.6972524180433104,
+        "netProfit": -114.35000000000001,
+        "paybackMonths": 66.73457730388425,
+        "roiPct": -63.527777777777786,
+        "totalInvested": 180,
+        "totalRevenue": 65.64999999999999
+      }
+    },
+    {
+      "kind": "score",
+      "args": {
+        "accountSlug": "dbcinema_web",
+        "_bypassMv": true
+      },
+      "value": {
+        "itemsMissingCostCount": 0,
+        "itemsWithCostCount": 2,
+        "monthlyRate": 2.6972524180433104,
+        "netProfit": -114.35000000000001,
+        "paybackMonths": 66.73457730388425,
+        "roiPct": -63.527777777777786,
+        "totalInvested": 180,
+        "totalRevenue": 65.64999999999999
+      }
+    }
+  ],
+  "provenance": {
+    "sourceCommit": "e861ac8b75483a92876bf10e6a12584d4413c683",
+    "input": "synthetic contract fixture",
+    "calculation": "independent original registered query handlers"
+  }
+}

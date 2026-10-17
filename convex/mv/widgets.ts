@@ -1,3 +1,5 @@
+import { computeSellRecommendations, computePriceRecommendations } from "../items";
+import { requireSnapshot, type WidgetAnalyticsInputs } from "../lib/analytics_source_order";
 import { loadPricingRows } from "../lib/pricing_input_cache";
 /**
  * 2026-07-12 cost audit — generic widget MV refreshers (table `mv_widgets`,
@@ -38,7 +40,7 @@ import {
   computeOosForSlug,
 } from "../items";
 import { computeHealthIssues, type HealthIssue } from "../health";
-import { CANONICAL_BUNDLE_WINDOWS } from "../bundles";
+import { computeTopBundleRankings, CANONICAL_BUNDLE_WINDOWS } from "../bundles";
 import { defaultStartYear } from "../tax";
 import { isConfirmedWithDates } from "../lib/reservations/predicates";
 
@@ -370,6 +372,7 @@ export async function refreshHandoffsWidget(
 
 export async function refreshSlowWidgets(
   ctx: ActionCtx,
+  captured?: WidgetAnalyticsInputs,
 ): Promise<{ ok: true; written: number }> {
   const startedAt = Date.now();
   let written = 0;
@@ -382,17 +385,27 @@ export async function refreshSlowWidgets(
     written += 1;
   };
 
+  // Definition failures surface at the original first bundle slot, after
+  // the first sell/price writes. Other independent master steps still run.
+  const bundlePayload = async (accountSlug:string|null,days:number) => {
+    if(!captured)return ctx.runQuery(internal.bundles.__service_getTopBundles,{accountSlug,days,_bypassMv:true});
+    const definitions=requireSnapshot(captured.bundleDefinitions);
+    return computeTopBundleRankings({...definitions,reservations:captured.reservations},accountSlug,days);
+  };
+
   for (const { key, arg } of SLUG_VARIANTS) {
     await write(
       `sell:${key}`,
-      await ctx.runQuery(internal.items.__service_getSellRecommendations, {
+      captured
+        ? await computeSellRecommendations(captured, arg, async name => captured.pricing.find(row => row.item_name_canonical === name) ?? null)
+        : await ctx.runQuery(internal.items.__service_getSellRecommendations, {
         accountSlug: arg,
         _bypassMv: true,
       }),
     );
     await write(
       `price:${key}`,
-      await ctx.runQuery(internal.items.__service_getPriceRecommendations, {
+      captured ? computePriceRecommendations(captured, arg) : await ctx.runQuery(internal.items.__service_getPriceRecommendations, {
         accountSlug: arg,
         _bypassMv: true,
       }),
@@ -400,11 +413,7 @@ export async function refreshSlowWidgets(
     for (const days of CANONICAL_BUNDLE_WINDOWS) {
       await write(
         `bundles:${key}:${days}`,
-        await ctx.runQuery(internal.bundles.__service_getTopBundles, {
-          accountSlug: arg,
-          days,
-          _bypassMv: true,
-        }),
+        await bundlePayload(arg, days),
       );
     }
   }
