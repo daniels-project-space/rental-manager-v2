@@ -17,6 +17,19 @@ export function reservationReadMetadataMatches(record: Doc<"reservation_read_rec
   return record.source_id === source._id && Object.is(record.source_creation_time, source._creationTime)
     && reservationReadFields.every(key => Object.is(record[key], source[key]));
 }
+export function reservationActivityMetadata(source: Doc<"reservations">) {
+  return { activity_version: 1 as const,
+    ...(source.latest_activity === undefined ? {} : { latest_activity: source.latest_activity }),
+    ...(source.order_step === undefined ? {} : { order_step: source.order_step }),
+    ...(source.paid === undefined ? {} : { paid: source.paid }),
+    ...(source.platform_booking_confirmed === undefined ? {} : { platform_booking_confirmed: source.platform_booking_confirmed }) };
+}
+export function reservationActivityMatches(presence: Doc<"reservation_order_presence"> | null, source: Doc<"reservations">) {
+  return !!presence && presence.source_id === source._id && presence.hygglo_order_id === source.hygglo_order_id
+    && presence.activity_version === 1 && Object.is(presence.latest_activity, source.latest_activity)
+    && Object.is(presence.order_step, source.order_step) && Object.is(presence.paid, source.paid)
+    && Object.is(presence.platform_booking_confirmed, source.platform_booking_confirmed);
+}
 export async function decodeReservationRead(record: Doc<"reservation_read_records">): Promise<Doc<"reservations">> {
   if (!record.valid || record.version !== 1 || !record.data || await cacheByteDigest(record.data) !== record.packed_sha256) throw Error("Reservation read record is unavailable");
   const value = unpackCacheValue(record.data) as Doc<"reservations">;
@@ -54,9 +67,9 @@ export async function syncReservationReadRecord(ctx: MutationCtx, id: Id<"reserv
     if (sourceChange) await bumpRevision(ctx);
     return;
   }
-  const presenceChanged = !presence || presence.hygglo_order_id !== source.hygglo_order_id;
+  const presenceChanged = !reservationActivityMatches(presence, source);
   if (presenceChanged) {
-    const value = { source_id: id, ...(source.hygglo_order_id === undefined ? {} : { hygglo_order_id: source.hygglo_order_id }) };
+    const value = { source_id: id, ...(source.hygglo_order_id === undefined ? {} : { hygglo_order_id: source.hygglo_order_id }), ...reservationActivityMetadata(source) };
     if (presence) await ctx.db.replace(presence._id, value); else await ctx.db.insert("reservation_order_presence", value);
   }
   const source_sha256 = await cacheValueDigest(source);
