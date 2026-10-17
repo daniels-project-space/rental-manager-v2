@@ -6,6 +6,9 @@
 `node scripts/deployment-inputs.mjs --write` after staging new runtime files.
 CI checks the generated result. Unknown inputs, missing manifests and missing
 Git history cause normal builds. `VERCEL_FORCE_BUILD=1` also forces a build.
+Shared package/compiler settings affect every layer. Release-control scripts
+follow their actual website/backend-publisher consumers and do not by themselves
+require publication of an unchanged worker image.
 
 With `RM_SPLIT_DEPLOYMENTS=enabled` in GitHub and Vercel:
 
@@ -49,6 +52,10 @@ runtime/deployment inputs.
 
 ## Backups and credential rotation
 
+Backup helpers live in `.github/scripts/`, outside application runtime inputs.
+Ordinary edits there do not rebuild the website or publish workers. A helper
+imported by real runtime code remains a deployment input; CI checks that boundary.
+
 The existing daily 03:17 UTC backup remains authoritative and serialized.
 It validates Rental Manager's current vault credential source before exporting,
 then resolves current storage credentials immediately before uploading directly
@@ -57,6 +64,8 @@ the old separately copied GitHub R2 secrets, persist credential files, or forwar
 the backend/vault credential to the storage uploader.
 
 The upload supplies a Content-MD5 checksum and records the source SHA-256.
+Optional automatic SDK checksums are suppressed so R2 receives one explicit
+validated checksum, rather than rejecting two simultaneous checksum headers.
 The existing HeadObject check verifies complete length and matching SHA-256
 metadata; the receipt identifies the exact object. Cloudflare documents
 [Content-MD5 support for PutObject](https://developers.cloudflare.com/r2/api/s3/api/).

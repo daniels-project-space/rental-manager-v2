@@ -4,7 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { loadBackupStorage, uploadBackup } from "./backup-to-r2.mjs";
-import { backupChecksum, verifyBackupHead } from "./backup-checksum.mjs";
+import { backupChecksum, verifyBackupHead, backupChecksumClientOptions } from "./backup-checksum.mjs";
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
 const account = "b".repeat(32);
 const endpoint = `https://${account}.r2.cloudflarestorage.com`;
@@ -91,4 +92,20 @@ test("checks complete source bytes and rejects size or hash metadata drift", () 
   assert.doesNotThrow(() => verifyBackupHead({ ContentLength: 3, Metadata: { sha256: expected.sha256 } }, expected));
   assert.throws(() => verifyBackupHead({ ContentLength: 4, Metadata: { sha256: expected.sha256 } }, expected), /size/);
   assert.throws(() => verifyBackupHead({ ContentLength: 3, Metadata: { sha256: "wrong" } }, expected), /hash metadata/);
+});
+
+test("the installed SDK sends only the explicit validated MD5 checksum to R2", async () => {
+  const bytes = Buffer.from("abc"), checksum = backupChecksum(bytes);
+  let headers;
+  const client = new S3Client({
+    region: "auto", endpoint, credentials: { accessKeyId: "fixture-access", secretAccessKey: "fixture-secret" },
+    ...backupChecksumClientOptions(),
+    requestHandler: { handle: async request => { headers = request.headers; return { response: { statusCode: 200, headers: {}, body: new Uint8Array() } }; } },
+  });
+  try {
+    await client.send(new PutObjectCommand({ Bucket: "rental-manager-v2", Key: "backups/rmv2/20261017/convex-hearty-oyster-600.zip", Body: bytes, ContentLength: bytes.length, ContentMD5: checksum.contentMD5, Metadata: { sha256: checksum.sha256 } }));
+    assert.equal(headers["content-md5"], checksum.contentMD5);
+    assert.equal(headers["x-amz-meta-sha256"], checksum.sha256);
+    assert.deepEqual(Object.keys(headers).filter(key => key.startsWith("x-amz-checksum-")), []);
+  } finally { client.destroy(); }
 });

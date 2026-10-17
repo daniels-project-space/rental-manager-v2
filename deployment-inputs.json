@@ -5,8 +5,6 @@
     "package.json",
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
-    "scripts/deployment-impact.mjs",
-    "scripts/deployment-inputs.mjs",
     "tsconfig.json"
   ],
   "website": {

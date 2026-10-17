@@ -11,7 +11,7 @@
 
 import { readFileSync, statSync } from "node:fs";
 import { S3Client, PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
-import { backupChecksum, verifyBackupHead } from "./backup-checksum.mjs";
+import { backupChecksum, verifyBackupHead, backupChecksumClientOptions } from "./backup-checksum.mjs";
 
 const BUCKET = "rental-manager-v2";
 
@@ -48,6 +48,7 @@ async function main() {
   const localBytes = localStat.size;
 
   const client = new S3Client({
+    ...backupChecksumClientOptions(),
     region: "auto",
     endpoint,
     credentials: { accessKeyId, secretAccessKey },

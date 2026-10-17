@@ -19,7 +19,9 @@ export function classifyChanges(files, before, after) {
   const result = { website: false, backend: false, trigger: false, reason: "classified_dependencies", changedFiles: files };
   const manifests = [before, after];
   for (const file of files) {
-    if (nonRuntime(file)) continue;
+    // CI-only helpers stay outside application releases. If a runtime module
+    // actually imports one, its recorded consumers override the directory rule.
+    if (nonRuntime(file) && !manifests.some(manifest => manifest.globals.includes(file) || ["website", "backend", "trigger"].some(layer => manifest[layer].files.includes(file)))) continue;
     if (manifests.some(manifest => manifest.globals.includes(file))) return all("shared_build_configuration_changed");
     for (const layer of ["website", "backend", "trigger"]) {
       if (manifests.some(manifest => manifest[layer].uncertain.length || manifest[layer].files.includes(file))) result[layer] = true;
@@ -30,7 +32,7 @@ export function classifyChanges(files, before, after) {
       // Adding an unused backend module should not rebuild the UI. A changed
       // website boundary does require a build, including removed dependencies.
       for (const layer of ["website", "backend", "trigger"]) if (JSON.stringify(before[layer]) !== JSON.stringify(after[layer])) result[layer] = true;
-    } else if (!file.startsWith("src/hygglo-core/")) result.website = true;
+    } else if (!file.startsWith("src/hygglo-core/") && !nonRuntime(file)) result.website = true;
     // A core module absent from both graphs is not a website/worker input.
   }
   return result;

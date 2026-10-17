@@ -18,6 +18,21 @@ function roles(files, before = manifest(), after = manifest()) {
   const { website, backend, trigger } = classifyChanges(files, before, after);
   return [website, backend, trigger];
 }
+
+test("CI-only backup helpers do not create application deployments", () => {
+  assert.deepEqual(roles([".github/scripts/backup-to-r2.mjs", ".github/scripts/backup-checksum.mjs"]), [false, false, false]);
+});
+test("runtime consumers override metadata-directory exclusions, including deleted dependencies", () => {
+  const website = manifest(); website.website.files.push(".github/scripts/shared.mjs");
+  assert.deepEqual(roles([".github/scripts/shared.mjs"], website, website), [true, false, false]);
+  const worker = manifest(); worker.trigger.files.push(".github/scripts/shared.mjs");
+  assert.deepEqual(roles([".github/scripts/shared.mjs"], worker, manifest()), [false, false, true]);
+});
+test("release-control changes follow their actual consumers without publishing unchanged workers", () => {
+  const m = manifest(); m.website.files.push("scripts/deployment-impact.mjs"); m.backend.files.push("scripts/deployment-impact.mjs");
+  assert.deepEqual(roles(["scripts/deployment-impact.mjs"], m, m), [true, true, false]);
+  assert.deepEqual(roles(["package.json"], m, m), [true, true, true]);
+});
 for (const [name, files, expected] of [
   ["backend implementation", ["convex/query.ts"], [false, true, false]],
   ["new backend module", ["convex/newQuery.ts"], [false, true, false]],
