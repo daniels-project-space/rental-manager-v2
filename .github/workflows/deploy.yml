@@ -1,20 +1,17 @@
-# Convex + Vercel deploy via Vercel's git integration (build script runs `convex deploy --cmd 'next build'`).
-# This workflow covers the remaining gap: deploying Trigger.dev tasks to the cloud.
+# Explicit operator fallback. Automatic worker publication is owned by CI,
+# after the exact source has passed its checks and input classification.
 # Trigger.dev v3 project: proj_cdhxwycwcjdmxnsodsmc
 
 name: Deploy Trigger.dev tasks
+run-name: ${{ inputs.verify_backend_key && 'Read-only backend credential preflight' || 'Manual Trigger task deployment' }}
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - 'src/trigger/**'
-      - 'src/hygglo-core/**'
-      - 'trigger.config.ts'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
+    inputs:
+      verify_backend_key:
+        description: Check the existing production credential without deploying or starting a task
+        type: boolean
+        default: false
 
 concurrency:
   group: trigger-deploy
@@ -24,27 +21,55 @@ jobs:
   deploy-trigger:
     name: Deploy Trigger.dev tasks
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read-only backend credential preflight
+        if: inputs.verify_backend_key
+        run: node scripts/verify-backend-key.mjs
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+
+      - name: Check whether worker dependencies changed
+        if: ${{ !inputs.verify_backend_key }}
+        id: impact
+        env:
+          BASE_SHA: ${{ github.event.before }}
+        run: node scripts/deployment-impact.mjs "$BASE_SHA"
 
       - name: Setup pnpm
+        if: ${{ !inputs.verify_backend_key }}
         uses: pnpm/action-setup@v4
         with:
           version: 11.5.1
 
       - name: Setup Node 24
+        if: ${{ !inputs.verify_backend_key }}
         uses: actions/setup-node@v4
         with:
           node-version: '24'
           cache: 'pnpm'
 
       - name: Install dependencies
+        if: ${{ !inputs.verify_backend_key }}
         run: pnpm install --frozen-lockfile
 
+      - name: Verify compatible backend before manual publication
+        if: ${{ !inputs.verify_backend_key && vars.RM_SPLIT_DEPLOYMENTS == 'enabled' }}
+        run: node scripts/backend-ready.mjs
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+
       - name: Deploy Trigger.dev tasks
+        if: ${{ !inputs.verify_backend_key }}
         # The `trigger.dev` package's bin is named `trigger` (not `trigger.dev`),
         # so the package.json `trigger:deploy` script doesn't resolve. Use the bin directly.
-        run: pnpm exec trigger deploy --external-id "$GITHUB_SHA"
+        run: |
+          node --input-type=module -e 'import { assertCurrentInputs } from "./scripts/deployment-impact.mjs"; assertCurrentInputs(process.env.GITHUB_SHA, "trigger");'
+          pnpm exec trigger deploy --external-id "$GITHUB_SHA"
         env:
           TRIGGER_ACCESS_TOKEN: ${{ secrets.TRIGGER_ACCESS_TOKEN }}

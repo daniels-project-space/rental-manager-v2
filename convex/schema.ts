@@ -19,6 +19,10 @@ import { invoiceStatsValidator } from "./lib/invoice_stats_fields";
 // (renters, reservations, conversations, rules, denial_records).
 // MASTER SAFETY RAIL: settings.ALLOW_HYGGLO_SEND must remain false.
 const operationalSchema = defineSchema({
+  // One reusable deployment lease. No customer records or per-build history.
+  deployment_leases: defineTable({
+    resource: v.string(), owner: v.string(), sourceCommit: v.string(), expiresAt: v.number(),
+  }).index("by_resource", ["resource"]),
   storefront_checkout_stock: defineTable({key:v.string(),revision:v.number(),rows:v.array(v.object({bookingId:v.string(),item_id:v.id("items"),start:v.number(),end:v.number(),qty:v.number(),expiresAt:v.number(),endExclusive:v.boolean(),bufferMinutes:v.number()})),receivedAt:v.number()}).index("by_key",["key"]),
   // Operator queue preferences only; never changes a booking or conversation.
   quick_reply_thread_state: defineTable({
