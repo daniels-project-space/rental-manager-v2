@@ -3,4 +3,5 @@
 .serena
 graphify-out
 .trigger
+.convex-tmp-*
 coverage

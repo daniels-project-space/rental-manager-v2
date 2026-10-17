@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import { BACKEND_URL, assertCurrentMain, sourceCommit, publishBackend, readBackendIdentity, runInstalledTool } from "./backend-publisher.mjs";
+import { backendFingerprint } from "./backend-fingerprint.mjs";
 
 // Preview builds share the live backend URL/key. Only an explicitly production
 // Vercel build may publish functions; local and PR builds only compile the UI.
@@ -16,16 +18,22 @@ if (production) {
     throw new Error("Production requires DBCINEMA_ADMIN_TOKEN for the DB Cinema chat bridge.");
   }
 }
-const args = production
-  ? ["convex", "deploy", "--check-build-environment=disable", "--cmd", "next build"]
-  : ["next", "build"];
-const result = spawnSync("pnpm", ["exec", ...args], { stdio: "inherit", env: process.env });
-if (result.error) throw result.error;
-if (production && result.status === 0) {
-  // This invokes an already deployed mutation; it does not publish functions
-  // or start another build. The mutation checks the actual deployment URL.
-  const warm = spawnSync("pnpm", ["exec", "convex", "run", "stock_input_cache_admin:ensureSharedSnapshot", JSON.stringify({ expectedDeploymentUrl: "https://hearty-oyster-600.convex.cloud" })], { stdio: "inherit", env: process.env });
-  if (warm.error) throw warm.error;
-  if (warm.status !== 0) process.exit(warm.status ?? 1);
+if (!production) {
+  await runInstalledTool("next", ["build"]);
+} else if (process.env.RM_SPLIT_DEPLOYMENTS !== "enabled") {
+  // Initial bootstrap retains the existing coupled publication. Enable split
+  // releases only after the identity/lease endpoints and CI publisher qualify.
+  await publishBackend({ nextBuild: true, locked: false });
+} else {
+  const identity = await readBackendIdentity();
+  if (identity.sourceFingerprint === backendFingerprint()) {
+    // Exactly the existing qualified backend; do not republish it for a UI
+    // change. Match the public URL variables Convex's --cmd used to supply.
+    const env = { ...process.env, NEXT_PUBLIC_CONVEX_URL: BACKEND_URL, NEXT_PUBLIC_CONVEX_SITE_URL: BACKEND_URL.replace(".cloud", ".site") };
+    await runInstalledTool("next", ["build"], env);
+    assertCurrentMain(sourceCommit(), "website");
+  } else {
+    await publishBackend({ nextBuild: true, locked: true });
+    assertCurrentMain(sourceCommit(), "website");
+  }
 }
-process.exit(result.status ?? 1);

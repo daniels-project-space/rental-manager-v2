@@ -7,16 +7,15 @@
  */
 import { getR2 } from "@/mastra/lib/r2-client";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { AssetCache } from "./asset-cache";
 
-const cache = new Map<string, Buffer>();
+const cache = new AssetCache({ maxBytes: 64 * 1024 * 1024, maxEntries: 32, ttlMs: 60 * 60_000 });
 
 export async function getAsset(key: string): Promise<Buffer> {
-  const hit = cache.get(key);
-  if (hit) return hit;
-  const { s3, bucket } = await getR2();
-  const resp = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-  const arr = await resp.Body!.transformToByteArray();
-  const buf = Buffer.from(arr);
-  cache.set(key, buf);
-  return buf;
+  return cache.load(key, async () => {
+    const { s3, bucket } = await getR2();
+    const resp = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    const arr = await resp.Body!.transformToByteArray();
+    return Buffer.from(arr);
+  });
 }

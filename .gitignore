@@ -33,6 +33,7 @@ next-env.d.ts
 
 # convex local
 .convex
+/.convex-tmp-*/
 .env.local
 .env.*.local
 

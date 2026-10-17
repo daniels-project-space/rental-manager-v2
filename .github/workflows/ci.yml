@@ -8,13 +8,21 @@ on:
     branches: [main]
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # PR checks are safe to supersede. A main run may be publishing the backend;
+  # its lease/cleanup must complete before the next publisher takes over.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   typecheck:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      website: ${{ steps.impact.outputs.website }}
+      backend: ${{ steps.impact.outputs.backend }}
+      trigger: ${{ steps.impact.outputs.trigger }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Detect package manager
         id: pm
         run: |
@@ -29,10 +37,19 @@ jobs:
       - name: Install
         run: |
           if [ "${{ steps.pm.outputs.pm }}" = "pnpm" ]; then
-            pnpm install --frozen-lockfile || pnpm install
+            pnpm install --frozen-lockfile
           else
-            npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+            npm ci --no-audit --no-fund
           fi
+      - name: Check deployment dependency boundaries and publisher contracts
+        run: |
+          node scripts/deployment-inputs.mjs
+          node --test scripts/deployment-impact.test.mjs scripts/backend-publisher.test.mjs
+      - name: Classify changed deployment inputs
+        id: impact
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: node scripts/deployment-impact.mjs "$BASE_SHA"
       - name: Guard public Convex owner boundaries
         run: |
           node scripts/check-owner-boundary.mjs
@@ -54,3 +71,68 @@ jobs:
           fi
       - name: Guard London booking-time transcripts
         run: node scripts/check-booking-time-extractors.mjs
+      - name: Verify the private main-branch backend credential
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: node scripts/verify-backend-key.mjs
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+
+  deploy-backend:
+    name: Publish backend without rebuilding an unchanged website
+    needs: typecheck
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.RM_SPLIT_DEPLOYMENTS == 'enabled' && needs.typecheck.outputs.backend == 'true' && needs.typecheck.outputs.website == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: rental-backend-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Publish the validated current main backend
+        run: node scripts/publish-backend.mjs
+        env:
+          RM_SPLIT_DEPLOYMENTS: ${{ vars.RM_SPLIT_DEPLOYMENTS }}
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+
+  deploy-trigger:
+    name: Publish changed Trigger worker dependencies
+    needs: [typecheck, deploy-backend]
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.typecheck.result == 'success' && (needs.deploy-backend.result == 'success' || needs.deploy-backend.result == 'skipped') && needs.typecheck.outputs.trigger == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: trigger-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.5.1 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Verify current worker inputs
+        run: node --input-type=module -e 'import { assertCurrentInputs } from "./scripts/deployment-impact.mjs"; assertCurrentInputs(process.env.GITHUB_SHA, "trigger");'
+      - name: Verify the compatible backend is served
+        if: vars.RM_SPLIT_DEPLOYMENTS == 'enabled'
+        run: node scripts/backend-ready.mjs
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+      - name: Publish the validated worker source
+        run: pnpm exec trigger deploy --external-id "$GITHUB_SHA"
+        env:
+          TRIGGER_ACCESS_TOKEN: ${{ secrets.TRIGGER_ACCESS_TOKEN }}
