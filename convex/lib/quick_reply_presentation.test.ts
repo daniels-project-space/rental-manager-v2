@@ -93,6 +93,15 @@ describe("Quick Reply live lifecycle", () => {
     order_step: null,
     is_request: false,
   };
+  it.each(["BOOKED_AFTER_VERIFIED", "DELIVERED", "RETURNED", "REVIEWED"])(
+    "current Hygglo %s cannot regress because confirmation flags are missing", step => {
+      expect(quickReplyStage({...base,source:"hygglo",order_step:step,paid:true,verification_started:true,platform_booking_confirmed:false})).toBe("confirmed");
+    });
+  it.each(["REQUEST", "APPROVED", "FUNDS_RESERVED"])("current unpaid %s wins over historic flags",step => {
+    expect(quickReplyStage({...base,source:"hygglo",order_step:step,paid:true,verification_started:true})).toBe("enquiry");
+  });
+  it("uses the same VERIFIED-only pending stage as Active Rentals",()=>expect(quickReplyStage({...base,source:"hygglo",order_step:"VERIFIED",paid:false,verification_started:false})).toBe("pending"));
+  it.each(["CANCELED","VERIFICATION_FAILED"])("terminal step %s closes stale flags",step => expect(quickReplyStage({...base,order_step:step,paid:true,verification_started:true})).toBe("closed"));
   it.each(["REQUEST", "APPROVED", "FUNDS_RESERVED"])(
     "unpaid %s remains an enquiry",
     (step) =>

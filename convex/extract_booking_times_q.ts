@@ -11,7 +11,8 @@ import { internal } from "./_generated/api";
 import { queueNotificationEvents } from "./notifications";
 import { rentalTimeChangedEvent, syncRentalReminders } from "./lib/rental_timing_notifications";
 import { confirmedChatClock, recoverConfirmedChatClock } from "../src/lib/booking-schedule-evidence";
-import { hashBookingTimeTranscript } from "../src/lib/booking-time-transcript";
+import { BOOKING_TIME_EXTRACTION_VERSION, hashBookingTimeTranscript } from "../src/lib/booking-time-transcript";
+import { contextualScheduleMessages } from "../src/lib/booking-schedule-context";
 import type { MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { markReservationDirty } from "./lib/reconciliation_dirty";
@@ -24,12 +25,12 @@ async function persistTimes(ctx:MutationCtx,id:Id<"reservations">,hash:string,pa
  const messages=rows.reverse().map(m=>({sender:m.sender,body_text:m.body_text,hygglo_sent_at:m.hygglo_sent_at??m.fetched_at}));
  if(hashBookingTimeTranscript(messages)!==hash)return false;
  const next={...row,...patch};
- let pickup=confirmedChatClock(messages,"pickup",next.pickup_time,next.pickup_date??next.start_date,next.start_date,hash);
- let returned=confirmedChatClock(messages,"return",next.return_time,next.return_date??next.end_date,next.end_date,hash);
+ let pickup=confirmedChatClock(messages,"pickup",next.pickup_time,next.pickup_date??next.start_date,next.start_date,hash,row.pickup_time_provenance);
+ let returned=confirmedChatClock(messages,"return",next.return_time,next.return_date??next.end_date,next.end_date,hash,row.return_time_provenance);
  // A literal agreement can be recovered without a model guess or another
  // paid extraction. This also repairs an old candidate rejected for its date.
- const recoveredPickup = !pickup && next.start_date ? recoverConfirmedChatClock(messages,"pickup",next.start_date,hash) : undefined;
- const recoveredReturn = !returned && next.end_date ? recoverConfirmedChatClock(messages,"return",next.end_date,hash) : undefined;
+ const recoveredPickup = !pickup && next.start_date ? recoverConfirmedChatClock(messages,"pickup",next.start_date,hash,row.pickup_time_provenance) : undefined;
+ const recoveredReturn = !returned && next.end_date ? recoverConfirmedChatClock(messages,"return",next.end_date,hash,row.return_time_provenance) : undefined;
  if(recoveredPickup){pickup=recoveredPickup;patch={...patch,pickup_time:pickup.time,pickup_date:pickup.date};next.pickup_time=pickup.time;next.pickup_date=pickup.date;}
  if(recoveredReturn){returned=recoveredReturn;patch={...patch,return_time:returned.time,return_date:returned.date};next.return_time=returned.time;next.return_date=returned.date;}
  // Keep independently established history when the bounded latest window
@@ -38,17 +39,19 @@ async function persistTimes(ctx:MutationCtx,id:Id<"reservations">,hash:string,pa
  const keep=(proof:typeof pickup,endpoint:"pickup"|"return")=>{
   if(!proof)return undefined;const time=endpoint==="pickup"?next.pickup_time:next.return_time;const date=endpoint==="pickup"?(next.pickup_date??next.start_date):(next.return_date??next.end_date);
   const context=endpoint==="pickup"?/\b(?:pickup|pick up|collect)/i:/\b(?:return|drop.?off|back)/i;
-  return proof.time===time&&proof.date===date&&!messages.some(m=>(m.hygglo_sent_at??0)>proof.confirmedAt&&context.test(m.body_text)&&/\d|morning|evening|afternoon|noon|midday|midnight|day|tonight|tomorrow/i.test(m.body_text))?proof:undefined;
+  return proof.time===time&&proof.date===date&&!contextualScheduleMessages(messages,endpoint,endpoint==="pickup"?next.start_date!:next.end_date!,proof).some(m=>(m.hygglo_sent_at??0)>proof.confirmedAt&&context.test(m.body_text)&&/\d|morning|evening|afternoon|noon|midday|midnight|day|tonight|tomorrow/i.test(m.body_text))?proof:undefined;
  };
  pickup??=keep(row.pickup_time_provenance,"pickup");returned??=keep(row.return_time_provenance,"return");
- await patchRevenueReservation(ctx, id, {...patch,pickup_time_provenance:pickup,return_time_provenance:returned,...(stampExtraction?{times_transcript_hash:hash,times_extracted_at:Date.now()}:{} )});
+ const scheduleChanged = ["pickup_time", "return_time", "pickup_date", "return_date"].some(field => next[field as keyof typeof next] !== row[field as keyof typeof row]) || JSON.stringify([row.pickup_time_provenance,row.return_time_provenance].map(proof=>proof&&[proof.source,proof.date,proof.time,proof.precision])) !== JSON.stringify([pickup,returned].map(proof=>proof&&[proof.source,proof.date,proof.time,proof.precision]));
+ await patchRevenueReservation(ctx, id, {...patch,pickup_time_provenance:pickup,return_time_provenance:returned,...(scheduleChanged?{schedule_updated_at:Date.now()}:{}),...(stampExtraction?{times_transcript_hash:hash,times_extracted_at:Date.now()}:{} )});
+ if(scheduleChanged)await ctx.scheduler.runAfter(0,internal.mv.calendar.requestRefresh,{});
  const confirmedNext={...next,pickup_time_provenance:pickup,return_time_provenance:returned};
  const event=rentalTimeChangedEvent(row,confirmedNext,Date.now(),true);
  if(event)await queueNotificationEvents(ctx,[event]);
  await syncRentalReminders(ctx,confirmedNext);
  const changesHoldWindow = (["pickup_time", "return_time", "pickup_date", "return_date"] as const)
   .some((field) => patch[field] !== undefined && row[field] !== patch[field]);
- if (changesHoldWindow && row.account_slug) {
+ if ((changesHoldWindow || scheduleChanged) && row.account_slug) {
   await markReservationDirty(ctx, id, row.account_slug);
  }
  return true;
@@ -102,28 +105,6 @@ export const setTimes = internalMutation({
   },
   handler: async (ctx, { reservation_id, transcript_hash, patch }) => {
     if(!await persistTimes(ctx,reservation_id,transcript_hash,patch))return {ok:false,reason:"stale_transcript"};
-    // Calendar fast-path (2026-08-16): the calendar MV (convex/mv/calendar.ts)
-    // otherwise only rebuilds on its 30-min cron / 45-min backstop, so a
-    // same-day time correction could take up to 30-45 min to show up on the
-    // calendar/overlays. Its own dirtySince probe already does a CHEAP
-    // selective rebuild (one account's 4 views, not all 10) whenever it sees
-    // times_extracted_at move — this just triggers that check immediately
-    // instead of waiting for the next tick, reusing the existing logic as-is.
-    //
-    // Narrowly gated to an actual time/date change, NOT every call — this
-    // mutation is ALSO invoked with an empty patch just to bump
-    // times_extracted_at and stop a re-poll from re-checking unchanged
-    // content forever (see callers), which must NOT itself trigger a rebuild
-    // or this fast-path would fire on every no-op poll, not just genuine
-    // changes.
-    const changedTimeOrDate =
-      patch.pickup_time !== undefined ||
-      patch.return_time !== undefined ||
-      patch.pickup_date !== undefined ||
-      patch.return_date !== undefined;
-    if (changedTimeOrDate) {
-      await ctx.scheduler.runAfter(0, internal.mv.calendar.requestRefresh, {});
-    }
     return { ok: true };
   },
 });
@@ -246,7 +227,7 @@ export const admin_getExtractBatchInputs = query({
       if ((r.end_date as string) < cutoffStr) continue;
       // Re-extract only when a message arrived AFTER the last extraction attempt.
       const extractedAt = (r as { times_extracted_at?: number }).times_extracted_at ?? 0;
-      if (conv.last_msg_at <= extractedAt) continue;
+      if (conv.last_msg_at <= extractedAt && r.times_transcript_hash?.startsWith(BOOKING_TIME_EXTRACTION_VERSION + ":")) continue;
       picked.push({
         id: r._id as string,
         hygglo_order_id: r.hygglo_order_id as string,
@@ -310,28 +291,6 @@ export const admin_setExtractedTimes = mutation({
   },
   handler: async (ctx, { reservation_id, transcript_hash, patch }) => {
     if(!await persistTimes(ctx,reservation_id,transcript_hash,patch))return {ok:false,reason:"stale_transcript"};
-    // Calendar fast-path (2026-08-16): the calendar MV (convex/mv/calendar.ts)
-    // otherwise only rebuilds on its 30-min cron / 45-min backstop, so a
-    // same-day time correction could take up to 30-45 min to show up on the
-    // calendar/overlays. Its own dirtySince probe already does a CHEAP
-    // selective rebuild (one account's 4 views, not all 10) whenever it sees
-    // times_extracted_at move — this just triggers that check immediately
-    // instead of waiting for the next tick, reusing the existing logic as-is.
-    //
-    // Narrowly gated to an actual time/date change, NOT every call — this
-    // mutation is ALSO invoked with an empty patch just to bump
-    // times_extracted_at and stop a re-poll from re-checking unchanged
-    // content forever (see callers), which must NOT itself trigger a rebuild
-    // or this fast-path would fire on every no-op poll, not just genuine
-    // changes.
-    const changedTimeOrDate =
-      patch.pickup_time !== undefined ||
-      patch.return_time !== undefined ||
-      patch.pickup_date !== undefined ||
-      patch.return_date !== undefined;
-    if (changedTimeOrDate) {
-      await ctx.scheduler.runAfter(0, internal.mv.calendar.requestRefresh, {});
-    }
     return { ok: true };
   },
 });
@@ -348,15 +307,14 @@ export const reconcileTimeProvenance = mutation({
    const rows=await ctx.db.query("hygglo_messages").withIndex("by_thread",q=>q.eq("thread_id",row.hygglo_order_id!)).order("desc").take(32);
    const messages=rows.reverse().map(m=>({sender:m.sender,body_text:m.body_text,hygglo_sent_at:m.hygglo_sent_at??m.fetched_at}));
    const hash=hashBookingTimeTranscript(messages);
-   const pickup=row.start_date?recoverConfirmedChatClock(messages,"pickup",row.start_date,hash):undefined;
-   const returned=row.end_date?recoverConfirmedChatClock(messages,"return",row.end_date,hash):undefined;
+   const pickup=row.start_date?recoverConfirmedChatClock(messages,"pickup",row.start_date,hash,row.pickup_time_provenance):undefined;
+   const returned=row.end_date?recoverConfirmedChatClock(messages,"return",row.end_date,hash,row.return_time_provenance):undefined;
    await persistTimes(ctx,id,hash,{...(pickup?{pickup_time:pickup.time,pickup_date:pickup.date}:{}),...(returned?{return_time:returned.time,return_date:returned.date}:{})},false);
    const next=await ctx.db.get(id);
    const changed=JSON.stringify([row.pickup_time_provenance,row.return_time_provenance])!==JSON.stringify([next?.pickup_time_provenance,next?.return_time_provenance]);
    if(changed)await ctx.db.insert("audit_log",{table_name:"reservations",actor:"system:confirmed-schedule-reconciliation",op:"update",count:1,note:JSON.stringify({reservation_id:id,evidenceHash:hash,pickupConfirmed:!!next?.pickup_time_provenance,returnConfirmed:!!next?.return_time_provenance}),ts:Date.now()});
    results.push({reservation_id:id,changed,pickupConfirmed:!!next?.pickup_time_provenance,returnConfirmed:!!next?.return_time_provenance});
   }
-  await ctx.scheduler.runAfter(0,internal.mv.calendar.requestRefresh,{});
   return results;
  }
 });

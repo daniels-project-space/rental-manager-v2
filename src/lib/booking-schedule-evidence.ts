@@ -1,4 +1,4 @@
-import { sanitizeTime } from "./booking-time-extraction";
+import { contextualScheduleMessages, scheduleAcceptance as acceptance, scheduleRejection as rejection, scheduleClockPattern, literalScheduleTime, type PriorScheduleClock } from "./booking-schedule-context";
 import type { BookingTimeMessage } from "./booking-time-transcript";
 export type ScheduleProof = {
   source: "agreed_chat" | "provider_booking" | "website_contract";
@@ -6,14 +6,11 @@ export type ScheduleProof = {
   time: string;
   confirmedAt: number;
   evidenceHash?: string;
+  precision?: "approximate";
 };
-const acceptance =
-  /^(?:yes(?:[!., ]|$)|yeah(?:[!., ]|$)|sure(?:[!., ]|$)|ok(?:ay)?(?:[!., ]|$)|alright(?:[!., ]|$)|perfect(?:[!., ]|$)|that works|sounds good|agreed|confirmed)/i;
-const rejection =
-  /\b(?:not|no|can't|cannot|won't|however|but|instead|could|would|until|unfortunately)\b/i;
 /** Corroborate exact model candidates against a literal schedule proposal and the other party's acceptance.
  * Broad morning/evening, ETAs, lone renter requests and model confidence cannot establish an agreement. */
-export function confirmedChatClock(
+function corroborateChatClock(
   messages: BookingTimeMessage[],
   endpoint: "pickup" | "return",
   time: string | undefined,
@@ -23,7 +20,7 @@ export function confirmedChatClock(
 ): ScheduleProof | undefined {
   if (!time || !date || !bookedDate) return;
   let proposal:
-    | { index: number; sender: string; dateProven: boolean }
+    | { index: number; sender: string; dateProven: boolean; approximate: boolean }
     | undefined;
   let agreement: ScheduleProof | undefined;
   let contextualDate = date === bookedDate;
@@ -32,7 +29,7 @@ export function confirmedChatClock(
       text = m.body_text;
     if (
       !["owner", "renter"].includes(m.sender) ||
-      /\b(?:mins?|minutes?|eta|on my way|running late)\b/i.test(text)
+      /\b(?:\d+\s*(?:mins?|minutes?)|eta|on my way)\b/i.test(text)
     )
       continue;
     if (
@@ -50,6 +47,7 @@ export function confirmedChatClock(
           time,
           confirmedAt: m.hygglo_sent_at ?? 0,
           evidenceHash: hash,
+          ...(proposal.approximate ? { precision: "approximate" as const } : {}),
         };
       proposal = undefined;
     }
@@ -64,16 +62,14 @@ export function confirmedChatClock(
       const clause=text.slice(c.index!,context[i+1]?.index??text.length);
       if(side===endpoint && !/\d{1,2}(?:[:.]\d{2}|\s*[ap]\.?m)|noon|midday|midnight/i.test(clause) && /morning|evening|afternoon|during the day|tonight|tomorrow|\d+(?:st|nd|rd|th)/i.test(clause)){agreement=undefined;proposal=undefined;}
     }
-    for (const clock of text.matchAll(
-      /\b(?:\d{1,2}(?:[:.]\d{2}\s*(?:[ap]\.?m\.?)?|\s*[ap]\.?m\.?)|noon|midday|midnight)\b/gi,
-    )) {
+    for (const clock of text.matchAll(scheduleClockPattern())) {
       const preceding = context.filter((c) => c.index! <= clock.index!).at(-1),
         following = context.find((c) => c.index! > clock.index!);
       const c = preceding ?? following;
       if (!c) continue;
       const side = /^(?:return|drop|back)/i.test(c[0]) ? "return" : "pickup";
       if (side !== endpoint) continue;
-      const explicit = /^(?:noon|midday)$/i.test(clock[0])?"12:00":/^midnight$/i.test(clock[0])?"00:00":sanitizeTime(clock[0]);
+      const explicit = literalScheduleTime(clock[0]);
       if (!explicit) continue;
       const clause = text.slice(
         c.index!>clock.index!?Math.max(0,clock.index!-15):c.index!,
@@ -81,7 +77,7 @@ export function confirmedChatClock(
           text.length,
       );
       if (
-        /\b(?:around|about|approximately|ish|before|after|by)\b/i.test(clause) ||
+        /\b(?:before|after|by|not|cannot|can't)\b/i.test(clause) ||
         /\d\s*[-–]\s*\d/.test(clause)
       ) {
         agreement = undefined;
@@ -90,6 +86,10 @@ export function confirmedChatClock(
       }
       let dateProven = contextualDate;
       const day = Number(date.slice(8, 10));
+      const weekday = clause.match(/\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i)?.[0];
+      if (weekday) dateProven = new Intl.DateTimeFormat("en-GB", {timeZone:"Europe/London",weekday:"long"}).format(new Date(date+"T12:00Z")).toLowerCase() === weekday.toLowerCase() && Math.abs(Date.parse(date)-Date.parse(bookedDate))<=3*86400000;
+      const explicitDate = clause.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0];
+      if (explicitDate) dateProven = date === explicitDate && Math.abs(Date.parse(date)-Date.parse(bookedDate))<=3*86400000;
       const namedDay = clause.match(/\b(\d{1,2})(?:st|nd|rd|th)\b/i);
       if (namedDay)
         dateProven =
@@ -115,12 +115,23 @@ export function confirmedChatClock(
       }
       contextualDate = dateProven;
       // A later different proposal invalidates a stale model candidate instead of freeing stock early.
-      if (explicit !== time || !dateProven) agreement = undefined;
+      if (explicit !== time || !dateProven || /\b(?:around|about|approximately|roughly|ish|more like)\b/i.test(clause)) agreement = undefined;
       proposal =
-        explicit === time ? { index, sender: m.sender, dateProven } : undefined;
+        explicit === time ? { index, sender: m.sender, dateProven,
+          approximate: /\b(?:around|about|approximately|roughly|ish|more like)\b|\dish\b/i.test(clause),
+        } : undefined;
     }
   }
   return agreement;
+}
+
+/** Validate an extracted candidate using source-ordered, contextual evidence. */
+export function confirmedChatClock(
+  messages: BookingTimeMessage[], endpoint: "pickup" | "return", time: string | undefined,
+  date: string | undefined, bookedDate: string | undefined, hash: string, prior?: PriorScheduleClock,
+): ScheduleProof | undefined {
+  if (!bookedDate) return;
+  return corroborateChatClock(contextualScheduleMessages(messages, endpoint, bookedDate, prior), endpoint, time, date, bookedDate, hash);
 }
 
 /** Recover existing saved agreement candidates without another paid model call. */
@@ -129,13 +140,13 @@ export function recoverConfirmedChatClock(
   endpoint: "pickup" | "return",
   bookedDate: string,
   hash: string,
+  prior?: PriorScheduleClock,
 ) {
+  messages = contextualScheduleMessages(messages, endpoint, bookedDate, prior);
   const clocks = new Set<string>();
   for (const m of messages)
-    for (const token of m.body_text.matchAll(
-      /\b(?:\d{1,2}(?:[:.]\d{2}\s*(?:[ap]\.?m\.?)?|\s*[ap]\.?m\.?)|noon|midday|midnight)\b/gi,
-    )) {
-      const time = /^(?:noon|midday)$/i.test(token[0])?"12:00":/^midnight$/i.test(token[0])?"00:00":sanitizeTime(token[0]);
+    for (const token of m.body_text.matchAll(scheduleClockPattern())) {
+      const time = literalScheduleTime(token[0]);
       if (time) clocks.add(time);
     }
   const proofs: ScheduleProof[] = [];
@@ -146,7 +157,7 @@ export function recoverConfirmedChatClock(
       .toISOString()
       .slice(0, 10);
     for (const time of clocks) {
-      const proof = confirmedChatClock(
+      const proof = corroborateChatClock(
         messages,
         endpoint,
         time,

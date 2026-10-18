@@ -584,10 +584,11 @@ const operationalSchema = defineSchema({
       v.literal("CANCELED"),
       v.literal("VERIFICATION_FAILED"),
     )),
+    schedule_updated_at: v.optional(v.number()), // actual clock/date/provenance changes, separate from extraction attempts
     pickup_time: v.optional(v.string()),           // "HH:MM" — LLM-extracted from owner-renter chat
     return_time: v.optional(v.string()),           // "HH:MM"
-    pickup_time_provenance: v.optional(v.object({source:v.union(v.literal("agreed_chat"),v.literal("provider_booking"),v.literal("website_contract")),date:v.string(),time:v.string(),confirmedAt:v.number(),evidenceHash:v.optional(v.string())})),
-    return_time_provenance: v.optional(v.object({source:v.union(v.literal("agreed_chat"),v.literal("provider_booking"),v.literal("website_contract")),date:v.string(),time:v.string(),confirmedAt:v.number(),evidenceHash:v.optional(v.string())})),
+    pickup_time_provenance: v.optional(v.object({source:v.union(v.literal("agreed_chat"),v.literal("provider_booking"),v.literal("website_contract")),date:v.string(),time:v.string(),confirmedAt:v.number(),evidenceHash:v.optional(v.string()),precision:v.optional(v.literal("approximate"))})),
+    return_time_provenance: v.optional(v.object({source:v.union(v.literal("agreed_chat"),v.literal("provider_booking"),v.literal("website_contract")),date:v.string(),time:v.string(),confirmedAt:v.number(),evidenceHash:v.optional(v.string()),precision:v.optional(v.literal("approximate"))})),
 
     return_date: v.optional(v.string()),           // ISO date — may differ from end_date (e.g. morning after)
     pickup_method: v.optional(v.string()),         // "delivery" | "collection" | "unknown"
@@ -895,6 +896,7 @@ const operationalSchema = defineSchema({
     // (MV-cached) stale until the next poller bump. Indexed max(times_extracted_at)
     // lets the probe catch it in one read.
     .index("by_times_extracted_at", ["times_extracted_at"])
+    .index("by_schedule_updated_at", ["schedule_updated_at"])
     // 2026-07-12 cost audit: listForReconcile (poller, every cycle × account)
     // read the ENTIRE account history via by_account_slug (~700 fat rows to
     // derive forward-looking holds). Composite index lets it scope to
