@@ -11,11 +11,13 @@ import * as admin from "../pricing_input_cache_admin";
 
 function fixture(input?: any[]) {
   const rows = input ?? [
-    { _id: "price-a", _creationTime: 1.125, item_name_canonical: "Camera body", account_id: "owner-a", daily_price_min: 20.25, daily_price_max: 35.5, is_bundle: false, created_at: 1 },
-    { _id: "price-b", _creationTime: 2.5, item_name_canonical: "Camera body", account_id: "owner-b", daily_price_min: 22.75, daily_price_max: 40, is_bundle: false, created_at: 2 },
+    { _id: "price-a", _creationTime: 1.125, item_id: "item-a", item_name_canonical: "Camera body", account_id: "owner-a", daily_price_min: 20.25, daily_price_max: 35.5, is_bundle: false, created_at: 1 },
+    { _id: "price-b", _creationTime: 2.5, item_id: "item-b", item_name_canonical: "Camera body", account_id: "owner-b", daily_price_min: 22.75, daily_price_max: 40, is_bundle: false, created_at: 2 },
     { _id: "price-short", _creationTime: 3, item_name_canonical: "Go", daily_price_min: 1, daily_price_max: 2, is_bundle: false, created_at: 3 },
   ];
-  const tables: Record<string, any[]> = { pricing_catalog: structuredClone(rows), pricing_input_cache_state: [], pricing_input_cache_blobs: [], recommendation_dismissals: [], accounts: [
+  const tables: Record<string, any[]> = { pricing_catalog: structuredClone(rows), pricing_input_cache_state: [], pricing_input_cache_blobs: [], recommendation_dismissals: [], recommendation_price_apply_jobs: [], listing_resolution_override: [], hygglo_product_index: [
+    { _id: "map-a", account_slug: "leo", item_id: "item-a", product_id: 9001 },
+  ], accounts: [
     { _id: "owner-a", slug: "leo" }, { _id: "owner-b", slug: "daniel" },
   ] };
   const reads: string[] = [], writes: string[] = [], scheduled: any[] = []; let serial = 0;
@@ -27,6 +29,7 @@ function fixture(input?: any[]) {
         async collect() { reads.push(table); return structuredClone(tables[table].filter(row => filters.every(filter => filter(row))).sort((a, b) => a._creationTime - b._creationTime || a._id.localeCompare(b._id))); },
         async take(n: number) { return (await query.collect()).slice(0, n); },
         async first() { return (await query.collect())[0] ?? null; },
+        order(_direction: string) { return query; },
         async unique() { const rows = await query.collect(); if (rows.length > 1) throw Error("Duplicate fixture key"); return rows[0] ?? null; },
       }; return query;
     },
@@ -89,11 +92,28 @@ describe("lossless pricing inputs", () => {
     const f = fixture(); await ready(f);
     await (upsertPricingRow as any)._handler(f.context(), { item_name_canonical: "Camera body", daily_price_min: 30, daily_price_max: 40 });
     expect(f.tables.pricing_catalog[0].daily_price_min).toBe(30); expect(f.tables.pricing_catalog[1].daily_price_min).toBe(22.75);
-    expect(await (applyRecommendation as any)._handler(f.context(), { pricingRowId: "price-a", accountSlug: "leo", itemNameCanonical: "Camera body", newDailyRate: 50, demandSignature: "r1,r2,r3" })).toMatchObject({ updated: 1, newDailyRate: 50 });
-    expect(f.tables.pricing_catalog.slice(0, 2).map(row => [row.daily_price_min, row.daily_price_max])).toEqual([[50, 50], [22.75, 40]]);
-    expect(f.tables.recommendation_dismissals).toMatchObject([{ pricing_row_id: "price-a", account_slug: "leo", demand_signature: "r1,r2,r3", dismissed_by: "applied" }]);
-    expect(f.tables.pricing_input_cache_state[0].revision).toBe(3); expect(f.scheduled).toHaveLength(1);
+    vi.stubEnv("ALLOW_RECOMMENDATION_PRICE_WRITES", "true");
+    const queued = await (applyRecommendation as any)._handler(f.context(), { pricingRowId: "price-a", accountSlug: "leo", itemNameCanonical: "Camera body", newDailyRate: 34.5, demandSignature: "r1,r2,r3" });
+    expect(queued).toMatchObject({ ok: true, status: "queued", newDailyRate: 34.5 });
+    expect(f.tables.recommendation_price_apply_jobs[0]).toMatchObject({ account_slug: "leo", product_id: 9001, old_price: 30, new_price: 34.5, status: "queued" });
+    expect(f.tables.pricing_catalog[0].daily_price_min).toBe(30);
+    expect(f.tables.recommendation_dismissals).toHaveLength(0);
+    expect(f.tables.pricing_input_cache_state[0].revision).toBe(2); expect(f.scheduled).toHaveLength(2);
     await expect((applyRecommendation as any)._handler(f.context(), { pricingRowId: "price-a", accountSlug: "daniel", itemNameCanonical: "Camera body", newDailyRate: 60, demandSignature: "r1,r2,r3" })).rejects.toThrow("different account");
+  });
+  it("does not queue a live price write when the exact account/listing mapping is missing or ambiguous", async () => {
+    vi.stubEnv("ALLOW_RECOMMENDATION_PRICE_WRITES", "true");
+    const args = { pricingRowId: "price-a", accountSlug: "leo", itemNameCanonical: "Camera body", newDailyRate: 23.29, demandSignature: "r1,r2,r3" };
+    const missing = fixture(); missing.tables.hygglo_product_index = [];
+    await expect((applyRecommendation as any)._handler(missing.context(), args)).rejects.toThrow("No exact Hygglo listing");
+    expect(missing.tables.recommendation_price_apply_jobs).toHaveLength(0);
+    expect(missing.scheduled).toHaveLength(0);
+
+    const ambiguous = fixture();
+    ambiguous.tables.hygglo_product_index.push({ _id: "map-a-2", account_slug: "leo", item_id: "item-a", product_id: 9002 });
+    await expect((applyRecommendation as any)._handler(ambiguous.context(), args)).rejects.toThrow("More than one Hygglo listing");
+    expect(ambiguous.tables.recommendation_price_apply_jobs).toHaveLength(0);
+    expect(ambiguous.scheduled).toHaveLength(0);
   });
   it("keeps preparation strict and refuses enabling a source revision that changed", async () => {
     const f = fixture(); await ready(f, false); const ctx = f.context(); f.reads.length = 0;

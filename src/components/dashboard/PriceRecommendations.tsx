@@ -18,6 +18,9 @@ export function PriceRecommendations() {
     accountSlug: activeAccountSlug,
     _bypassMv: true,
   });
+  const jobs = useStableQuery(api.pricing_catalog.getRecommendationPriceApplyJobs, {
+    accountSlug: activeAccountSlug,
+  });
 
   const applyMutation = useMutation(api.pricing_catalog.applyRecommendation);
   const dismissMutation = useMutation(api.pricing_catalog.dismissRecommendation);
@@ -106,7 +109,14 @@ export function PriceRecommendations() {
               : "rgba(239,68,68,0.12)";
             const isApplying = applying.has(item.pricingRowId);
             const isDismissing = dismissing.has(item.pricingRowId);
-            const err = localErrors[item.pricingRowId];
+            const job = jobs?.find((candidate) => candidate.pricing_row_id === item.pricingRowId);
+            const jobPending = job?.status === "queued" || job?.status === "processing";
+            const err = localErrors[item.pricingRowId] || (job?.status === "failed" ? job.error : undefined);
+            const targetError = item.listingTargetStatus === "ambiguous"
+              ? "More than one listing matches this item on this account. Resolve the listing mapping before applying."
+              : item.listingTargetStatus !== "ready"
+                ? "No exact Hygglo listing is mapped to this item on this account."
+                : undefined;
             return (
               <div
                 key={item.pricingRowId}
@@ -149,19 +159,19 @@ export function PriceRecommendations() {
                     </span>
                   </div>
                 </div>
-                {err && (
+                {(err || targetError) && (
                   <p className="text-xs mt-1" style={{ color: "#ef4444" }}>
-                    {err}
+                    {err || targetError}
                   </p>
                 )}
                 <div className="flex gap-2 mt-2">
                   <button
                     className="text-xs px-3 py-1 rounded font-medium transition-colors disabled:opacity-50"
                     style={{ background: "rgba(34,197,94,0.15)", color: "#22c55e" }}
-                    disabled={isApplying || isDismissing}
+                    disabled={isApplying || isDismissing || jobPending || !!targetError}
                     onClick={() => handleApply(item)}
                   >
-                    {isApplying ? "Applying…" : "Apply"}
+                    {isApplying || jobPending ? "Updating on Hygglo…" : job?.status === "succeeded" ? "Applied" : targetError ? "Unavailable" : "Apply"}
                   </button>
                   <button
                     className="text-xs px-3 py-1 rounded transition-colors disabled:opacity-50"
@@ -169,7 +179,7 @@ export function PriceRecommendations() {
                       background: "rgba(255,255,255,0.06)",
                       color: "#8b8fa3",
                     }}
-                    disabled={isApplying || isDismissing}
+                    disabled={isApplying || isDismissing || jobPending}
                     onClick={() => handleDismiss(item)}
                   >
                     {isDismissing ? "Dismissing…" : "Dismiss"}
