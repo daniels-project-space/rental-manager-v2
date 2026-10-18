@@ -4690,13 +4690,11 @@ export function ReplyInbox() {
         : needsReply(t),
   );
   const sorted = [...visible].sort((a, b) =>
-    compareQuickReplies(a, b, sortBy, now),
+    compareQuickReplies(a, b, sortBy, now, filter),
   );
   const duplicateIds = quickReplyDuplicateIds(sorted.filter(pendingRequest));
   const duplicateLast=(rows:ReplyTileData[])=>[...rows.filter(row=>!duplicateIds.has(row.thread_id)),...rows.filter(row=>duplicateIds.has(row.thread_id))];
-  const displayRows = sortBy==="priority"
-    ? [...duplicateLast(sorted.filter(row=>row.human_requested||row.last_sender!=="owner")),...duplicateLast(sorted.filter(row=>!row.human_requested&&row.last_sender==="owner"))]
-    : duplicateLast(sorted);
+  const displayRows = duplicateLast(sorted);
   const previewTile =
     displayRows.find((tile) => tile.thread_id === previewId) ??
     displayRows[0] ??
