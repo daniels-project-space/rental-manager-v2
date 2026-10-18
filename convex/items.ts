@@ -18,6 +18,7 @@ import {
 } from "./lib/widget_mv";
 import type { Doc, Id } from "./_generated/dataModel";
 import { isConfirmedWithDates, isPaidWithV1Legacy } from "./lib/reservations/predicates";
+import { hasOwnerPinnedDailyRate } from "./lib/pricing_recommendation_target";
 // Attribution engine (was gated by `use_new_attribution_engine` — Phase 6 cutover).
 import {
   attributeRevenue,
@@ -868,8 +869,9 @@ export const getPriceRecommendations = query({
     const dismissed = new Map(dismissals.filter(d => d.pricing_row_id).map(d => [String(d.pricing_row_id), d.demand_signature]));
     const visible = candidates.filter(row => dismissed.get(row.pricingRowId) !== row.demandSignature);
     // The Apply button is only actionable when the recommendation resolves to
-    // one deterministic Hygglo product on the same account. Keep unresolved
-    // rows visible with an explanation; never guess from a similar title.
+    // one deterministic Hygglo product on the same account. A fallback needs
+    // owner-pinned identity plus a unique matching published daily rate.
+    // Similar titles and fuzzy masterItemId links are never sufficient.
     return Promise.all(visible.map(async row => {
       if (!row.itemId || !row.accountSlug) {
         return { ...row, listingTargetStatus: "unmapped" as const };
@@ -888,9 +890,20 @@ export const getPriceRecommendations = query({
           .filter(mapping => mapping.account_slug === row.accountSlug && mapping.components.length === 1 && mapping.components[0].item_id === row.itemId && mapping.components[0].qty === 1)
           .map(mapping => mapping.product_id),
       ])];
-      const listingTargetStatus = mappings.length > 100 || overrides.length > 100 || productIds.length > 1
+      let ownerPinnedRateMatches: Doc<"hygglo_products">[] = [];
+      let ownerPinnedCandidateOverflow = false;
+      if (productIds.length === 0 && mappings.length <= 100 && overrides.length <= 100) {
+        const candidates = await ctx.db.query("hygglo_products")
+          .withIndex("by_master_item", q => q.eq("masterItemId", row.itemId as Id<"items">))
+          .take(101);
+        ownerPinnedCandidateOverflow = candidates.length > 100;
+        if (!ownerPinnedCandidateOverflow) {
+          ownerPinnedRateMatches = candidates.filter(product => product.accountSlug === row.accountSlug && hasOwnerPinnedDailyRate(product, row.itemId as Id<"items">, row.currentRate));
+        }
+      }
+      const listingTargetStatus = mappings.length > 100 || overrides.length > 100 || ownerPinnedCandidateOverflow || productIds.length > 1 || ownerPinnedRateMatches.length > 1
         ? "ambiguous" as const
-        : productIds.length === 1
+        : productIds.length === 1 || ownerPinnedRateMatches.length === 1
           ? "ready" as const
           : "unmapped" as const;
       return { ...row, listingTargetStatus };
