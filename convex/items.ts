@@ -866,7 +866,35 @@ export const getPriceRecommendations = query({
       ? await ctx.db.query("recommendation_dismissals").withIndex("by_account", q => q.eq("account_slug", accountSlug)).collect()
       : await ctx.db.query("recommendation_dismissals").collect();
     const dismissed = new Map(dismissals.filter(d => d.pricing_row_id).map(d => [String(d.pricing_row_id), d.demand_signature]));
-    return candidates.filter(row => dismissed.get(row.pricingRowId) !== row.demandSignature);
+    const visible = candidates.filter(row => dismissed.get(row.pricingRowId) !== row.demandSignature);
+    // The Apply button is only actionable when the recommendation resolves to
+    // one deterministic Hygglo product on the same account. Keep unresolved
+    // rows visible with an explanation; never guess from a similar title.
+    return Promise.all(visible.map(async row => {
+      if (!row.itemId || !row.accountSlug) {
+        return { ...row, listingTargetStatus: "unmapped" as const };
+      }
+      const mappings = await ctx.db.query("hygglo_product_index")
+        .withIndex("by_item_id", q => q.eq("item_id", row.itemId as Id<"items">))
+        .take(101);
+      const overrides = await ctx.db.query("listing_resolution_override")
+        .withIndex("by_stock_item", q => q.eq("stock_item_id", row.itemId as Id<"items">))
+        .take(101);
+      const productIds = [...new Set([
+        ...mappings
+        .filter(mapping => mapping.account_slug === row.accountSlug)
+        .map(mapping => mapping.product_id),
+        ...overrides
+          .filter(mapping => mapping.account_slug === row.accountSlug && mapping.components.length === 1 && mapping.components[0].item_id === row.itemId && mapping.components[0].qty === 1)
+          .map(mapping => mapping.product_id),
+      ])];
+      const listingTargetStatus = mappings.length > 100 || overrides.length > 100 || productIds.length > 1
+        ? "ambiguous" as const
+        : productIds.length === 1
+          ? "ready" as const
+          : "unmapped" as const;
+      return { ...row, listingTargetStatus };
+    }));
 
   },
 });

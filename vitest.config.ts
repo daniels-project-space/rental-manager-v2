@@ -27,6 +27,7 @@ export default defineConfig({
       "convex/deployment_identity.test.ts",
       "convex/storefront_checkout_stock.test.ts",
       "convex/price_recommendations.test.ts",
+      "convex/pricing_catalog.price_apply.test.ts",
       "convex/slow_analytics.capture.test.ts",
       "convex/quick_reply_manual_draft.test.ts",
       "convex/quick_reply_thread_state.test.ts",

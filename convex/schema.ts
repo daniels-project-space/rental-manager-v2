@@ -1220,6 +1220,27 @@ const operationalSchema = defineSchema({
     .index("by_pricing_row", ["pricing_row_id"])
     .index("by_account", ["account_slug"]),
 
+  // Durable, owner-triggered publication of one recommendation to one exact
+  // account/listing. The job is committed before its worker runs so a browser
+  // disconnect cannot lose the requested Hygglo update.
+  recommendation_price_apply_jobs: defineTable({
+    account_slug: v.string(),
+    pricing_row_id: v.id("pricing_catalog"),
+    item_id: v.id("items"),
+    product_id: v.number(),
+    item_name_canonical: v.string(),
+    old_price: v.number(),
+    new_price: v.number(),
+    demand_signature: v.string(),
+    status: v.union(v.literal("queued"), v.literal("processing"), v.literal("succeeded"), v.literal("failed")),
+    created_at: v.number(),
+    updated_at: v.number(),
+    finished_at: v.optional(v.number()),
+    error: v.optional(v.string()),
+  })
+    .index("by_account_updated", ["account_slug", "updated_at"])
+    .index("by_pricing_demand_created", ["pricing_row_id", "demand_signature", "created_at"]),
+
   // ── Hygglo inbox messages (Phase 6.0) ─────────────────────
   hygglo_messages: defineTable({
     account_slug: v.string(),
