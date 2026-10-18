@@ -568,3 +568,18 @@ describe("human attention after an operator reply",()=>{
   expect(answered.last_sender).toBe("owner");
  });
 });
+
+describe("website conversation history pages",()=>{
+ it("forwards older-message cursors and returns continuation metadata",async()=>{
+  vi.stubEnv("OWNER_AUTH_REQUIRED","false");vi.stubEnv("DBCINEMA_CONVEX_URL","https://fixture.invalid");vi.stubEnv("DBCINEMA_ADMIN_TOKEN","fixture-only");
+  const calls:any[]=[];
+  vi.stubGlobal("fetch",vi.fn(async(_url:string,options:RequestInit)=>{calls.push(JSON.parse(String(options.body)));return new Response(JSON.stringify({status:"success",value:{page:[{_id:"old",sender:"renter",text:"Older message",at:1}],isDone:false,continueCursor:"next-page"}}))}));
+  const result=await(thread as any)._handler({}, {booking_id:"booking",cursor:"previous-page"});
+  expect(calls[0]).toMatchObject({path:"rentalChat:messages",args:{paginationOpts:{numItems:40,cursor:"previous-page"}}});
+  expect(result).toMatchObject({nextCursor:"next-page",messages:[{id:"old",content:"Older message"}]});
+ });
+ it("stops at the actual end instead of inventing another page",async()=>{
+  vi.stubEnv("OWNER_AUTH_REQUIRED","false");vi.stubEnv("DBCINEMA_CONVEX_URL","https://fixture.invalid");vi.stubEnv("DBCINEMA_ADMIN_TOKEN","fixture-only");vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({status:"success",value:{page:[],isDone:true,continueCursor:"terminal"}}))));
+  expect(await(thread as any)._handler({}, {booking_id:"booking"})).toMatchObject({nextCursor:null,messages:[]});
+ });
+});

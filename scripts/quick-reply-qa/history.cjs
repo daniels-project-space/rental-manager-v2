@@ -15,7 +15,16 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
   await c.evaluate(`window.__fixture.messages.push({id:'sent-new',role:'owner',content:'Just-sent fixture response',timestamp:Date.now()+1000});window.__fixture.changed()`);await pause(100);
   assert(await c.evaluate(`document.querySelector('[role="dialog"]').textContent.includes('Just-sent fixture response')`));
   fs.writeFileSync(process.env.RM_QA_OUTPUT+'/history-'+width+'.png',Buffer.from((await c.cmd('Page.captureScreenshot')).data,'base64'));
-  proof.push({width,...check,...all,liveTail:true});c.close();
+  proof.push({width,source:"hygglo",...check,...all,liveTail:true});
+  await c.evaluate(`document.querySelector('[aria-label="Close conversation"]').click();window.__fixture.websiteHistory=Array.from({length:125},(_,i)=>({id:'web-'+i,role:i%2?'renter':'owner',content:'Website history '+i,timestamp:Date.now()-((125-i)*60000)}));document.querySelector('[data-thread-id="fixture-1"]').click()`);await pause(300);
+  for(let i=0;i<3;i++){await c.evaluate(`(()=>{const b=[...document.querySelector('[role="dialog"]').querySelectorAll('button')].find(b=>b.textContent==='Load earlier messages');b?.scrollIntoView({block:'center'});b?.click()})()`);await pause(180);}
+  assert(await c.evaluate(`document.querySelector('[role="dialog"]').textContent.includes('Website history 0')`));
+  assert.equal(await c.evaluate(`document.querySelector('[role="dialog"]').querySelectorAll('[data-message-id]').length`),125);
+  await c.evaluate(`window.__fixture.websiteHistory.push({id:'web-new',role:'renter',content:'Fresh website reply',timestamp:Date.now()+1000});document.dispatchEvent(new Event('visibilitychange'))`);await pause(200);
+  assert(await c.evaluate(`document.querySelector('[role="dialog"]').textContent.includes('Website history 0')&&document.querySelector('[role="dialog"]').textContent.includes('Fresh website reply')`),'Website refresh must preserve loaded older history');
+  assert.equal(await c.evaluate(`document.querySelector('[role="dialog"]').querySelectorAll('[data-message-id]').length`),126);
+  fs.writeFileSync(process.env.RM_QA_OUTPUT+'/website-history-'+width+'.png',Buffer.from((await c.cmd('Page.captureScreenshot')).data,'base64'));
+  proof.push({width,source:"dbcinema_web",messages:126,oldestRetainedAfterRefresh:true,latestReceived:true});c.close();
  }
  fs.writeFileSync(process.env.RM_QA_OUTPUT+'/history-proof.json',JSON.stringify(proof,null,2));console.log(proof);
 })().catch(e=>{console.error(e);process.exit(1)});

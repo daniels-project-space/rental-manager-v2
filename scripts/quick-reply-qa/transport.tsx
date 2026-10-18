@@ -375,7 +375,12 @@ export function useAction(ref) {
       if (name === "dbcinema_chat:applyRentalDates") return { ok: true };
       if (name === "dbcinema_chat:refundRental")
         return { status: "succeeded", amount: args.amount_pence / 100 };
-      if (name === "dbcinema_chat:thread") return { messages };
+      if (name === "dbcinema_chat:thread") {
+        const all=window.__fixture.websiteHistory;
+        if(!all)return {messages,nextCursor:null};
+        const ordered=[...all].sort((a,b)=>b.timestamp-a.timestamp),offset=Number(args.cursor??0),page=ordered.slice(offset,offset+40);
+        return {messages:page.reverse(),nextCursor:offset+40<ordered.length?String(offset+40):null};
+      }
       if (name === "dbcinema_chat:renterReviews")
         return { reviews: [], lowCount: 0, fetched: true };
       if (name === "replyInbox_actions:generateDraft" || name === "quick_reply_manual_draft:generate") {
