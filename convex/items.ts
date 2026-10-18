@@ -16,7 +16,7 @@ import {
   readWidgetMv,
   widgetSlugKey,
 } from "./lib/widget_mv";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { isConfirmedWithDates, isPaidWithV1Legacy } from "./lib/reservations/predicates";
 // Attribution engine (was gated by `use_new_attribution_engine` — Phase 6 cutover).
 import {
@@ -379,12 +379,16 @@ export type SellRecoRow = {
 };
 
 export type PriceRecoRow = {
+  pricingRowId: Id<"pricing_catalog">;
   itemId: string | undefined;
+  accountSlug: string;
   name: string;
   currentRate: number;
   suggestedRate: number;
   pctChange: number;
   demandSignal: string;
+  demandCount: number;
+  demandSignature: string;
 };
 
 export type OosPoolComponents = Map<string, Array<{ item_id: string; qty: number }>>;
@@ -725,13 +729,49 @@ export const getSellRecommendations = query({
 /**
  * W17 Price Recommendations - demand-signal based price suggestions
  */
-export function computePriceRecommendations(input: PricingAnalyticsInputs, accountSlug: string | null, now = Date.now()) {
+export function computePriceRecommendations(
+  input: PricingAnalyticsInputs & { accountSlugById?: ReadonlyMap<string, string> },
+  accountSlug: string | null,
+  now = Date.now(),
+) {
   const LOOKBACK_DAYS = 30;
   const cutoff = new Date(now);
   cutoff.setDate(cutoff.getDate() - LOOKBACK_DAYS);
   const cutoffStr = cutoff.toISOString().slice(0, 10);
 
-  let reservations = startDateWindow(input.reservations, cutoffStr);
+  // Preserve the daily analytics snapshot contract for existing internal
+  // consumers. The live dashboard passes the account map and uses the
+  // account-exact path below.
+  if (!input.accountSlugById) {
+    let rows = startDateWindow(input.reservations, cutoffStr);
+    if (accountSlug) rows = rows.filter((r) => r.account_slug === accountSlug);
+    const counts = new Map<string, number>();
+    for (const r of rows) {
+      const seen = new Set<string>();
+      for (const x of readResolverItems(r)) {
+        if (seen.has(x.item_name_canonical)) continue;
+        seen.add(x.item_name_canonical);
+        counts.set(x.item_name_canonical, (counts.get(x.item_name_canonical) ?? 0) + 1);
+      }
+    }
+    const bestByName = new Map<string, typeof input.pricing[number]>();
+    for (const p of input.pricing) {
+      if (p.is_bundle || p.marketing_only) continue;
+      const old = bestByName.get(p.item_name_canonical);
+      if (!old || p.created_at > old.created_at) bestByName.set(p.item_name_canonical, p);
+    }
+    return Array.from(bestByName.values()).map((p) => {
+      const bookings = counts.get(p.item_name_canonical) ?? 0;
+      const currentRate = p.daily_price_min;
+      if (bookings >= 3) return { itemId: p.item_id, name: p.item_name_canonical, currentRate, suggestedRate: parseFloat((currentRate * 1.15).toFixed(2)), pctChange: 15, demandSignal: bookings + " bookings this month" };
+      if (bookings <= 1) return { itemId: p.item_id, name: p.item_name_canonical, currentRate, suggestedRate: parseFloat((currentRate * 0.9).toFixed(2)), pctChange: -10, demandSignal: bookings === 0 ? "No bookings this month" : "Low demand" };
+      return null;
+    }).filter((r): r is NonNullable<typeof r> => r !== null);
+  }
+
+  const todayStr = new Date(now).toISOString().slice(0, 10);
+  let reservations = startDateWindow(input.reservations, cutoffStr)
+    .filter((r) => (r.start_date ?? "") <= todayStr && ["confirmed", "completed", "active"].includes(r.status));
   if (accountSlug) {
     reservations = reservations.filter((r) => r.account_slug === accountSlug);
   }
@@ -741,45 +781,50 @@ export function computePriceRecommendations(input: PricingAnalyticsInputs, accou
   // always returned 0, so nearly every item was told to "cut price 10%".
   // readResolverItems resolves raw listings → canonical (bundle-expanded),
   // exactly like getSellRecommendations. One rental counts once per item.
-  const freqMap = new Map<string, number>();
+  const freqMap = new Map<string, { count: number; ids: string[] }>();
   for (const r of reservations) {
     const seen = new Set<string>();
     for (const x of readResolverItems(r)) {
       if (seen.has(x.item_name_canonical)) continue;
       seen.add(x.item_name_canonical);
-      freqMap.set(x.item_name_canonical, (freqMap.get(x.item_name_canonical) ?? 0) + 1);
+      const slug = r.account_slug ?? "";
+      const key = `${slug}\u0000${x.item_name_canonical}`;
+      const entry = freqMap.get(key) ?? { count: 0, ids: [] };
+      entry.count += 1;
+      entry.ids.push(String(r._id));
+      freqMap.set(key, entry);
     }
   }
 
   const allPricingRows = input.pricing;
 
-  // BF-01: deduplicate — one row per name_canonical, keep highest updated_at
-  const bestByName = new Map<string, typeof allPricingRows[0]>();
-  for (const p of allPricingRows) {
-    if (p.is_bundle || p.marketing_only) continue;
-    const existing = bestByName.get(p.item_name_canonical);
-    if (!existing || p.created_at > existing.created_at) {
-      bestByName.set(p.item_name_canonical, p);
-    }
-  }
+  const eligibleRows = allPricingRows.filter((p) =>
+    !p.is_bundle && !p.marketing_only && p.account_id !== undefined && input.accountSlugById!.has(String(p.account_id)),
+  );
+  const scopedRows = accountSlug
+    ? eligibleRows.filter((p) => input.accountSlugById?.get(String(p.account_id)) === accountSlug)
+    : eligibleRows;
 
-  return Array.from(bestByName.values()).map((p) => {
-    const bookings = freqMap.get(p.item_name_canonical) ?? 0;
+  return scopedRows.map((p) => {
+    const rowAccountSlug = input.accountSlugById?.get(String(p.account_id));
+    const demand = freqMap.get(`${rowAccountSlug ?? ""}\u0000${p.item_name_canonical}`) ?? { count: 0, ids: [] };
+    const bookings = demand.count;
     const currentRate = p.daily_price_min;
+    const common = {
+      pricingRowId: p._id, itemId: p.item_id, accountSlug: rowAccountSlug!,
+      name: p.item_name_canonical, currentRate, demandCount: bookings,
+      demandSignature: demand.ids.sort().join(","),
+    };
     if (bookings >= 3) {
       return {
-        itemId: p.item_id,
-        name: p.item_name_canonical,
-        currentRate,
+        ...common,
         suggestedRate: parseFloat((currentRate * 1.15).toFixed(2)),
         pctChange: 15,
         demandSignal: bookings + " bookings this month",
       };
     } else if (bookings <= 1) {
       return {
-        itemId: p.item_id,
-        name: p.item_name_canonical,
-        currentRate,
+        ...common,
         suggestedRate: parseFloat((currentRate * 0.9).toFixed(2)),
         pctChange: -10,
         demandSignal: bookings === 0 ? "No bookings this month" : "Low demand",
@@ -794,21 +839,34 @@ export const getPriceRecommendations = query({
     accountSlug: v.union(v.string(), v.null()),
     _bypassMv: v.optional(v.boolean()),
   },
-  handler: async (ctx, { accountSlug, _bypassMv }) => {
-    // 2026-07-12 cost audit: MV fast path (daily refresh via mv/widgets).
-    if (!_bypassMv) {
-      const cached = await readWidgetMv(
-        ctx,
-        `price:${widgetSlugKey(accountSlug)}`,
-        SLOW_WIDGET_MAX_AGE_MS,
-      );
-      if (cached !== null) return cached as PriceRecoRow[];
+  handler: async (ctx, { accountSlug }) => {
+    const now = Date.now();
+    const cutoff = new Date(now); cutoff.setDate(cutoff.getDate() - 30);
+    const start = cutoff.toISOString().slice(0, 10), end = new Date(now).toISOString().slice(0, 10);
+    let reservations, pricing, accounts;
+    if (accountSlug) {
+      const account = await ctx.db.query("accounts").withIndex("by_slug", q => q.eq("slug", accountSlug)).unique();
+      if (!account) return [];
+      const statusRows = await Promise.all(["confirmed", "completed", "active"].map(status =>
+        ctx.db.query("reservations").withIndex("by_account_status_start_date", q => q.eq("account_slug", accountSlug).eq("status", status).gte("start_date", start).lte("start_date", end)).collect(),
+      ));
+      reservations = statusRows.flat();
+      pricing = await ctx.db.query("pricing_catalog").withIndex("by_account", q => q.eq("account_id", account._id)).collect();
+      accounts = [account];
+    } else {
+      [reservations, pricing, accounts] = await Promise.all([
+        ctx.db.query("reservations").withIndex("by_start_date", q => q.gte("start_date", start).lte("start_date", end)).collect(),
+        ctx.db.query("pricing_catalog").collect(),
+        ctx.db.query("accounts").collect(),
+      ]);
     }
-    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 30);
-    const reservations = await ctx.db.query("reservations")
-      .withIndex("by_start_date", q => q.gte("start_date", cutoff.toISOString().slice(0,10))).collect();
-    const pricing = await loadPricingRows(ctx);
-    return computePriceRecommendations({ reservations, pricing }, accountSlug);
+    const accountSlugById = new Map(accounts.map((a) => [String(a._id), a.slug]));
+    const candidates = computePriceRecommendations({ reservations, pricing, accountSlugById }, accountSlug, now) as PriceRecoRow[];
+    const dismissals = accountSlug
+      ? await ctx.db.query("recommendation_dismissals").withIndex("by_account", q => q.eq("account_slug", accountSlug)).collect()
+      : await ctx.db.query("recommendation_dismissals").collect();
+    const dismissed = new Map(dismissals.filter(d => d.pricing_row_id).map(d => [String(d.pricing_row_id), d.demand_signature]));
+    return candidates.filter(row => dismissed.get(row.pricingRowId) !== row.demandSignature);
 
   },
 });

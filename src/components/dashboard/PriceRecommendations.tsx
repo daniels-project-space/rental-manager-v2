@@ -16,46 +16,52 @@ export function PriceRecommendations() {
 
   const data = useStableQuery(api.items.getPriceRecommendations, {
     accountSlug: activeAccountSlug,
+    _bypassMv: true,
   });
-  // No-arg query: pass undefined so we don't churn a fresh `{}` reference
-  // every render (audit 2026-05-23: cuts unnecessary Convex serialization).
-  const dismissedNames = useStableQuery(api.pricing_catalog.getDismissedItemNames);
 
   const applyMutation = useMutation(api.pricing_catalog.applyRecommendation);
   const dismissMutation = useMutation(api.pricing_catalog.dismissRecommendation);
 
-  const dismissedSet = new Set(dismissedNames ?? []);
-  const visible = data
-    ? data.filter(
-        (r) => r !== null && !dismissedSet.has(r!.name)
-      )
-    : [];
+  const visible = data ?? [];
 
-  async function handleApply(name: string, suggestedRate: number) {
-    setApplying((p) => new Set([...p, name]));
-    setLocalErrors((p) => ({ ...p, [name]: "" }));
+  async function handleApply(item: NonNullable<typeof visible[number]>) {
+    const key = item.pricingRowId;
+    setApplying((p) => new Set([...p, key]));
+    setLocalErrors((p) => ({ ...p, [key]: "" }));
     try {
-      await applyMutation({ itemNameCanonical: name, newDailyRate: suggestedRate });
+      await applyMutation({
+        pricingRowId: item.pricingRowId,
+        accountSlug: item.accountSlug,
+        itemNameCanonical: item.name,
+        newDailyRate: item.suggestedRate,
+        demandSignature: item.demandSignature,
+      });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      setLocalErrors((p) => ({ ...p, [name]: msg }));
+      setLocalErrors((p) => ({ ...p, [key]: msg }));
     } finally {
       setApplying((p) => {
         const next = new Set(p);
-        next.delete(name);
+        next.delete(key);
         return next;
       });
     }
   }
 
-  async function handleDismiss(name: string) {
-    setDismissing((p) => new Set([...p, name]));
+  async function handleDismiss(item: NonNullable<typeof visible[number]>) {
+    const key = item.pricingRowId;
+    setDismissing((p) => new Set([...p, key]));
     try {
-      await dismissMutation({ itemNameCanonical: name });
+      await dismissMutation({
+        pricingRowId: item.pricingRowId,
+        accountSlug: item.accountSlug,
+        itemNameCanonical: item.name,
+        demandSignature: item.demandSignature,
+      });
     } finally {
       setDismissing((p) => {
         const next = new Set(p);
-        next.delete(name);
+        next.delete(key);
         return next;
       });
     }
@@ -77,7 +83,7 @@ export function PriceRecommendations() {
         }
       />
 
-      {(data === undefined || dismissedNames === undefined) && (
+      {data === undefined && (
         <div className="space-y-2">
           {[...Array(4)].map((_, i) => (
             <SkeletonBlock key={i} className="h-14 w-full rounded-lg" />
@@ -86,25 +92,24 @@ export function PriceRecommendations() {
       )}
 
       {data !== undefined &&
-        dismissedNames !== undefined &&
         visible.length === 0 && (
           <EmptyState message="All pricing looks good" icon="✓" />
         )}
 
-      {data !== undefined && dismissedNames !== undefined && visible.length > 0 && (
+      {data !== undefined && visible.length > 0 && (
         <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
           {visible.map((item) => {
-            const raise = item!.pctChange > 0;
+            const raise = item.pctChange > 0;
             const changeColor = raise ? "#22c55e" : "#ef4444";
             const changeBg = raise
               ? "rgba(34,197,94,0.12)"
               : "rgba(239,68,68,0.12)";
-            const isApplying = applying.has(item!.name);
-            const isDismissing = dismissing.has(item!.name);
-            const err = localErrors[item!.name];
+            const isApplying = applying.has(item.pricingRowId);
+            const isDismissing = dismissing.has(item.pricingRowId);
+            const err = localErrors[item.pricingRowId];
             return (
               <div
-                key={String(item!.itemId ?? `unmapped:${item!.name}`)}
+                key={item.pricingRowId}
                 className="px-3 py-2.5 rounded-lg"
                 style={{
                   background: "rgba(255,255,255,0.03)",
@@ -117,22 +122,22 @@ export function PriceRecommendations() {
                       className="text-sm font-medium truncate"
                       style={{ color: "#e4e6eb" }}
                     >
-                      {item!.name}
+                      {item.name}{item.accountSlug && !activeAccountSlug ? ` · ${item.accountSlug}` : ""}
                     </p>
                     <p className="text-xs mt-0.5" style={{ color: "#8b8fa3" }}>
-                      {item!.demandSignal}
+                      {item.demandSignal}
                     </p>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <div className="text-right">
                       <p className="text-xs" style={{ color: "#8b8fa3" }}>
-                        £{item!.currentRate}/d
+                        £{item.currentRate}/d
                       </p>
                       <p
                         className="text-sm font-semibold"
                         style={{ color: changeColor }}
                       >
-                        £{item!.suggestedRate}/d
+                        £{item.suggestedRate}/d
                       </p>
                     </div>
                     <span
@@ -140,7 +145,7 @@ export function PriceRecommendations() {
                       style={{ color: changeColor, background: changeBg }}
                     >
                       {raise ? "+" : ""}
-                      {item!.pctChange}%
+                      {item.pctChange}%
                     </span>
                   </div>
                 </div>
@@ -154,7 +159,7 @@ export function PriceRecommendations() {
                     className="text-xs px-3 py-1 rounded font-medium transition-colors disabled:opacity-50"
                     style={{ background: "rgba(34,197,94,0.15)", color: "#22c55e" }}
                     disabled={isApplying || isDismissing}
-                    onClick={() => handleApply(item!.name, item!.suggestedRate)}
+                    onClick={() => handleApply(item)}
                   >
                     {isApplying ? "Applying…" : "Apply"}
                   </button>
@@ -165,7 +170,7 @@ export function PriceRecommendations() {
                       color: "#8b8fa3",
                     }}
                     disabled={isApplying || isDismissing}
-                    onClick={() => handleDismiss(item!.name)}
+                    onClick={() => handleDismiss(item)}
                   >
                     {isDismissing ? "Dismissing…" : "Dismiss"}
                   </button>

@@ -26,6 +26,7 @@ export default defineConfig({
       "src/lib/render/asset-cache.test.ts",
       "convex/deployment_identity.test.ts",
       "convex/storefront_checkout_stock.test.ts",
+      "convex/price_recommendations.test.ts",
       "convex/slow_analytics.capture.test.ts",
       "convex/quick_reply_manual_draft.test.ts",
       "convex/quick_reply_thread_state.test.ts",

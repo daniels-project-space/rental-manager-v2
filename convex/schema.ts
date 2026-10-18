@@ -360,7 +360,7 @@ const operationalSchema = defineSchema({
     multi_day_notes: v.optional(v.string()),
     marketing_only: v.optional(v.boolean()),
     created_at: v.number(),
-  }).index("by_item", ["item_id"]).index("by_item_account", ["item_id", "account_id"]).index("by_name", ["item_name_canonical"]),
+  }).index("by_item", ["item_id"]).index("by_item_account", ["item_id", "account_id"]).index("by_name", ["item_name_canonical"]).index("by_account", ["account_id"]),
 
   // ── Listing photos (port from v1) ────────────────────────────
   listing_photos: defineTable({
@@ -1209,11 +1209,16 @@ const operationalSchema = defineSchema({
   // ── Price recommendation dismissals (W17) ───────────────────
   recommendation_dismissals: defineTable({
     item_id: v.optional(v.id("items")),
+    pricing_row_id: v.optional(v.id("pricing_catalog")),
+    account_slug: v.optional(v.string()),
     item_name_canonical: v.string(),
+    demand_signature: v.optional(v.string()),
     dismissed_at: v.number(),
     dismissed_by: v.optional(v.string()),   // "user" | "applied"
   })
-    .index("by_item_name", ["item_name_canonical"]),
+    .index("by_item_name", ["item_name_canonical"])
+    .index("by_pricing_row", ["pricing_row_id"])
+    .index("by_account", ["account_slug"]),
 
   // ── Hygglo inbox messages (Phase 6.0) ─────────────────────
   hygglo_messages: defineTable({

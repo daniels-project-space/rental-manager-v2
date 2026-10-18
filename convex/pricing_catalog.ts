@@ -1,6 +1,8 @@
 import { loadPricingRows, patchPricingInput, insertPricingInput } from "./lib/pricing_input_cache";
 import { mutation, query } from "./owner_functions";
 import { v } from "convex/values";
+import type { MutationCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 
 /**
  * W17 Price Recommendations — apply a suggested rate to pricing_catalog.
@@ -8,38 +10,22 @@ import { v } from "convex/values";
  */
 export const applyRecommendation = mutation({
   args: {
+    pricingRowId: v.id("pricing_catalog"),
+    accountSlug: v.string(),
     itemNameCanonical: v.string(),
     newDailyRate: v.number(),
+    demandSignature: v.string(),
   },
-  handler: async (ctx, { itemNameCanonical, newDailyRate }) => {
+  handler: async (ctx, { pricingRowId, accountSlug, itemNameCanonical, newDailyRate, demandSignature }) => {
     if (newDailyRate <= 0) throw new Error("newDailyRate must be positive");
-
-    const rows = await ctx.db
-      .query("pricing_catalog")
-      .withIndex("by_name", (q) => q.eq("item_name_canonical", itemNameCanonical))
-      .collect();
-
-    if (rows.length === 0) {
-      throw new Error(`No pricing_catalog row found for: ${itemNameCanonical}`);
-    }
-
-    for (const row of rows) {
-      // Keep price_max >= price_min; if new rate > existing max, bump max too
-      const newMax = Math.max(row.daily_price_max, newDailyRate);
-      await patchPricingInput(ctx, row._id, {
-        daily_price_min: newDailyRate,
-        daily_price_max: newMax,
-      }, row);
-    }
-
-    // Remove any existing dismissal for this item (applying overrides dismiss)
-    const existing = await ctx.db
-      .query("recommendation_dismissals")
-      .withIndex("by_item_name", (q) => q.eq("item_name_canonical", itemNameCanonical))
-      .first();
-    if (existing) await ctx.db.delete(existing._id);
-
-    return { ok: true, updated: rows.length, newDailyRate };
+    const row = await ctx.db.get(pricingRowId);
+    if (!row || row.item_name_canonical !== itemNameCanonical) throw new Error("Recommendation no longer matches this pricing row");
+    const account = await ctx.db.query("accounts").withIndex("by_slug", q => q.eq("slug", accountSlug)).unique();
+    if (!account || row.account_id !== account._id) throw new Error("Pricing row belongs to a different account");
+    const newMax = Math.max(row.daily_price_max, newDailyRate);
+    await patchPricingInput(ctx, row._id, { daily_price_min: newDailyRate, daily_price_max: newMax }, row);
+    await recordRecommendationDismissal(ctx, row._id, accountSlug, itemNameCanonical, demandSignature, "applied");
+    return { ok: true, updated: 1, newDailyRate };
   },
 });
 
@@ -49,25 +35,42 @@ export const applyRecommendation = mutation({
  */
 export const dismissRecommendation = mutation({
   args: {
+    pricingRowId: v.id("pricing_catalog"),
+    accountSlug: v.string(),
     itemNameCanonical: v.string(),
-    itemId: v.optional(v.string()),   // Convex ID as string (optional)
+    demandSignature: v.string(),
   },
-  handler: async (ctx, { itemNameCanonical }) => {
-    // Idempotent: skip if already dismissed
-    const existing = await ctx.db
-      .query("recommendation_dismissals")
-      .withIndex("by_item_name", (q) => q.eq("item_name_canonical", itemNameCanonical))
-      .first();
-    if (existing) return { ok: true, already_dismissed: true };
-
-    await ctx.db.insert("recommendation_dismissals", {
-      item_name_canonical: itemNameCanonical,
-      dismissed_at: Date.now(),
-      dismissed_by: "user",
-    });
+  handler: async (ctx, { pricingRowId, accountSlug, itemNameCanonical, demandSignature }) => {
+    const row = await ctx.db.get(pricingRowId);
+    if (!row || row.item_name_canonical !== itemNameCanonical) throw new Error("Recommendation no longer matches this pricing row");
+    const account = await ctx.db.query("accounts").withIndex("by_slug", q => q.eq("slug", accountSlug)).unique();
+    if (!account || row.account_id !== account._id) throw new Error("Pricing row belongs to a different account");
+    await recordRecommendationDismissal(ctx, row._id, accountSlug, itemNameCanonical, demandSignature, "user");
     return { ok: true, already_dismissed: false };
   },
 });
+
+async function recordRecommendationDismissal(
+  ctx: MutationCtx,
+  pricingRowId: Id<"pricing_catalog">,
+  accountSlug: string,
+  itemNameCanonical: string,
+  demandSignature: string,
+  dismissedBy: "user" | "applied",
+) {
+  const existing = await ctx.db.query("recommendation_dismissals")
+    .withIndex("by_pricing_row", (q) => q.eq("pricing_row_id", pricingRowId)).first();
+  const value = {
+    pricing_row_id: pricingRowId,
+    account_slug: accountSlug,
+    item_name_canonical: itemNameCanonical,
+    demand_signature: demandSignature,
+    dismissed_at: Date.now(),
+    dismissed_by: dismissedBy,
+  };
+  if (existing) await ctx.db.patch(existing._id, value);
+  else await ctx.db.insert("recommendation_dismissals", value);
+}
 
 /**
  * Query dismissed item names (used by W17 to filter recommendations list).

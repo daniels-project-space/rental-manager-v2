@@ -15,7 +15,9 @@ function fixture(input?: any[]) {
     { _id: "price-b", _creationTime: 2.5, item_name_canonical: "Camera body", account_id: "owner-b", daily_price_min: 22.75, daily_price_max: 40, is_bundle: false, created_at: 2 },
     { _id: "price-short", _creationTime: 3, item_name_canonical: "Go", daily_price_min: 1, daily_price_max: 2, is_bundle: false, created_at: 3 },
   ];
-  const tables: Record<string, any[]> = { pricing_catalog: structuredClone(rows), pricing_input_cache_state: [], pricing_input_cache_blobs: [], recommendation_dismissals: [] };
+  const tables: Record<string, any[]> = { pricing_catalog: structuredClone(rows), pricing_input_cache_state: [], pricing_input_cache_blobs: [], recommendation_dismissals: [], accounts: [
+    { _id: "owner-a", slug: "leo" }, { _id: "owner-b", slug: "daniel" },
+  ] };
   const reads: string[] = [], writes: string[] = [], scheduled: any[] = []; let serial = 0;
   const db = {
     query(table: string) {
@@ -87,8 +89,11 @@ describe("lossless pricing inputs", () => {
     const f = fixture(); await ready(f);
     await (upsertPricingRow as any)._handler(f.context(), { item_name_canonical: "Camera body", daily_price_min: 30, daily_price_max: 40 });
     expect(f.tables.pricing_catalog[0].daily_price_min).toBe(30); expect(f.tables.pricing_catalog[1].daily_price_min).toBe(22.75);
-    expect(await (applyRecommendation as any)._handler(f.context(), { itemNameCanonical: "Camera body", newDailyRate: 50 })).toMatchObject({ updated: 2, newDailyRate: 50 });
-    expect(f.tables.pricing_catalog.slice(0, 2).map(row => [row.daily_price_min, row.daily_price_max])).toEqual([[50, 50], [50, 50]]); expect(f.tables.pricing_input_cache_state[0].revision).toBe(3); expect(f.scheduled).toHaveLength(1);
+    expect(await (applyRecommendation as any)._handler(f.context(), { pricingRowId: "price-a", accountSlug: "leo", itemNameCanonical: "Camera body", newDailyRate: 50, demandSignature: "r1,r2,r3" })).toMatchObject({ updated: 1, newDailyRate: 50 });
+    expect(f.tables.pricing_catalog.slice(0, 2).map(row => [row.daily_price_min, row.daily_price_max])).toEqual([[50, 50], [22.75, 40]]);
+    expect(f.tables.recommendation_dismissals).toMatchObject([{ pricing_row_id: "price-a", account_slug: "leo", demand_signature: "r1,r2,r3", dismissed_by: "applied" }]);
+    expect(f.tables.pricing_input_cache_state[0].revision).toBe(3); expect(f.scheduled).toHaveLength(1);
+    await expect((applyRecommendation as any)._handler(f.context(), { pricingRowId: "price-a", accountSlug: "daniel", itemNameCanonical: "Camera body", newDailyRate: 60, demandSignature: "r1,r2,r3" })).rejects.toThrow("different account");
   });
   it("keeps preparation strict and refuses enabling a source revision that changed", async () => {
     const f = fixture(); await ready(f, false); const ctx = f.context(); f.reads.length = 0;
