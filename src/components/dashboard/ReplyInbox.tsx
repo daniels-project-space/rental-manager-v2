@@ -3032,12 +3032,18 @@ export function ReplyModal({
     tile.source === "dbcinema_web",
   );
   const [dbCinemaRefresh, setDbCinemaRefresh] = useState(0);
+  const [websiteCursor,setWebsiteCursor] = useState<string|null>(null);
+  const [websiteLoadingOlder,setWebsiteLoadingOlder] = useState(false);
+  const websiteHistoryStarted = useRef(false);
   useEffect(() => {
     if (tile.source !== "dbcinema_web" || !tile.source_booking_id) return;
     let alive = true;
     void loadDbCinemaThread({ booking_id: tile.source_booking_id })
       .then((result) => {
-        if (alive) setDbCinemaMessages(result.messages);
+        if (alive) {
+          setDbCinemaMessages(previous=>mergeConversationHistory([...previous,...result.messages],[]) as typeof previous);
+          if(!websiteHistoryStarted.current)setWebsiteCursor(result.nextCursor??null);
+        }
       })
       .catch(() => {
         if (alive)
@@ -3166,7 +3172,7 @@ export function ReplyModal({
   useEffect(() => {
     const list = messageListRef.current;
     if (!list) return;
-    if(historyScrollAnchor.current && history.status!=="LoadingMore"){
+    if(historyScrollAnchor.current && history.status!=="LoadingMore"&&!websiteLoadingOlder){
       const anchor=historyScrollAnchor.current;list.scrollTop=anchor.top+list.scrollHeight-anchor.height;historyScrollAnchor.current=null;
     }
     let alive = true;
@@ -3181,7 +3187,7 @@ export function ReplyModal({
       alive = false;
       observer.disconnect();
     };
-  }, [thread?.length, dryRunSentMsgs.length, history.status]);
+  }, [thread?.length, dryRunSentMsgs.length, history.status, websiteLoadingOlder]);
   const [decided, setDecided] = useState<"approve" | "decline" | null>(null);
   const [deciding, setDeciding] = useState(false);
   const [confirming, setConfirming] = useState<"approve" | "decline" | null>(
@@ -3875,6 +3881,14 @@ export function ReplyModal({
                   list.scrollHeight - list.scrollTop - list.clientHeight < 64;
               }}
             >
+              {tile.source === "dbcinema_web" && websiteCursor && <div className={styles.historyControls}><button type="button" disabled={websiteLoadingOlder} onClick={async()=>{
+                if(websiteLoadingOlder||!tile.source_booking_id)return;
+                const list=messageListRef.current;if(list)historyScrollAnchor.current={height:list.scrollHeight,top:list.scrollTop};followLatest.current=false;
+                websiteHistoryStarted.current=true;setWebsiteLoadingOlder(true);
+                try{const page=await loadDbCinemaThread({booking_id:tile.source_booking_id,cursor:websiteCursor});setDbCinemaMessages(previous=>mergeConversationHistory([...previous,...page.messages],[]) as typeof previous);setWebsiteCursor(page.nextCursor??null);}
+                catch{setNote("Earlier messages are unavailable. Please retry.");}
+                finally{setWebsiteLoadingOlder(false);}
+              }}>{websiteLoadingOlder?"Loading earlier messages…":"Load earlier messages"}</button></div>}
               {tile.source !== "dbcinema_web" && <div className={styles.historyControls}>
                 {(history.status === "CanLoadMore" || history.status === "LoadingMore") && <button type="button" disabled={history.status === "LoadingMore"} onClick={()=>{
                   const list=messageListRef.current;if(list)historyScrollAnchor.current={height:list.scrollHeight,top:list.scrollTop};

@@ -421,21 +421,24 @@ export const renterReviews = action({
 
 /** Fetches the selected DB Cinema rental thread without exposing its admin token. */
 export const thread = action({
-  args: { booking_id: v.string() },
-  handler: async (ctx, { booking_id }) => {
+  args: { booking_id: v.string(), cursor: v.optional(v.union(v.string(),v.null())) },
+  handler: async (ctx, { booking_id, cursor }) => {
     await requireOwner(ctx);
     const page = await callDbCinema<{
       page?: Array<{ _id: string; sender: string; text: string; at: number }>;
       escalated?: boolean;
+      isDone?: boolean;
+      continueCursor?: string;
     }>("query", "rentalChat:messages", {
       ...conversationScope(booking_id),
       admin: true,
-      paginationOpts: { numItems: 40, cursor: null },
+      paginationOpts: { numItems: 40, cursor: cursor ?? null },
     });
     if (!page || !Array.isArray(page.page))
       throw new Error("DB Cinema chat history is unavailable.");
     return {
       escalated: !!page.escalated,
+      nextCursor: page.isDone === false && page.continueCursor ? page.continueCursor : null,
       messages: page.page
         .slice()
         .reverse()
