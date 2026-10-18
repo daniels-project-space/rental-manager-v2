@@ -1,3 +1,4 @@
+import { quickReplyProof } from "./lib/quick_reply_proof";
 
 import { insertRevenueReservation, patchRevenueReservation } from "./lib/reservation_revenue";
 import { readLatestReservationActivity } from "./lib/reservation_activity_queries";
@@ -925,6 +926,7 @@ async function upsertOrderImpl(
   ctx: MutationCtx,
   args: UpsertOrderArgs,
 ): Promise<UpsertImplResult> {
+  if (Array.isArray(args.order?.steps)) args = {...args,...quickReplyProof(args.order)};
   const existing = await ctx.db
     .query("reservations")
     .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", args.hygglo_order_id))
@@ -1691,6 +1693,7 @@ export const listByThread = query({
     // previews), then back to chronological order for display.
     rows.reverse();
     return rows.map((m) => ({
+      id: m.message_id,
       role: m.sender === "owner" ? "owner" : "renter",
       sender_name: m.sender_name ?? m.sender,
       content: m.body_text,

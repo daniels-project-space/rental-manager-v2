@@ -155,6 +155,8 @@ let browser, server;
     await child(process.execPath,[__dirname+"/reference.cjs"],{env});
   } else if(process.env.RM_QA_PHONE_ONLY) {
     await child(process.execPath,[__dirname+"/phone-close.cjs"],{env});
+  } else if(process.env.RM_QA_HISTORY_ONLY) {
+    await child(process.execPath,[__dirname+"/history.cjs"],{env});
   } else if(process.env.RM_QA_QUEUE_ONLY) {
     await child(process.execPath,[__dirname+"/queue.cjs"],{env});
   } else if (process.env.RM_QA_STACK_ONLY) {

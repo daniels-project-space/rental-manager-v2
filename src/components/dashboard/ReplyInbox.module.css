@@ -700,3 +700,5 @@
 .moneyOverview > div { padding: 12px; border: 1px solid #344d60; border-radius: 12px; background: #182a37; display: flex; flex-direction: column; gap: 6px; }
 .moneyOverview small { font-size: 10px; color: #a9bfd0; }
 .moneyOverview strong { font-size: 20px; color: #eaf4ff; overflow-wrap: anywhere; }
+
+.historyControls{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;color:#94a3b8;font-size:11px}.historyControls:empty{display:none}.historyControls button{border:1px solid #334155;border-radius:9px;padding:6px 12px;background:#15202c;color:#cbd5e1}.historyControls button:disabled{opacity:.55}.systemMessage{align-self:center;max-width:92%;padding:9px 14px;border:1px solid #33415566;border-radius:10px;background:#111b26;color:#b8c9df;text-align:center;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}.systemMessage small{display:block;color:#7f96b0;font-size:10px;margin-bottom:3px}.systemMessage span{display:block}.chatAttachment{display:block;margin-top:7px;max-width:260px}.chatAttachment img{display:block;max-width:100%;max-height:220px;border-radius:8px;object-fit:contain}

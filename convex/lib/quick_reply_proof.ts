@@ -1,4 +1,6 @@
+import { isDead, isVerified } from "../order_step_semantics";
 type Detail = {
+  isBookedAndReady?: boolean;
   steps?: Array<{
     key: string;
     active?: boolean;
@@ -28,27 +30,35 @@ export function quickReplyProof(detail: Detail) {
         (s.active || s.completed) &&
         !s.failure,
     );
-  const verified = steps.some(
+  const current = steps.find(s => s.active);
+  const active = current?.key;
+  const booked = active ? isVerified(active) : steps.some(s => isVerified(s.key) && s.completed === true && !s.failure);
+  const closed = current?.failure === true || isDead(active) || steps.some(s => isDead(s.key) && (s.active || s.completed));
+  const verified = booked || steps.some(
     (s) => s.key === "VERIFIED" && s.completed === true && !s.failure,
   );
   const begun =
     paid &&
-    steps.some(
+    (booked || steps.some(
       (s) => s.key === "VERIFIED" && (s.active || s.completed) && !s.failure,
-    );
+    ));
   const events = (detail.activities ?? [])
     .filter((a) => !a.chatMessage)
     .map((a) => `${a.event?.title ?? ""} ${a.event?.content ?? ""}`);
   const confirmation = events.some(
     (text) =>
       !/not |failed|rejected|cancelled|will be|once /i.test(text) &&
-      /(?:rental|booking|borrower).{0,70}(?:confirmed|booked|passed (?:our )?(?:security|verification) checks)|(?:passed (?:our )?(?:security|verification) checks).{0,70}(?:rental|booking|borrower)/i.test(
+      /(?:everything is booked and ready)|(?:rental|booking|borrower).{0,70}(?:confirmed|booked|passed (?:our )?(?:security|verification) checks)|(?:passed (?:our )?(?:security|verification) checks).{0,70}(?:rental|booking|borrower)/i.test(
         text,
       ),
   );
   return {
     paid,
     verification_started: begun,
-    platform_booking_confirmed: paid && verified && confirmation,
+    // Current post-verification workflow is platform evidence in its own
+    // right. Hygglo need not repeat a particular English event phrase.
+    platform_booking_confirmed: !closed && paid && verified &&
+      (booked || detail.isBookedAndReady === true || confirmation) &&
+      (!active || isVerified(active)),
   };
 }

@@ -1,6 +1,6 @@
 // @ts-nocheck
 // Isolated test transport: no Convex client or external provider is constructed.
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore, useState } from "react";
 let version = 0;
 const listeners = new Set<() => void>();
 const subscribe = (fn: () => void) => {
@@ -169,10 +169,11 @@ export function useQuery(ref, args) {
   if (name === "replyInbox:getReplyQueue")
     return rows.filter((r) => r.source === "hygglo");
   if (name === "replyInbox:getThreadById")
-    return rows.find((r) => r.thread_id === args.thread_id);
+    return window.__fixture.liveTiles?.[args.thread_id] ?? rows.find((r) => r.thread_id === args.thread_id);
   if(name === "quick_reply_thread_state:getForThreads") return Object.fromEntries(args.thread_ids.map(id=>[id,hidden[id]??null]));
   if (name === "settings:get") return settings;
   if (name === "hygglo:listByThread") return messages;
+  if (name === "hygglo_history:state") return window.__fixture.history?.[args.thread_id] ? {ready:true,count:window.__fixture.history[args.thread_id].length,error:null}:null;
   if (name === "replyInbox:getImminentHandoffs")
     return window.__fixture.handoffCases ?? [
       {
@@ -259,6 +260,7 @@ export function useAction(ref) {
   return useCallback(
     async (args) => {
       window.__calls.push({ kind: "action", name, args });
+      if (name === "hygglo_history_actions:refresh") return {ok:true};
       if (name === "quick_reply_search:page") {
         if (window.__historyFailure) throw Error("Fixture history unavailable");
         if (window.__historyDelay)
@@ -547,8 +549,12 @@ export function useMutation(ref) {
     [name],
   );
 }
-export function usePaginatedQuery() {
-  return { results: [], status: "Exhausted", loadMore() {} };
+export function usePaginatedQuery(ref,args,options) {
+  useSyncExternalStore(subscribe,snapshot,snapshot);
+  const [count,setCount]=useState(options?.initialNumItems??40);
+  const data=args!=="skip"?(window.__fixture.history?.[args.thread_id]??[]):[];
+  const ordered=[...data].sort((a,b)=>b.timestamp-a.timestamp);
+  return {results:ordered.slice(0,count),status:count<ordered.length?"CanLoadMore":"Exhausted",loadMore(n){setCount(v=>v+n)}};
 }
 export function useConvexAuth() {
   return { isAuthenticated: true, isLoading: false };
