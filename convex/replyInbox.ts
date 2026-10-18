@@ -369,7 +369,7 @@ type ItemAvail = {
   reason?: string;
   item_index?: number;
 };
-type TileAvailability = {
+export type TileAvailability = {
   status: "available" | "conflict" | "unknown";
   include_pending: boolean;
   stock_rules_version: 7;
@@ -379,7 +379,7 @@ type TileAvailability = {
   items: ItemAvail[];
 };
 
-type AvailCtx = {
+export type AvailCtx = {
   confirmed: Doc<"reservations">[];
   pending: Doc<"reservations">[];
   productIndex: Map<string, string>;
@@ -403,7 +403,7 @@ type AvailCtx = {
   byOrderId: Map<string, Doc<"reservations">>;
 };
 
-async function loadAvailCtx(
+export async function loadAvailCtx(
   ctx: QueryCtx,
   includePending: boolean,
   window?: StockDateWindow,
@@ -2647,3 +2647,34 @@ export const __service_getReplyQueue = internalQueryOf(getReplyQueue);
 export const __service_getDraftApprovalContext = internalQueryOf(getDraftApprovalContext);
 
 export const __service_getThreadById=internalQueryOf(getThreadById);
+
+/** Live stock verdicts for the Pending Review panel. Kept in Reply Inbox so
+ * dashboard headlines do not import this large module into unrelated APIs. */
+export const getPendingReviewAvailability = query({
+  args: { thread_ids: v.array(v.string()) },
+  handler: async (ctx, { thread_ids }) => {
+    const uniqueThreadIds = [...new Set(thread_ids)];
+    const reservations = (await Promise.all(uniqueThreadIds.map((threadId) =>
+      ctx.db.query("reservations")
+        .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", threadId))
+        .first(),
+    ))).filter((row): row is Doc<"reservations"> => row !== null);
+    const dated = reservations.filter((row) => (row.pickup_date ?? row.start_date) &&
+      (row.return_date ?? row.end_date ?? row.start_date));
+    if (!dated.length) {
+      return uniqueThreadIds.map((thread_id) => ({ thread_id, availability: null }));
+    }
+    const starts = dated.map((row) => row.pickup_date ?? row.start_date!).sort();
+    const ends = dated.map((row) => row.return_date ?? row.end_date ?? row.start_date!).sort();
+    const window: StockDateWindow = { start_date: starts[0], end_date: ends[ends.length - 1] };
+    const availabilityContext = await loadAvailCtx(ctx, false, window);
+    await extendAvailabilityMappings(ctx, availabilityContext, dated);
+    const availabilityByThread = new Map(dated.map((row) => [
+      row.hygglo_order_id!, computeAvailability(row, availabilityContext),
+    ]));
+    return uniqueThreadIds.map((thread_id) => ({
+      thread_id,
+      availability: availabilityByThread.get(thread_id) ?? null,
+    }));
+  },
+});

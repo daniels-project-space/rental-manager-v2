@@ -36,7 +36,8 @@ export type PlatformFalloutCounts = {
 };
 
 function isTerminal(row: PlatformFalloutRow): boolean {
-  return row.is_obsolete === true || row.status === "cancelled" || row.status === "declined";
+  return row.is_obsolete === true || row.status === "cancelled" || row.status === "declined" ||
+    row.order_step === "CANCELED" || row.order_step === "VERIFICATION_FAILED";
 }
 
 /**

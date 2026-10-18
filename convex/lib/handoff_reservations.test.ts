@@ -140,7 +140,9 @@ describe("indexed handoff candidates", () => {
     try {
       const data = { reservations: [
         row("confirmed", { net_to_owner_gbp: 80, order_step: "DELIVERED" }),
-        row("pending", { status: "pending_review", net_to_owner_gbp: 45, start_date: "2026-10-20", end_date: "2026-10-21" }),
+        row("pending", { status: "pending_review", hygglo_order_id: "pending", net_to_owner_gbp: 45, start_date: "2026-10-20", end_date: "2026-10-21" }),
+      ], conversations: [
+        { _id: "conversation-pending", thread_id: "pending", last_sender: "renter", last_renter_msg_at: Date.now() - 1_000 },
       ] };
       const core = fixture(data);
       const coreResult = await (getRentalHeadlineCoreStats as any)._handler(core.ctx, { accountSlug: null });
@@ -152,7 +154,7 @@ describe("indexed handoff candidates", () => {
       const pendingResult = await (getRentalPendingReviewStats as any)._handler(pending.ctx, { accountSlug: null });
       expect(pendingResult).toMatchObject({ count: 1, value_gbp: 45, month_value_gbp: 45 });
       expect(pendingResult.rentals.map((r: any) => r.reservation_id)).toEqual(["pending"]);
-      expect(pending.reads.every((read) => read.equals.status === "pending_review")).toBe(true);
+      expect(pending.reads.filter((read) => read.table === "reservations").every((read) => read.equals.status === "pending_review")).toBe(true);
     } finally {
       vi.useRealTimers();
     }
@@ -163,14 +165,16 @@ describe("indexed handoff candidates", () => {
     vi.setSystemTime(new Date("2026-10-16T12:00:00Z"));
     try {
       const { ctx, reads } = fixture({ reservations: [
-        row("own-pending", { status: "pending_review", net_to_owner_gbp: 45, start_date: "2026-10-20" }),
+        row("own-pending", { status: "pending_review", hygglo_order_id: "thread-own", net_to_owner_gbp: 45, start_date: "2026-10-20" }),
         row("other-pending", { status: "pending_review", account_slug: "leo", _creationTime: Date.now() - 1000, start_date: "2026-10-21" }),
         row("confirmed", { account_slug: "leo" }),
+      ], conversations: [
+        { _id: "conversation-own", thread_id: "thread-own", last_sender: "renter", last_renter_msg_at: Date.now() - 1_000 },
       ] });
       const result = await (getRentalPendingReviewStats as any)._handler(ctx, { accountSlug: "diogo" });
       expect(result.count).toBe(1);
       expect(result.other_account_new_booking_count).toBe(1);
-      expect(reads.every((read) => read.equals.status === "pending_review")).toBe(true);
+      expect(reads.filter((read) => read.table === "reservations").every((read) => read.equals.status === "pending_review")).toBe(true);
     } finally {
       vi.useRealTimers();
     }
