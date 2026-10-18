@@ -4,6 +4,7 @@ export type QuickReplySort =
   | "waiting"
   | "newest"
   | "oldest";
+export type QuickReplySection = "todo" | "requests" | "all";
 type Row = {
   thread_id: string;
   last_sender: string | null;
@@ -12,6 +13,8 @@ type Row = {
   request_created_at?: number | null;
   net_to_owner_gbp: number | null;
   estimate_earnings_gbp: number | null;
+  is_request?: boolean;
+  human_requested?: boolean;
   availability?: { status: string } | null;
 };
 const validTime = (value: number | null | undefined) =>
@@ -22,12 +25,13 @@ const earnings = (row: Row) => {
   const value = row.net_to_owner_gbp ?? row.estimate_earnings_gbp;
   return value != null && Number.isFinite(value) ? value : null;
 };
-/** Independent sorts have no earnings/time cross weighting; only Priority blends. */
+/** Explicit sorts stay independent; Priority adapts its weights to the active section. */
 export function compareQuickReplies(
   a: Row,
   b: Row,
   sort: QuickReplySort,
   now: number,
+  section: QuickReplySection = "todo",
 ): number {
   const stable = () => a.thread_id.localeCompare(b.thread_id);
   if (sort === "earnings") {
@@ -69,22 +73,45 @@ export function compareQuickReplies(
         ? -1
         : (sort === "oldest" ? av - bv : bv - av) || stable();
   }
-  // Priority starts with the operator’s outstanding replies. Money can never
-  // pull an answered conversation above one still waiting for a response.
-  const aWaiting = a.last_sender !== "owner", bWaiting = b.last_sender !== "owner";
-  if (aWaiting !== bWaiting) return aWaiting ? -1 : 1;
-  const score = (row: Row) =>
-    2 * Math.log1p(Math.max(0, earnings(row) ?? 0)) +
-    3 *
-      Math.log1p(
-        row.last_sender === "renter" && validTime(row.last_renter_msg_at)
-          ? Math.max(0, (now - row.last_renter_msg_at) / 3_600_000)
-          : 0,
-      ) +
-    (row.availability?.status === "available"
-      ? 2
+  // The To reply section is explicitly an action queue, so an unanswered
+  // renter stays ahead of an answered thread. The All section intentionally
+  // drops this gate and ranks every conversation from its current live signals.
+  if (section === "todo") {
+    const aWaiting = a.last_sender !== "owner";
+    const bWaiting = b.last_sender !== "owner";
+    if (aWaiting !== bWaiting) return aWaiting ? -1 : 1;
+  }
+  const score = (row: Row) => {
+    const waitingOnOwner = row.last_sender === "renter" ||
+      (row.last_sender !== "owner" && (row.human_requested || row.is_request));
+    const waitingSince = row.last_sender === "renter"
+      ? validTime(row.last_renter_msg_at)
+      : row.last_sender !== "owner" && row.is_request
+        ? validTime(row.request_created_at)
+        : null;
+    const waitHours = waitingOnOwner && waitingSince
+      ? Math.max(0, (now - waitingSince) / 3_600_000)
+      : 0;
+    const availability = row.availability?.status === "available"
+      ? 1
       : row.availability?.status === "conflict"
-        ? -2
-        : 0);
+        ? -1
+        : 0;
+    const value = Math.log1p(Math.max(0, earnings(row) ?? 0));
+    if (section === "requests") {
+      // In the request section, bookability is the strongest signal; age and
+      // expected owner earnings break ties so fresh viable requests surface.
+      return 4 * availability + 2.5 * Math.log1p(waitHours) + 1.5 * value;
+    }
+    if (section === "all") {
+      // Keep replied rentals in the same live ranking, where a new renter
+      // message immediately restores response urgency without a hard partition.
+      return 20 * Number(waitingOnOwner) + 2 * Math.log1p(waitHours) +
+        2 * value + 2 * availability;
+    }
+    // To reply: response urgency leads, followed by stock and owner return.
+    return 8 * Number(waitingOnOwner) + 3 * Math.log1p(waitHours) +
+      1.5 * value + 2 * availability;
+  };
   return score(b) - score(a) || stable();
 }

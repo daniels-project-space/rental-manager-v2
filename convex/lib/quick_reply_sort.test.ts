@@ -107,3 +107,41 @@ describe("priority reply lifecycle",()=>{
 });
 
 it("also keeps a new request without any messages above already answered threads",()=>expect(compareQuickReplies(row("new",{last_sender:null,last_renter_msg_at:0,estimate_earnings_gbp:1}),row("answered",{last_sender:"owner",estimate_earnings_gbp:100000}),"priority",1000)).toBeLessThan(0));
+
+describe("section-aware live priority ranking", () => {
+  it("ranks viable, higher-return rentals first inside the request section", () => {
+    const available = row("available", {
+      estimate_earnings_gbp: 100,
+      availability: { status: "available" },
+    });
+    const conflict = row("conflict", {
+      estimate_earnings_gbp: 1,
+      availability: { status: "conflict" },
+    });
+    expect(compareQuickReplies(available, conflict, "priority", 1000, "requests")).toBeLessThan(0);
+  });
+
+  it("reorders the all section by earnings and availability after a reply", () => {
+    const rental = row("rental", {
+      estimate_earnings_gbp: 50_000,
+      last_sender: "owner",
+      availability: { status: "available" },
+      last_renter_msg_at: 100,
+    });
+    const enquiry = row("enquiry", {
+      estimate_earnings_gbp: 10_000,
+      availability: { status: "available" },
+      last_renter_msg_at: 900,
+    });
+
+    expect(compareQuickReplies(rental, enquiry, "priority", 1000, "all")).toBeGreaterThan(0);
+    rental.last_sender = "renter";
+    rental.last_renter_msg_at = 990;
+    expect(compareQuickReplies(rental, enquiry, "priority", 1000, "all")).toBeLessThan(0);
+
+    // The optimistic send receipt changes last_sender immediately, removing
+    // stale wait urgency; the live list then recalculates from current metrics.
+    rental.last_sender = "owner";
+    expect(compareQuickReplies(rental, enquiry, "priority", 1000, "all")).toBeGreaterThan(0);
+  });
+});
