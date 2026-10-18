@@ -600,6 +600,7 @@
       "convex/lib/power_listing_identity.ts",
       "convex/lib/price_claims.ts",
       "convex/lib/pricing_input_cache.ts",
+      "convex/lib/pricing_recommendation_target.ts",
       "convex/lib/product_context.ts",
       "convex/lib/product_read_model.ts",
       "convex/lib/profile_image.ts",
