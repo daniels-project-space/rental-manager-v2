@@ -15,7 +15,7 @@ function fixture(input?: any[]) {
     { _id: "price-b", _creationTime: 2.5, item_id: "item-b", item_name_canonical: "Camera body", account_id: "owner-b", daily_price_min: 22.75, daily_price_max: 40, is_bundle: false, created_at: 2 },
     { _id: "price-short", _creationTime: 3, item_name_canonical: "Go", daily_price_min: 1, daily_price_max: 2, is_bundle: false, created_at: 3 },
   ];
-  const tables: Record<string, any[]> = { pricing_catalog: structuredClone(rows), pricing_input_cache_state: [], pricing_input_cache_blobs: [], recommendation_dismissals: [], recommendation_price_apply_jobs: [], listing_resolution_override: [], hygglo_product_index: [
+  const tables: Record<string, any[]> = { pricing_catalog: structuredClone(rows), pricing_input_cache_state: [], pricing_input_cache_blobs: [], recommendation_dismissals: [], recommendation_price_apply_jobs: [], listing_resolution_override: [], hygglo_products: [], hygglo_product_index: [
     { _id: "map-a", account_slug: "leo", item_id: "item-a", product_id: 9001 },
   ], accounts: [
     { _id: "owner-a", slug: "leo" }, { _id: "owner-b", slug: "daniel" },

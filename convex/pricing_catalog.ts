@@ -4,6 +4,8 @@ import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import type { MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
+import { hasOwnerPinnedDailyRate } from "./lib/pricing_recommendation_target";
+import { insertStockInput } from "./lib/stock_input_writes";
 
 /**
  * Queue an owner-approved price recommendation for the exact Hygglo listing
@@ -55,7 +57,21 @@ export const applyRecommendation = mutation({
         .filter(mapping => mapping.account_slug === accountSlug && mapping.components.length === 1 && mapping.components[0].item_id === row.item_id && mapping.components[0].qty === 1)
         .map(mapping => mapping.product_id),
     ])];
-    if (mappings.length > 100 || overrides.length > 100 || productIds.length !== 1) {
+    let resolvedProductId = productIds.length === 1 ? productIds[0] : undefined;
+    let fallbackProduct: Doc<"hygglo_products"> | undefined;
+    if (productIds.length === 0 && mappings.length <= 100 && overrides.length <= 100) {
+      const indexedCandidates = await ctx.db.query("hygglo_products")
+        .withIndex("by_master_item", q => q.eq("masterItemId", row.item_id!))
+        .take(101);
+      if (indexedCandidates.length <= 100) {
+        const candidates = indexedCandidates.filter(product => product.accountSlug === accountSlug && hasOwnerPinnedDailyRate(product, row.item_id!, row.daily_price_min));
+        if (candidates.length === 1) {
+          fallbackProduct = candidates[0];
+          resolvedProductId = fallbackProduct.productId;
+        }
+      }
+    }
+    if (mappings.length > 100 || overrides.length > 100 || !resolvedProductId) {
       throw new Error(productIds.length === 0
         ? "No exact Hygglo listing is mapped to this item on this account"
         : "More than one Hygglo listing maps to this item; update the listing mapping before applying");
@@ -70,11 +86,23 @@ export const applyRecommendation = mutation({
     }
 
     const now = Date.now();
+    if (fallbackProduct) {
+      await insertStockInput(ctx, "hygglo_product_index", {
+        account_slug: accountSlug,
+        product_id: fallbackProduct.productId,
+        item_id: row.item_id,
+        source: "manual",
+        evidence_count: 1,
+        created_at: now,
+        last_seen_at: now,
+        sample_title: fallbackProduct.name,
+      });
+    }
     const jobId = await ctx.db.insert("recommendation_price_apply_jobs", {
       account_slug: accountSlug,
       pricing_row_id: row._id,
       item_id: row.item_id,
-      product_id: productIds[0],
+      product_id: resolvedProductId,
       item_name_canonical: itemNameCanonical,
       old_price: row.daily_price_min,
       new_price: newDailyRate,
@@ -85,6 +113,58 @@ export const applyRecommendation = mutation({
     });
     await ctx.scheduler.runAfter(0, internal.pricing_catalog.publishRecommendationPrice, { jobId });
     return { ok: true, jobId, status: "queued", newDailyRate };
+  },
+});
+
+/** One-time, idempotent backfill for owner-pinned listings with one exact current-rate match. */
+export const backfillRecommendationListingMappings = internalMutation({
+  args: { accountSlugs: v.array(v.string()) },
+  handler: async (ctx, { accountSlugs }) => {
+    const now = Date.now();
+    let linked = 0;
+    let skippedAmbiguous = 0;
+    let skippedUnmatched = 0;
+    let skippedOverLimit = 0;
+    for (const accountSlug of [...new Set(accountSlugs)]) {
+      const account = await ctx.db.query("accounts").withIndex("by_slug", q => q.eq("slug", accountSlug)).unique();
+      if (!account) continue;
+      const [pricing, products] = await Promise.all([
+        ctx.db.query("pricing_catalog").withIndex("by_account", q => q.eq("account_id", account._id)).take(501),
+        ctx.db.query("hygglo_products").withIndex("by_account", q => q.eq("accountSlug", accountSlug)).take(501),
+      ]);
+      if (pricing.length > 500 || products.length > 500) {
+        skippedOverLimit++;
+        continue;
+      }
+      for (const row of pricing) {
+        if (!row.item_id || row.is_bundle || row.marketing_only) continue;
+        const [mappings, overrides] = await Promise.all([
+          ctx.db.query("hygglo_product_index").withIndex("by_item_id", q => q.eq("item_id", row.item_id!)).take(101),
+          ctx.db.query("listing_resolution_override").withIndex("by_stock_item", q => q.eq("stock_item_id", row.item_id!)).take(101),
+        ]);
+        const existingIds = new Set([
+          ...mappings.filter(mapping => mapping.account_slug === accountSlug).map(mapping => mapping.product_id),
+          ...overrides.filter(mapping => mapping.account_slug === accountSlug && mapping.components.length === 1 && mapping.components[0].item_id === row.item_id && mapping.components[0].qty === 1).map(mapping => mapping.product_id),
+        ]);
+        if (existingIds.size) continue;
+        const candidates = products.filter(product => hasOwnerPinnedDailyRate(product, row.item_id!, row.daily_price_min));
+        if (candidates.length === 0) { skippedUnmatched++; continue; }
+        if (candidates.length !== 1 || mappings.length > 100 || overrides.length > 100) { skippedAmbiguous++; continue; }
+        const product = candidates[0];
+        await insertStockInput(ctx, "hygglo_product_index", {
+          account_slug: accountSlug,
+          product_id: product.productId,
+          item_id: row.item_id,
+          source: "manual",
+          evidence_count: 1,
+          created_at: now,
+          last_seen_at: now,
+          sample_title: product.name,
+        });
+        linked++;
+      }
+    }
+    return { linked, skippedAmbiguous, skippedUnmatched, skippedOverLimit };
   },
 });
 
