@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { BookingTimeMessage } from "./booking-time-transcript";
+import { chronologicalBookingMessages, type BookingTimeMessage } from "./booking-time-transcript";
 
 /** Normalise common model formats without silently turning 7 PM into 07:00. */
 export function sanitizeTime(value: string | undefined | null): string | undefined {
@@ -94,7 +94,7 @@ export function formatBookingTimeMessageTimestamp(timestamp: number): string {
 
 /** Both extractors must send the same London-dated transcript to the model. */
 export function buildBookingTimeTranscript(messages: BookingTimeMessage[]): string {
-  return messages.map((message) => {
+  return chronologicalBookingMessages(messages).map((message) => {
     const date = message.hygglo_sent_at === undefined
       ? "London date unavailable"
       : formatBookingTimeMessageTimestamp(message.hygglo_sent_at);
@@ -105,6 +105,7 @@ export function buildBookingTimeTranscript(messages: BookingTimeMessage[]): stri
 
 /** A renter's extension request alone does not change the agreed return date. */
 export function hasUnconfirmedReturnExtension(messages: BookingTimeMessage[]): boolean {
+  messages = chronologicalBookingMessages(messages);
   const request = /\b(?:can|could|may|would)\s+(?:i|we)\b.{0,100}\b(?:extend|return|drop\s+(?:it\s+)?back)\b|\bextend\b.{0,80}\b(?:tomorrow|another|next|please)\b/i;
   let latestRequest = -1;
   for (let i = 0; i < messages.length; i++) {
@@ -147,13 +148,16 @@ export function validatedBookingDates(
 export const BOOKING_TIME_INSTRUCTIONS = `You are extracting the FINAL AGREED pickup and return schedule from a rental equipment chat.
 
 INSTRUCTIONS:
+- Read the timestamped conversation chronologically. An accepted correction supersedes the earlier time even when the renter omits "pickup" or "return" in a follow-up.
+- "Running late, will be with you more like 9" after an agreed 8am pickup, followed by "Ok all good", changes the pickup to 09:00. Resolve shorthand AM/PM from the previous agreement and London message time; never turn it into 21:00 without evidence.
+- "Around/about/roughly 9", "9ish" and "more like 9" are approximate clock targets. Extract the target HH:MM and explain the approximation in notes. The independent evidence guard preserves approximate precision; never promote a range, "after 5", "before 9" or a deadline to an exact clock.
+- A journey duration ("10 minutes away"), tracking ETA, "on my way" or arrival report alone does not renegotiate the handoff. A clear later/earlier clock correction accepted by the other party DOES update it, including "will be there at 9 instead".
 - Find the LAST pickup and return times agreed or confirmed by both parties; later corrections replace earlier proposals.
 - A renter's time counts as agreed when the owner/bot confirms or acknowledges it.
 - Pickup and return are separate. If one agreed time explicitly covers both, use it for both.
 - Never invent a clock for morning, afternoon, evening, during the day, or an unacknowledged proposal: return null. Literal noon/midday means 12:00 and midnight means 00:00. Preserve exact stated minutes.
 - Convert 7pm to 19:00, 10am to 10:00 and 6.30pm to 18:30.
 - If AM/PM is absent, infer only from clear rental context. If ambiguous, say so in notes and use LOW confidence.
-- Ignore arrival ETAs and journey updates such as "I'll be there at 20:32" or "10 mins away" unless they explicitly renegotiate the rental handoff time.
 - If no handoff times were discussed, use null for both times.
 
 DATES:

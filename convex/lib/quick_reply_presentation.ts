@@ -1,3 +1,4 @@
+import { isDead, isInVerification, isVerified, ORDER_STEPS } from "../order_step_semantics";
 export type QuickReplyStage = "enquiry" | "pending" | "confirmed" | "closed";
 type StageInput = {
   has_reservation: boolean;
@@ -24,7 +25,15 @@ export function quickReplyStage(tile: StageInput): QuickReplyStage {
     )
   )
     return "closed";
-  if (!tile.has_reservation || tile.paid !== true) return "enquiry";
+  if (!tile.has_reservation) return "enquiry";
+  // Hygglo's active step describes the CURRENT required action. Historical
+  // verification_started / a missing booking-confirmed flag cannot regress it.
+  if (tile.source !== "dbcinema_web" && ORDER_STEPS.some(step => step === tile.order_step)) {
+    if (isDead(tile.order_step)) return "closed";
+    if (isVerified(tile.order_step)) return "confirmed";
+    return isInVerification(tile.order_step) ? "pending" : "enquiry";
+  }
+  if (tile.paid !== true) return "enquiry";
   if (tile.platform_booking_confirmed === true) return "confirmed";
   return tile.verification_started === true ? "pending" : "enquiry";
 }

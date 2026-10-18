@@ -636,6 +636,14 @@ export const dirtySince = query({
       if (typeof lastStamp === "number" && lastStamp > sinceMs) complete = false;
     }
 
+    // Deterministic evidence recovery deliberately does not stamp extraction
+    // freshness. Its actual schedule changes still invalidate cached calendars.
+    const scheduleRows = await ctx.db.query("reservations")
+      .withIndex("by_schedule_updated_at", q => q.gt("schedule_updated_at", sinceMs))
+      .order("desc").take(DIRTY_PROBE_ROWS);
+    for (const row of scheduleRows) noteRow(row.account_slug);
+    if (scheduleRows.length === DIRTY_PROBE_ROWS) complete = false;
+
     // dirty && complete ⇒ slugSet is non-empty (every dirty row either added
     // its slug or flipped `complete`).
     return { dirty, slugs: dirty && complete ? [...slugSet] : null };

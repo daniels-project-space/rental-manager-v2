@@ -18,16 +18,17 @@ export function confirmedClock(
   if (!time || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return undefined;
   // Website clocks are accepted in the immutable signed rental contract.
   if (row.account_slug === "dbcinema_web") return time;
-  return proof?.time === time && proof.date === date ? time : undefined;
+  return proof?.time === time && proof.date === date && proof.precision !== "approximate" ? time : undefined;
 }
 
 /** Display a saved clock honestly without granting it inventory precision. */
 export function calendarClock(row: Parameters<typeof confirmedClock>[0], endpoint: "pickup" | "return", date: string) {
   const confirmed = confirmedClock(row, endpoint, date);
   if (confirmed) return { time: confirmed, status: "confirmed" as const };
+  const proof = endpoint === "pickup" ? row.pickup_time_provenance : row.return_time_provenance;
   const saved = endpoint === "pickup" ? row.pickup_time : row.return_time;
   return saved && /^([01]\d|2[0-3]):[0-5]\d$/.test(saved)
-    ? { time: saved, status: "reported" as const }
+    ? { time: saved, status: proof?.time === saved && proof.date === date && proof.precision === "approximate" ? "approximate" as const : "reported" as const }
     : { time: null, status: "missing" as const };
 }
 const london = new Intl.DateTimeFormat("en-CA", {

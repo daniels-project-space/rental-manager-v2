@@ -1,7 +1,7 @@
 "use client";
 import styles from "./CalendarGantt.module.css";
 import { rentalCalendarTimestamp } from "../../lib/rental-calendar-time";
-type CalendarClockStatus = "confirmed" | "reported" | "missing";
+type CalendarClockStatus = "confirmed" | "approximate" | "reported" | "missing";
 import WebsiteVerificationPanel from "./WebsiteVerificationPanel";
 import { websiteVerificationLabel, type WebsiteVerification } from "../../../convex/lib/websiteVerification";
 import React, { useEffect, useLayoutEffect, useState, useCallback, useRef } from "react";
@@ -533,15 +533,15 @@ function ReservationBar({ row, height, isNext, isFocused, onSelect, liveProgress
     >
       {pickupInWeek && pickupVisible && <span data-calendar-endpoint="pickup" className={styles.barPickup}
         style={{left:clockOffset(row.left)}}
-        title={`${pickupDay} · Pickup ${pickup ?? "time not recorded"}${block.pickup_time_status === "reported" ? " · reported, not confirmed" : ""}`}>
-        ↑ {pickup ?? "—"}{block.pickup_time_status === "reported" && <i>•</i>}
+        title={`${pickupDay} · Pickup ${pickup ?? "time not recorded"}${block.pickup_time_status === "approximate" ? " · approximate, agreed in chat" : ""}${block.pickup_time_status === "reported" ? " · reported, not confirmed" : ""}`}>
+        ↑ {block.pickup_time_status === "approximate" ? "≈ " : ""}{pickup ?? "—"}{block.pickup_time_status === "reported" && <i>•</i>}
       </span>}
       {nameGeometry && <CalendarBarName name={renterLabel} width={nameGeometry.width} color={ss.text} strike={ss.strikethrough} offset={nameGeometry.offset} />}
       {returnInWeek && returnVisible && <span data-calendar-endpoint="return" className={styles.barReturn}
         data-calendar-below={row.width<128 || undefined}
         style={{top:row.width<128 ? height+3 : undefined,left:clockOffset(row.left+row.width-62),right:"auto"}}
-        title={`${returnDay} · Return ${ret ?? "time not recorded"}${block.return_time_status === "reported" ? " · reported, not confirmed" : ""}`}>
-        {ret ?? "—"} ↓{block.return_time_status === "reported" && <i>•</i>}
+        title={`${returnDay} · Return ${ret ?? "time not recorded"}${block.return_time_status === "approximate" ? " · approximate, agreed in chat" : ""}${block.return_time_status === "reported" ? " · reported, not confirmed" : ""}`}>
+        {block.return_time_status === "approximate" ? "≈ " : ""}{ret ?? "—"} ↓{block.return_time_status === "reported" && <i>•</i>}
       </span>}
       {showProgress && (
         <div

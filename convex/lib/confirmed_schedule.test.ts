@@ -97,7 +97,7 @@ describe("independent exact schedule agreement", () => {
       recoverConfirmedChatClock(m, "pickup", "2026-10-09", "hash"),
     ).toMatchObject({ date: "2026-10-08", time: "20:00" });
   });
-  it("does not turn an approximate reversed phrase into a precise return",()=>expect(proof([["renter","About 5pm return"],["owner","Yes!"]])).toBeUndefined());
+  it("does not turn an approximate reversed phrase into a precise return",()=>expect(proof([["renter","About 5pm return"],["owner","Yes!"]])).toMatchObject({time:"17:00",precision:"approximate"}));
   it("ignores travel ETAs", () =>
     expect(
       proof([
