@@ -35,7 +35,8 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { mergeConversationHistory, type ConversationMessage } from "../../lib/quick-reply-history";
+import { useAction, useMutation, useQuery, usePaginatedQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { makeFunctionReference } from "convex/server";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -2989,6 +2990,33 @@ export function ReplyModal({
     api.hygglo.listByThread,
     tile.source === "dbcinema_web" ? "skip" : { thread_id: tile.thread_id },
   );
+  const historyState = useQuery(api.hygglo_history.state,
+    tile.source === "dbcinema_web" ? "skip" : {thread_id:tile.thread_id});
+  const history = usePaginatedQuery(api.hygglo_history.page,
+    tile.source !== "dbcinema_web" && historyState?.ready ? {thread_id:tile.thread_id} : "skip",
+    {initialNumItems:40});
+  const refreshHistory = useAction(api.hygglo_history_actions.refresh);
+  const [historyError,setHistoryError] = useState<string | null>(null);
+  const [historyRefreshing,setHistoryRefreshing] = useState(false);
+  const historyRefreshBusy = useRef<string | null>(null);
+  const historyThread = useRef(tile.thread_id);historyThread.current=tile.thread_id;
+  const historyBlocked = useRef(false);historyBlocked.current=historyState?.blocked??false;
+  const fetchHistory = useCallback(async(force=false)=>{
+    if(historyBlocked.current&&!force)return;
+    if(tile.source === "dbcinema_web" || historyRefreshBusy.current===tile.thread_id)return;
+    historyRefreshBusy.current=tile.thread_id;setHistoryRefreshing(true);setHistoryError(null);
+    try{const result=await refreshHistory({thread_id:tile.thread_id,force});if(historyThread.current===tile.thread_id)setHistoryError(result.ok?null:result.error??"Could not refresh conversation history.");}
+    catch{if(historyThread.current===tile.thread_id)setHistoryError("Could not refresh conversation history. Please retry.");}
+    finally{if(historyRefreshBusy.current===tile.thread_id)historyRefreshBusy.current=null;if(historyThread.current===tile.thread_id)setHistoryRefreshing(false);}
+  },[tile.thread_id,tile.source,refreshHistory]);
+  useEffect(()=>{
+    if(tile.source === "dbcinema_web")return;
+    void fetchHistory();
+    const refresh=()=>{if(document.visibilityState === "visible")void fetchHistory();};
+    const timer=window.setInterval(refresh,60_000);
+    document.addEventListener("visibilitychange",refresh);
+    return()=>{window.clearInterval(timer);document.removeEventListener("visibilitychange",refresh);};
+  },[tile.source,fetchHistory]);
   const loadDbCinemaThread = useAction(dbCinemaThreadRef);
   const sendDbCinemaReply = useAction(dbCinemaSendRef);
   const draftDbCinemaReply = useAction(dbCinemaDraftRef);
@@ -3040,12 +3068,13 @@ export function ReplyModal({
       document.removeEventListener("visibilitychange", refresh);
     };
   }, [tile.source]);
-  const thread =
+  const thread: ConversationMessage[] | undefined =
     tile.source === "dbcinema_web"
       ? dbCinemaLoading
         ? undefined
         : dbCinemaMessages
-      : hyggloThread;
+      : hyggloThread === undefined && !history.results.length ? undefined
+      : mergeConversationHistory(historyState?.ready ? history.results : [],hyggloThread??[]);
   // Live tile (reactive) so the location overlay appears the moment it resolves.
   const liveTile = useQuery(
     api.replyInbox.getThreadById,
@@ -3133,9 +3162,13 @@ export function ReplyModal({
   const [dryRunSentMsgs, setDryRunSentMsgs] = useState<string[]>([]);
   const messageListRef = useRef<HTMLDivElement>(null);
   const followLatest = useRef(true);
+  const historyScrollAnchor = useRef<{height:number;top:number}|null>(null);
   useEffect(() => {
     const list = messageListRef.current;
     if (!list) return;
+    if(historyScrollAnchor.current && history.status!=="LoadingMore"){
+      const anchor=historyScrollAnchor.current;list.scrollTop=anchor.top+list.scrollHeight-anchor.height;historyScrollAnchor.current=null;
+    }
     let alive = true;
     const revealLatest = () => {
       if (alive && followLatest.current) list.scrollTop = list.scrollHeight;
@@ -3148,7 +3181,7 @@ export function ReplyModal({
       alive = false;
       observer.disconnect();
     };
-  }, [thread?.length, dryRunSentMsgs.length]);
+  }, [thread?.length, dryRunSentMsgs.length, history.status]);
   const [decided, setDecided] = useState<"approve" | "decline" | null>(null);
   const [deciding, setDeciding] = useState(false);
   const [confirming, setConfirming] = useState<"approve" | "decline" | null>(
@@ -3800,7 +3833,7 @@ export function ReplyModal({
             <div className={styles.verificationStrip}>
               <div className={styles.chatProgress}>
                 <span className={styles.sectionLabel}>Booking progress</span>
-                <StageBar t={tile} />
+                <StageBar t={liveTile ?? tile} />
               </div>
 
               {!controlsOpen&&<button type="button" className={styles.headerControls} aria-label="Open rental controls" onClick={()=>{setControlsOpen(true);setControlTab("gear");setReplacementOpen(false);}}>Booking actions <span aria-hidden="true">⌄</span></button>}
@@ -3842,16 +3875,26 @@ export function ReplyModal({
                   list.scrollHeight - list.scrollTop - list.clientHeight < 64;
               }}
             >
+              {tile.source !== "dbcinema_web" && <div className={styles.historyControls}>
+                {(history.status === "CanLoadMore" || history.status === "LoadingMore") && <button type="button" disabled={history.status === "LoadingMore"} onClick={()=>{
+                  const list=messageListRef.current;if(list)historyScrollAnchor.current={height:list.scrollHeight,top:list.scrollTop};
+                  followLatest.current=false;history.loadMore(40);
+                }}>{history.status === "LoadingMore" ? "Loading earlier messages…" : "Load earlier messages"}</button>}
+                {historyRefreshing && !historyState?.ready && <small>Loading complete conversation…</small>}
+                {(historyError || historyState?.error) && <button type="button" disabled={historyRefreshing} onClick={()=>void fetchHistory(true)}>Retry conversation history</button>}
+              </div>}
               {thread === undefined ? (
                 <SkeletonBlock className="h-24 w-full" />
               ) : thread.length === 0 ? (
                 <div className="text-sm text-[#6b7280]">No messages yet.</div>
               ) : (
                 thread.map((m, i) => {
-                  const sent = fmtMsgTime(m.timestamp);
+                  const sent = m.timestamp == null ? "" : fmtMsgTime(m.timestamp);
+                  if(m.role === "system")return <div key={m.id??`event-${i}`} className={styles.systemMessage} role="note"><small>Hygglo{sent?` · ${sent}`:""}</small><span>{m.content}</span></div>;
                   return (
                     <div
-                      key={i}
+                      key={m.id??i}
+                      data-message-id={m.id}
                       className={`${styles.message} ${m.role === "owner" ? styles.ownerMessage : ""}`}
                     >
                       {m.role === "owner" ? (
@@ -3867,6 +3910,7 @@ export function ReplyModal({
                       )}
                       <div className={styles.bubble}>
                         {m.content}
+                        {m.images?.map(image=><a key={image.url} href={image.url} target="_blank" rel="noopener noreferrer" className={styles.chatAttachment}><img src={image.thumbnail??image.url} alt="Conversation attachment" loading="lazy" /></a>)}
                         {m.role === "owner" && sent && (
                           <span className={styles.messageTime}>
                             {sent} <b>✓</b>

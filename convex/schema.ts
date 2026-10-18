@@ -1244,6 +1244,11 @@ const operationalSchema = defineSchema({
     .index("by_pricing_demand_created", ["pricing_row_id", "demand_signature", "created_at"]),
 
   // ── Hygglo inbox messages (Phase 6.0) ─────────────────────
+  // Complete provider timelines are loaded only for opened conversations.
+  // Keep status events and attachments out of the operational renter stream.
+  hygglo_history_state: defineTable({thread_id:v.string(),account_slug:v.string(),ready:v.boolean(),entry_count:v.number(),lease:v.optional(v.string()),started_at:v.number(),refreshed_at:v.optional(v.number()),source_hash:v.optional(v.string()),error:v.optional(v.string()),blocked:v.optional(v.boolean()),failures:v.optional(v.number())}).index("by_thread",["thread_id"]),
+  hygglo_history_entries: defineTable({thread_id:v.string(),account_slug:v.string(),provider_id:v.string(),position:v.optional(v.number()),role:v.union(v.literal("owner"),v.literal("renter"),v.literal("system")),hidden:v.optional(v.boolean()),content:v.string(),title:v.optional(v.string()),timestamp:v.optional(v.number()),sort_at:v.number(),images:v.array(v.object({url:v.string(),thumbnail:v.optional(v.string())}))}).index("by_thread_id",["thread_id","provider_id"]).index("by_thread_time",["thread_id","sort_at","position"]),
+
   hygglo_messages: defineTable({
     account_slug: v.string(),
     thread_id: v.string(),
