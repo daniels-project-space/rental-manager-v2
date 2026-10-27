@@ -857,7 +857,7 @@ export const dbCinemaRenterTrustByEmails = internalQuery({
       const renter = await dbCinemaRenterByVerifiedEmail(ctx, email);
       if (!renter) return {
         email, renter_identity: null, rating: null, review_count: null,
-        blacklisted: false, flagged: false,
+        display_name: null, profile_image_url: null, blacklisted: false, flagged: false,
       };
       const trusted = renter.trust_checked_at != null && (renter.hygglo_review_count ?? 0) > 0;
       return {
@@ -865,6 +865,8 @@ export const dbCinemaRenterTrustByEmails = internalQuery({
         renter_identity: `hygglo:${renter._id}`,
         rating: trusted ? renter.hygglo_rating ?? null : null,
         review_count: trusted ? renter.hygglo_review_count ?? null : null,
+        display_name: renter.display_name ?? null,
+        profile_image_url: renter.profile_image_url ?? null,
         blacklisted: !!(renter.blacklisted || renter.blacklist),
         flagged: !!renter.flag_on_request,
       };

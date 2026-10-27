@@ -19,6 +19,16 @@ type LinkedRenterReviews = {
   fetched: boolean;
   unavailable: boolean;
 };
+type EmailRenterTrust = {
+  email: string;
+  renter_identity: string | null;
+  rating: number | null;
+  review_count: number | null;
+  display_name: string | null;
+  profile_image_url: string | null;
+  blacklisted: boolean;
+  flagged: boolean;
+};
 
 type RemoteResult<T> = {
   status?: string;
@@ -381,13 +391,14 @@ export const inbox = action({
 /** Owner-authenticated, bounded inbox for customer email routed through Gaffer. */
 export const emailInbox = action({
   args: {},
-  handler: async (ctx) => {
+  handler: async (ctx): Promise<Array<Record<string, unknown>>> => {
     await requireOwner(ctx);
     const feed = await callDbCinema<{
       authorized?: boolean;
       items?: Array<{
         _id: string;
         email: string;
+        verifiedRenterEmail?: string | null;
         name?: string | null;
         subject: string;
         status: string;
@@ -401,11 +412,22 @@ export const emailInbox = action({
     if (!feed?.authorized || !Array.isArray(feed.items)) {
       throw new Error("DB Cinema email inbox is unavailable.");
     }
-    return feed.items
-      .filter((thread) =>
-        !!thread._id && !!thread.email && Number.isFinite(thread.updatedAt) && !!thread.lastText?.trim(),
-      )
-      .map((thread) => ({
+    const threads = feed.items.filter((thread) =>
+      !!thread._id && !!thread.email && Number.isFinite(thread.updatedAt) && !!thread.lastText?.trim(),
+    );
+    const verifiedEmails = threads.flatMap((thread) =>
+      typeof thread.verifiedRenterEmail === "string" && thread.verifiedRenterEmail.trim()
+        ? [thread.verifiedRenterEmail.trim().toLowerCase()]
+        : [],
+    );
+    const trustSummaries: EmailRenterTrust[] = verifiedEmails.length
+      ? await ctx.runQuery(internal.replyInbox.dbCinemaRenterTrustByEmails, { emails: verifiedEmails }) as EmailRenterTrust[]
+      : [];
+    const trustByEmail = new Map<string, (typeof trustSummaries)[number]>(trustSummaries.map((summary) => [summary.email.trim().toLowerCase(), summary]));
+    return threads.map((thread) => {
+      const verifiedEmail = thread.verifiedRenterEmail?.trim().toLowerCase();
+      const trust = verifiedEmail ? trustByEmail.get(verifiedEmail) : undefined;
+      return {
         thread_id: `dbcinema-email:${thread._id}`,
         source: "dbcinema_email" as const,
         source_booking_id: `email:${thread._id}`,
@@ -413,13 +435,13 @@ export const emailInbox = action({
         email_address: thread.email,
         email_subject: thread.subject,
         account_slug: "dbcinema_web",
-        renter_name: thread.name?.trim() || thread.email.split("@")[0] || "Email customer",
-        renter_image_url: null,
-        renter_identity: `email:${thread.email.toLowerCase()}`,
-        renter_rating: null,
-        renter_review_count: null,
-        renter_blacklisted: false,
-        renter_flagged: false,
+        renter_name: trust?.display_name?.trim() || thread.name?.trim() || thread.email.split("@")[0] || "Email customer",
+        renter_image_url: trust?.profile_image_url ?? null,
+        renter_identity: trust?.renter_identity ?? `email:${thread.email.toLowerCase()}`,
+        renter_rating: trust?.rating ?? null,
+        renter_review_count: trust?.review_count ?? null,
+        renter_blacklisted: trust?.blacklisted ?? false,
+        renter_flagged: trust?.flagged ?? false,
         human_requested: thread.status === "human_requested",
         status: "Email",
         start_at: null,
@@ -462,7 +484,8 @@ export const emailInbox = action({
         ai_draft_flags: null,
         location: null,
         updated_at: thread.updatedAt,
-      }));
+      };
+    });
   },
 });
 

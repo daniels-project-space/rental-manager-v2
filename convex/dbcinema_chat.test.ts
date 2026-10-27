@@ -611,9 +611,39 @@ describe("DB Cinema customer email in Quick Reply", () => {
       source_booking_id: "email:email-thread",
       email_address: "renter@example.com",
       email_subject: "4 mic kits",
+      renter_identity: "email:renter@example.com",
       last_sender: "renter",
       human_requested: true,
       has_reservation: false,
+    });
+  });
+
+  it("links a verified email sender to the matching renter profile", async () => {
+    configureOwnerBridge();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: "success", value: {
+      authorized: true,
+      items: [{ _id: "email-thread", email: "renter@example.com", verifiedRenterEmail: "renter@example.com", name: "Unverified sender name", subject: "Rental question", status: "open", lastAt: 90, lastDirection: "in", lastText: "Is the kit free?", unreadOwner: 1, updatedAt: 90 }],
+    } }))));
+    const runQuery = vi.fn(async (_query: unknown, _args: unknown) => [{
+      email: "renter@example.com",
+      renter_identity: "hygglo:existing-renter",
+      rating: 4.9,
+      review_count: 12,
+      display_name: "Renter profile",
+      profile_image_url: "https://images.example/renter.jpg",
+      blacklisted: false,
+      flagged: true,
+    }]);
+    const rows = await (emailInbox as any)._handler({ runQuery }, {});
+    expect(runQuery).toHaveBeenCalledTimes(1);
+    expect(runQuery.mock.calls[0][1]).toEqual({ emails: ["renter@example.com"] });
+    expect(rows[0]).toMatchObject({
+      renter_identity: "hygglo:existing-renter",
+      renter_name: "Renter profile",
+      renter_image_url: "https://images.example/renter.jpg",
+      renter_rating: 4.9,
+      renter_review_count: 12,
+      renter_flagged: true,
     });
   });
 
