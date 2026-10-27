@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("./auth", () => ({ authComponent: { safeGetAuthUser: vi.fn() } }));
-import { inbox, replacementBasketOptions, thread, sendOwnerReply } from "./dbcinema_chat";
+import { inbox, emailInbox, replacementBasketOptions, thread, sendOwnerReply, draftReply } from "./dbcinema_chat";
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -582,4 +582,84 @@ describe("website conversation history pages",()=>{
   vi.stubEnv("OWNER_AUTH_REQUIRED","false");vi.stubEnv("DBCINEMA_CONVEX_URL","https://fixture.invalid");vi.stubEnv("DBCINEMA_ADMIN_TOKEN","fixture-only");vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({status:"success",value:{page:[],isDone:true,continueCursor:"terminal"}}))));
   expect(await(thread as any)._handler({}, {booking_id:"booking"})).toMatchObject({nextCursor:null,messages:[]});
  });
+});
+
+describe("DB Cinema customer email in Quick Reply", () => {
+  function configureOwnerBridge() {
+    vi.stubEnv("OWNER_AUTH_REQUIRED", "false");
+    vi.stubEnv("DBCINEMA_CONVEX_URL", "https://fixture.invalid");
+    vi.stubEnv("DBCINEMA_ADMIN_TOKEN", "fixture-only");
+  }
+
+  it("creates a labeled renter-waiting email row from the bounded remote inbox", async () => {
+    configureOwnerBridge();
+    const calls: any[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, options: RequestInit) => {
+      const body = JSON.parse(String(options.body));
+      calls.push(body);
+      return new Response(JSON.stringify({ status: "success", value: {
+        authorized: true,
+        items: [{ _id: "email-thread", email: "renter@example.com", name: "Renter", subject: "4 mic kits", status: "human_requested", lastAt: 90, lastDirection: "in", lastText: "Do you have four?", unreadOwner: 1, updatedAt: 90 }],
+      } }));
+    }));
+    const rows = await (emailInbox as any)._handler({}, {});
+    expect(calls[0]).toMatchObject({ path: "emailInbox:adminInbox", args: { limit: 100, token: "fixture-only" } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      source: "dbcinema_email",
+      thread_id: "dbcinema-email:email-thread",
+      source_booking_id: "email:email-thread",
+      email_address: "renter@example.com",
+      email_subject: "4 mic kits",
+      last_sender: "renter",
+      human_requested: true,
+      has_reservation: false,
+    });
+  });
+
+  it("loads email history, marks it read, and replies through the business-mail action", async () => {
+    configureOwnerBridge();
+    const calls: any[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, options: RequestInit) => {
+      const body = JSON.parse(String(options.body));
+      calls.push(body);
+      const value = body.path === "emailInbox:adminThread"
+        ? { authorized: true, thread: { status: "human_requested" }, messages: [{ _id: "in-1", direction: "in", text: "Need four mic kits", at: 10 }] }
+        : { ok: true };
+      return new Response(JSON.stringify({ status: "success", value }));
+    }));
+    const history = await (thread as any)._handler({}, { booking_id: "email:email-thread" });
+    expect(history).toMatchObject({ escalated: true, messages: [{ id: "in-1", role: "renter", content: "Need four mic kits" }] });
+    await (sendOwnerReply as any)._handler({}, { booking_id: "email:email-thread", text: " Thanks, I will check. " });
+    expect(calls.map((call) => call.path)).toEqual([
+      "emailInbox:adminThread",
+      "emailInbox:markRead",
+      "emailInbox:sendOwnerReply",
+    ]);
+    expect(calls[2]).toMatchObject({ args: { threadId: "email-thread", text: "Thanks, I will check.", token: "fixture-only" } });
+  });
+
+  it("drafts from the email history without sending", async () => {
+    configureOwnerBridge();
+    vi.stubEnv("NOTIF_BASE_URL", "https://draft.fixture.invalid");
+    vi.stubEnv("RENTER_BOT_API_SECRET", "fixture-draft-secret");
+    const calls: any[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, options: RequestInit) => {
+      if (url.includes("/api/dbcinema-chat-draft")) {
+        calls.push({ url, body: JSON.parse(String(options.body)) });
+        return new Response(JSON.stringify({ draft: "I can confirm the available mic options." }));
+      }
+      const body = JSON.parse(String(options.body));
+      calls.push(body);
+      return new Response(JSON.stringify({ status: "success", value: {
+        authorized: true,
+        thread: { email: "renter@example.com", name: "Renter", subject: "4 mic kits" },
+        messages: [{ direction: "in", text: "Need four mic kits", at: 10 }],
+      } }));
+    }));
+    const result = await (draftReply as any)._handler({}, { booking_id: "email:email-thread" });
+    expect(result).toEqual({ draft: "I can confirm the available mic options." });
+    expect(calls).toHaveLength(2);
+    expect(calls[1].body.messages).toEqual([{ role: "renter", text: "Need four mic kits", at: 10 }]);
+  });
 });

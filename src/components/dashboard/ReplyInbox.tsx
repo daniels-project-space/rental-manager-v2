@@ -69,6 +69,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 
 const dbCinemaInboxRef = makeFunctionReference<"action">("dbcinema_chat:inbox");
+const dbCinemaEmailInboxRef = makeFunctionReference<"action">("dbcinema_chat:emailInbox");
 const dbCinemaThreadRef = makeFunctionReference<"action">(
   "dbcinema_chat:thread",
 );
@@ -234,8 +235,10 @@ export interface DraftFlag {
 }
 export interface ReplyTileData {
   thread_id: string;
-  source?: "hygglo" | "dbcinema_web";
+  source?: "hygglo" | "dbcinema_web" | "dbcinema_email";
   source_booking_id?: string;
+  email_address?: string;
+  email_subject?: string;
   start_at?: number | null;
   end_at?: number | null;
   renter_image_url?: string | null;
@@ -1212,9 +1215,13 @@ function Thumb({
 function tileAccent(
   tile: Pick<ReplyTileData, "source" | "account_slug">,
 ): string {
+  if (tile.source === "dbcinema_email") return "#45c4d8";
   return calendarAccountAccent(
     tile.source === "dbcinema_web" ? "dbcinema_web" : tile.account_slug,
   );
+}
+function isDbCinemaSource(source: ReplyTileData["source"]): boolean {
+  return source === "dbcinema_web" || source === "dbcinema_email";
 }
 function AccountTag({
   slug,
@@ -1233,7 +1240,7 @@ function AccountTag({
         borderColor: `${accent}55`,
       }}
     >
-      {source === "dbcinema_web" ? "DB Cinema Web" : accountLabel(slug)}
+      {source === "dbcinema_web" ? "DB Cinema Web" : source === "dbcinema_email" ? "DB Cinema Email" : accountLabel(slug)}
     </span>
   );
 }
@@ -1250,13 +1257,13 @@ function ConversationHeader({tile,onReviews,onClose,headerRef,extras}: {
       <div className="min-w-0">
         <h3>{tile.renter_name}</h3>
         <div className={styles.chatReputation}>
-          <button type="button" className={styles.rating} title="View all renter reviews" onClick={onReviews}>
+          {tile.source !== "dbcinema_email" && <button type="button" className={styles.rating} title="View all renter reviews" onClick={onReviews}>
             {tile.renter_rating!=null?<><StarRating rating={tile.renter_rating} size={12}/><span>{tile.renter_rating.toFixed(1)}</span></>:"Unrated"}
             {tile.renter_review_count!=null&&<small className={styles.reviewCount}> ({tile.renter_review_count})</small>}
-          </button>
+          </button>}
           <AccountTag slug={tile.account_slug} source={tile.source}/>
         </div>
-        <div className={styles.identityDates} title={tile.availability?.window?.note}>{tile.start_date?`${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date??tile.start_date)}`:(tile.availability?.window?.source === "today" ? "Stock: today" : "Dates pending")}</div>
+        <div className={styles.identityDates} title={tile.email_subject ?? tile.availability?.window?.note}>{tile.source === "dbcinema_email" ? `${tile.email_address ?? "Customer email"} · ${tile.email_subject ?? "Rental enquiry"}` : tile.start_date?`${fmtDate(tile.start_date)} – ${fmtDate(tile.end_date??tile.start_date)}`:(tile.availability?.window?.source === "today" ? "Stock: today" : "Dates pending")}</div>
       </div>
     </div>
     {onClose&&<button type="button" onClick={onClose} aria-label="Close conversation" data-testid="quick-reply-close" className={styles.chatClose}><span>×</span><small>Close</small></button>}
@@ -1273,16 +1280,17 @@ function ConversationHeader({tile,onReviews,onClose,headerRef,extras}: {
 }
 
 function ConversationPreview({tile,onOpen,onReviews,onDraft}:{tile:ReplyTileData;onOpen:()=>void;onReviews:()=>void;onDraft:()=>void}) {
-  const native=useQuery(api.hygglo.listByThread,tile.source==="dbcinema_web"?"skip":{thread_id:tile.thread_id});
+  const remote= isDbCinemaSource(tile.source);
+  const native=useQuery(api.hygglo.listByThread,remote?"skip":{thread_id:tile.thread_id});
   const loadWeb=useAction(dbCinemaThreadRef);
   const [website,setWebsite]=useState<{thread:string;messages:Array<{role:string;content:string;timestamp:number}>}|null>(null);
   useEffect(()=>{
-    if(tile.source!=="dbcinema_web"||!tile.source_booking_id)return;
+    if(!remote||!tile.source_booking_id)return;
     let alive=true;
     void loadWeb({booking_id:tile.source_booking_id}).then(result=>{if(alive)setWebsite({thread:tile.thread_id,messages:result.messages});}).catch(()=>{if(alive)setWebsite(null);});
     return ()=>{alive=false;};
-  },[tile.source,tile.source_booking_id,tile.thread_id,loadWeb]);
-  const messages=tile.source==="dbcinema_web"?(website?.thread===tile.thread_id?website.messages:[]):native??[];
+  },[remote,tile.source_booking_id,tile.thread_id,loadWeb]);
+  const messages=remote?(website?.thread===tile.thread_id?website.messages:[]):native??[];
   return <aside className={styles.queuePreview} aria-label={`Request preview for ${tile.renter_name}`}>
     <ConversationHeader tile={tile} onReviews={onReviews}/>
     <div className={styles.verificationStrip}><span className={styles.sectionLabel}>Booking progress</span><StageBar t={tile}/></div>
@@ -1416,7 +1424,7 @@ function ReplyCard({
         />
         <div className="min-w-0">
           <strong className={styles.renterName}>{tile.renter_name}</strong>
-          <button
+          {tile.source === "dbcinema_email" ? <span className={styles.rating}>Email enquiry</span> : <button
             type="button"
             className={styles.rating}
             onClick={(e) => {
@@ -1429,7 +1437,7 @@ function ReplyCard({
             {tile.renter_review_count != null && (
               <small> ({tile.renter_review_count})</small>
             )}
-          </button>
+          </button>}
           {(tile.renter_blacklisted || tile.renter_flagged) && (
             <span className="block text-[10px] text-red-300">
               {tile.renter_blacklisted ? "Blacklisted" : "Flagged"}
@@ -2988,12 +2996,12 @@ export function ReplyModal({
 
   const hyggloThread = useQuery(
     api.hygglo.listByThread,
-    tile.source === "dbcinema_web" ? "skip" : { thread_id: tile.thread_id },
+    isDbCinemaSource(tile.source) ? "skip" : { thread_id: tile.thread_id },
   );
   const historyState = useQuery(api.hygglo_history.state,
-    tile.source === "dbcinema_web" ? "skip" : {thread_id:tile.thread_id});
+    isDbCinemaSource(tile.source) ? "skip" : {thread_id:tile.thread_id});
   const history = usePaginatedQuery(api.hygglo_history.page,
-    tile.source !== "dbcinema_web" && historyState?.ready ? {thread_id:tile.thread_id} : "skip",
+    !isDbCinemaSource(tile.source) && historyState?.ready ? {thread_id:tile.thread_id} : "skip",
     {initialNumItems:40});
   const refreshHistory = useAction(api.hygglo_history_actions.refresh);
   const [historyError,setHistoryError] = useState<string | null>(null);
@@ -3003,14 +3011,14 @@ export function ReplyModal({
   const historyBlocked = useRef(false);historyBlocked.current=historyState?.blocked??false;
   const fetchHistory = useCallback(async(force=false)=>{
     if(historyBlocked.current&&!force)return;
-    if(tile.source === "dbcinema_web" || historyRefreshBusy.current===tile.thread_id)return;
+    if(isDbCinemaSource(tile.source) || historyRefreshBusy.current===tile.thread_id)return;
     historyRefreshBusy.current=tile.thread_id;setHistoryRefreshing(true);setHistoryError(null);
     try{const result=await refreshHistory({thread_id:tile.thread_id,force});if(historyThread.current===tile.thread_id)setHistoryError(result.ok?null:result.error??"Could not refresh conversation history.");}
     catch{if(historyThread.current===tile.thread_id)setHistoryError("Could not refresh conversation history. Please retry.");}
     finally{if(historyRefreshBusy.current===tile.thread_id)historyRefreshBusy.current=null;if(historyThread.current===tile.thread_id)setHistoryRefreshing(false);}
   },[tile.thread_id,tile.source,refreshHistory]);
   useEffect(()=>{
-    if(tile.source === "dbcinema_web")return;
+    if(isDbCinemaSource(tile.source))return;
     void fetchHistory();
     const refresh=()=>{if(document.visibilityState === "visible")void fetchHistory();};
     const timer=window.setInterval(refresh,60_000);
@@ -3029,15 +3037,17 @@ export function ReplyModal({
     }>
   >([]);
   const [dbCinemaLoading, setDbCinemaLoading] = useState(
-    tile.source === "dbcinema_web",
+    isDbCinemaSource(tile.source),
   );
   const [dbCinemaRefresh, setDbCinemaRefresh] = useState(0);
   const [websiteCursor,setWebsiteCursor] = useState<string|null>(null);
   const [websiteLoadingOlder,setWebsiteLoadingOlder] = useState(false);
   const websiteHistoryStarted = useRef(false);
   useEffect(() => {
-    if (tile.source !== "dbcinema_web" || !tile.source_booking_id) return;
+    if (!isDbCinemaSource(tile.source) || !tile.source_booking_id) return;
     let alive = true;
+    setDbCinemaLoading(true);
+    setDbCinemaMessages([]);
     void loadDbCinemaThread({ booking_id: tile.source_booking_id })
       .then((result) => {
         if (alive) {
@@ -3062,12 +3072,12 @@ export function ReplyModal({
     dbCinemaRefresh,
   ]);
   useEffect(() => {
-    if (tile.source !== "dbcinema_web") return;
+    if (!isDbCinemaSource(tile.source)) return;
     const refresh = () => {
       if (document.visibilityState === "visible")
         setDbCinemaRefresh((value) => value + 1);
     };
-    const timer = window.setInterval(refresh, 15_000);
+    const timer = window.setInterval(refresh, tile.source === "dbcinema_email" ? 30_000 : 15_000);
     document.addEventListener("visibilitychange", refresh);
     return () => {
       window.clearInterval(timer);
@@ -3075,7 +3085,7 @@ export function ReplyModal({
     };
   }, [tile.source]);
   const thread: ConversationMessage[] | undefined =
-    tile.source === "dbcinema_web"
+    isDbCinemaSource(tile.source)
       ? dbCinemaLoading
         ? undefined
         : dbCinemaMessages
@@ -3084,7 +3094,7 @@ export function ReplyModal({
   // Live tile (reactive) so the location overlay appears the moment it resolves.
   const liveTile = useQuery(
     api.replyInbox.getThreadById,
-    tile.source === "dbcinema_web"
+    isDbCinemaSource(tile.source)
       ? "skip"
       : {
           thread_id: tile.thread_id,
@@ -3095,7 +3105,7 @@ export function ReplyModal({
   const resolveTrust = useAction(resolveTrustRef);
   const locResolvedRef = useRef(false);
   useEffect(() => {
-    if (tile.source === "dbcinema_web") return;
+    if (isDbCinemaSource(tile.source)) return;
     if (locResolvedRef.current) return;
     locResolvedRef.current = true;
     void resolveLoc({ thread_id: tile.thread_id });
@@ -3201,7 +3211,7 @@ export function ReplyModal({
   const [showMap, setShowMap] = useState(false);
   const queriedReviews = useQuery(
     reviewsGetRef,
-    showReviews && tile.source !== "dbcinema_web"
+    showReviews && !isDbCinemaSource(tile.source)
       ? { thread_id: tile.thread_id }
       : "skip",
   ) as RenterReviewsResult | undefined;
@@ -3237,14 +3247,13 @@ export function ReplyModal({
     tile.thread_id,
     getDbCinemaReviews,
   ]);
-  const reviews =
-    tile.source === "dbcinema_web" ? dbCinemaReviews : queriedReviews;
+  const reviews = tile.source === "dbcinema_web" ? dbCinemaReviews : tile.source === "dbcinema_email" ? undefined : queriedReviews;
   const refreshReviews = useAction(reviewsRefreshRef);
   const reviewsRefreshedRef = useRef(false);
   useEffect(() => {
     if (
       showReviews &&
-      tile.source !== "dbcinema_web" &&
+      !isDbCinemaSource(tile.source) &&
       !reviewsRefreshedRef.current
     ) {
       reviewsRefreshedRef.current = true;
@@ -3367,7 +3376,7 @@ export function ReplyModal({
   // Paste a snippet into the compose box (never sends). Appends with a blank
   // line if there's already text, so you can stack delivery + bank + your own.
   function copyAIDraft() {
-    if (tile.source === "dbcinema_web") {
+    if (isDbCinemaSource(tile.source)) {
       pasteText(draft);
       return;
     }
@@ -3402,7 +3411,7 @@ export function ReplyModal({
     setDrafting(true);
     setNote(null);
     try {
-      if (tile.source === "dbcinema_web") {
+      if (isDbCinemaSource(tile.source)) {
         if (!tile.source_booking_id)
           throw new Error("Missing DB Cinema booking reference.");
         const result = await draftDbCinemaReply({
@@ -3471,7 +3480,7 @@ export function ReplyModal({
   },[initialDraftRequest]);
 
   function onCopyDraft() {
-    if (tile.source === "dbcinema_web") {
+    if (isDbCinemaSource(tile.source)) {
       if (draft) pasteText(draft);
       return;
     }
@@ -3495,7 +3504,7 @@ export function ReplyModal({
     setSending(true);
     setNote(null);
     try {
-      if (tile.source === "dbcinema_web") {
+      if (isDbCinemaSource(tile.source)) {
         if (dryRun) {
           if (clearBox) setText("");
           setDryRunSentMsgs((prev) => [...prev, body.trim()]);
@@ -3518,7 +3527,7 @@ export function ReplyModal({
           },
         ]);
         if (clearBox) setText("");
-        setNote("Reply sent to the DB Cinema rental chat.");
+        setNote(tile.source === "dbcinema_email" ? "Email sent from dbcinemarentals@gmail.com." : "Reply sent to the DB Cinema rental chat.");
         setDbCinemaRefresh((value) => value + 1);
         onActed({kind:"replied",thread_id:tile.thread_id,through:tile.last_renter_msg_at,text:body.trim()});
         return true;
@@ -3889,7 +3898,7 @@ export function ReplyModal({
                 catch{setNote("Earlier messages are unavailable. Please retry.");}
                 finally{setWebsiteLoadingOlder(false);}
               }}>{websiteLoadingOlder?"Loading earlier messages…":"Load earlier messages"}</button></div>}
-              {tile.source !== "dbcinema_web" && <div className={styles.historyControls}>
+              {!isDbCinemaSource(tile.source) && <div className={styles.historyControls}>
                 {(history.status === "CanLoadMore" || history.status === "LoadingMore") && <button type="button" disabled={history.status === "LoadingMore"} onClick={()=>{
                   const list=messageListRef.current;if(list)historyScrollAnchor.current={height:list.scrollHeight,top:list.scrollTop};
                   followLatest.current=false;history.loadMore(40);
@@ -4446,6 +4455,7 @@ export function ReplyModal({
 export function ReplyInbox() {
   const { activeAccountSlug } = useAccount();
   const loadDbCinemaInbox = useAction(dbCinemaInboxRef);
+  const loadDbCinemaEmailInbox = useAction(dbCinemaEmailInboxRef);
   // Persisted "count pending bookings in the double-booking check" toggle.
   const settings = useQuery(api.settings.get, {});
   const updateSettings = useMutation(api.settings.update);
@@ -4526,6 +4536,31 @@ export function ReplyInbox() {
       document.removeEventListener("visibilitychange", refresh);
     };
   }, [loadDbCinemaInbox]);
+  const [emailRows, setEmailRows] = useState<ReplyTileData[]>([]);
+  const [emailLoadFailed, setEmailLoadFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const refresh = async () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const rows = await loadDbCinemaEmailInbox({});
+        if (alive) {
+          setEmailRows(rows as ReplyTileData[]);
+          setEmailLoadFailed(false);
+        }
+      } catch {
+        if (alive) setEmailLoadFailed(true);
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 30_000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [loadDbCinemaEmailInbox]);
 
   const [accountFilter, setAccountFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -4629,10 +4664,10 @@ export function ReplyInbox() {
         ];
       }),
     );
-  const stateIds=[...new Set([...(queue??[]).map(t=>t.thread_id),...dbCinemaRows.map(t=>t.thread_id),...(handoffs??[]).flatMap(h=>h.thread_id?[h.thread_id]:[]),...(openId?[openId]:[])])].sort();
+  const stateIds=[...new Set([...(queue??[]).map(t=>t.thread_id),...dbCinemaRows.map(t=>t.thread_id),...emailRows.map(t=>t.thread_id),...(handoffs??[]).flatMap(h=>h.thread_id?[h.thread_id]:[]),...(openId?[openId]:[])])].sort();
   const remoteHidden=useQuery(threadStateRef,{thread_ids:stateIds}) as Record<string,number|null>|undefined;
   const watermark=(id:string)=>Math.max(hiddenThrough[id]??-1,remoteHidden?.[id]??-1);
-  const rawRows=[...(queue??[]),...dbCinemaRows].map(t=>applyReplyReceipt(withPortrait(t),replyReceipts[t.thread_id]));
+  const rawRows=[...(queue??[]),...dbCinemaRows,...emailRows].map(t=>applyReplyReceipt(withPortrait(t),replyReceipts[t.thread_id]));
   const isHidden=(t:ReplyTileData)=>threadHidden(t,watermark(t.thread_id)<0?null:watermark(t.thread_id));
   const currentHandoffs = [...(handoffs ?? []), ...dbHandoffs]
     .filter(entry=>{if(!entry.thread_id)return true;const row=rawRows.find(t=>t.thread_id===entry.thread_id);return row?!isHidden(row):watermark(entry.thread_id)<0;})
@@ -4709,6 +4744,8 @@ export function ReplyInbox() {
   const haystackFor = (t: ReplyTileData) =>
     [
       t.renter_name,
+      t.email_address ?? "",
+      t.email_subject ?? "",
       t.preview,
       t.search_text ?? "",
       ...t.items.map((item) => item.name),
@@ -4718,6 +4755,7 @@ export function ReplyInbox() {
       .toLocaleLowerCase();
   const eligible = rawRows.filter(t=>!isHidden(t)).filter(t=>!accountFilter || (t.source==="dbcinema_web"?"dbcinema_web":t.account_slug)===accountFilter);
   const historyRequests = eligible
+    .filter((t) => t.source !== "dbcinema_email")
     .map((t) => ({
       thread_id: t.thread_id,
       ...(t.source === "dbcinema_web"
@@ -4768,7 +4806,7 @@ export function ReplyInbox() {
     : null;
   const openFromCheck = useQuery(
     api.replyInbox.getThreadById,
-    openId && !openId.startsWith("dbcinema:") && !openFromQueue
+    openId && !openId.startsWith("dbcinema:") && !openId.startsWith("dbcinema-email:") && !openFromQueue
       ? { thread_id: openId }
       : "skip",
   ) as ReplyTileData | null | undefined;
@@ -4825,6 +4863,8 @@ export function ReplyInbox() {
             {dbCinemaLoadFailed && (
               <span className="text-amber-300">DB Cinema offline</span>
             )}
+            {emailRows.length > 0 && <span className="rounded-full border border-[#45c4d8]/30 bg-[#45c4d8]/10 px-2 py-1 text-[10px] font-semibold text-[#79deea]">DB Cinema Email · {emailRows.length}</span>}
+            {emailLoadFailed && <span className="text-amber-300">DB Cinema email unavailable</span>}
           </div>
 
         </div>

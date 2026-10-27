@@ -378,6 +378,94 @@ export const inbox = action({
   },
 });
 
+/** Owner-authenticated, bounded inbox for customer email routed through Gaffer. */
+export const emailInbox = action({
+  args: {},
+  handler: async (ctx) => {
+    await requireOwner(ctx);
+    const feed = await callDbCinema<{
+      authorized?: boolean;
+      items?: Array<{
+        _id: string;
+        email: string;
+        name?: string | null;
+        subject: string;
+        status: string;
+        lastAt: number;
+        lastDirection: "in" | "out";
+        lastText: string;
+        unreadOwner: number;
+        updatedAt: number;
+      }>;
+    }>("query", "emailInbox:adminInbox", { limit: 100 });
+    if (!feed?.authorized || !Array.isArray(feed.items)) {
+      throw new Error("DB Cinema email inbox is unavailable.");
+    }
+    return feed.items
+      .filter((thread) =>
+        !!thread._id && !!thread.email && Number.isFinite(thread.updatedAt) && !!thread.lastText?.trim(),
+      )
+      .map((thread) => ({
+        thread_id: `dbcinema-email:${thread._id}`,
+        source: "dbcinema_email" as const,
+        source_booking_id: `email:${thread._id}`,
+        email_thread_id: thread._id,
+        email_address: thread.email,
+        email_subject: thread.subject,
+        account_slug: "dbcinema_web",
+        renter_name: thread.name?.trim() || thread.email.split("@")[0] || "Email customer",
+        renter_image_url: null,
+        renter_identity: `email:${thread.email.toLowerCase()}`,
+        renter_rating: null,
+        renter_review_count: null,
+        renter_blacklisted: false,
+        renter_flagged: false,
+        human_requested: thread.status === "human_requested",
+        status: "Email",
+        start_at: null,
+        end_at: null,
+        total_gbp: null,
+        net_to_owner_gbp: null,
+        estimate_earnings_gbp: null,
+        gross_paid_gbp: null,
+        currency: "GBP",
+        items: [],
+        unread_owner: thread.unreadOwner ?? 0,
+        last_message: thread.lastText,
+        last_sender: thread.lastDirection === "in" ? "renter" as const : "owner" as const,
+        last_renter_msg_at: thread.lastDirection === "in" ? thread.lastAt : 0,
+        last_activity_at: thread.updatedAt,
+        last_msg_at: thread.lastAt,
+        preview: thread.lastText,
+        search_text: `${thread.email} ${thread.subject} ${thread.lastText}`.slice(0, 4000),
+        kind: "message" as const,
+        is_request: false,
+        has_reservation: false,
+        can_decide: false,
+        can_accept: false,
+        can_deny: false,
+        start_date: null,
+        end_date: null,
+        return_date: null,
+        order_step: null,
+        booking_status: null,
+        pickup_method: null,
+        delivery_fee_gbp: null,
+        estimate_gbp: null,
+        estimate_days: null,
+        availability: null,
+        item_count: 0,
+        image_url: null,
+        has_draft: false,
+        ai_draft_text: null,
+        ai_draft_confidence: null,
+        ai_draft_flags: null,
+        location: null,
+        updated_at: thread.updatedAt,
+      }));
+  },
+});
+
 /** Gets renter trust reviews only through a verified, unique email match. */
 export const renterReviews = action({
   args: { booking_id: v.string() },
@@ -424,6 +512,28 @@ export const thread = action({
   args: { booking_id: v.string(), cursor: v.optional(v.union(v.string(),v.null())) },
   handler: async (ctx, { booking_id, cursor }) => {
     await requireOwner(ctx);
+    if (booking_id.startsWith("email:")) {
+      const threadId = booking_id.slice("email:".length);
+      const page = await callDbCinema<{
+        authorized?: boolean;
+        thread?: { status?: string } | null;
+        messages?: Array<{ _id: string; direction: "in" | "out"; text: string; at: number }>;
+      }>("query", "emailInbox:adminThread", { threadId });
+      if (!page?.authorized || !Array.isArray(page.messages)) {
+        throw new Error("DB Cinema email history is unavailable.");
+      }
+      await callDbCinema("mutation", "emailInbox:markRead", { threadId });
+      return {
+        escalated: page.thread?.status === "human_requested",
+        nextCursor: null,
+        messages: page.messages.map((message) => ({
+          id: message._id,
+          role: message.direction === "out" ? "owner" as const : "renter" as const,
+          content: message.text,
+          timestamp: message.at,
+        })),
+      };
+    }
     const page = await callDbCinema<{
       page?: Array<{ _id: string; sender: string; text: string; at: number }>;
       escalated?: boolean;
@@ -463,6 +573,15 @@ export const sendOwnerReply = action({
     const body = text.trim();
     if (!body || body.length > 2000)
       throw new Error("Write a message of up to 2,000 characters.");
+    if (booking_id.startsWith("email:")) {
+      const result = await callDbCinema<{ ok?: boolean }>(
+        "action",
+        "emailInbox:sendOwnerReply",
+        { threadId: booking_id.slice("email:".length), text: body },
+      );
+      if (!result?.ok) throw new Error("DB Cinema did not accept the email reply.");
+      return { ok: true };
+    }
     const result = await callDbCinema<{ ok?: boolean }>(
       "mutation",
       "rentalChat:sendOwner",
@@ -481,6 +600,40 @@ export const draftReply = action({
   args: { booking_id: v.string() },
   handler: async (ctx, { booking_id }) => {
     await requireOwner(ctx);
+    if (booking_id.startsWith("email:")) {
+      const threadId = booking_id.slice("email:".length);
+      const page = await callDbCinema<{
+        authorized?: boolean;
+        thread?: { email?: string; name?: string; subject?: string } | null;
+        messages?: Array<{ direction: "in" | "out"; text: string; at: number }>;
+      }>("query", "emailInbox:adminThread", { threadId });
+      if (!page?.authorized || !page.thread || !Array.isArray(page.messages)) {
+        throw new Error("DB Cinema email draft context is unavailable.");
+      }
+      const base = process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
+      const secret = process.env.RENTER_BOT_API_SECRET;
+      if (!secret) throw new Error("AI reply drafts are not configured.");
+      const response = await fetch(`${base.replace(/\/$/, "")}/api/dbcinema-chat-draft`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${secret}` },
+        body: JSON.stringify({
+          renter_name: page.thread.name ?? page.thread.email?.split("@")[0],
+          booking: { status: "Customer email", items: [] },
+          messages: page.messages.map((message) => ({
+            role: message.direction === "out" ? "owner" : "renter",
+            text: message.text,
+            at: message.at,
+          })),
+        }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!response.ok) throw new Error("AI email draft is temporarily unavailable.");
+      const result = (await response.json()) as { draft?: string };
+      if (typeof result.draft !== "string" || !result.draft.trim()) {
+        throw new Error("AI returned an empty email reply draft.");
+      }
+      return { draft: result.draft.trim() };
+    }
     const [feed, page] = await Promise.all([
       callDbCinema<{
         authorized?: boolean;
