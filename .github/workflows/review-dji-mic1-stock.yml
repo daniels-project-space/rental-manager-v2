@@ -1,0 +1,45 @@
+name: Review owner-confirmed DJI Mic 1 stock mapping
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Apply only the exact owner-confirmed repair after its dry-run plan matches
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dji-mic1-stock-review
+  cancel-in-progress: false
+
+jobs:
+  review:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout production source
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.1
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Dry-run, optionally apply, and verify the exact repair
+        run: node scripts/run-dji-mic1-stock-review.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
