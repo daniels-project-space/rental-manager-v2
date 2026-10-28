@@ -58,6 +58,7 @@ export default defineConfig({
       "convex/lib/reply_stock_dates.test.ts",
       "convex/lib/owner_availability_review.test.ts",
       "convex/lib/stocked_catalogue_review.test.ts",
+      "convex/lib/remus_stock_review.test.ts",
       "convex/lib/owner_confirmed_packing.test.ts",
       "convex/lib/quick_reply_requested_items.test.ts",
       "convex/lib/review_time.test.ts",
