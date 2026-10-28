@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Doc } from "../_generated/dataModel";
-import { DJI_MIC1_OFFERS, djiMic1StockReview } from "./dji_mic1_stock_review";
+import { DJI_MIC1_OFFERS, DJI_MIC1_REVIEW_SOURCE, djiMic1StockReview } from "./dji_mic1_stock_review";
+import { resolveListingComponents } from "./listing_components";
+import { canonicalKitContents } from "./canonical_kit_contents";
 import { reconcileDjiMic1Stock, runDjiMic1StockReview, convexRunArguments, convexDiagnosticArguments, parseConvexRunOutput } from "../../scripts/run-dji-mic1-stock-review.mjs";
 
 function fixture() {
@@ -25,6 +27,23 @@ function applyFixture() {
   return { items, products, overrides, plan };
 }
 
+function packingReviewFixture() {
+  const { items, products, overrides } = fixture();
+  const title = products[0].name!;
+  items[0].aliases = ["dji wireless mics", "DJI Mic 1", "DJI Mic One", "DJI Mic 1st generation", "original DJI Mic"];
+  items[0].listing_stock_rules = [{
+    title_pattern: `^${title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+    source: DJI_MIC1_REVIEW_SOURCE,
+    components: [{ item_id: "mic1" as Doc<"items">["_id"], qty: 1 }],
+    excludes: [],
+    packing_review_required: true,
+  }];
+  products[0].masterItemId = "mic1" as Doc<"items">["_id"];
+  products[0].stockIdentityOverride = { itemId: "mic1" as Doc<"items">["_id"], title, source: DJI_MIC1_REVIEW_SOURCE };
+  overrides[0].components = [{ item_id: "mic1" as Doc<"items">["_id"], qty: 1 }];
+  return { items, products, overrides };
+}
+
 describe("owner-confirmed DJI Mic 1 stock review", () => {
   it("moves the listing from the Mic 2 pool to the separate Mic 1 set and is idempotent", () => {
     expect(DJI_MIC1_OFFERS).toEqual([["dbcinema", 852812]]);
@@ -36,8 +55,60 @@ describe("owner-confirmed DJI Mic 1 stock review", () => {
     expect(first.items[0].qty).toBe(1);
     expect(first.items[0].aliases).toEqual(expect.arrayContaining(["DJI Mic 1", "DJI Mic One"]));
     expect(first.plan.items[0].patch).not.toHaveProperty("qty");
+    expect(first.items[0].listing_stock_rules).toEqual([expect.objectContaining({
+      source: DJI_MIC1_REVIEW_SOURCE,
+      components: [{ item_id: "mic1", qty: 1 }],
+      packing_review_required: false,
+      description_override: "Contents: • 1x DJI Wireless Mics",
+      supplied_parts: expect.arrayContaining([
+        { name: "DJI Mic transmitters", qty: 2 },
+        { name: "DJI Mic receiver", qty: 1 },
+        { name: "DJI audio cable", qty: 1 },
+        { name: "DJI Mic charging case", qty: 1 },
+        { name: "DJI Mic carrying case", qty: 1 },
+        { name: "DJI Lavalier microphones", qty: 2 },
+      ]),
+    })]);
     const replay = djiMic1StockReview(first.items, first.products, first.overrides);
     expect(replay).toEqual({ items: [], products: [], mappingChanges: [], inserts: [] });
+  });
+
+  it("reconciles the exact owner-listed parts while holding only one physical Mic 1 set", () => {
+    const first = applyFixture();
+    const resolved = resolveListingComponents(
+      first.items,
+      [{ item_id: "mic1", qty: 1 }],
+      "mic1",
+      1,
+      "Dji mic wireless + 2x lav mics 2x transmitters",
+      undefined,
+      first.products[0].name,
+    );
+    expect(resolved.complete).toBe(true);
+    expect(resolved.owned).toBe(true);
+    expect(resolved.components).toHaveLength(1);
+    expect(resolved.components[0]).toMatchObject({ item_id: "mic1", units_per_listing: 1, owned: true });
+    const contents = canonicalKitContents(resolved.components, first.items);
+    expect(contents.unreconciled_contents).toEqual([]);
+    expect(contents.contents).toEqual(expect.arrayContaining([
+      "2x DJI Mic transmitters",
+      "1x DJI Mic receiver",
+      "1x DJI audio cable",
+      "1x DJI Mic charging case",
+      "1x DJI Mic carrying case",
+      "2x DJI Lavalier microphones",
+    ]));
+  });
+
+  it("repairs the live post-identity state by clearing only the exact packing-review rule", () => {
+    const current = packingReviewFixture();
+    const plan = djiMic1StockReview(current.items, current.products, current.overrides);
+    expect(plan.items).toHaveLength(1);
+    expect(plan.products).toHaveLength(0);
+    expect(plan.mappingChanges).toHaveLength(0);
+    expect(plan.inserts).toHaveLength(0);
+    expect(plan.items[0].patch).not.toHaveProperty("qty");
+    expect(plan.items[0].patch.listing_stock_rules).toEqual([expect.objectContaining({ packing_review_required: false })]);
   });
 
   it("refuses a generation-specific title or a changed owner mapping", () => {
@@ -53,7 +124,7 @@ describe("owner-confirmed DJI Mic 1 stock review", () => {
   });
 
   it("uses the supported Convex CLI against only the fixed mutation", async () => {
-    const summary = { dryRun: true, reviewedOffers: 1, itemWrites: 1, productWrites: 1, mappingWrites: 1, ownedQuantityChanged: false, rentalChanges: 0, messagesSent: 0, packingReviewRequired: true };
+    const summary = { dryRun: true, reviewedOffers: 1, itemWrites: 1, productWrites: 0, mappingWrites: 0, ownedQuantityChanged: false, rentalChanges: 0, messagesSent: 0, packingReviewRequired: false };
     const execute = vi.fn().mockResolvedValue(summary);
     const result = await runDjiMic1StockReview({ dryRun: true, key: "fixture-secret", execute });
     expect(result.itemWrites).toBe(1);
@@ -76,22 +147,30 @@ describe("owner-confirmed DJI Mic 1 stock review", () => {
   });
 
   it("applies only the exact reviewed write plan and verifies a clean second dry-run", async () => {
-    const plan = (writes: number) => ({ reviewedOffers: 1, itemWrites: writes, productWrites: writes, mappingWrites: writes, ownedQuantityChanged: false, rentalChanges: 0, messagesSent: 0, packingReviewRequired: true });
-    const run = vi.fn().mockResolvedValueOnce(plan(1)).mockResolvedValueOnce(plan(1)).mockResolvedValueOnce(plan(0));
+    const plan = (dryRun: boolean, writes: [number, number, number]) => ({ dryRun, reviewedOffers: 1, itemWrites: writes[0], productWrites: writes[1], mappingWrites: writes[2], ownedQuantityChanged: false, rentalChanges: 0, messagesSent: 0, packingReviewRequired: false });
+    const run = vi.fn().mockResolvedValueOnce(plan(true, [1, 0, 0])).mockResolvedValueOnce(plan(false, [1, 0, 0])).mockResolvedValueOnce(plan(true, [0, 0, 0]));
+    const result = await reconcileDjiMic1Stock({ apply: true, verifyIdentity: vi.fn(), run });
+    expect(result.mode).toBe("applied-and-verified");
+    expect(run.mock.calls.map(([args]) => args.dryRun)).toEqual([true, false, true]);
+  });
+
+  it("still permits the exact combined stock-link repair when the packing review is not yet applied", async () => {
+    const plan = (dryRun: boolean, writes: [number, number, number]) => ({ dryRun, reviewedOffers: 1, itemWrites: writes[0], productWrites: writes[1], mappingWrites: writes[2], ownedQuantityChanged: false, rentalChanges: 0, messagesSent: 0, packingReviewRequired: false });
+    const run = vi.fn().mockResolvedValueOnce(plan(true, [1, 1, 1])).mockResolvedValueOnce(plan(false, [1, 1, 1])).mockResolvedValueOnce(plan(true, [0, 0, 0]));
     const result = await reconcileDjiMic1Stock({ apply: true, verifyIdentity: vi.fn(), run });
     expect(result.mode).toBe("applied-and-verified");
     expect(run.mock.calls.map(([args]) => args.dryRun)).toEqual([true, false, true]);
   });
 
   it("recognizes an already-correct mapping without writing and rejects unexpected plans", async () => {
-    const clean = { reviewedOffers: 1, itemWrites: 0, productWrites: 0, mappingWrites: 0, ownedQuantityChanged: false, rentalChanges: 0, messagesSent: 0, packingReviewRequired: true };
+    const clean = { dryRun: true, reviewedOffers: 1, itemWrites: 0, productWrites: 0, mappingWrites: 0, ownedQuantityChanged: false, rentalChanges: 0, messagesSent: 0, packingReviewRequired: false };
     const alreadyApplied = vi.fn().mockResolvedValue(clean);
     const result = await reconcileDjiMic1Stock({ apply: true, verifyIdentity: vi.fn(), run: alreadyApplied });
     expect(result.mode).toBe("already-in-sync");
     expect(alreadyApplied).toHaveBeenCalledTimes(1);
 
     const unexpected = vi.fn().mockResolvedValue({ ...clean, itemWrites: 2 });
-    await expect(reconcileDjiMic1Stock({ apply: true, verifyIdentity: vi.fn(), run: unexpected })).rejects.toThrow("itemWrites");
+    await expect(reconcileDjiMic1Stock({ apply: true, verifyIdentity: vi.fn(), run: unexpected })).rejects.toThrow("Dry-run did not match either reviewed DJI Mic 1 repair plan.");
     expect(unexpected).toHaveBeenCalledTimes(1);
   });
 });

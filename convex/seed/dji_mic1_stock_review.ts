@@ -27,6 +27,6 @@ export const apply = internalMutation({
       const count = plan.items.length + plan.products.length + plan.mappingChanges.length + plan.inserts.length;
       if (count) await ctx.db.insert("audit_log", { table_name: "items/hygglo_products/listing_resolution_override", actor: "catalogue-audit", op: "update", count, source_file: "seed/dji_mic1_stock_review.apply", note: DJI_MIC1_REVIEW_SOURCE, ts: Date.now() });
     }
-    return { dryRun, reviewedOffers: 1, itemWrites: plan.items.length, productWrites: plan.products.length, mappingWrites: plan.mappingChanges.length + plan.inserts.length, ownedQuantityChanged: false, rentalChanges: 0, messagesSent: 0, packingReviewRequired: true };
+    return { dryRun, reviewedOffers: 1, itemWrites: plan.items.length, productWrites: plan.products.length, mappingWrites: plan.mappingChanges.length + plan.inserts.length, ownedQuantityChanged: false, rentalChanges: 0, messagesSent: 0, packingReviewRequired: false };
   },
 });

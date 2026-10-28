@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       apply:
-        description: Apply only the exact owner-confirmed repair after its dry-run plan matches
+        description: Apply the exact Mic 1 stock and owner-listed packing repair after its dry-run plan matches
         type: boolean
         default: false
 
