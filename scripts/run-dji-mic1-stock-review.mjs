@@ -1,5 +1,8 @@
 import { pathToFileURL } from "node:url";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { BACKEND_URL, readBackendIdentity } from "./backend-publisher.mjs";
+import { installedToolEntry } from "./installed-tool.mjs";
 
 const FUNCTION_PATH = "seed/dji_mic1_stock_review:apply";
 const EXPECTED = {
@@ -13,6 +16,38 @@ const EXPECTED = {
   packingReviewRequired: true,
 };
 const CLEAN = { ...EXPECTED, itemWrites: 0, productWrites: 0, mappingWrites: 0 };
+const execFileAsync = promisify(execFile);
+
+export function convexRunArguments(dryRun) {
+  return ["run", FUNCTION_PATH, JSON.stringify({ dryRun }), "--typecheck", "disable", "--codegen", "disable"];
+}
+
+export function parseConvexRunOutput(output) {
+  const text = String(output ?? "");
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end < start) throw new Error("Convex CLI returned no stock review summary.");
+  try {
+    const value = JSON.parse(text.slice(start, end + 1));
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
+    return value;
+  } catch {
+    throw new Error("Convex CLI returned an invalid stock review summary.");
+  }
+}
+
+async function executeConvexRun({ dryRun, key }) {
+  try {
+    const { stdout } = await execFileAsync(process.execPath, [installedToolEntry("convex"), ...convexRunArguments(dryRun)], {
+      env: { ...process.env, CONVEX_DEPLOY_KEY: key },
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    });
+    return parseConvexRunOutput(stdout);
+  } catch {
+    throw new Error("Convex CLI could not complete the production stock review.");
+  }
+}
 
 function assertPlan(actual, expected, label) {
   for (const [key, value] of Object.entries(expected)) {
@@ -20,20 +55,11 @@ function assertPlan(actual, expected, label) {
   }
 }
 
-/** @param {{ dryRun?: boolean, key?: string, request?: typeof fetch }} options */
-export async function runDjiMic1StockReview({ dryRun, key = process.env.CONVEX_DEPLOY_KEY, request = fetch } = {}) {
+/** @param {{ dryRun?: boolean, key?: string, execute?: typeof executeConvexRun }} options */
+export async function runDjiMic1StockReview({ dryRun, key = process.env.CONVEX_DEPLOY_KEY, execute = executeConvexRun } = {}) {
   if (typeof dryRun !== "boolean") throw new Error("A dry-run flag is required.");
   if (!key?.trim()) throw new Error("The protected production credential is unavailable.");
-  const response = await request(`${BACKEND_URL}/api/mutation`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Convex ${key}` },
-    body: JSON.stringify({ path: FUNCTION_PATH, args: [{ dryRun }], format: "convex_encoded_json" }),
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!response.ok) throw new Error(`The production stock review failed with HTTP ${response.status}.`);
-  const result = await response.json();
-  if (result.status !== "success") throw new Error("The production stock review returned an unsuccessful result.");
-  return result.value;
+  return execute({ dryRun, key });
 }
 
 export async function reconcileDjiMic1Stock({ apply = false, verifyIdentity = readBackendIdentity, run = runDjiMic1StockReview } = {}) {

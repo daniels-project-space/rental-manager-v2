@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Doc } from "../_generated/dataModel";
 import { DJI_MIC1_OFFERS, djiMic1StockReview } from "./dji_mic1_stock_review";
-import { BACKEND_URL } from "../../scripts/backend-publisher.mjs";
-import { reconcileDjiMic1Stock, runDjiMic1StockReview } from "../../scripts/run-dji-mic1-stock-review.mjs";
+import { reconcileDjiMic1Stock, runDjiMic1StockReview, convexRunArguments, parseConvexRunOutput } from "../../scripts/run-dji-mic1-stock-review.mjs";
 
 function fixture() {
   const items = [
@@ -49,18 +48,15 @@ describe("owner-confirmed DJI Mic 1 stock review", () => {
     expect(() => djiMic1StockReview(changedMapping.items, changedMapping.products, changedMapping.overrides)).toThrow(/allocation changed/i);
   });
 
-  it("calls only the fixed mutation with a protected deployment credential", async () => {
-    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
-      status: "success",
-      value: { dryRun: true, reviewedOffers: 1, itemWrites: 1, productWrites: 1, mappingWrites: 1, ownedQuantityChanged: false, rentalChanges: 0, messagesSent: 0, packingReviewRequired: true },
-    }), { status: 200 }));
-    const result = await runDjiMic1StockReview({ dryRun: true, key: "fixture-secret", request });
+  it("uses the supported Convex CLI against only the fixed mutation", async () => {
+    const summary = { dryRun: true, reviewedOffers: 1, itemWrites: 1, productWrites: 1, mappingWrites: 1, ownedQuantityChanged: false, rentalChanges: 0, messagesSent: 0, packingReviewRequired: true };
+    const execute = vi.fn().mockResolvedValue(summary);
+    const result = await runDjiMic1StockReview({ dryRun: true, key: "fixture-secret", execute });
     expect(result.itemWrites).toBe(1);
-    expect(request).toHaveBeenCalledTimes(1);
-    const [url, init] = request.mock.calls[0];
-    expect(url).toBe(`${BACKEND_URL}/api/mutation`);
-    expect(init?.headers).toMatchObject({ Authorization: "Convex fixture-secret" });
-    expect(JSON.parse(String(init?.body))).toEqual({ path: "seed/dji_mic1_stock_review:apply", args: [{ dryRun: true }], format: "convex_encoded_json" });
+    expect(execute).toHaveBeenCalledWith({ dryRun: true, key: "fixture-secret" });
+    expect(convexRunArguments(true)).toEqual(["run", "seed/dji_mic1_stock_review:apply", "{\"dryRun\":true}", "--typecheck", "disable", "--codegen", "disable"]);
+    expect(convexRunArguments(false)).not.toContain("--push");
+    expect(parseConvexRunOutput(`Running mutation\n${JSON.stringify(summary)}`)).toEqual(summary);
   });
 
   it("applies only the exact reviewed write plan and verifies a clean second dry-run", async () => {
