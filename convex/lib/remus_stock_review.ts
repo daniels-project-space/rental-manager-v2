@@ -14,6 +14,11 @@ export const REMUS_OFFERS = [
 ] as const;
 const escape = (value:string) => value.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
 
+// Convex serialises object keys in its own order. Equality must compare
+// values, otherwise an identical persisted rule appears changed on every run.
+const stable = (value:unknown):unknown => Array.isArray(value) ? value.map(stable)
+  : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([key,item])=>[key,stable(item)])) : value;
+
 export function remusStockReview(items: Doc<"items">[], products: Doc<"hygglo_products">[]) {
   const owned = (name:string) => {
     const matches=items.filter(item=>item.name_canonical===name);
@@ -53,7 +58,7 @@ export function remusStockReview(items: Doc<"items">[], products: Doc<"hygglo_pr
   const itemChanges=[...additions].flatMap(([id,rules])=>{
     const item=items.find(i=>String(i._id)===id)!;
     const listing_stock_rules=[...(item.listing_stock_rules??[]).filter(rule=>rule.source!==REMUS_STOCK_SOURCE),...rules];
-    return JSON.stringify(item.listing_stock_rules)===JSON.stringify(listing_stock_rules)?[]:[{id:item._id,patch:{listing_stock_rules}}];
+    return JSON.stringify(stable(item.listing_stock_rules))===JSON.stringify(stable(listing_stock_rules))?[]:[{id:item._id,patch:{listing_stock_rules}}];
   });
   return {items:itemChanges,products:productChanges};
 }

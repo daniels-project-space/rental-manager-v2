@@ -33,6 +33,11 @@ describe("reviewed Remus offers use actual shared master lenses",()=>{
     expect(items.every(item=>item.qty===1)).toBe(true);
     expect(remusStockReview(items,products)).toEqual({items:[],products:[]});
   });
+  it("remains unchanged after the database reorders persisted object keys",()=>{
+    const {items,products}=repair();
+    const stored=JSON.parse(JSON.stringify(items,(_key,value)=>value && !Array.isArray(value) && typeof value==="object" ? Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b))) : value));
+    expect(remusStockReview(stored,products)).toEqual({items:[],products:[]});
+  });
   it("a confirmed 45mm hire blocks every account's overlapping set but leaves the 33mm free",()=>{
     const {items,products}=repair();
     const request={item_name:"Remus",start_date:"2026-11-03",end_date:"2026-11-04",quantity:1};
