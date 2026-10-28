@@ -1,0 +1,73 @@
+import type { Doc, Id } from "../_generated/dataModel";
+
+export const DJI_MIC1_OFFERS = [["dbcinema", 852812]] as const;
+export const DJI_MIC1_REVIEW_SOURCE = "owner-confirmed DJI Mic 1 identity — 2026-10-28";
+
+function stable(value: any): string {
+  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stable(value[key])}`).join(",")}}`;
+  return JSON.stringify(value);
+}
+
+function escape(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function djiMic1StockReview(items: Doc<"items">[], products: Doc<"hygglo_products">[], overrides: Doc<"listing_resolution_override">[]) {
+  const masters = items.filter(item => item.name_canonical === "DJI Wireless Mics");
+  if (masters.length !== 1 || masters[0].status !== "active" || masters[0].is_marketing_only !== false ||
+      !Number.isSafeInteger(masters[0].qty) || masters[0].qty !== 1 || masters[0].unit_kind !== "set")
+    throw Error("Owner-confirmed DJI Mic 1 master identity or quantity needs review");
+  const master = masters[0];
+  const parts = master.compatibility?.included_with_rental ?? [];
+  if (!["2x transmitter", "1x receiver", "1x charging case"].every(part => parts.includes(part)))
+    throw Error("Owner-confirmed DJI Mic 1 master contents changed");
+  const secondGen = items.filter(item => item.name_canonical === "DJI Mic 2 wireless");
+  if (secondGen.length !== 1 || secondGen[0]._id === master._id) throw Error("DJI Mic generations are not separate in master inventory");
+  const oldMaster = items.find(item => item.name_canonical === "Audio boom mic Sennheiser");
+  if (!oldMaster) throw Error("The stale boom-mic mapping changed; review the listing before repair");
+
+  const aliases = [...new Set([...(master.aliases ?? []), "DJI Mic 1", "DJI Mic One", "DJI Mic 1st generation", "original DJI Mic"])].sort();
+  const ruleChanges: NonNullable<Doc<"items">["listing_stock_rules"]> = [];
+  const productChanges: Array<{ id: Doc<"hygglo_products">["_id"]; patch: Partial<Doc<"hygglo_products">> }> = [];
+  const mappingChanges: Array<{ id: Doc<"listing_resolution_override">["_id"]; patch: Partial<Doc<"listing_resolution_override">> }> = [];
+  const inserts: Array<{ account_slug: string; product_id: number; components: { item_id: Id<"items">; qty: number }[] }> = [];
+
+  for (const [account, id] of DJI_MIC1_OFFERS) {
+    const matches = products.filter(product => product.accountSlug === account && product.productId === id);
+    if (matches.length !== 1) throw Error(`Reviewed DJI Mic 1 offer missing or duplicated: ${account}#${id}`);
+    const product = matches[0], title = product.name ?? "";
+    if (!/\bdji\s+mic\s+wireless\b/i.test(title) || /\bdji\s+mic\s*2\b/i.test(title) || product.isMarketingOnlyOverride === true)
+      throw Error(`Reviewed DJI Mic 1 offer identity or owner exclusion needs review: ${account}#${id}`);
+    if (product.masterItemId && product.masterItemId !== master._id && product.masterItemId !== oldMaster._id)
+      throw Error(`Reviewed DJI Mic 1 offer master changed: ${account}#${id}`);
+
+    const existing = overrides.filter(row => row.account_slug === account && row.product_id === id);
+    if (existing.length > 1) throw Error(`Duplicate reviewed DJI Mic 1 mappings: ${account}#${id}`);
+    if (existing.length === 1) {
+      const row = existing[0];
+      const mapped = row.components.length === 1 && row.components[0].qty === 1 && row.components[0].item_id === master._id;
+      const expectedStale = row.source === "manual_audit" && row.components.length === 1 && row.components[0].qty === 1 && row.components[0].item_id === secondGen[0]._id;
+      if (!mapped && !expectedStale) throw Error(`Reviewed DJI Mic 1 stock allocation changed: ${account}#${id}`);
+      if (expectedStale) mappingChanges.push({ id: row._id, patch: { components: [{ item_id: master._id, qty: 1 }], source: "manual_audit", note: DJI_MIC1_REVIEW_SOURCE, updated_at: Date.now() } });
+    } else {
+      inserts.push({ account_slug: account, product_id: id, components: [{ item_id: master._id, qty: 1 }] });
+    }
+
+    const pattern = `^${escape(title)}$`;
+    if (pattern.length > 200) throw Error("Reviewed DJI Mic 1 title exceeds the stock rule limit");
+    if (!ruleChanges.some(rule => rule.title_pattern === pattern))
+      ruleChanges.push({ title_pattern: pattern, source: DJI_MIC1_REVIEW_SOURCE, components: [{ item_id: master._id, qty: 1 }], excludes: [], packing_review_required: true });
+    const patch: Partial<Doc<"hygglo_products">> = {};
+    if (product.masterItemId !== master._id || product.stockIdentityOverride?.itemId !== master._id || product.stockIdentityOverride?.title !== title)
+      Object.assign(patch, { masterItemId: master._id, stockIdentityOverride: { itemId: master._id, title, source: DJI_MIC1_REVIEW_SOURCE } });
+    if (Object.keys(patch).length) productChanges.push({ id: product._id, patch });
+  }
+
+  const listing_stock_rules = [...(master.listing_stock_rules ?? []).filter(rule => rule.source !== DJI_MIC1_REVIEW_SOURCE), ...ruleChanges];
+  const itemPatch: Partial<Doc<"items">> = {};
+  if (stable(master.aliases ?? []) !== stable(aliases)) itemPatch.aliases = aliases;
+  if (stable(master.listing_stock_rules ?? []) !== stable(listing_stock_rules)) itemPatch.listing_stock_rules = listing_stock_rules;
+  const itemChanges = Object.keys(itemPatch).length ? [{ id: master._id, patch: itemPatch }] : [];
+  return { items: itemChanges, products: productChanges, mappingChanges, inserts };
+}

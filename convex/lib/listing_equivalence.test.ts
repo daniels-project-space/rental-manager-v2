@@ -100,3 +100,20 @@ describe("listing_equivalence — direct vs equivalence precedence", () => {
     });
   });
 });
+
+describe("listing_equivalence — DJI mic generations", () => {
+  it("keeps Mic 1 and Mic 2 mapped to their own inventory pools", () => {
+    expect(resolveListingToInventory("DJI Mic One Wireless Kit", null, OWNED)).toEqual({
+      sku: "DJI Wireless Mics",
+      matchType: "equivalence",
+    });
+    expect(resolveListingToInventory("DJI Mic Wireless Kit", null, OWNED)).toEqual({
+      sku: "DJI Mic 2 wireless",
+      matchType: "equivalence",
+    });
+    expect(resolveListingToInventory("DJI Mic 2 Wireless Kit", null, OWNED)).toEqual({
+      sku: "DJI Mic 2 wireless",
+      matchType: "equivalence",
+    });
+  });
+});
