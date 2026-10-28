@@ -136,8 +136,8 @@ export function resolveListingComponents(items: Doc<"items">[], override: Compon
     structured: declared.structured || (declared.components.length === 1 && declared.components[0].qty === 1),
   } : null;
   const coverageComplete = !coverage || (coverage.structured && !coverage.missing.length && !coverage.unresolved.length);
-  const complete = !supplied.unresolved.length && coverageComplete && (override !== undefined || derive || !!titlePack) && validQuantity && components.every((c) => c.owned !== null);
+  const complete = !rules.some(rule=>rule.stock_review_required) && !supplied.unresolved.length && coverageComplete && (override !== undefined || derive || !!titlePack) && validQuantity && components.every((c) => c.owned !== null);
   const owned = !validQuantity ? null : override?.length === 0 || ownership_blockers.length > 0 || components.some((c) => c.owned === false) ? false
     : !complete || !components.length ? null : true;
-  return { components, complete, owned, primary_camera, ownership_blockers, valid_quantity: validQuantity, supplied_part_bindings:[...(suppliedDeclaration?.bindings??[]),...(suppliedParts?.bindings??[])], applied_stock_rules:rules.map(rule=>({source:rule.source,title_pattern:rule.title_pattern,...(rule.packing_review_required?{packing_review_required:true}:{})})), declared_components_added, source:derive?"declared_contents":override === undefined ? "primary_item_only" : "listing_override", coverage, unresolved_default_adapters:supplied.unresolved };
+  return { components, complete, owned, primary_camera, ownership_blockers, valid_quantity: validQuantity, supplied_part_bindings:[...(suppliedDeclaration?.bindings??[]),...(suppliedParts?.bindings??[])], applied_stock_rules:rules.map(rule=>({source:rule.source,title_pattern:rule.title_pattern,...(rule.packing_review_required?{packing_review_required:true}:{}),...(rule.stock_review_required?{stock_review_required:true}:{})})), declared_components_added, source:derive?"declared_contents":override === undefined ? "primary_item_only" : "listing_override", coverage, unresolved_default_adapters:supplied.unresolved };
 }
