@@ -48,7 +48,7 @@ export function extractComponents(desc: string): {
     // A standalone heading describes the set, not an extra quantity of it.
     // Remove presentation marks only for heading recognition; preserve inline contents.
     const heading = line.trim().replace(/^[^a-z0-9]+/i, "").replace(/\*\*/g, "");
-    return /^(?:included in (?:this|the)\b[^:•‣●]*\b(?:set|kit|rental|bundle|package)|in (?:this|the) (?:kit|rental|bundle|package)(?:,\s*(?:I include|you['’]ll find))?|what['’]?s included|contents)\s*:?$/i.test(heading)
+    return /^(?:included in (?:this|the)\b[^:•‣●]*\b(?:set|kit|rental|bundle|package)|in (?:this|the) (?:kit|rental|bundle|package)(?:,\s*(?:I include|you['’]ll find))?|also included|what['’]?s included|contents)\s*:?$/i.test(heading)
       ? "Contents:" : line.replace(/\*\*/g, "");
   });
   let contents = false, bullets = false, end = lines.length;

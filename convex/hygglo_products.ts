@@ -294,7 +294,7 @@ export async function catalogueForStorefrontRows(ctx: QueryCtx, allowPrepared = 
       const kit = canonicalKitContents(resolved.components, inventory, primary?.compatibility?.included_with_rental ?? []);
       const verifiedContents = complete && resolved.owned===true && !classifiedMarketing;
       const inventoryFacts = {version:1 as const,contents:verifiedContents?kit.contents:[],optionalContents:verifiedContents?kit.optional_contents:[],
-        reviewRequired:!verifiedContents || kit.unreconciled_contents.length>0,owned:classifiedMarketing?false:resolved.owned};
+        reviewRequired:!verifiedContents || kit.unreconciled_contents.length>0 || resolved.applied_stock_rules.some(rule=>rule.packing_review_required),owned:classifiedMarketing?false:resolved.owned};
       // Match the public bridge projection here, before serializing rich private descriptions.
       const {productId,name,isPublished,isMarketingOnly,valuation,minimumRentalDays,prices,images,unavailableDates,listings,masterItemId}=product;
       // Copy identity follows actual seller wording, not repaired stock links.
