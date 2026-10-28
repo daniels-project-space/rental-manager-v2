@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Doc } from "../_generated/dataModel";
 import { DJI_MIC1_OFFERS, djiMic1StockReview } from "./dji_mic1_stock_review";
-import { reconcileDjiMic1Stock, runDjiMic1StockReview, convexRunArguments, parseConvexRunOutput } from "../../scripts/run-dji-mic1-stock-review.mjs";
+import { reconcileDjiMic1Stock, runDjiMic1StockReview, convexRunArguments, convexDiagnosticArguments, parseConvexRunOutput } from "../../scripts/run-dji-mic1-stock-review.mjs";
 
 function fixture() {
   const items = [
@@ -56,7 +56,19 @@ describe("owner-confirmed DJI Mic 1 stock review", () => {
     expect(execute).toHaveBeenCalledWith({ dryRun: true, key: "fixture-secret" });
     expect(convexRunArguments(true)).toEqual(["run", "seed/dji_mic1_stock_review:apply", "{\"dryRun\":true}", "--typecheck", "disable", "--codegen", "disable"]);
     expect(convexRunArguments(false)).not.toContain("--push");
+    expect(convexDiagnosticArguments().slice(0, 2)).toEqual(["run", "--inline-query"]);
     expect(parseConvexRunOutput(`Running mutation\n${JSON.stringify(summary)}`)).toEqual(summary);
+  });
+
+  it("reports unexpected live identity read-only and never applies through a blocked preflight", async () => {
+    const diagnostic = { productFound: true, productMaster: { name: "unexpected master", quantity: 1 }, mappings: [] };
+    const execute = vi.fn().mockRejectedValue(new Error("Reviewed DJI Mic 1 offer master changed: dbcinema#852812"));
+    const diagnose = vi.fn().mockResolvedValue(diagnostic);
+    const run = (args: { dryRun?: boolean } = {}) => runDjiMic1StockReview({ ...args, key: "fixture-secret", execute, diagnose });
+    const result = await reconcileDjiMic1Stock({ apply: true, verifyIdentity: vi.fn(), run });
+    expect(result).toEqual({ mode: "blocked", diagnostic });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(diagnose).toHaveBeenCalledWith({ key: "fixture-secret" });
   });
 
   it("applies only the exact reviewed write plan and verifies a clean second dry-run", async () => {
