@@ -8,14 +8,15 @@ export const apply = internalMutation({
   args: { dryRun: v.optional(v.boolean()) },
   handler: async (ctx, { dryRun = true }) => {
     const account = "dbcinema", productId = 852812;
-    const [masterRows, secondGenRows, staleRows, product, overrideRows] = await Promise.all([
+    const [masterRows, secondGenRows, staleRows, rodeRows, product, overrideRows] = await Promise.all([
       ctx.db.query("items").withIndex("by_canonical_name", q => q.eq("name_canonical", "DJI Wireless Mics")).take(2),
       ctx.db.query("items").withIndex("by_canonical_name", q => q.eq("name_canonical", "DJI Mic 2 wireless")).take(2),
       ctx.db.query("items").withIndex("by_canonical_name", q => q.eq("name_canonical", "Audio boom mic Sennheiser")).take(2),
+      ctx.db.query("items").withIndex("by_canonical_name", q => q.eq("name_canonical", "Rode Video Mic Go")).take(2),
       ctx.db.query("hygglo_products").withIndex("by_account_product", q => q.eq("accountSlug", account).eq("productId", productId)).first(),
       ctx.db.query("listing_resolution_override").withIndex("by_account_product", q => q.eq("account_slug", account).eq("product_id", productId)).take(2),
     ]);
-    const items = [...masterRows, ...secondGenRows, ...staleRows];
+    const items = [...masterRows, ...secondGenRows, ...staleRows, ...rodeRows];
     if (!product) throw Error("The owner-confirmed DJI Mic 1 offer disappeared");
     const plan = djiMic1StockReview(items, [product], overrideRows);
     if (!dryRun) {

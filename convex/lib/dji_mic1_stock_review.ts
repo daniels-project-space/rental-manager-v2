@@ -2,6 +2,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 
 export const DJI_MIC1_OFFERS = [["dbcinema", 852812]] as const;
 export const DJI_MIC1_REVIEW_SOURCE = "owner-confirmed DJI Mic 1 identity — 2026-10-28";
+const STALE_PRODUCT_MASTER_NAMES = ["Audio boom mic Sennheiser", "Rode Video Mic Go"] as const;
 
 function stable(value: any): string {
   if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
@@ -24,8 +25,13 @@ export function djiMic1StockReview(items: Doc<"items">[], products: Doc<"hygglo_
     throw Error("Owner-confirmed DJI Mic 1 master contents changed");
   const secondGen = items.filter(item => item.name_canonical === "DJI Mic 2 wireless");
   if (secondGen.length !== 1 || secondGen[0]._id === master._id) throw Error("DJI Mic generations are not separate in master inventory");
-  const oldMaster = items.find(item => item.name_canonical === "Audio boom mic Sennheiser");
-  if (!oldMaster) throw Error("The stale boom-mic mapping changed; review the listing before repair");
+  const staleMasters = STALE_PRODUCT_MASTER_NAMES.flatMap(name => {
+    const matches = items.filter(item => item.name_canonical === name);
+    if (matches.length > 1) throw Error("A stale DJI Mic offer master is ambiguous; review the listing before repair");
+    return matches;
+  });
+  if (!staleMasters.length) throw Error("No reviewed stale DJI Mic offer master remains; review the listing before repair");
+  const staleMasterIds = new Set(staleMasters.map(item => item._id));
 
   const aliases = [...new Set([...(master.aliases ?? []), "DJI Mic 1", "DJI Mic One", "DJI Mic 1st generation", "original DJI Mic"])].sort();
   const ruleChanges: NonNullable<Doc<"items">["listing_stock_rules"]> = [];
@@ -39,7 +45,7 @@ export function djiMic1StockReview(items: Doc<"items">[], products: Doc<"hygglo_
     const product = matches[0], title = product.name ?? "";
     if (!/\bdji\s+mic\s+wireless\b/i.test(title) || /\bdji\s+mic\s*2\b/i.test(title) || product.isMarketingOnlyOverride === true)
       throw Error(`Reviewed DJI Mic 1 offer identity or owner exclusion needs review: ${account}#${id}`);
-    if (product.masterItemId && product.masterItemId !== master._id && product.masterItemId !== oldMaster._id)
+    if (product.masterItemId && product.masterItemId !== master._id && !staleMasterIds.has(product.masterItemId))
       throw Error(`Reviewed DJI Mic 1 offer master changed: ${account}#${id}`);
 
     const existing = overrides.filter(row => row.account_slug === account && row.product_id === id);
