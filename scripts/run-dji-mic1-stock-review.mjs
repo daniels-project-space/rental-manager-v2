@@ -44,8 +44,17 @@ async function executeConvexRun({ dryRun, key }) {
       maxBuffer: 1024 * 1024,
     });
     return parseConvexRunOutput(stdout);
-  } catch {
-    throw new Error("Convex CLI could not complete the production stock review.");
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Convex CLI returned")) throw error;
+    const raw = [error?.stderr, error?.message].filter(value => typeof value === "string").join("\n");
+    const safe = raw.replaceAll(key, "[redacted]")
+      .replace(/(?:prod|dev|preview):[A-Za-z0-9-]+\|[^\s]+/g, "[deploy key]")
+      .replace(/(?:Convex|Bearer)\s+[^\s]+/gi, "[authorization redacted]")
+      .replace(/\x1b\[[0-9;]*m/g, "");
+    const detail = safe.split(/\r?\n/).map(line => line.trim())
+      .filter(line => line && /error|failed|unauthorized|forbidden|not found|cannot|could not|expected|deployment/i.test(line))
+      .slice(-2).join(" ").slice(0, 300);
+    throw new Error("Convex CLI could not complete the production stock review." + (detail ? " " + detail : ""));
   }
 }
 
