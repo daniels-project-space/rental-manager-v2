@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Doc } from "../_generated/dataModel";
 import { DJI_MIC1_OFFERS, djiMic1StockReview } from "./dji_mic1_stock_review";
+import { BACKEND_URL } from "../../scripts/backend-publisher.mjs";
+import { reconcileDjiMic1Stock, runDjiMic1StockReview } from "../../scripts/run-dji-mic1-stock-review.mjs";
 
 function fixture() {
   const items = [
@@ -45,5 +47,39 @@ describe("owner-confirmed DJI Mic 1 stock review", () => {
     const changedMapping = fixture();
     changedMapping.overrides[0].components = [{ item_id: "unexpected" as Doc<"items">["_id"], qty: 2 }];
     expect(() => djiMic1StockReview(changedMapping.items, changedMapping.products, changedMapping.overrides)).toThrow(/allocation changed/i);
+  });
+
+  it("calls only the fixed mutation with a protected deployment credential", async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      status: "success",
+      value: { dryRun: true, reviewedOffers: 1, itemWrites: 1, productWrites: 1, mappingWrites: 1, ownedQuantityChanged: false, rentalChanges: 0, messagesSent: 0, packingReviewRequired: true },
+    }), { status: 200 }));
+    const result = await runDjiMic1StockReview({ dryRun: true, key: "fixture-secret", request });
+    expect(result.itemWrites).toBe(1);
+    expect(request).toHaveBeenCalledTimes(1);
+    const [url, init] = request.mock.calls[0];
+    expect(url).toBe(`${BACKEND_URL}/api/mutation`);
+    expect(init?.headers).toMatchObject({ Authorization: "Convex fixture-secret" });
+    expect(JSON.parse(String(init?.body))).toEqual({ path: "seed/dji_mic1_stock_review:apply", args: [{ dryRun: true }], format: "convex_encoded_json" });
+  });
+
+  it("applies only the exact reviewed write plan and verifies a clean second dry-run", async () => {
+    const plan = (writes: number) => ({ reviewedOffers: 1, itemWrites: writes, productWrites: writes, mappingWrites: writes, ownedQuantityChanged: false, rentalChanges: 0, messagesSent: 0, packingReviewRequired: true });
+    const run = vi.fn().mockResolvedValueOnce(plan(1)).mockResolvedValueOnce(plan(1)).mockResolvedValueOnce(plan(0));
+    const result = await reconcileDjiMic1Stock({ apply: true, verifyIdentity: vi.fn(), run });
+    expect(result.mode).toBe("applied-and-verified");
+    expect(run.mock.calls.map(([args]) => args.dryRun)).toEqual([true, false, true]);
+  });
+
+  it("recognizes an already-correct mapping without writing and rejects unexpected plans", async () => {
+    const clean = { reviewedOffers: 1, itemWrites: 0, productWrites: 0, mappingWrites: 0, ownedQuantityChanged: false, rentalChanges: 0, messagesSent: 0, packingReviewRequired: true };
+    const alreadyApplied = vi.fn().mockResolvedValue(clean);
+    const result = await reconcileDjiMic1Stock({ apply: true, verifyIdentity: vi.fn(), run: alreadyApplied });
+    expect(result.mode).toBe("already-in-sync");
+    expect(alreadyApplied).toHaveBeenCalledTimes(1);
+
+    const unexpected = vi.fn().mockResolvedValue({ ...clean, itemWrites: 2 });
+    await expect(reconcileDjiMic1Stock({ apply: true, verifyIdentity: vi.fn(), run: unexpected })).rejects.toThrow("itemWrites");
+    expect(unexpected).toHaveBeenCalledTimes(1);
   });
 });
