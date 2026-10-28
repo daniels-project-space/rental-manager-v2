@@ -91,6 +91,13 @@ export const DEFAULT_LISTING_EQUIVALENCE_MAP: Record<string, string[]> = {
   "dji drone": ["DJI Mavic 3 Pro", "DJI Mini 4 Pro"],
 
   // ── Wireless mics ───────────────────────────────────────────────────
+  // Keep explicit product generations distinct; preserve the established fallback for ambiguous names.
+  "dji mic 2": ["DJI Mic 2 wireless"],
+  "dji mic2": ["DJI Mic 2 wireless"],
+  "dji wireless mic 2": ["DJI Mic 2 wireless"],
+  "dji mic 1": ["DJI Wireless Mics"],
+  "dji mic one": ["DJI Wireless Mics"],
+  "dji wireless mic 1": ["DJI Wireless Mics"],
   "dji mic": ["DJI Mic 2 wireless", "DJI Wireless Mics", "Rode Wireless Mic Pro set"],
   "rode wireless": ["Rode Wireless Mic Pro set", "DJI Mic 2 wireless"],
   "lavalier": ["DJI Mic 2 wireless", "Rode Wireless Mic Pro set", "DJI Wireless Mics"],
