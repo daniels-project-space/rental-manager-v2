@@ -8,8 +8,9 @@ function fixture() {
     { _id: "mic1", name_canonical: "DJI Wireless Mics", aliases: ["dji wireless mics"], kind: "audio", unit_kind: "set", status: "active", is_marketing_only: false, qty: 1, compatibility: { included_with_rental: ["2x transmitter", "1x receiver", "1x charging case"] } },
     { _id: "mic2", name_canonical: "DJI Mic 2 wireless", kind: "audio", unit_kind: "set", status: "active", is_marketing_only: false, qty: 1 },
     { _id: "boom", name_canonical: "Audio boom mic Sennheiser", kind: "audio", unit_kind: "set", status: "active", is_marketing_only: false, qty: 1 },
+    { _id: "rode", name_canonical: "Rode Video Mic Go", kind: "audio", unit_kind: "unit", status: "active", is_marketing_only: false, qty: 1 },
   ] as unknown as Doc<"items">[];
-  const products = [{ _id: "product", accountSlug: "dbcinema", productId: 852812, name: "Dji mic wireless + 2x lav mics 2x transmitters (like rode go 2)", masterItemId: "boom", isMarketingOnly: false }] as unknown as Doc<"hygglo_products">[];
+  const products = [{ _id: "product", accountSlug: "dbcinema", productId: 852812, name: "Dji mic wireless + 2x lav mics 2x transmitters (like rode go 2)", masterItemId: "rode", isMarketingOnly: false }] as unknown as Doc<"hygglo_products">[];
   const overrides = [{ _id: "mapping", account_slug: "dbcinema", product_id: 852812, source: "manual_audit", components: [{ item_id: "mic2", qty: 1 }] }] as unknown as Doc<"listing_resolution_override">[];
   return { items, products, overrides };
 }
@@ -46,6 +47,9 @@ describe("owner-confirmed DJI Mic 1 stock review", () => {
     const changedMapping = fixture();
     changedMapping.overrides[0].components = [{ item_id: "unexpected" as Doc<"items">["_id"], qty: 2 }];
     expect(() => djiMic1StockReview(changedMapping.items, changedMapping.products, changedMapping.overrides)).toThrow(/allocation changed/i);
+    const unknownMaster = fixture();
+    unknownMaster.products[0].masterItemId = "unexpected" as Doc<"items">["_id"];
+    expect(() => djiMic1StockReview(unknownMaster.items, unknownMaster.products, unknownMaster.overrides)).toThrow(/master changed/i);
   });
 
   it("uses the supported Convex CLI against only the fixed mutation", async () => {
