@@ -3,7 +3,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 const manifestName = "deployment-inputs.json";
-const nonRuntime = file => /(?:^|\/)__tests__\//.test(file) || /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file) || /^(?:docs|graphify-out|\.serena|\.agents|\.codex|coverage|\.github)\//.test(file) || /(?:^|\/)(?:README|AGENTS)\.md$/.test(file);
+const nonRuntime = file => /^vitest\.config\.[cm]?[jt]s$/.test(file) || /(?:^|\/)__tests__\//.test(file) || /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file) || /^(?:docs|graphify-out|\.serena|\.agents|\.codex|coverage|\.github)\//.test(file) || /(?:^|\/)(?:README|AGENTS)\.md$/.test(file);
 const all = reason => ({ website: true, backend: true, trigger: true, reason });
 
 /** Vercel's source snapshot need not retain a usable origin remote. This
