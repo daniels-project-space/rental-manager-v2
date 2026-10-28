@@ -1340,7 +1340,7 @@ function ReplyCard({
   const ds = decideState(tile);
   // Urgency timer only when the ball is in MY court; a thread I replied to last
   // is calm (no glow / no "unanswered for" clock).
-  const u = aw ? urgency(now - tile.last_renter_msg_at) : null;
+  const u = aw ? tile.human_requested ? { color: "#f59e0b", caption: "Human needed", glow: true, blink: true } : urgency(now - tile.last_renter_msg_at) : null;
   const approve = useAction(api.replyInbox_actions.approveOrder);
   const decline = useAction(api.replyInbox_actions.declineOrder);
   const [confirming, setConfirming] = useState<"approve" | "decline" | null>(
@@ -1401,7 +1401,7 @@ function ReplyCard({
       onFocus={(event) => {
         if (event.target === event.currentTarget) onPreview();
       }}
-      className={`${styles.row} ${selected ? styles.selected : ""} ${duplicate ? styles.duplicate : ""}`}
+      className={`${styles.row} ${selected ? styles.selected : ""} ${duplicate ? styles.duplicate : ""} ${aw && tile.human_requested ? styles.humanEscalation : ""}`}
       role="button"
       tabIndex={0}
       onKeyDown={(event) => {

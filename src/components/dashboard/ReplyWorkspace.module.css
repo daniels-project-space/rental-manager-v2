@@ -28,6 +28,9 @@
 .row { position: relative; min-height: 94px; padding: 10px 12px 10px 8px; border-left: 4px solid var(--account-accent); border-bottom: 1px solid #2b343d; cursor: pointer; outline: none; }
 .row:last-child { border-bottom: 0; }
 .row:hover,.row:focus-visible { background: #202a34; }
+.humanEscalation { border-left-color:#f59e0b; background:linear-gradient(90deg,#f59e0b20,transparent 75%); animation:humanReviewGlow 2s ease-in-out infinite; }
+@keyframes humanReviewGlow { 0%,100% { box-shadow:inset 0 0 0 1px #f59e0b33; } 50% { box-shadow:inset 0 0 22px #f59e0b30,inset 0 0 0 1px #f59e0ba0; } }
+@media(prefers-reduced-motion:reduce) { .humanEscalation { animation:none; box-shadow:inset 0 0 0 1px #f59e0ba0; } }
 .selected { background: #171e25; outline: 1px solid #c69c58; outline-offset: -1px; box-shadow: inset 4px 0 #f7c66d; }
 .duplicate { opacity: .46; }
 .duplicateLabel { display: block; margin-top: 5px; padding: 3px 5px; border: 1px solid #58616d; border-radius: 5px; color: #cbd3df; font-size: 8px; }
