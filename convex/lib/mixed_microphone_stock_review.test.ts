@@ -16,6 +16,7 @@ describe("mixed wireless microphone bundle review",()=>{
   expect(result.complete).toBe(false);expect(result.owned).toBeNull();expect(result.applied_stock_rules.some(r=>r.stock_review_required)).toBe(true);
   expect(result.components.map(c=>({item_id:c.item_id,qty:c.units_per_listing}))).toEqual([{item_id:"dji",qty:1},{item_id:"rode",qty:2}]);
   expect(canonicalListingAllocation(items,[override],[product],[]).get("dbcinema#1027212")).toEqual([{item_id:"dji",qty:1},{item_id:"rode",qty:2}]);
+  items[1].listing_stock_rules=items[1].listing_stock_rules!.map(rule=>Object.fromEntries(Object.entries(rule).reverse()) as typeof rule);
   expect(mixedMicrophoneStockReview(items,product,override)).toEqual({item:null,override:null});expect(items.map(i=>i.qty)).toEqual([1,2]);
  });
  it("refuses changed identities, stock, or unexpected manual mappings",()=>{
