@@ -19,6 +19,15 @@ function roles(files, before = manifest(), after = manifest()) {
   return [website, backend, trigger];
 }
 
+test("a backend repair and its Vitest registration publish the backend without a website release", () => {
+  const before=manifest(), after=manifest();
+  after.backend.files.push("convex/lib/remus_stock_review.ts", "convex/seed/remus_stock_review.ts");
+  assert.deepEqual(roles(["convex/lib/remus_stock_review.ts","convex/seed/remus_stock_review.ts","convex/lib/remus_stock_review.test.ts","vitest.config.ts","deployment-inputs.json"],before,after),[false,true,false]);
+  const consumed=manifest();consumed.website.files.push("vitest.config.ts");
+  assert.deepEqual(roles(["vitest.config.ts"],consumed,consumed),[true,false,false],"an actual runtime import overrides the test configuration exclusion");
+  const uncertain=manifest();uncertain.website.uncertain.push("unresolved runtime import");
+  assert.deepEqual(roles(["convex/lib/remus_stock_review.ts","vitest.config.ts"],uncertain,uncertain),[true,true,false],"uncertain runtime dependencies must still build");
+});
 test("CI-only backup helpers do not create application deployments", () => {
   assert.deepEqual(roles([".github/scripts/backup-to-r2.mjs", ".github/scripts/backup-checksum.mjs"]), [false, false, false]);
 });
