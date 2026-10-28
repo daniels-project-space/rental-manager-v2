@@ -3,6 +3,15 @@ import type { Doc, Id } from "../_generated/dataModel";
 export const DJI_MIC1_OFFERS = [["dbcinema", 852812]] as const;
 export const DJI_MIC1_REVIEW_SOURCE = "owner-confirmed DJI Mic 1 identity — 2026-10-28";
 const STALE_PRODUCT_MASTER_NAMES = ["Audio boom mic Sennheiser", "Rode Video Mic Go"] as const;
+const DJI_MIC1_DESCRIPTION_OVERRIDE = "Contents: • 1x DJI Wireless Mics";
+const DJI_MIC1_SUPPLIED_PARTS = [
+  { name: "DJI Mic transmitters", qty: 2 },
+  { name: "DJI Mic receiver", qty: 1 },
+  { name: "DJI audio cable", qty: 1 },
+  { name: "DJI Mic charging case", qty: 1 },
+  { name: "DJI Mic carrying case", qty: 1 },
+  { name: "DJI Lavalier microphones", qty: 2 },
+] as const;
 
 function stable(value: any): string {
   if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
@@ -62,15 +71,51 @@ export function djiMic1StockReview(items: Doc<"items">[], products: Doc<"hygglo_
 
     const pattern = `^${escape(title)}$`;
     if (pattern.length > 200) throw Error("Reviewed DJI Mic 1 title exceeds the stock rule limit");
-    if (!ruleChanges.some(rule => rule.title_pattern === pattern))
-      ruleChanges.push({ title_pattern: pattern, source: DJI_MIC1_REVIEW_SOURCE, components: [{ item_id: master._id, qty: 1 }], excludes: [], packing_review_required: true });
+    const finalRule = {
+      title_pattern: pattern,
+      source: DJI_MIC1_REVIEW_SOURCE,
+      components: [{ item_id: master._id, qty: 1 }],
+      excludes: [],
+      supplied_parts: [...DJI_MIC1_SUPPLIED_PARTS],
+      description_override: DJI_MIC1_DESCRIPTION_OVERRIDE,
+      packing_review_required: false,
+    };
+    const ownerRules = (master.listing_stock_rules ?? []).filter(rule => rule.source === DJI_MIC1_REVIEW_SOURCE);
+    if (ownerRules.length > 1) throw Error("The reviewed DJI Mic 1 packing rule is ambiguous");
+    const currentRule = ownerRules[0];
+    const currentIsFinal = currentRule !== undefined && stable({
+      title_pattern: currentRule.title_pattern,
+      source: currentRule.source,
+      components: currentRule.components.map(component => ({ item_id: String(component.item_id), qty: component.qty })),
+      excludes: currentRule.excludes.map(String),
+      supplied_parts: currentRule.supplied_parts ?? [],
+      description_override: currentRule.description_override ?? null,
+      packing_review_required: currentRule.packing_review_required ?? false,
+      stock_review_required: currentRule.stock_review_required ?? false,
+    }) === stable({
+      ...finalRule,
+      components: finalRule.components.map(component => ({ item_id: String(component.item_id), qty: component.qty })),
+      description_override: DJI_MIC1_DESCRIPTION_OVERRIDE,
+      stock_review_required: false,
+    });
+    const isPriorReviewRule = currentRule !== undefined && currentRule.title_pattern === pattern &&
+      currentRule.components.length === 1 && String(currentRule.components[0].item_id) === String(master._id) &&
+      currentRule.components[0].qty === 1 && currentRule.excludes.length === 0 &&
+      currentRule.packing_review_required === true && currentRule.stock_review_required === undefined &&
+      currentRule.supplied_parts === undefined && currentRule.optional_parts === undefined &&
+      currentRule.description_override === undefined && currentRule.apply_to_declared_component === undefined;
+    if (currentRule && !currentIsFinal && !isPriorReviewRule)
+      throw Error("The reviewed DJI Mic 1 packing rule changed; review the listing before repair");
+    if (!currentIsFinal) ruleChanges.push(finalRule);
     const patch: Partial<Doc<"hygglo_products">> = {};
     if (product.masterItemId !== master._id || product.stockIdentityOverride?.itemId !== master._id || product.stockIdentityOverride?.title !== title)
       Object.assign(patch, { masterItemId: master._id, stockIdentityOverride: { itemId: master._id, title, source: DJI_MIC1_REVIEW_SOURCE } });
     if (Object.keys(patch).length) productChanges.push({ id: product._id, patch });
   }
 
-  const listing_stock_rules = [...(master.listing_stock_rules ?? []).filter(rule => rule.source !== DJI_MIC1_REVIEW_SOURCE), ...ruleChanges];
+  const listing_stock_rules = ruleChanges.length
+    ? [...(master.listing_stock_rules ?? []).filter(rule => rule.source !== DJI_MIC1_REVIEW_SOURCE), ...ruleChanges]
+    : master.listing_stock_rules ?? [];
   const itemPatch: Partial<Doc<"items">> = {};
   if (stable(master.aliases ?? []) !== stable(aliases)) itemPatch.aliases = aliases;
   if (stable(master.listing_stock_rules ?? []) !== stable(listing_stock_rules)) itemPatch.listing_stock_rules = listing_stock_rules;

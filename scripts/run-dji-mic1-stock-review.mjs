@@ -27,17 +27,14 @@ return {
   mic2: mic2.map(item => ({ name: item.name_canonical, quantity: item.qty, unitKind: item.unit_kind, status: item.status })),
   mappings: mappingDetails,
 };`;
-const EXPECTED = {
-  reviewedOffers: 1,
-  itemWrites: 1,
-  productWrites: 1,
-  mappingWrites: 1,
-  ownedQuantityChanged: false,
-  rentalChanges: 0,
-  messagesSent: 0,
-  packingReviewRequired: true,
-};
-const CLEAN = { ...EXPECTED, itemWrites: 0, productWrites: 0, mappingWrites: 0 };
+const REPAIR_PLANS = [
+  { dryRun: true, reviewedOffers: 1, itemWrites: 1, productWrites: 0, mappingWrites: 0,
+    ownedQuantityChanged: false, rentalChanges: 0, messagesSent: 0, packingReviewRequired: false },
+  { dryRun: true, reviewedOffers: 1, itemWrites: 1, productWrites: 1, mappingWrites: 1,
+    ownedQuantityChanged: false, rentalChanges: 0, messagesSent: 0, packingReviewRequired: false },
+];
+const CLEAN = { dryRun: true, reviewedOffers: 1, itemWrites: 0, productWrites: 0, mappingWrites: 0,
+  ownedQuantityChanged: false, rentalChanges: 0, messagesSent: 0, packingReviewRequired: false };
 const execFileAsync = promisify(execFile);
 
 export function convexRunArguments(dryRun) {
@@ -121,12 +118,15 @@ export async function reconcileDjiMic1Stock({ apply = false, verifyIdentity = re
   await verifyIdentity();
   const before = await run({ dryRun: true });
   if (before?.blocked === true) return { mode: "blocked", diagnostic: before.diagnostic };
-  const alreadyApplied = before?.itemWrites === 0 && before?.productWrites === 0 && before?.mappingWrites === 0;
-  assertPlan(before, alreadyApplied ? CLEAN : EXPECTED, "Dry-run");
-  if (!apply || alreadyApplied) return { mode: alreadyApplied ? "already-in-sync" : "dry-run", before };
+  const alreadyApplied = Object.entries(CLEAN).every(([key, value]) => before?.[key] === value);
+  if (alreadyApplied) return { mode: "already-in-sync", before };
+  const repairPlan = REPAIR_PLANS.find(plan => Object.entries(plan).every(([key, value]) => before?.[key] === value));
+  if (!repairPlan) throw new Error("Dry-run did not match either reviewed DJI Mic 1 repair plan.");
+  assertPlan(before, repairPlan, "Dry-run");
+  if (!apply) return { mode: "dry-run", before };
 
   const applied = await run({ dryRun: false });
-  assertPlan(applied, EXPECTED, "Apply");
+  assertPlan(applied, { ...repairPlan, dryRun: false }, "Apply");
   const after = await run({ dryRun: true });
   assertPlan(after, CLEAN, "Post-apply dry-run");
   return { mode: "applied-and-verified", before, applied, after };
