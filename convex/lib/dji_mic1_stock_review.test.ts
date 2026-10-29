@@ -177,6 +177,7 @@ describe("owner-confirmed DJI Mic 1 stock review", () => {
     expect(convexRunArguments(true)).toEqual(["run", "seed/dji_mic1_stock_review:apply", "{\"dryRun\":true}", "--typecheck", "disable", "--codegen", "disable"]);
     expect(convexRunArguments(false)).not.toContain("--push");
     expect(convexDiagnosticArguments().slice(0, 2)).toEqual(["run", "--inline-query"]);
+    expect(convexDiagnosticArguments()[2]).toContain("listing_stock_rules");
     expect(parseConvexRunOutput(`Running mutation\n${JSON.stringify(summary)}`)).toEqual(summary);
   });
 
@@ -188,6 +189,18 @@ describe("owner-confirmed DJI Mic 1 stock review", () => {
     const result = await reconcileDjiMic1Stock({ apply: true, verifyIdentity: vi.fn(), run });
     expect(result).toEqual({ mode: "blocked", diagnostic });
     expect(execute).toHaveBeenCalledTimes(1);
+    expect(diagnose).toHaveBeenCalledWith({ key: "fixture-secret" });
+  });
+
+  it("diagnoses a changed packing rule read-only and never applies while blocked", async () => {
+    const diagnostic = { productFound: true, productMaster: { name: "DJI Wireless Mics", listingStockRules: [{ source: DJI_MIC1_REVIEW_SOURCE }] }, mappings: [] };
+    const execute = vi.fn().mockRejectedValue(new Error("The reviewed DJI Mic 1 packing rule changed; review the listing before repair"));
+    const diagnose = vi.fn().mockResolvedValue(diagnostic);
+    const run = (args: { dryRun?: boolean } = {}) => runDjiMic1StockReview({ ...args, key: "fixture-secret", execute, diagnose });
+    const result = await reconcileDjiMic1Stock({ apply: true, verifyIdentity: vi.fn(), run });
+    expect(result).toEqual({ mode: "blocked", diagnostic });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith({ dryRun: true, key: "fixture-secret" });
     expect(diagnose).toHaveBeenCalledWith({ key: "fixture-secret" });
   });
 
