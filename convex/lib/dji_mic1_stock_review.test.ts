@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Doc } from "../_generated/dataModel";
 import { DJI_MIC1_OFFERS, DJI_MIC1_REVIEW_SOURCE, djiMic1StockReview } from "./dji_mic1_stock_review";
 import { resolveListingComponents } from "./listing_components";
-import { canonicalKitContents } from "./canonical_kit_contents";
+import { listingKitContext } from "./listing_kit_context";
 import { reconcileDjiMic1Stock, runDjiMic1StockReview, convexRunArguments, convexDiagnosticArguments, parseConvexRunOutput } from "../../scripts/run-dji-mic1-stock-review.mjs";
 
 function fixture() {
@@ -12,7 +12,16 @@ function fixture() {
     { _id: "boom", name_canonical: "Audio boom mic Sennheiser", kind: "audio", unit_kind: "set", status: "active", is_marketing_only: false, qty: 1 },
     { _id: "rode", name_canonical: "Rode Video Mic Go", kind: "audio", unit_kind: "unit", status: "active", is_marketing_only: false, qty: 1 },
   ] as unknown as Doc<"items">[];
-  const products = [{ _id: "product", accountSlug: "dbcinema", productId: 852812, name: "Dji mic wireless + 2x lav mics 2x transmitters (like rode go 2)", masterItemId: "rode", isMarketingOnly: false }] as unknown as Doc<"hygglo_products">[];
+  const products = [{
+    _id: "product",
+    accountSlug: "dbcinema",
+    productId: 852812,
+    name: "Dji mic wireless + 2x lav mics 2x transmitters (like rode go 2)",
+    description: "Included in this rental: 2x Dji mic Transmitter 1x Dji mic Reciever 1x Audio Cable 1x charging case 1x carrying case 2x Lavelier Lapel microphones. Add-on direct: Add a third Dji Microphone to the mix for 8£/d more.",
+    descriptionSyncedAt: Date.now(),
+    masterItemId: "rode",
+    isMarketingOnly: false,
+  }] as unknown as Doc<"hygglo_products">[];
   const overrides = [{ _id: "mapping", account_slug: "dbcinema", product_id: 852812, source: "manual_audit", components: [{ item_id: "mic2", qty: 1 }] }] as unknown as Doc<"listing_resolution_override">[];
   return { items, products, overrides };
 }
@@ -59,21 +68,41 @@ describe("owner-confirmed DJI Mic 1 stock review", () => {
       source: DJI_MIC1_REVIEW_SOURCE,
       components: [{ item_id: "mic1", qty: 1 }],
       packing_review_required: false,
-      description_override: "Contents: • 1x DJI Wireless Mics",
-      supplied_parts: expect.arrayContaining([
+      description_override: "Contents: • 2x transmitters • 1x receiver • 1x audio cable • 1x charging case • 1x carrying case • 2x lavalier microphones",
+      supplied_parts: [
         { name: "DJI Mic transmitters", qty: 2 },
         { name: "DJI Mic receiver", qty: 1 },
-        { name: "DJI audio cable", qty: 1 },
+        { name: "Audio cable", qty: 1 },
         { name: "DJI Mic charging case", qty: 1 },
         { name: "DJI Mic carrying case", qty: 1 },
-        { name: "DJI Lavalier microphones", qty: 2 },
-      ]),
+        { name: "Lavalier microphones", qty: 2 },
+      ],
     })]);
+    expect(first.items[0].compatibility?.included_with_rental).toEqual([
+      "2x transmitter",
+      "1x receiver",
+      "1x audio cable",
+      "1x charging case",
+      "1x carrying case",
+      "2x lavalier microphones",
+    ]);
+    expect(first.items[0].qty).toBe(1);
+    expect(first.items[0].listing_stock_rules?.[0].supplied_parts?.some(part => /third/i.test(part.name))).toBe(false);
     const replay = djiMic1StockReview(first.items, first.products, first.overrides);
     expect(replay).toEqual({ items: [], products: [], mappingChanges: [], inserts: [] });
   });
 
-  it("reconciles the exact owner-listed parts while holding only one physical Mic 1 set", () => {
+  it("refuses to map when the synced seller description changes or omits a base component", () => {
+    const missingCarryCase = fixture();
+    missingCarryCase.products[0].description = missingCarryCase.products[0].description!.replace("1x carrying case", "");
+    expect(() => djiMic1StockReview(missingCarryCase.items, missingCarryCase.products, missingCarryCase.overrides)).toThrow(/seller-listed base contents/i);
+
+    const missingSyncReceipt = fixture();
+    delete missingSyncReceipt.products[0].descriptionSyncedAt;
+    expect(() => djiMic1StockReview(missingSyncReceipt.items, missingSyncReceipt.products, missingSyncReceipt.overrides)).toThrow(/seller-listed base contents/i);
+  });
+
+  it("reconciles the exact owner-listed parts while holding only one physical Mic 1 set", async () => {
     const first = applyFixture();
     const resolved = resolveListingComponents(
       first.items,
@@ -88,16 +117,32 @@ describe("owner-confirmed DJI Mic 1 stock review", () => {
     expect(resolved.owned).toBe(true);
     expect(resolved.components).toHaveLength(1);
     expect(resolved.components[0]).toMatchObject({ item_id: "mic1", units_per_listing: 1, owned: true });
-    const contents = canonicalKitContents(resolved.components, first.items);
-    expect(contents.unreconciled_contents).toEqual([]);
-    expect(contents.contents).toEqual(expect.arrayContaining([
+    const context = await listingKitContext(
+      {} as any,
+      "dbcinema",
+      first.items[0],
+      resolved.components,
+      first.items,
+    );
+    expect(context.contents_review_required).toBe(false);
+    expect(context.kit.unreconciled_contents).toEqual([]);
+    expect(context.kit.contents).toEqual([
+      "1 × DJI Wireless Mics",
       "2x DJI Mic transmitters",
       "1x DJI Mic receiver",
-      "1x DJI audio cable",
+      "1x Audio cable",
       "1x DJI Mic charging case",
       "1x DJI Mic carrying case",
-      "2x DJI Lavalier microphones",
-    ]));
+      "2x Lavalier microphones",
+    ]);
+    expect(context.included_with_rental).toEqual([
+      "2x DJI Mic transmitters",
+      "1x DJI Mic receiver",
+      "1x Audio cable",
+      "1x DJI Mic charging case",
+      "1x DJI Mic carrying case",
+      "2x Lavalier microphones",
+    ]);
   });
 
   it("repairs the live post-identity state by clearing only the exact packing-review rule", () => {
@@ -172,5 +217,21 @@ describe("owner-confirmed DJI Mic 1 stock review", () => {
     const unexpected = vi.fn().mockResolvedValue({ ...clean, itemWrites: 2 });
     await expect(reconcileDjiMic1Stock({ apply: true, verifyIdentity: vi.fn(), run: unexpected })).rejects.toThrow("Dry-run did not match either reviewed DJI Mic 1 repair plan.");
     expect(unexpected).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an owner-confirmed physical kit out of the automatic marketing-only bucket on future syncs", () => {
+    const data = fixture();
+    const product = data.products[0] as any;
+    product.isMarketingOnly = true;
+
+    const plan = djiMic1StockReview(data.items, data.products, data.overrides);
+    const patch = plan.products.find(change => change.id === product._id)?.patch;
+    expect(patch).toMatchObject({ isMarketingOnly: false, isMarketingOnlyOverride: false });
+    expect(patch?.marketingOnlyUpdatedAt).toEqual(expect.any(Number));
+
+    const imported = data.products.map(row => ({ ...row, ...patch })) as any;
+    const secondReview = djiMic1StockReview(data.items, imported, data.overrides);
+    expect(secondReview.products).toHaveLength(0);
+    expect(data.items.find(item => item.name_canonical === "DJI Wireless Mics")?.qty).toBe(1);
   });
 });

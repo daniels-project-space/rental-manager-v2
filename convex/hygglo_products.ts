@@ -291,7 +291,12 @@ export async function catalogueForStorefrontRows(ctx: QueryCtx, allowPrepared = 
       const classifiedMarketing=resolvedMarketingOnly(product,resolved,inventory);
       const complete = resolved.complete && components.length > 0 && components.every(c => Number.isSafeInteger(c.qty) && c.qty > 0);
       const primary = listingKitItem(resolved, inventory);
-      const kit = canonicalKitContents(resolved.components, inventory, primary?.compatibility?.included_with_rental ?? []);
+      const kit = canonicalKitContents(
+        resolved.components,
+        inventory,
+        primary?.compatibility?.included_with_rental ?? [],
+        primary ? String(primary._id) : undefined,
+      );
       const verifiedContents = complete && resolved.owned===true && !classifiedMarketing;
       const inventoryFacts = {version:1 as const,contents:verifiedContents?kit.contents:[],optionalContents:verifiedContents?kit.optional_contents:[],
         reviewRequired:!verifiedContents || kit.unreconciled_contents.length>0 || resolved.applied_stock_rules.some(rule=>rule.packing_review_required),owned:classifiedMarketing?false:resolved.owned};

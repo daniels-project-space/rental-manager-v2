@@ -63,19 +63,19 @@ export function loadProductContext(
 export async function refreshProductContext(
   ctx: MutationCtx, account: string, productId: number,
 ): Promise<"inserted" | "updated" | "unchanged"> {
-  const [source, existing] = await Promise.all([
+  const [source, existingRows] = await Promise.all([
     ctx.db.query("hygglo_products").withIndex("by_account_product", (q) =>
       q.eq("accountSlug", account).eq("productId", productId)).first(),
     ctx.db.query("hygglo_product_context").withIndex("by_account_product", (q) =>
-      q.eq("account_slug", account).eq("product_id", productId)).first(),
+      q.eq("account_slug", account).eq("product_id", productId)).take(101),
   ]);
+  if (existingRows.length > 100) throw new Error("Product context mirror exceeded the 100-row repair bound");
+  const existing = existingRows[0];
   if (!source) {
     // Remove all old duplicates so deleting a source cannot reveal a stale mirror.
-    if (existing) {
-      const rows = await ctx.db.query("hygglo_product_context").withIndex("by_account_product", (q) =>
-        q.eq("account_slug", account).eq("product_id", productId)).collect();
+    if (existingRows.length) {
       await invalidateStockWhen(ctx, () => true);
-      for (const row of rows) await ctx.db.delete(row._id);
+      for (const row of existingRows) await ctx.db.delete(row._id);
       return "updated";
     }
     return "unchanged";
@@ -86,13 +86,17 @@ export async function refreshProductContext(
     await ctx.db.insert("hygglo_product_context", next);
     return "inserted";
   }
-  if (Object.entries(next).every(([key, value]) => JSON.stringify(existing[key as keyof typeof existing]) === JSON.stringify(value))) {
+  const unchanged = Object.entries(next).every(([key, value]) =>
+    JSON.stringify(existing[key as keyof typeof existing]) === JSON.stringify(value));
+  const duplicateMirrors = existingRows.slice(1);
+  if (unchanged && !duplicateMirrors.length) {
     return "unchanged";
   }
-  await invalidateStockWhen(ctx, () => existing.projection_version !== 2 || existing.source_product_id === undefined || existing.image_urls === undefined ||
+  await invalidateStockWhen(ctx, () => duplicateMirrors.length > 0 || existing.projection_version !== 2 || existing.source_product_id === undefined || existing.image_urls === undefined ||
     ["account_slug", "product_id", "name", "description", "master_item_id"].some(key =>
       existing[key as keyof typeof existing] !== next[key as keyof typeof next]));
-  await ctx.db.patch(existing._id, next);
+  if (!unchanged) await ctx.db.patch(existing._id, next);
+  for (const duplicate of duplicateMirrors) await ctx.db.delete(duplicate._id);
   return "updated";
 }
 

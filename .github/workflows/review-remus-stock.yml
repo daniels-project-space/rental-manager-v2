@@ -1,0 +1,45 @@
+name: Review owned Remus master stock
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Apply the reviewed 22-offer master-stock repair after the dry-run plan is validated
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: remus-stock-review
+  cancel-in-progress: false
+
+jobs:
+  review:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout production source
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.1
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Dry-run, optionally apply, and verify all reviewed offers
+        run: node scripts/run-remus-stock-review.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
