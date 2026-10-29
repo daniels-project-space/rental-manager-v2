@@ -10,6 +10,23 @@ const productId = 852812;
 const product = await ctx.db.query("hygglo_products").withIndex("by_account_product", q => q.eq("accountSlug", account).eq("productId", productId)).first();
 if (!product) return { productFound: false };
 const linkedMaster = product.masterItemId ? await ctx.db.get(product.masterItemId) : null;
+const listingStockRules = await Promise.all((linkedMaster?.listing_stock_rules ?? []).map(async rule => ({
+  titlePattern: rule.title_pattern,
+  source: rule.source,
+  components: await Promise.all((rule.components ?? []).map(async component => {
+    const item = await ctx.db.get(component.item_id);
+    return { name: item?.name_canonical ?? "missing", quantity: component.qty };
+  })),
+  excludes: await Promise.all((rule.excludes ?? []).map(async id => {
+    const item = await ctx.db.get(id);
+    return item?.name_canonical ?? "missing";
+  })),
+  suppliedParts: rule.supplied_parts ?? [],
+  optionalParts: rule.optional_parts ?? [],
+  packingReviewRequired: rule.packing_review_required ?? false,
+  stockReviewRequired: rule.stock_review_required ?? false,
+  descriptionOverride: rule.description_override ?? null,
+}))));
 const mappings = await ctx.db.query("listing_resolution_override").withIndex("by_account_product", q => q.eq("account_slug", account).eq("product_id", productId)).take(2);
 const mic1 = await ctx.db.query("items").withIndex("by_canonical_name", q => q.eq("name_canonical", "DJI Wireless Mics")).take(2);
 const mic2 = await ctx.db.query("items").withIndex("by_canonical_name", q => q.eq("name_canonical", "DJI Mic 2 wireless")).take(2);
@@ -22,7 +39,7 @@ const mappingDetails = await Promise.all(mappings.map(async row => ({
 })));
 return {
   productFound: true,
-  productMaster: { name: linkedMaster?.name_canonical ?? "missing", quantity: linkedMaster?.qty ?? null, unitKind: linkedMaster?.unit_kind ?? null },
+  productMaster: { name: linkedMaster?.name_canonical ?? "missing", quantity: linkedMaster?.qty ?? null, unitKind: linkedMaster?.unit_kind ?? null, listingStockRules },
   mic1: mic1.map(item => ({ name: item.name_canonical, quantity: item.qty, unitKind: item.unit_kind, status: item.status, contents: item.compatibility?.included_with_rental ?? [] })),
   mic2: mic2.map(item => ({ name: item.name_canonical, quantity: item.qty, unitKind: item.unit_kind, status: item.status })),
   mappings: mappingDetails,
@@ -107,7 +124,7 @@ export async function runDjiMic1StockReview({ dryRun, key = process.env.CONVEX_D
   try {
     return await execute({ dryRun, key });
   } catch (error) {
-    if (dryRun && /Reviewed DJI Mic 1 offer master changed/.test(error instanceof Error ? error.message : "")) {
+    if (dryRun && /Reviewed DJI Mic 1 offer master changed|reviewed DJI Mic 1 packing rule changed/i.test(error instanceof Error ? error.message : "")) {
       return { blocked: true, diagnostic: await diagnose({ key }) };
     }
     throw error;
