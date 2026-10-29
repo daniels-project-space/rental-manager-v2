@@ -24,9 +24,14 @@ export async function listingKitContext(ctx:QueryCtx,account:string|null|undefin
     conflict=listingMediaConflict(recorded,listingNames);
     if(conflict)safe=withoutUnverifiedMediaCapacity(recorded);
   }
-  const kit=canonicalKitContents(components,inventory,safe);
+  const reviewedForItem=item?components.filter(c=>String(c.item_id)===String(item._id)).flatMap(c=>c.reviewed_supplied_parts??[]):[];
+  const reviewedLines=reviewedForItem.map(p=>`${p.qty}x ${p.name}`);
+  const kit=canonicalKitContents(components,inventory,safe,item?String(item._id):undefined);
+  const includedWithRental=reviewedLines.length
+    ? reviewedLines.filter(text=>!kit.unreconciled_contents.includes(text))
+    : safe.filter(text=>!kit.unreconciled_contents.includes(text));
   const contents_review_required=conflict||kit.unreconciled_contents.length>0;
-  return {kit,included_with_rental:safe.filter(text=>!kit.unreconciled_contents.includes(text)),contents_review_required,
+  return {kit,included_with_rental:includedWithRental,contents_review_required,
     contents_review:contents_review_required?{recorded_contents:recorded,listing_names:listingNames,unreconciled_contents:kit.unreconciled_contents}:null};
 }
 

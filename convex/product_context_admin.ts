@@ -24,14 +24,16 @@ export const audit = internalQuery({
     const keys = new Map(page.page.map((row) => [`${row.accountSlug}#${row.productId}`, row]));
     const mismatches: Array<{ account: string; productId: number; fields: string[] }> = [];
     for (const row of keys.values()) {
-      const [source, compact] = await Promise.all([
+      const [source, compactRows] = await Promise.all([
         ctx.db.query("hygglo_products").withIndex("by_account_product", (q) => q.eq("accountSlug", row.accountSlug).eq("productId", row.productId)).first(),
-        ctx.db.query("hygglo_product_context").withIndex("by_account_product", (q) => q.eq("account_slug", row.accountSlug).eq("product_id", row.productId)).first(),
+        ctx.db.query("hygglo_product_context").withIndex("by_account_product", (q) => q.eq("account_slug", row.accountSlug).eq("product_id", row.productId)).take(2),
       ]);
       if (!source) throw new Error("Product audit lost a source inside its snapshot");
+      const compact = compactRows[0];
       const expected = projectProduct(source);
       const fields = Object.entries(expected).filter(([key, value]) =>
         !compact || JSON.stringify(compact[key as keyof typeof compact]) !== JSON.stringify(value)).map(([key]) => key);
+      if (compactRows.length > 1) fields.push("duplicate_mirrors");
       if (fields.length) mismatches.push({ account: row.accountSlug, productId: row.productId, fields });
     }
     return { scanned: page.page.length, checkedKeys: keys.size, mismatches, isDone: page.isDone, continueCursor: page.continueCursor };

@@ -3,14 +3,30 @@ import type { Doc, Id } from "../_generated/dataModel";
 export const DJI_MIC1_OFFERS = [["dbcinema", 852812]] as const;
 export const DJI_MIC1_REVIEW_SOURCE = "owner-confirmed DJI Mic 1 identity — 2026-10-28";
 const STALE_PRODUCT_MASTER_NAMES = ["Audio boom mic Sennheiser", "Rode Video Mic Go"] as const;
-const DJI_MIC1_DESCRIPTION_OVERRIDE = "Contents: • 1x DJI Wireless Mics";
+const DJI_MIC1_LEGACY_MASTER_PARTS = ["2x transmitter", "1x receiver", "1x charging case"] as const;
+const DJI_MIC1_MASTER_PARTS = [
+  "2x transmitter",
+  "1x receiver",
+  "1x audio cable",
+  "1x charging case",
+  "1x carrying case",
+  "2x lavalier microphones",
+] as const;
+const DJI_MIC1_LEGACY_SUPPLIED_PARTS = [
+  { name: "DJI Mic transmitters", qty: 2 },
+  { name: "DJI Mic receiver", qty: 1 },
+  { name: "DJI Mic charging case", qty: 1 },
+  { name: "Lavalier microphones", qty: 2 },
+] as const;
+const DJI_MIC1_LEGACY_DESCRIPTION_OVERRIDE = "Contents: • 2x transmitters • 1x receiver • 1x charging case • 2x lavalier microphones";
+const DJI_MIC1_DESCRIPTION_OVERRIDE = "Contents: • 2x transmitters • 1x receiver • 1x audio cable • 1x charging case • 1x carrying case • 2x lavalier microphones";
 const DJI_MIC1_SUPPLIED_PARTS = [
   { name: "DJI Mic transmitters", qty: 2 },
   { name: "DJI Mic receiver", qty: 1 },
-  { name: "DJI audio cable", qty: 1 },
+  { name: "Audio cable", qty: 1 },
   { name: "DJI Mic charging case", qty: 1 },
   { name: "DJI Mic carrying case", qty: 1 },
-  { name: "DJI Lavalier microphones", qty: 2 },
+  { name: "Lavalier microphones", qty: 2 },
 ] as const;
 
 function stable(value: any): string {
@@ -30,7 +46,8 @@ export function djiMic1StockReview(items: Doc<"items">[], products: Doc<"hygglo_
     throw Error("Owner-confirmed DJI Mic 1 master identity or quantity needs review");
   const master = masters[0];
   const parts = master.compatibility?.included_with_rental ?? [];
-  if (!["2x transmitter", "1x receiver", "1x charging case"].every(part => parts.includes(part)))
+  const allowedMasterParts = new Set([...DJI_MIC1_LEGACY_MASTER_PARTS, ...DJI_MIC1_MASTER_PARTS]);
+  if (!DJI_MIC1_LEGACY_MASTER_PARTS.every(part => parts.includes(part)) || parts.some(part => !allowedMasterParts.has(part as typeof DJI_MIC1_MASTER_PARTS[number])))
     throw Error("Owner-confirmed DJI Mic 1 master contents changed");
   const secondGen = items.filter(item => item.name_canonical === "DJI Mic 2 wireless");
   if (secondGen.length !== 1 || secondGen[0]._id === master._id) throw Error("DJI Mic generations are not separate in master inventory");
@@ -54,6 +71,17 @@ export function djiMic1StockReview(items: Doc<"items">[], products: Doc<"hygglo_
     const product = matches[0], title = product.name ?? "";
     if (!/\bdji\s+mic\s+wireless\b/i.test(title) || /\bdji\s+mic\s*2\b/i.test(title) || product.isMarketingOnlyOverride === true)
       throw Error(`Reviewed DJI Mic 1 offer identity or owner exclusion needs review: ${account}#${id}`);
+    const description = (product.description ?? "").replace(/<[^>]*>/g, " ").replace(/&nbsp;|&#160;/gi, " ").toLowerCase().replace(/\s+/g, " ");
+    const sellerListedContents = [
+      /\b2\s*x\s+dji\s+mic\s+transmitters?\b/,
+      /\b1\s*x\s+dji\s+mic\s+rec(?:eiver|iever)\b/,
+      /\b1\s*x\s+audio\s+cable\b/,
+      /\b1\s*x\s+charging\s+case\b/,
+      /\b1\s*x\s+carrying\s+case\b/,
+      /\b2\s*x\s+lavelier\s+lapel\s+microphones?\b/,
+    ];
+    if (!Number.isSafeInteger(product.descriptionSyncedAt) || !description || sellerListedContents.some(pattern => !pattern.test(description)))
+      throw Error(`Reviewed DJI Mic 1 seller-listed base contents changed or are not verified: ${account}#${id}`);
     if (product.masterItemId && product.masterItemId !== master._id && !staleMasterIds.has(product.masterItemId))
       throw Error(`Reviewed DJI Mic 1 offer master changed: ${account}#${id}`);
 
@@ -104,12 +132,24 @@ export function djiMic1StockReview(items: Doc<"items">[], products: Doc<"hygglo_
       currentRule.packing_review_required === true && currentRule.stock_review_required === undefined &&
       currentRule.supplied_parts === undefined && currentRule.optional_parts === undefined &&
       currentRule.description_override === undefined && currentRule.apply_to_declared_component === undefined;
-    if (currentRule && !currentIsFinal && !isPriorReviewRule)
+    const isPriorContentsRule = currentRule !== undefined && currentRule.title_pattern === pattern &&
+      currentRule.components.length === 1 && String(currentRule.components[0].item_id) === String(master._id) &&
+      currentRule.components[0].qty === 1 && currentRule.excludes.length === 0 &&
+      currentRule.packing_review_required === false && currentRule.stock_review_required === undefined &&
+      stable(currentRule.supplied_parts ?? []) === stable(DJI_MIC1_LEGACY_SUPPLIED_PARTS) &&
+      currentRule.description_override === DJI_MIC1_LEGACY_DESCRIPTION_OVERRIDE &&
+      currentRule.optional_parts === undefined && currentRule.apply_to_declared_component === undefined;
+    if (currentRule && !currentIsFinal && !isPriorReviewRule && !isPriorContentsRule)
       throw Error("The reviewed DJI Mic 1 packing rule changed; review the listing before repair");
     if (!currentIsFinal) ruleChanges.push(finalRule);
     const patch: Partial<Doc<"hygglo_products">> = {};
     if (product.masterItemId !== master._id || product.stockIdentityOverride?.itemId !== master._id || product.stockIdentityOverride?.title !== title)
       Object.assign(patch, { masterItemId: master._id, stockIdentityOverride: { itemId: master._id, title, source: DJI_MIC1_REVIEW_SOURCE } });
+    // This is an owner-reviewed physical kit. If the importer's automatic
+    // marketing heuristic hid it, persist a manual rentable classification;
+    // upsertProductsBatch preserves this override on future catalogue syncs.
+    if (product.isMarketingOnly && product.isMarketingOnlyOverride === undefined)
+      Object.assign(patch, { isMarketingOnly: false, isMarketingOnlyOverride: false, marketingOnlyUpdatedAt: Date.now() });
     if (Object.keys(patch).length) productChanges.push({ id: product._id, patch });
   }
 
@@ -119,6 +159,9 @@ export function djiMic1StockReview(items: Doc<"items">[], products: Doc<"hygglo_
   const itemPatch: Partial<Doc<"items">> = {};
   if (stable(master.aliases ?? []) !== stable(aliases)) itemPatch.aliases = aliases;
   if (stable(master.listing_stock_rules ?? []) !== stable(listing_stock_rules)) itemPatch.listing_stock_rules = listing_stock_rules;
+  const compatibility = master.compatibility ?? {};
+  const reviewedCompatibility = { ...compatibility, included_with_rental: [...DJI_MIC1_MASTER_PARTS] };
+  if (stable(compatibility) !== stable(reviewedCompatibility)) itemPatch.compatibility = reviewedCompatibility;
   const itemChanges = Object.keys(itemPatch).length ? [{ id: master._id, patch: itemPatch }] : [];
   return { items: itemChanges, products: productChanges, mappingChanges, inserts };
 }

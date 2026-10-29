@@ -18,7 +18,8 @@ function fixture(source: Record<string, any>[] = [], compact: Record<string, any
         reads.push(table);
         return (rows[table] ?? []).filter((row) => predicates.every((test) => test(row)))
           .sort((a,b) => a._creationTime - b._creationTime);
-      }, async first() { return (await q.collect())[0] ?? null; },
+      }, async take(count: number) { return (await q.collect()).slice(0, count); },
+      async first() { return (await q.collect())[0] ?? null; },
       async unique() { const found = await q.collect(); if (found.length > 1) throw Error("Non-unique fixture index"); return found[0] ?? null; },
       async paginate(options: {cursor: string|null; numItems: number}) {
         const all = await q.collect(), offset = Number(options.cursor ?? 0), end = offset + options.numItems;
@@ -79,6 +80,21 @@ describe("transactional compact product contexts", () => {
     f.reads.length = 0;
     expect(await loadProductContext(f.ctx,"leo",77)).toMatchObject({name:"Sony FX3",projection_version:2});
     expect(f.reads).toEqual(["hygglo_product_context"]);
+  });
+
+  it("collapses duplicate listing mirrors to the indexed canonical source on refresh", async () => {
+    const source = product("source");
+    const f = fixture([source], [
+      { ...projectProduct(source), _id:"canonical", _creationTime:1 },
+      { ...projectProduct(product("stale-source", { name:"Stale mirrored kit", masterItemId:"stale-camera" })), _id:"stale-copy", _creationTime:2 },
+    ]);
+
+    expect(await refreshProductContext(f.ctx,"leo",77)).toBe("updated");
+    expect(f.rows.hygglo_product_context).toHaveLength(1);
+    expect(f.rows.hygglo_product_context[0]).toMatchObject({
+      _id:"canonical", source_product_id:"source", name:"Sony FX3", master_item_id:"camera",
+    });
+    expect(f.rows.hygglo_products).toHaveLength(1);
   });
 
   it("shares the same pending indexed read across stock qualification and images", async () => {
@@ -150,6 +166,9 @@ describe("transactional compact product contexts", () => {
     f.rows.hygglo_product_context[0].is_marketing_only = false;
     const result = await (audit as any)._handler(f.ctx,{paginationOpts:{cursor:null,numItems:50}});
     expect(result.mismatches[0].fields).toEqual(["is_marketing_only"]);
+    f.rows.hygglo_product_context.push({ ...f.rows.hygglo_product_context[0], _id:"duplicate-mirror", _creationTime:99 });
+    const duplicateResult = await (audit as any)._handler(f.ctx,{paginationOpts:{cursor:null,numItems:50}});
+    expect(duplicateResult.mismatches[0].fields).toContain("duplicate_mirrors");
     expect(f.writes).toEqual([]);
   });
 
