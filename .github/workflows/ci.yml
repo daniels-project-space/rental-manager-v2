@@ -6,6 +6,13 @@ on:
     paths-ignore: ['**.md', 'docs/**', '.serena/**']
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish_backend:
+        description: Publish the current validated main backend on demand
+        required: true
+        type: boolean
+        default: false
 concurrency:
   group: ci-${{ github.ref }}
   # PR checks are safe to supersede. A main run may be publishing the backend;
@@ -72,7 +79,7 @@ jobs:
       - name: Guard London booking-time transcripts
         run: node scripts/check-booking-time-extractors.mjs
       - name: Verify the private main-branch backend credential
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_backend == true))
         run: node scripts/verify-backend-key.mjs
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
@@ -80,7 +87,7 @@ jobs:
   deploy-backend:
     name: Publish backend without rebuilding an unchanged website
     needs: typecheck
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.RM_SPLIT_DEPLOYMENTS == 'enabled' && needs.typecheck.outputs.backend == 'true' && needs.typecheck.outputs.website == 'false'
+    if: github.ref == 'refs/heads/main' && vars.RM_SPLIT_DEPLOYMENTS == 'enabled' && ((github.event_name == 'push' && needs.typecheck.outputs.backend == 'true' && needs.typecheck.outputs.website == 'false') || (github.event_name == 'workflow_dispatch' && inputs.publish_backend == true))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     concurrency:
