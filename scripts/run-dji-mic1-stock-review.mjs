@@ -106,8 +106,16 @@ async function executeConvexDiagnostic({ key }) {
       maxBuffer: 1024 * 1024,
     });
     return parseConvexRunOutput(stdout);
-  } catch {
-    throw new Error("The read-only DJI Mic 1 inventory diagnostic could not complete.");
+  } catch (error) {
+    const detail = String(error?.stderr ?? error?.message ?? "")
+      .replaceAll(key, "[redacted]")
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean)
+      .slice(-3)
+      .join(" ")
+      .slice(0, 400);
+    throw new Error("The read-only DJI Mic 1 inventory diagnostic could not complete." + (detail ? ` ${detail}` : ""));
   }
 }
 
