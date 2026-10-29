@@ -178,6 +178,8 @@ describe("owner-confirmed DJI Mic 1 stock review", () => {
     expect(convexRunArguments(false)).not.toContain("--push");
     expect(convexDiagnosticArguments().slice(0, 2)).toEqual(["run", "--inline-query"]);
     expect(convexDiagnosticArguments()[2]).toContain("listing_stock_rules");
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+    expect(() => new AsyncFunction("ctx", convexDiagnosticArguments()[2])).not.toThrow();
     expect(parseConvexRunOutput(`Running mutation\n${JSON.stringify(summary)}`)).toEqual(summary);
   });
 

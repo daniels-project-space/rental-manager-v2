@@ -26,7 +26,7 @@ const listingStockRules = await Promise.all((linkedMaster?.listing_stock_rules ?
   packingReviewRequired: rule.packing_review_required ?? false,
   stockReviewRequired: rule.stock_review_required ?? false,
   descriptionOverride: rule.description_override ?? null,
-}))));
+})));
 const mappings = await ctx.db.query("listing_resolution_override").withIndex("by_account_product", q => q.eq("account_slug", account).eq("product_id", productId)).take(2);
 const mic1 = await ctx.db.query("items").withIndex("by_canonical_name", q => q.eq("name_canonical", "DJI Wireless Mics")).take(2);
 const mic2 = await ctx.db.query("items").withIndex("by_canonical_name", q => q.eq("name_canonical", "DJI Mic 2 wireless")).take(2);
