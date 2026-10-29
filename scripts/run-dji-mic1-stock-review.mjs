@@ -13,6 +13,7 @@ const linkedMaster = product.masterItemId ? await ctx.db.get(product.masterItemI
 const listingStockRules = await Promise.all((linkedMaster?.listing_stock_rules ?? []).map(async rule => ({
   titlePattern: rule.title_pattern,
   source: rule.source,
+  applyToDeclaredComponent: rule.apply_to_declared_component ?? null,
   components: await Promise.all((rule.components ?? []).map(async component => {
     const item = await ctx.db.get(component.item_id);
     return { name: item?.name_canonical ?? "missing", quantity: component.qty };

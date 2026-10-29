@@ -19,6 +19,17 @@ const DJI_MIC1_LEGACY_SUPPLIED_PARTS = [
   { name: "Lavalier microphones", qty: 2 },
 ] as const;
 const DJI_MIC1_LEGACY_DESCRIPTION_OVERRIDE = "Contents: • 2x transmitters • 1x receiver • 1x charging case • 2x lavalier microphones";
+// Exact rule observed on the reviewed live listing. The seller's synced
+// description below independently verifies each of these six base contents.
+const DJI_MIC1_OBSERVED_SUPPLIED_PARTS = [
+  { name: "DJI Mic transmitters", qty: 2 },
+  { name: "DJI Mic receiver", qty: 1 },
+  { name: "DJI audio cable", qty: 1 },
+  { name: "DJI Mic charging case", qty: 1 },
+  { name: "DJI Mic carrying case", qty: 1 },
+  { name: "DJI Lavalier microphones", qty: 2 },
+] as const;
+const DJI_MIC1_OBSERVED_DESCRIPTION_OVERRIDE = "Contents: • 1x DJI Wireless Mics";
 const DJI_MIC1_DESCRIPTION_OVERRIDE = "Contents: • 2x transmitters • 1x receiver • 1x audio cable • 1x charging case • 1x carrying case • 2x lavalier microphones";
 const DJI_MIC1_SUPPLIED_PARTS = [
   { name: "DJI Mic transmitters", qty: 2 },
@@ -99,24 +110,29 @@ export function djiMic1StockReview(items: Doc<"items">[], products: Doc<"hygglo_
 
     const pattern = `^${escape(title)}$`;
     if (pattern.length > 200) throw Error("Reviewed DJI Mic 1 title exceeds the stock rule limit");
+    const ownerRules = (master.listing_stock_rules ?? []).filter(rule => rule.source === DJI_MIC1_REVIEW_SOURCE);
+    if (ownerRules.length > 1) throw Error("The reviewed DJI Mic 1 packing rule is ambiguous");
+    const currentRule = ownerRules[0];
     const finalRule = {
       title_pattern: pattern,
       source: DJI_MIC1_REVIEW_SOURCE,
       components: [{ item_id: master._id, qty: 1 }],
       excludes: [],
+      ...(currentRule?.apply_to_declared_component !== undefined ? { apply_to_declared_component: currentRule.apply_to_declared_component } : {}),
+      ...(currentRule?.optional_parts !== undefined ? { optional_parts: currentRule.optional_parts } : {}),
+      ...(currentRule?.stock_review_required !== undefined ? { stock_review_required: currentRule.stock_review_required } : {}),
       supplied_parts: [...DJI_MIC1_SUPPLIED_PARTS],
       description_override: DJI_MIC1_DESCRIPTION_OVERRIDE,
       packing_review_required: false,
     };
-    const ownerRules = (master.listing_stock_rules ?? []).filter(rule => rule.source === DJI_MIC1_REVIEW_SOURCE);
-    if (ownerRules.length > 1) throw Error("The reviewed DJI Mic 1 packing rule is ambiguous");
-    const currentRule = ownerRules[0];
     const currentIsFinal = currentRule !== undefined && stable({
       title_pattern: currentRule.title_pattern,
       source: currentRule.source,
       components: currentRule.components.map(component => ({ item_id: String(component.item_id), qty: component.qty })),
       excludes: currentRule.excludes.map(String),
       supplied_parts: currentRule.supplied_parts ?? [],
+      optional_parts: currentRule.optional_parts ?? [],
+      apply_to_declared_component: currentRule.apply_to_declared_component ?? false,
       description_override: currentRule.description_override ?? null,
       packing_review_required: currentRule.packing_review_required ?? false,
       stock_review_required: currentRule.stock_review_required ?? false,
@@ -125,6 +141,8 @@ export function djiMic1StockReview(items: Doc<"items">[], products: Doc<"hygglo_
       components: finalRule.components.map(component => ({ item_id: String(component.item_id), qty: component.qty })),
       description_override: DJI_MIC1_DESCRIPTION_OVERRIDE,
       stock_review_required: false,
+      optional_parts: finalRule.optional_parts ?? [],
+      apply_to_declared_component: finalRule.apply_to_declared_component ?? false,
     });
     const isPriorReviewRule = currentRule !== undefined && currentRule.title_pattern === pattern &&
       currentRule.components.length === 1 && String(currentRule.components[0].item_id) === String(master._id) &&
@@ -139,7 +157,14 @@ export function djiMic1StockReview(items: Doc<"items">[], products: Doc<"hygglo_
       stable(currentRule.supplied_parts ?? []) === stable(DJI_MIC1_LEGACY_SUPPLIED_PARTS) &&
       currentRule.description_override === DJI_MIC1_LEGACY_DESCRIPTION_OVERRIDE &&
       currentRule.optional_parts === undefined && currentRule.apply_to_declared_component === undefined;
-    if (currentRule && !currentIsFinal && !isPriorReviewRule && !isPriorContentsRule)
+    const isObservedContentsRule = currentRule !== undefined && currentRule.title_pattern === pattern &&
+      currentRule.components.length === 1 && String(currentRule.components[0].item_id) === String(master._id) &&
+      currentRule.components[0].qty === 1 && currentRule.excludes.length === 0 &&
+      currentRule.packing_review_required !== true && currentRule.stock_review_required !== true &&
+      (currentRule.optional_parts ?? []).length === 0 &&
+      stable(currentRule.supplied_parts ?? []) === stable(DJI_MIC1_OBSERVED_SUPPLIED_PARTS) &&
+      currentRule.description_override === DJI_MIC1_OBSERVED_DESCRIPTION_OVERRIDE;
+    if (currentRule && !currentIsFinal && !isPriorReviewRule && !isPriorContentsRule && !isObservedContentsRule)
       throw Error("The reviewed DJI Mic 1 packing rule changed; review the listing before repair");
     if (!currentIsFinal) ruleChanges.push(finalRule);
     const patch: Partial<Doc<"hygglo_products">> = {};
