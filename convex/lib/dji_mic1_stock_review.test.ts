@@ -53,6 +53,26 @@ function packingReviewFixture() {
   return { items, products, overrides };
 }
 
+function observedContentsFixture() {
+  const current = packingReviewFixture();
+  Object.assign(current.items[0].listing_stock_rules![0], {
+    packing_review_required: false,
+    stock_review_required: false,
+    optional_parts: [],
+    apply_to_declared_component: true,
+    description_override: "Contents: • 1x DJI Wireless Mics",
+    supplied_parts: [
+      { name: "DJI Mic transmitters", qty: 2 },
+      { name: "DJI Mic receiver", qty: 1 },
+      { name: "DJI audio cable", qty: 1 },
+      { name: "DJI Mic charging case", qty: 1 },
+      { name: "DJI Mic carrying case", qty: 1 },
+      { name: "DJI Lavalier microphones", qty: 2 },
+    ],
+  });
+  return current;
+}
+
 describe("owner-confirmed DJI Mic 1 stock review", () => {
   it("moves the listing from the Mic 2 pool to the separate Mic 1 set and is idempotent", () => {
     expect(DJI_MIC1_OFFERS).toEqual([["dbcinema", 852812]]);
@@ -154,6 +174,27 @@ describe("owner-confirmed DJI Mic 1 stock review", () => {
     expect(plan.inserts).toHaveLength(0);
     expect(plan.items[0].patch).not.toHaveProperty("qty");
     expect(plan.items[0].patch.listing_stock_rules).toEqual([expect.objectContaining({ packing_review_required: false })]);
+  });
+
+  it("updates the observed live contents without changing stock or existing rule behavior", () => {
+    const current = observedContentsFixture();
+    const plan = djiMic1StockReview(current.items, current.products, current.overrides);
+    expect(plan.items).toHaveLength(1);
+    expect(plan.products).toHaveLength(0);
+    expect(plan.mappingChanges).toHaveLength(0);
+    expect(plan.items[0].patch).not.toHaveProperty("qty");
+    expect(plan.items[0].patch.listing_stock_rules?.[0]).toMatchObject({
+      apply_to_declared_component: true,
+      optional_parts: [],
+      stock_review_required: false,
+      description_override: "Contents: • 2x transmitters • 1x receiver • 1x audio cable • 1x charging case • 1x carrying case • 2x lavalier microphones",
+    });
+    Object.assign(current.items[0], plan.items[0].patch);
+    expect(djiMic1StockReview(current.items, current.products, current.overrides)).toEqual({ items: [], products: [], mappingChanges: [], inserts: [] });
+
+    const changed = observedContentsFixture();
+    changed.items[0].listing_stock_rules![0].supplied_parts![0].qty = 3;
+    expect(() => djiMic1StockReview(changed.items, changed.products, changed.overrides)).toThrow(/packing rule changed/i);
   });
 
   it("refuses a generation-specific title or a changed owner mapping", () => {
