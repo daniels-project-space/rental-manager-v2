@@ -160,6 +160,39 @@ export const storefrontRead = httpAction(async (ctx, request) => {
 });
 http.route({ path: "/dbcinema/storefront-read", method: "POST", handler: storefrontRead });
 
+export const storefrontMarketingWrite = httpAction(async (ctx, request) => {
+  const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), {
+    status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+  });
+  const secret = process.env.DBCINEMA_MARKETING_WRITE_SECRET;
+  if (!secret) return reply(503, { status: "error", error: "service_not_configured" });
+  if (request.headers.get("x-dbcinema-sync-token") !== secret) return reply(401, { status: "error", error: "unauthorized" });
+  let input: any;
+  try {
+    const raw = await request.text();
+    if (new TextEncoder().encode(raw).length > 100000) return reply(413, { status: "error", error: "request_too_large" });
+    input = JSON.parse(raw);
+  } catch { return reply(400, { status: "error", error: "invalid_request" }); }
+  if (!input || typeof input !== "object" || Array.isArray(input) ||
+      Object.keys(input).some(key => !["protocolVersion", "requestId", "changes"].includes(key)) || input.protocolVersion !== 1 ||
+      typeof input.requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.requestId) ||
+      !Array.isArray(input.changes) || !input.changes.length || input.changes.length > 500 ||
+      input.changes.some((change: any) => !change || typeof change !== "object" || Array.isArray(change) ||
+        Object.keys(change).some(key => !["productId", "marketingOnly", "expectedUpdatedAt"].includes(key)) ||
+        !Number.isSafeInteger(change.productId) || change.productId < 1 ||
+        !(typeof change.marketingOnly === "boolean" || change.marketingOnly === null) ||
+        (change.expectedUpdatedAt !== undefined && (!Number.isSafeInteger(change.expectedUpdatedAt) || change.expectedUpdatedAt < 0))) ||
+      new Set(input.changes.map((change: any) => change.productId)).size !== input.changes.length)
+    return reply(400, { status: "error", error: "invalid_request" });
+  try {
+    const results = await ctx.runMutation(internal.hygglo_products.__saveStorefrontMarketing, { requestId: input.requestId, changes: input.changes });
+    return reply(200, { protocolVersion: 1, status: "success", requestId: input.requestId, results });
+  } catch {
+    return reply(409, { status: "error", error: "save_not_confirmed" });
+  }
+});
+http.route({ path: "/dbcinema/storefront-marketing-write", method: "POST", handler: storefrontMarketingWrite });
+
 /**
  * DB Cinema storefront → RMv2 booking push (2026-08-18).
  *

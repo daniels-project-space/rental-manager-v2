@@ -147,6 +147,7 @@ export default defineConfig({
       "convex/lib/renters.lookup.test.ts",
       "convex/items.storefront-stock.test.ts",
       "convex/storefront-read.test.ts",
+      "convex/storefront-marketing-write.test.ts",
       "convex/storefront-canonical-kits.test.ts",
       "convex/storefront-stock.test.ts",
       "convex/websiteReturns.test.ts",
