@@ -369,14 +369,9 @@ export const adminMarketingListings = query({
 });
 
 /** Atomic, conflict-checked edit of per-listing marketing-only tags. */
-export const __saveMarketingOverrides = internalMutation({
-  args: {
-    accountSlug: v.literal("dbcinema"),
-    changes: v.array(marketingChange),
-  },
-  handler: async (ctx, { accountSlug, changes }) => {
-    if (changes.length > 50 || new Set(changes.map((change) => change.productId)).size !== changes.length) {
-      throw new Error("Save up to 50 distinct listings at a time.");
+async function saveMarketingOverrides(ctx: MutationCtx, accountSlug: "dbcinema", changes: Array<{productId:number;marketingOnly:boolean|null;expectedUpdatedAt?:number}>, limit: number) {
+    if (!changes.length || changes.length > limit || new Set(changes.map((change) => change.productId)).size !== changes.length) {
+      throw new Error(`Save between 1 and ${limit} distinct listings at a time.`);
     }
     const rows = await Promise.all(changes.map(async (change) => {
       if (!Number.isSafeInteger(change.productId) || change.productId < 1) throw new Error("Invalid listing ID.");
@@ -407,6 +402,40 @@ export const __saveMarketingOverrides = internalMutation({
       mode: change.marketingOnly === null ? "automatic" as const : "manual" as const,
       updatedAt: at,
     }));
+}
+
+export const __saveMarketingOverrides = internalMutation({
+  args: { accountSlug: v.literal("dbcinema"), changes: v.array(marketingChange) },
+  handler: async (ctx, { accountSlug, changes }) => saveMarketingOverrides(ctx, accountSlug, changes, 50),
+});
+
+export const __saveStorefrontMarketing = internalMutation({
+  args: { requestId: v.string(), changes: v.array(marketingChange) },
+  handler: async (ctx, { requestId, changes }) => {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) throw Error("Invalid request identifier.");
+    const requestBody = JSON.stringify(changes);
+    const existing = await ctx.db.query("storefront_marketing_requests").withIndex("by_request", q => q.eq("requestId", requestId)).unique();
+    if (existing) {
+      if (existing.requestBody !== requestBody) throw Error("Request identifier was already used with different changes.");
+      for (const result of existing.results) {
+        const current = await ctx.db.query("hygglo_products").withIndex("by_account_product", q => q.eq("accountSlug", "dbcinema").eq("productId", result.productId)).first();
+        if (!current || current.marketingOnlyUpdatedAt !== result.updatedAt || (current.isMarketingOnlyOverride ?? current.isMarketingOnly) !== result.marketingOnly || (current.isMarketingOnlyOverride === undefined ? "automatic" : "manual") !== result.mode)
+          throw Error("A listing changed after this save. Review its current manager state.");
+      }
+      return existing.results;
+    }
+    const results = await saveMarketingOverrides(ctx, "dbcinema", changes, 500);
+    const request = await ctx.db.insert("storefront_marketing_requests", { requestId, requestBody, results, createdAt: Date.now() });
+    await ctx.scheduler.runAfter(30 * 86400000, internal.hygglo_products.__expireStorefrontMarketingReceipt, { request });
+    return results;
+  },
+});
+
+export const __expireStorefrontMarketingReceipt = internalMutation({
+  args: { request: v.id("storefront_marketing_requests") },
+  handler: async (ctx, { request }) => {
+    const receipt = await ctx.db.get(request);
+    if (receipt && receipt.createdAt <= Date.now() - 30 * 86400000) await ctx.db.delete(request);
   },
 });
 
