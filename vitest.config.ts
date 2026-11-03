@@ -248,6 +248,7 @@ export default defineConfig({
       "src/lib/booking-time-extraction.test.ts",
       "src/lib/booking-schedule-context.test.ts",
       "src/lib/calendar-bar-geometry.test.ts",
+      "src/lib/calendar-thumbnails.test.ts",
       "src/lib/revenue/leo-takeover.test.ts",
       "src/lib/revenue/account-breakdown.test.ts",
       "convex/revenue.web.test.ts",

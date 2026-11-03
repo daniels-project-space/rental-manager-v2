@@ -1,6 +1,7 @@
 "use client";
 import styles from "./CalendarGantt.module.css";
 import { rentalCalendarTimestamp } from "../../lib/rental-calendar-time";
+import { uniqueCalendarThumbnails } from "../../lib/calendar-thumbnails";
 type CalendarClockStatus = "confirmed" | "approximate" | "reported" | "missing";
 import WebsiteVerificationPanel from "./WebsiteVerificationPanel";
 import { websiteVerificationLabel, type WebsiteVerification } from "../../../convex/lib/websiteVerification";
@@ -373,8 +374,9 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 function ResThumbs({ items, ring, size = 56 }: { items: ResItem[]; ring: string; size?: number }) {
-  const shown = items.slice(0, 6);
-  const extra = items.length - shown.length;
+  const thumbnails = uniqueCalendarThumbnails(items);
+  const shown = thumbnails.slice(0, 6);
+  const extra = thumbnails.length - shown.length;
   const [preview, setPreview] = useState<{ src: string; name: string; cx: number; cy: number } | null>(null);
 
   const onEnter = (src: string, name: string) => (e: React.MouseEvent<HTMLElement>) => {
