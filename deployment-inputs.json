@@ -275,6 +275,7 @@
       "src/lib/booking-time-extraction.ts",
       "src/lib/booking-time-transcript.ts",
       "src/lib/calendar-bar-geometry.ts",
+      "src/lib/calendar-thumbnails.ts",
       "src/lib/chat/dashboard-tools.ts",
       "src/lib/convex-query-session.ts",
       "src/lib/convex-request-context.ts",
