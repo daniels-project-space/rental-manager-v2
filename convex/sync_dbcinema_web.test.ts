@@ -12,10 +12,10 @@ import { syncDbcinemaWeb, upsertSiteBookingsBatch } from "./sync_dbcinema_web";
 import { websiteVerificationLabel } from "../src/lib/websiteVerificationLabel";
 const invoke = (f: any, ctx: any, args: any) => f._handler(ctx, args);
 it("does not claim a verification snapshot proves collection readiness or a pending card hold",()=>{
- expect(websiteVerificationLabel({approved:true})).toBe("Verification and security checks passed · confirm collection readiness");
- expect(websiteVerificationLabel({approved:false,documentsApproved:true})).toBe("Documents approved · check security requirements");
- expect(websiteVerificationLabel({approved:false})).toBe("Paid · awaiting verification");
- expect(websiteVerificationLabel(null)).toBe("Paid · awaiting verification");
+ expect(websiteVerificationLabel({approved:true})).toBe("Last sync: checks passed · verify on website before collection");
+ expect(websiteVerificationLabel({approved:false,documentsApproved:true})).toBe("Last sync: documents approved · check website before collection");
+ expect(websiteVerificationLabel({approved:false})).toBe("Last sync: verification pending · check website");
+ expect(websiteVerificationLabel(null)).toBe("No website result · check website before collection");
 });
 function database() {
  const rows = new Map<string, any>(); let serial=0;
