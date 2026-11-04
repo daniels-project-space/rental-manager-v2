@@ -29,7 +29,7 @@ export function parseWebsiteVerification(raw: unknown): WebsiteVerification | un
   return { ...x, checks: { ...x.checks } };
 }
 export function websiteVerificationLabel(snapshot: Pick<WebsiteVerification, "approved" | "documentsApproved"> | null | undefined): string {
-  return snapshot?.approved ? "Approved · ready for collection" : snapshot?.documentsApproved ? "Documents approved · card hold pending" : "Paid · awaiting verification";
+  return snapshot?.approved ? "Verification and security checks passed · confirm collection readiness" : snapshot?.documentsApproved ? "Documents approved · check security requirements" : "Paid · awaiting verification";
 }
 
 /** Legacy dashboard readers must not expose the private provider/account trace. */

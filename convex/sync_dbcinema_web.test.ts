@@ -9,7 +9,14 @@ import { bookedUnitsOnDate, repairHeldUnits } from "./lib/availability";
 import { reservationItemUnits } from "./lib/reservations/itemUnits";
 import { queueNotificationEvents } from "./notifications";
 import { syncDbcinemaWeb, upsertSiteBookingsBatch } from "./sync_dbcinema_web";
+import { websiteVerificationLabel } from "./lib/websiteVerification";
 const invoke = (f: any, ctx: any, args: any) => f._handler(ctx, args);
+it("does not claim a verification snapshot proves collection readiness or a pending card hold",()=>{
+ expect(websiteVerificationLabel({approved:true})).toBe("Verification and security checks passed · confirm collection readiness");
+ expect(websiteVerificationLabel({approved:false,documentsApproved:true})).toBe("Documents approved · check security requirements");
+ expect(websiteVerificationLabel({approved:false})).toBe("Paid · awaiting verification");
+ expect(websiteVerificationLabel(null)).toBe("Paid · awaiting verification");
+});
 function database() {
  const rows = new Map<string, any>(); let serial=0;
  const db = {
