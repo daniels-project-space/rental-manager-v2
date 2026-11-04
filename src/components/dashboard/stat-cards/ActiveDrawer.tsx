@@ -1,6 +1,7 @@
 "use client";
 
-import { websiteVerificationLabel, type WebsiteVerification } from "../../../../convex/lib/websiteVerification";
+import type { WebsiteVerification } from "../../../../convex/lib/websiteVerification";
+import { websiteVerificationLabel } from "../../../lib/websiteVerificationLabel";
 import WebsiteVerificationPanel from "../WebsiteVerificationPanel";
 import Image from "next/image";
 import { createPortal } from "react-dom";

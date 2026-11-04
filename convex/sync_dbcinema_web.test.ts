@@ -9,7 +9,7 @@ import { bookedUnitsOnDate, repairHeldUnits } from "./lib/availability";
 import { reservationItemUnits } from "./lib/reservations/itemUnits";
 import { queueNotificationEvents } from "./notifications";
 import { syncDbcinemaWeb, upsertSiteBookingsBatch } from "./sync_dbcinema_web";
-import { websiteVerificationLabel } from "./lib/websiteVerification";
+import { websiteVerificationLabel } from "../src/lib/websiteVerificationLabel";
 const invoke = (f: any, ctx: any, args: any) => f._handler(ctx, args);
 it("does not claim a verification snapshot proves collection readiness or a pending card hold",()=>{
  expect(websiteVerificationLabel({approved:true})).toBe("Verification and security checks passed · confirm collection readiness");

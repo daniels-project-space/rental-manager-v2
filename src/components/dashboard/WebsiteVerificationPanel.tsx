@@ -3,7 +3,7 @@ import { useAction, useQuery, useConvexAuth } from "convex/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
-import { websiteVerificationLabel } from "../../../convex/lib/websiteVerification";
+import { websiteVerificationLabel } from "../../lib/websiteVerificationLabel";
 
 /** Mounted only for the selected private rental; background tabs never poll. */
 export default function WebsiteVerificationPanel({ reservationId }: { reservationId: string }) {
