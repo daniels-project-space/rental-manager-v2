@@ -5,7 +5,6 @@ import { RentalMoneyControl } from "./RentalMoneyControl";
 import { ChangeReview } from "./ChangeReview";
 import { ItemImage, RequestedItemStack } from "./RequestedItemStack";
 import type { CSSProperties } from "react";
-import { OwnerChecksPanel } from "./OwnerChecksPanel";
 import {
   shortListingTitle,
   shortItemName,
@@ -4949,7 +4948,7 @@ export function ReplyInbox() {
         <div
           data-quick-reply-split
           data-conversation-open={!!openId}
-          className={`${styles.split} ${styles.withDock} ${openId ? styles.expandedChat : ""}`}
+          className={`${styles.split} ${styles.withDock} ${styles.expandedChat}`}
         >
           <div className={styles.inbox}>
             {currentHandoffs.length > 0 && (
@@ -5054,10 +5053,6 @@ export function ReplyInbox() {
               </div>
             )}
 
-            <OwnerChecksPanel
-              accountSlug={accountFilter ?? undefined}
-              onOpen={setOpenId}
-            />
             <div className={styles.table}>
               <div className={styles.tableHeader}>
                 {[
