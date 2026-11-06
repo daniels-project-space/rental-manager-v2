@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isOpenPendingReviewBooking, needsOwnerReply } from "./pending_review_queue";
+import {
+  isAwaitingOwnerReply,
+  isClosedRentalLifecycle,
+  isOpenPendingReviewBooking,
+  needsOwnerReply,
+} from "./pending_review_queue";
 
 describe("pending-review queue qualification", () => {
   it("does not count failed, canceled, completed, or obsolete bookings as awaiting confirmation", () => {
@@ -20,5 +25,13 @@ describe("pending-review queue qualification", () => {
     expect(needsOwnerReply({ last_sender: "renter" })).toBe(true);
     expect(needsOwnerReply({ last_sender: "owner" })).toBe(false);
     expect(needsOwnerReply(null)).toBe(false);
+  });
+
+  it("uses the same booking lifecycle rules for the inbox and pending-review count", () => {
+    expect(needsOwnerReply(null, { status: "pending_review" })).toBe(true);
+    expect(needsOwnerReply({ last_sender: "owner" }, { status: "pending_review" })).toBe(false);
+    expect(needsOwnerReply({ human_requested: true, last_sender: "owner" }, { status: "confirmed" })).toBe(true);
+    expect(isAwaitingOwnerReply({ is_request: true, order_step: "CANCELED" })).toBe(false);
+    expect(isClosedRentalLifecycle({ status: "declined" })).toBe(true);
   });
 });

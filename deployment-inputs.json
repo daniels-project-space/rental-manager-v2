@@ -517,6 +517,7 @@
       "convex/lib/claim_duration.ts",
       "convex/lib/co_occurrence.ts",
       "convex/lib/confirmed_headline_order.ts",
+      "convex/lib/confirmed_headline_reads.ts",
       "convex/lib/confirmed_schedule.ts",
       "convex/lib/conversation_funnel.ts",
       "convex/lib/conversation_stage_validator.ts",

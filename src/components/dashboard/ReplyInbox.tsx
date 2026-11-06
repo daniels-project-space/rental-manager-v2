@@ -17,6 +17,7 @@ import {
   type DraftReview,
 } from "../../../convex/lib/draft_review";
 import { inclusiveRentalDays } from "../../../convex/lib/hygglo_pricing";
+import { isAwaitingOwnerReply, isClosedRentalLifecycle } from "../../../convex/lib/pending_review_queue";
 /**
  * Reply Inbox (2026-06-22 v3) — cross-account "renters waiting on me".
  *
@@ -502,32 +503,11 @@ function decideState(t: ReplyTileData): {
  *  cancelled or declined the thread is closed — cancelling IS the answer — so it
  *  should drop out of the action lists even when the renter's message was last. */
 function isResolvedClosed(t: ReplyTileData): boolean {
-  const s = (t.status ?? "").toLowerCase();
-  if (
-    s === "cancelled" ||
-    s === "canceled" ||
-    s === "declined" ||
-    s === "denied"
-  )
-    return true;
-  const step = (t.order_step ?? "").toUpperCase();
-  return (
-    step === "CANCELED" ||
-    step === "CANCELLED" ||
-    step === "DENIED" ||
-    step === "VERIFICATION_FAILED"
-  );
+  return isClosedRentalLifecycle(t);
 }
 /** True when the ball is in MY court (renter spoke last, or a pending request). */
 function awaitingMe(t: ReplyTileData): boolean {
-  if (t.human_requested && !isResolvedClosed(t)) return true;
-  // If I sent the last message, it's the renter's turn — never "waiting on me",
-  // even for a still-open request (I've already replied / approved it).
-  if (t.last_sender === "owner") return false;
-  if (t.last_sender === "renter") return true;
-  // Cancelled / declined → I already closed it; don't keep nagging me.
-  if (isResolvedClosed(t)) return false;
-  return t.last_sender === "renter" || t.is_request;
+  return isAwaitingOwnerReply(t);
 }
 function statusText(t: ReplyTileData): string {
   if (t.human_requested) return "Human requested";

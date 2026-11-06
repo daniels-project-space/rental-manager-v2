@@ -1,20 +1,23 @@
 import type { Doc } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import type { ReservationRow } from "./reservations/predicates";
+import { takeRentalHeadlineWindow } from "./confirmed_headline_reads";
 
 function sourceWindow(ctx: QueryCtx, field: "start_date" | "pickup_date", start: string, end: string, account: string | null) {
   if (account) {
-    return field === "start_date"
+    const query = field === "start_date"
       ? ctx.db.query("reservations").withIndex("by_account_status_start_date", (q) =>
-        q.eq("account_slug", account).eq("status", "completed").gte("start_date", start).lte("start_date", end)).collect()
+        q.eq("account_slug", account).eq("status", "completed").gte("start_date", start).lte("start_date", end))
       : ctx.db.query("reservations").withIndex("by_account_status_pickup_date", (q) =>
-        q.eq("account_slug", account).eq("status", "completed").gte("pickup_date", start).lte("pickup_date", end)).collect();
+        q.eq("account_slug", account).eq("status", "completed").gte("pickup_date", start).lte("pickup_date", end));
+    return takeRentalHeadlineWindow(query, `completed ${field}`);
   }
-  return field === "start_date"
+  const query = field === "start_date"
     ? ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
-      q.eq("status", "completed").gte("start_date", start).lte("start_date", end)).collect()
+      q.eq("status", "completed").gte("start_date", start).lte("start_date", end))
     : ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
-      q.eq("status", "completed").gte("pickup_date", start).lte("pickup_date", end)).collect();
+      q.eq("status", "completed").gte("pickup_date", start).lte("pickup_date", end));
+  return takeRentalHeadlineWindow(query, `completed ${field}`);
 }
 
 export function revenueFactRow(row: Doc<"reservation_revenue_facts">): ReservationRow {
@@ -36,11 +39,11 @@ export async function loadCompletedMonthlyRows(ctx: QueryCtx, start: string, end
   const ready = await ctx.db.query("reservation_revenue_ready").withIndex("by_key", (q) => q.eq("key", "v1")).first();
   if (!ready?.ready) return original();
   const firstMonth = start.slice(0, 7), lastMonth = end.slice(0, 7);
-  const facts = account
-    ? await ctx.db.query("reservation_revenue_facts").withIndex("by_account_month", (q) =>
-      q.eq("account_slug", account).gte("effective_month", firstMonth).lte("effective_month", lastMonth)).collect()
-    : await ctx.db.query("reservation_revenue_facts").withIndex("by_month", (q) =>
-      q.gte("effective_month", firstMonth).lte("effective_month", lastMonth)).collect();
+  const facts = await takeRentalHeadlineWindow(account
+    ? ctx.db.query("reservation_revenue_facts").withIndex("by_account_month", (q) =>
+      q.eq("account_slug", account).gte("effective_month", firstMonth).lte("effective_month", lastMonth))
+    : ctx.db.query("reservation_revenue_facts").withIndex("by_month", (q) =>
+      q.gte("effective_month", firstMonth).lte("effective_month", lastMonth)), "monthly revenue facts");
   const rows = facts.map(revenueFactRow);
   const dateShape = /^\d{4}-\d{2}-\d{2}$/;
   if (rows.some((row) => !dateShape.test(row.start_date!) ||

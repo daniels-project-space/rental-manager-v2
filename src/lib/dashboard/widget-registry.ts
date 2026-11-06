@@ -1,38 +1,49 @@
-import { BusinessPayoutCalculator } from "@/components/dashboard/finance/BusinessPayoutCalculator";
 import type { ComponentType } from "react";
-import { LiveCalendar } from "@/components/dashboard/LiveCalendar";
+import dynamic from "next/dynamic";
 import { StatsGrid } from "@/components/dashboard/StatsGrid";
-import { LifetimeRevenue } from "@/components/dashboard/LifetimeRevenue";
-import { EarningsChart } from "@/components/dashboard/EarningsChart";
-import { TaxSummary } from "@/components/dashboard/TaxSummary";
-import { LiveActivity } from "@/components/dashboard/LiveActivity";
 import { CalendarStrip } from "@/components/dashboard/CalendarStrip";
-import { ItemAvailabilityCalendar } from "@/components/dashboard/ItemAvailabilityCalendar";
 import { NextRentals } from "@/components/dashboard/NextRentals";
 import { ReturnHub } from "@/components/dashboard/ReturnHub";
-import { ConversationFunnel } from "@/components/dashboard/ConversationFunnel";
-import { ItemRevenuePanel } from "@/components/dashboard/ItemRevenuePanel";
-import { TopBundles } from "@/components/dashboard/TopBundles";
-import { ItemCycleTracker } from "@/components/dashboard/ItemCycleTracker";
-import { OutOfStockPanel } from "@/components/dashboard/OutOfStockPanel";
-import { MissedRevenue } from "@/components/dashboard/MissedRevenue";
-import { InvestmentScorecard } from "@/components/dashboard/InvestmentScorecard";
-import { SellRecommender } from "@/components/dashboard/SellRecommender";
-import { PriceRecommendations } from "@/components/dashboard/PriceRecommendations";
-import { AIInvestmentInsights } from "@/components/dashboard/AIInvestmentInsights";
-import { AIChat } from "@/components/dashboard/AIChat";
-import { HealthScanner } from "@/components/dashboard/HealthScanner";
-import { HyggloInbox } from "@/components/dashboard/HyggloInbox";
-import { ReplyInbox } from "@/components/dashboard/ReplyInbox";
-import { ItemROIPanel } from "@/components/dashboard/ItemROIPanel";
-import { LostRevenueBuyPanel } from "@/components/dashboard/LostRevenueBuyPanel";
-import { VerificationFunnelPanel } from "@/components/dashboard/VerificationFunnelPanel";
-import { EquipmentValuePanel } from "@/components/dashboard/EquipmentValuePanel";
-import { CompetitorIntelPanel } from "@/components/dashboard/CompetitorIntelPanel";
-import { PortedListingsPanel } from "@/components/dashboard/PortedListingsPanel";
-import { BrandControlPanel } from "@/components/dashboard/BrandControlPanel";
-import { ListingManagerPanel } from "@/components/dashboard/ListingManagerPanel";
-import { MarketingListingsPanel } from "@/components/dashboard/MarketingListingsPanel";
+
+// Secondary dashboard sections are already mounted by DeferredMount only when
+// they approach the viewport. Split each section into its own client chunk so
+// their modules also stay out of the first dashboard download.
+function deferredPanel(
+  loader: () => Promise<{ default: ComponentType<any> }>,
+): ComponentType<any> {
+  return dynamic<any>(loader, { ssr: false, loading: () => null });
+}
+
+const BusinessPayoutCalculator = deferredPanel(() => import("@/components/dashboard/finance/BusinessPayoutCalculator").then((m) => ({ default: m.BusinessPayoutCalculator })));
+const LiveCalendar = deferredPanel(() => import("@/components/dashboard/LiveCalendar").then((m) => ({ default: m.LiveCalendar })));
+const LifetimeRevenue = deferredPanel(() => import("@/components/dashboard/LifetimeRevenue").then((m) => ({ default: m.LifetimeRevenue })));
+const EarningsChart = deferredPanel(() => import("@/components/dashboard/EarningsChart").then((m) => ({ default: m.EarningsChart })));
+const TaxSummary = deferredPanel(() => import("@/components/dashboard/TaxSummary").then((m) => ({ default: m.TaxSummary })));
+const LiveActivity = deferredPanel(() => import("@/components/dashboard/LiveActivity").then((m) => ({ default: m.LiveActivity })));
+const ItemAvailabilityCalendar = deferredPanel(() => import("@/components/dashboard/ItemAvailabilityCalendar").then((m) => ({ default: m.ItemAvailabilityCalendar })));
+const ConversationFunnel = deferredPanel(() => import("@/components/dashboard/ConversationFunnel").then((m) => ({ default: m.ConversationFunnel })));
+const ItemRevenuePanel = deferredPanel(() => import("@/components/dashboard/ItemRevenuePanel").then((m) => ({ default: m.ItemRevenuePanel })));
+const TopBundles = deferredPanel(() => import("@/components/dashboard/TopBundles").then((m) => ({ default: m.TopBundles })));
+const ItemCycleTracker = deferredPanel(() => import("@/components/dashboard/ItemCycleTracker").then((m) => ({ default: m.ItemCycleTracker })));
+const OutOfStockPanel = deferredPanel(() => import("@/components/dashboard/OutOfStockPanel").then((m) => ({ default: m.OutOfStockPanel })));
+const MissedRevenue = deferredPanel(() => import("@/components/dashboard/MissedRevenue").then((m) => ({ default: m.MissedRevenue })));
+const InvestmentScorecard = deferredPanel(() => import("@/components/dashboard/InvestmentScorecard").then((m) => ({ default: m.InvestmentScorecard })));
+const SellRecommender = deferredPanel(() => import("@/components/dashboard/SellRecommender").then((m) => ({ default: m.SellRecommender })));
+const PriceRecommendations = deferredPanel(() => import("@/components/dashboard/PriceRecommendations").then((m) => ({ default: m.PriceRecommendations })));
+const AIInvestmentInsights = deferredPanel(() => import("@/components/dashboard/AIInvestmentInsights").then((m) => ({ default: m.AIInvestmentInsights })));
+const AIChat = deferredPanel(() => import("@/components/dashboard/AIChat").then((m) => ({ default: m.AIChat })));
+const HealthScanner = deferredPanel(() => import("@/components/dashboard/HealthScanner").then((m) => ({ default: m.HealthScanner })));
+const HyggloInbox = deferredPanel(() => import("@/components/dashboard/HyggloInbox").then((m) => ({ default: m.HyggloInbox })));
+const ReplyInbox = deferredPanel(() => import("@/components/dashboard/ReplyInbox").then((m) => ({ default: m.ReplyInbox })));
+const ItemROIPanel = deferredPanel(() => import("@/components/dashboard/ItemROIPanel").then((m) => ({ default: m.ItemROIPanel })));
+const LostRevenueBuyPanel = deferredPanel(() => import("@/components/dashboard/LostRevenueBuyPanel").then((m) => ({ default: m.LostRevenueBuyPanel })));
+const VerificationFunnelPanel = deferredPanel(() => import("@/components/dashboard/VerificationFunnelPanel").then((m) => ({ default: m.VerificationFunnelPanel })));
+const EquipmentValuePanel = deferredPanel(() => import("@/components/dashboard/EquipmentValuePanel").then((m) => ({ default: m.EquipmentValuePanel })));
+const CompetitorIntelPanel = deferredPanel(() => import("@/components/dashboard/CompetitorIntelPanel").then((m) => ({ default: m.CompetitorIntelPanel })));
+const PortedListingsPanel = deferredPanel(() => import("@/components/dashboard/PortedListingsPanel").then((m) => ({ default: m.PortedListingsPanel })));
+const BrandControlPanel = deferredPanel(() => import("@/components/dashboard/BrandControlPanel").then((m) => ({ default: m.BrandControlPanel })));
+const ListingManagerPanel = deferredPanel(() => import("@/components/dashboard/ListingManagerPanel").then((m) => ({ default: m.ListingManagerPanel })));
+const MarketingListingsPanel = deferredPanel(() => import("@/components/dashboard/MarketingListingsPanel").then((m) => ({ default: m.MarketingListingsPanel })));
 
 export type PanelWidget = {
   id: string;
