@@ -53,7 +53,8 @@ describe("owner API boundary", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it("retains anonymous compatibility only while the rollout switch is disabled", async () => {
+  it("opens production dashboard routes without a session in direct access mode", async () => {
+    vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("RENTAL_MANAGER_ACCESS", "open");
     mocks.getToken.mockRejectedValue(new Error("stale auth service"));
     const handler = vi.fn(async () => new Response("direct"));

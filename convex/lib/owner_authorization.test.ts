@@ -33,15 +33,12 @@ describe("backend owner authorization", () => {
   });
 });
 
-it("requires an owner session by default in production while preserving explicit local access",()=>{
- vi.stubEnv("NODE_ENV","production");vi.stubEnv("OWNER_AUTH_REQUIRED","true");
- expect(managerSessionRequired(undefined)).toBe(true);
- expect(managerSessionRequired("open")).toBe(true);
- expect(managerSessionRequired("owner")).toBe(true);
- expect(()=>managerSessionRequired("bad")).toThrow("Invalid");
- vi.stubEnv("NODE_ENV","development");
- expect(managerSessionRequired(undefined)).toBe(false);
- expect(managerSessionRequired("open")).toBe(false);
- expect(managerSessionRequired("owner")).toBe(true);
- vi.unstubAllEnvs();
+it.each(["production", "development", "test", undefined])("opens the dashboard directly in %s unless owner access is explicitly selected", (environment) => {
+ vi.stubEnv("NODE_ENV", environment); vi.stubEnv("OWNER_AUTH_REQUIRED", "true");
+ try {
+  expect(managerSessionRequired(undefined)).toBe(false);
+  expect(managerSessionRequired("open")).toBe(false);
+  expect(managerSessionRequired("owner")).toBe(true);
+  for (const value of ["", "bad", "OPEN"]) expect(()=>managerSessionRequired(value)).toThrow("Invalid");
+ } finally { vi.unstubAllEnvs(); }
 });
