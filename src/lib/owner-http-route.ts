@@ -18,8 +18,8 @@ export async function ownerClientFactory(): Promise<ConvexClientFactory> {
   const required = managerSessionRequired(process.env.RENTAL_MANAGER_ACCESS);
   const url = process.env.CONVEX_URL ?? RENTAL_CONVEX_URL;
   if (url !== RENTAL_CONVEX_URL) throw new Error("Unexpected rental Convex deployment");
-  // Keep direct access in local/test mode only. Production calls must carry a
-  // valid owner session; never elevate to an admin service credential.
+  // Direct dashboard access uses the ordinary client in every environment.
+  // Explicit owner mode still requires a valid session.
   if (!required) return () => new ConvexHttpClient(url);
   const token = await getToken();
   const factory = () => {
