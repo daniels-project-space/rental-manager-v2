@@ -39,6 +39,7 @@ function fixture(tables: Record<string, Row[]>) {
         reads.push({ table, index, rows: data.length, equals: { ...(q.equals ?? {}) } });
         return data;
       },
+      async take(limit: number) { return (await q.collect()).slice(0, limit); },
       async first() { return (await q.collect())[0] ?? null; },
     };
     return q;

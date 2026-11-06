@@ -4,10 +4,12 @@ export const OWNER_SERVICE_SUBJECT = "rental-manager-service";
 export interface OwnerIdentity { issuer: string; subject: string }
 export interface OwnerBinding { auth_user_id: string }
 
-/** Daniel's dashboard opens directly. A session gate requires a separate, explicit opt-in. */
+/** Production is owner-session-only; direct anonymous access remains available for local development and tests. */
 export function managerSessionRequired(value: string | undefined): boolean {
-  if (value === undefined || value === "open") return false;
   if (value === "owner") return true;
+  const explicitlyNonProduction = process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
+  if (value === "open") return !explicitlyNonProduction;
+  if (value === undefined) return !explicitlyNonProduction;
   throw new Error("Invalid RENTAL_MANAGER_ACCESS configuration");
 }
 

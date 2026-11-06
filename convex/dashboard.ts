@@ -24,6 +24,7 @@ import {
 import { realisedMonthRevenue, rentalMonthProjectionInputs } from "./lib/reservations/monthRevenue";
 import { loadCompletedMonthlyRows } from "./lib/monthly_revenue_rows";
 import { confirmedHeadlineOrder, confirmedPickupWindow } from "./lib/confirmed_headline_order";
+import { mergeConfirmedHeadlineWindows, takeRentalHeadlineWindow } from "./lib/confirmed_headline_reads";
 import {
   pctOfTarget,
   projectCurrentMonth,
@@ -3098,20 +3099,24 @@ async function loadPendingReviewHeadlineStats(
   pendingHorizonDate.setUTCDate(pendingHorizonDate.getUTCDate() + 365);
   const pendingHorizon = pendingHorizonDate.toISOString().slice(0, 10);
 
-  const pendingReviewRows = accountSlug
-    ? await ctx.db.query("reservations").withIndex("by_account_status_start_date", (q) =>
+  const pendingReviewQuery = accountSlug
+    ? ctx.db.query("reservations").withIndex("by_account_status_start_date", (q) =>
         q.eq("account_slug", accountSlug).eq("status", "pending_review")
-          .gte("start_date", dashCutoff).lte("start_date", pendingHorizon)).collect()
-    : await ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+          .gte("start_date", dashCutoff).lte("start_date", pendingHorizon))
+    : ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
         q.eq("status", "pending_review").gte("start_date", dashCutoff)
-          .lte("start_date", pendingHorizon)).collect();
+          .lte("start_date", pendingHorizon));
+  const pendingReviewRows = await takeRentalHeadlineWindow(pendingReviewQuery, "pending review");
 
   // A scoped page still needs to surface arrivals that landed in another
   // account so they are visible and the owner can switch to All accounts.
-  const pendingRowsForArrivalNotice = accountSlug
-    ? await ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+  const pendingArrivalQuery = accountSlug
+    ? ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
         q.eq("status", "pending_review").gte("start_date", dashCutoff)
-          .lte("start_date", pendingHorizon)).collect()
+          .lte("start_date", pendingHorizon))
+    : null;
+  const pendingRowsForArrivalNotice = pendingArrivalQuery
+    ? await takeRentalHeadlineWindow(pendingArrivalQuery, "pending arrival notices")
     : pendingReviewRows;
   const time = londonTime(now);
   const otherAccountNewBookingCount = accountSlug
@@ -3128,7 +3133,7 @@ async function loadPendingReviewHeadlineStats(
     if (!threadId) return null;
     const conversation = await ctx.db.query("conversations")
       .withIndex("by_thread", (q) => q.eq("thread_id", threadId)).first();
-    if (!needsOwnerReply(conversation)) return null;
+    if (!needsOwnerReply(conversation, row)) return null;
     return { row, threadId, conversation };
   }));
   const actionRows = withConversations.filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null);
@@ -3200,15 +3205,32 @@ async function loadRentalHeadlineStats(
   const monthStart = `${monthKey}-01`;
   const monthEnd = new Date(Date.UTC(year, monthNumber, 0)).toISOString().slice(0, 10);
   const projectionStart = new Date(Date.UTC(year, monthNumber - 4, 1)).toISOString().slice(0, 10);
-  // Full confirmed chains are required before grouping: an older adjacent
-  // member can determine the group's identity, span and value. The status
-  // index currently contains 31 rows (~81 KB, 16 Oct 2026), and one read
-  // avoids four overlapping date scans without reading completed history.
-  const allConfirmedRows = await (accountSlug
-    ? ctx.db.query("reservations").withIndex("by_account_status_start_date", (q) =>
-        q.eq("account_slug", accountSlug).eq("status", "confirmed")).collect()
-    : ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
-        q.eq("status", "confirmed")).collect());
+  // The KPI needs current/ongoing and future rentals plus the short recent
+  // history used by month projection. Never scan every confirmed reservation:
+  // each indexed date window is capped, and overlap is removed by reservation id.
+  const confirmedWindows = await Promise.all([
+    takeRentalHeadlineWindow(accountSlug
+      ? ctx.db.query("reservations").withIndex("by_account_status_end_date", (q) =>
+          q.eq("account_slug", accountSlug).eq("status", "confirmed").gte("end_date", today))
+      : ctx.db.query("reservations").withIndex("by_status_end_date", (q) =>
+          q.eq("status", "confirmed").gte("end_date", today)), "confirmed end_date"),
+    takeRentalHeadlineWindow(accountSlug
+      ? ctx.db.query("reservations").withIndex("by_account_status_return_date", (q) =>
+          q.eq("account_slug", accountSlug).eq("status", "confirmed").gte("return_date", today))
+      : ctx.db.query("reservations").withIndex("by_status_return_date", (q) =>
+          q.eq("status", "confirmed").gte("return_date", today)), "confirmed return_date"),
+    takeRentalHeadlineWindow(accountSlug
+      ? ctx.db.query("reservations").withIndex("by_account_status_pickup_date", (q) =>
+          q.eq("account_slug", accountSlug).eq("status", "confirmed").gte("pickup_date", projectionStart))
+      : ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
+          q.eq("status", "confirmed").gte("pickup_date", projectionStart)), "confirmed pickup_date"),
+    takeRentalHeadlineWindow(accountSlug
+      ? ctx.db.query("reservations").withIndex("by_account_status_start_date", (q) =>
+          q.eq("account_slug", accountSlug).eq("status", "confirmed").gte("start_date", projectionStart))
+      : ctx.db.query("reservations").withIndex("by_status_start_date", (q) =>
+          q.eq("status", "confirmed").gte("start_date", projectionStart)), "confirmed start_date"),
+  ]);
+  const allConfirmedRows = mergeConfirmedHeadlineWindows(confirmedWindows);
   const pendingReviewStats = {
     count: 0,
     value_gbp: 0,
@@ -3219,15 +3241,23 @@ async function loadRentalHeadlineStats(
   let confirmedRows = confirmedHeadlineOrder(allConfirmedRows, today);
   if (confirmedRows === null) {
     // A fully tied index key is rare. Retain exact database ordering then.
-    const groups = await Promise.all([
-      ctx.db.query("reservations").withIndex("by_status_end_date", (q) => q.eq("status", "confirmed").gte("end_date", today)).collect(),
-      ctx.db.query("reservations").withIndex("by_status_return_date", (q) => q.eq("status", "confirmed").gte("return_date", today)).collect(),
-      ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) => q.eq("status", "confirmed").gte("pickup_date", today)).collect(),
-      ctx.db.query("reservations").withIndex("by_status_start_date", (q) => q.eq("status", "confirmed").gte("start_date", today)).collect(),
-    ]);
+    const groups = [
+      accountSlug
+        ? ctx.db.query("reservations").withIndex("by_account_status_end_date", (q) => q.eq("account_slug", accountSlug).eq("status", "confirmed").gte("end_date", today))
+        : ctx.db.query("reservations").withIndex("by_status_end_date", (q) => q.eq("status", "confirmed").gte("end_date", today)),
+      accountSlug
+        ? ctx.db.query("reservations").withIndex("by_account_status_return_date", (q) => q.eq("account_slug", accountSlug).eq("status", "confirmed").gte("return_date", today))
+        : ctx.db.query("reservations").withIndex("by_status_return_date", (q) => q.eq("status", "confirmed").gte("return_date", today)),
+      accountSlug
+        ? ctx.db.query("reservations").withIndex("by_account_status_pickup_date", (q) => q.eq("account_slug", accountSlug).eq("status", "confirmed").gte("pickup_date", projectionStart))
+        : ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) => q.eq("status", "confirmed").gte("pickup_date", projectionStart)),
+      accountSlug
+        ? ctx.db.query("reservations").withIndex("by_account_status_start_date", (q) => q.eq("account_slug", accountSlug).eq("status", "confirmed").gte("start_date", projectionStart))
+        : ctx.db.query("reservations").withIndex("by_status_start_date", (q) => q.eq("status", "confirmed").gte("start_date", projectionStart)),
+    ];
+    const exactGroups = await Promise.all(groups.map((group, index) => takeRentalHeadlineWindow(group, `confirmed tie-break ${index + 1}`)));
     const ordered = new Map<string, (typeof allConfirmedRows)[number]>();
-    for (const row of groups.flat()) if (!accountSlug || row.account_slug === accountSlug) ordered.set(String(row._id), row);
-    for (const row of allConfirmedRows) if (!ordered.has(String(row._id))) ordered.set(String(row._id), row);
+    for (const row of exactGroups.flat()) ordered.set(String(row._id), row);
     confirmedRows = [...ordered.values()];
   }
   const scopedConfirmed = accountSlug
@@ -3242,24 +3272,24 @@ async function loadRentalHeadlineStats(
   // the current and three trailing months through bounded indexed windows
   // so both the booked total and its projection stay live without waiting
   // for the expensive all-dashboard snapshot.
-  // The confirmed start-date window is already present in confirmedRows.
+  // The bounded start-date window already contains every monthly start row.
   // Monthly revenue accepts only confirmed/completed rows; reading cancelled
   // pickup history again cannot contribute to the total or its baseline.
   const confirmedMonthRows = confirmedRows.filter((row) =>
     row.start_date !== undefined && row.start_date >= projectionStart && row.start_date <= monthEnd,
   );
-  // `confirmedRows` above already contains every confirmed reservation, so
-  // derive the pickup-date window from that read instead of issuing a second
-  // overlapping index scan for the same status/account cohort.
+  // Reuse the bounded pickup-date window; fall back to the exact monthly index
+  // range only when a fully tied key requires database ordering.
   const reusedPickupRows = confirmedPickupWindow(confirmedRows, projectionStart, monthEnd);
   const [completedMonthRows, confirmedPickupRows] = await Promise.all([
     loadCompletedMonthlyRows(ctx, projectionStart, monthEnd, accountSlug),
-    reusedPickupRows ?? (accountSlug
+    reusedPickupRows ?? takeRentalHeadlineWindow(accountSlug
       ? ctx.db.query("reservations").withIndex("by_account_status_pickup_date", (q) =>
           q.eq("account_slug", accountSlug).eq("status", "confirmed")
-            .gte("pickup_date", projectionStart).lte("pickup_date", monthEnd)).collect()
+            .gte("pickup_date", projectionStart).lte("pickup_date", monthEnd))
       : ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
-          q.eq("status", "confirmed").gte("pickup_date", projectionStart).lte("pickup_date", monthEnd)).collect()),
+          q.eq("status", "confirmed").gte("pickup_date", projectionStart).lte("pickup_date", monthEnd)),
+      "confirmed monthly pickup_date"),
   ]);
   const pickupMonthRows: ReservationRow[] = [...confirmedPickupRows, ...completedMonthRows.pickupRows].sort((a, b) =>
     (a.pickup_date ?? "").localeCompare(b.pickup_date ?? "") || a._creationTime - b._creationTime,
@@ -3273,7 +3303,9 @@ async function loadRentalHeadlineStats(
   const projectionInputs = rentalMonthProjectionInputs(projectionRows, today, accountSlug);
   const projection = projectCurrentMonth(projectionInputs);
   const remainingDays = projectionInputs.daysInMonth - projectionInputs.daysElapsed;
-  const elapsedCalendarDays = new Date().getDate();
+  // `today` comes from londonToday(); a host-local clock here could shift
+  // revenue pacing a day early or late around midnight in London.
+  const elapsedCalendarDays = Number(today.slice(-2));
   const earnedThisMonth = monthly.rentals
     .filter((row) => {
       const date = effectiveDate(row);

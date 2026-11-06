@@ -124,6 +124,7 @@ export function HeaderBar() {
           {ACCOUNTS.map((a) => {
             const active = activeAccountSlug === a.slug;
             const accent = a.color ?? "#e4e6eb";
+            const compactLabel = a.label.replace(/^DB Cinema/, "Cinema");
             return (
               <button
                 key={String(a.slug)}
@@ -148,7 +149,8 @@ export function HeaderBar() {
                     ringColor={active ? accent : "rgba(255,255,255,0.18)"}
                   />
                 )}
-                <span className={active || a.slug === null ? "inline" : "hidden sm:inline"}>{a.label}</span>
+                <span className="sm:hidden">{compactLabel}</span>
+                <span className="hidden sm:inline">{a.label}</span>
               </button>
             );
           })}

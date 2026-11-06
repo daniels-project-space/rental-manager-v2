@@ -33,8 +33,15 @@ describe("backend owner authorization", () => {
   });
 });
 
-it("defaults to direct access in production and ignores the legacy rollout flag",()=>{
+it("requires an owner session by default in production while preserving explicit local access",()=>{
  vi.stubEnv("NODE_ENV","production");vi.stubEnv("OWNER_AUTH_REQUIRED","true");
- expect(managerSessionRequired(undefined)).toBe(false);expect(managerSessionRequired("open")).toBe(false);expect(managerSessionRequired("owner")).toBe(true);
- expect(()=>managerSessionRequired("bad")).toThrow("Invalid");vi.unstubAllEnvs();
+ expect(managerSessionRequired(undefined)).toBe(true);
+ expect(managerSessionRequired("open")).toBe(true);
+ expect(managerSessionRequired("owner")).toBe(true);
+ expect(()=>managerSessionRequired("bad")).toThrow("Invalid");
+ vi.stubEnv("NODE_ENV","development");
+ expect(managerSessionRequired(undefined)).toBe(false);
+ expect(managerSessionRequired("open")).toBe(false);
+ expect(managerSessionRequired("owner")).toBe(true);
+ vi.unstubAllEnvs();
 });

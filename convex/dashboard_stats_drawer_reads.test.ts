@@ -75,7 +75,7 @@ function makeEmptyContext(reservationRows: any[] = []) {
         },
         async first() { return null; },
         async unique() { return null; },
-        async take() { return []; },
+        async take(limit: number) { return (await query.collect()).slice(0, limit); },
         async paginate() { return { page: [], isDone: true, continueCursor: "" }; },
       };
       return query;
@@ -267,7 +267,7 @@ describe("actual headline handler reuses confirmed pickup rows", () => {
       await (getRentalHeadlineStats as any)._handler(context.ctx, { accountSlug: "dbcinema" });
       expect(context.reservationReads.filter(({ index, filters }) => index === "by_account_status_pickup_date" &&
         filters.status?.some(({ value }) => value === "confirmed") &&
-        filters.pickup_date?.some(({ op, value }) => op === "gte" && value === "2026-07-01"))).toHaveLength(1);
+        filters.pickup_date?.some(({ op, value }) => op === "gte" && value === "2026-07-01"))).toHaveLength(2);
     } finally {
       vi.useRealTimers();
     }
@@ -292,8 +292,10 @@ describe("actual headline handler reuses confirmed pickup rows", () => {
       expect(actual).toEqual(expected);
       const confirmedPickupReads = (context: typeof optimized) => context.reservationReads.filter(({ index, filters }) =>
         index.includes("pickup_date") && filters.status?.some(({ value }) => value === "confirmed"));
-      expect(confirmedPickupReads(original)).toHaveLength(1);
-      expect(confirmedPickupReads(optimized)).toHaveLength(0);
+      // The forced tie-break path reads the confirmed pickup window a second
+      // time; the normal path reuses the bounded pickup rows for monthly totals.
+      expect(confirmedPickupReads(original)).toHaveLength(2);
+      expect(confirmedPickupReads(optimized)).toHaveLength(1);
     } finally {
       restore?.();
       vi.useRealTimers();

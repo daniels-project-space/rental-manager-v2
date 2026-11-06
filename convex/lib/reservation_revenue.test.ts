@@ -33,7 +33,7 @@ function fixture(initial: Record<string, any>[] = []) {
         return clone((tables[table]??[]).filter(row=>predicates.every(fn=>fn(row))).sort((a,b)=>{
           for(const key of [...keys,"_id"]){if(a[key]===b[key])continue;return a[key]===undefined?-1:b[key]===undefined?1:a[key]<b[key]?-1:1;}return 0;
         }));
-      },async first(){return (await q.collect())[0]??null;},async unique(){const rows=await q.collect();if(rows.length>1)throw Error("Duplicate unique key");return rows[0]??null;},
+      },async take(limit:number){return (await q.collect()).slice(0,limit);},async first(){return (await q.collect())[0]??null;},async unique(){const rows=await q.collect();if(rows.length>1)throw Error("Duplicate unique key");return rows[0]??null;},
       async paginate(options:any){const rows=await q.collect(),start=Number(options.cursor??0),end=start+options.numItems;return{page:rows.slice(start,end),isDone:end>=rows.length,continueCursor:String(end)};}};
       return q;
     },
