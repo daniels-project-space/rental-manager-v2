@@ -79,6 +79,22 @@ describe("DB Cinema shared stock bridge", () => {
     expect(f.tables.dbcinema_shared_stock_claims).toHaveLength(0);
   });
 
+  it("rechecks positive deltas against the original booking at settlement", async () => {
+    const f = fixture();
+    f.tables.items[0].qty = 3;
+    f.tables.reservations.push({ _id: "booking-reservation", account_slug: "dbcinema_web", hygglo_order_id: "booking-1", status: "confirmed", order_step: "APPROVED", site_revision: 2, start_date: "2027-01-01", end_date: "2027-01-02", resolved_items: [{ item_id: "lens", item_name_canonical: "Sony 24–70mm", confidence: 1, qty: 1 }] });
+    const request = { version: 1, operation: "acquire", args: { requestId: "swap-race-delta", bookingId: "booking-1", items: [{ itemId: "lens", start: at, returnAt: at + 86400000, quantity: 1 }] } };
+    const acquired = await run(f.ctx, request);
+    expect(acquired.result.state).toBe("prepared");
+    const begin = { version: 1, operation: "beginExecution", args: { id: "swap-race-delta", fingerprint: acquired.result.fingerprint, executionKey: "swap-race-execution" } };
+    expect((await run(f.ctx, begin)).result.state).toBe("execution_started");
+
+    f.tables.reservations.push({ _id: "external-reservation", account_slug: "other", hygglo_order_id: "external-order", status: "confirmed", start_date: "2027-01-01", end_date: "2027-01-02", resolved_items: [{ item_id: "lens", item_name_canonical: "Sony 24–70mm", confidence: 1, qty: 2 }] });
+    const check = { version: 1, operation: "checkExecution", args: { id: "swap-race-delta", fingerprint: acquired.result.fingerprint, executionKey: "swap-race-execution" } };
+    expect(await run(f.ctx, check)).toEqual({ sharedStockError: "capacity_conflict" });
+    expect(f.tables.dbcinema_shared_stock_claims[0].status).toBe("execution_started");
+  });
+
   it("rejects a zero-capacity claim that adds a physical stock unit", async () => {
     const f = fixture();
     const oldLine = { itemId: "lens", start: at, returnAt: at + 86400000, quantity: 1 };

@@ -301,7 +301,10 @@ async function processRequest(ctx: any, untrusted: unknown) {
       if (!record(stored) || !record(stored.args) || !Array.isArray(row.items) || !row.items.length) fail("The stock claim needs reconciliation.");
       const bookingId = typeof stored.args.bookingId === "string" ? stored.args.bookingId : undefined;
       const lines = row.items.map((line: any) => parseLine({ itemId: String(line.item_id), start: line.start, returnAt: line.end - HOUR_MS, quantity: line.qty }));
-      await ensureAvailable(ctx, lines, String(row.request_id), bookingId);
+      // `row.items` is the net-new quantity. Keep the original booking in
+      // occupancy here: excluding it would undercount a same-item quantity
+      // increase if another reservation arrived after execution began.
+      await ensureAvailable(ctx, lines, String(row.request_id));
     }
     return reply({ state: "execution_started", replayed: true });
   }
