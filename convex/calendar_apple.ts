@@ -11,6 +11,7 @@
 import { action, internalAction, internalActionOf } from "./owner_functions";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import crypto from "crypto";
 
 const ICLOUD_ROOT = "https://caldav.icloud.com";
@@ -289,7 +290,7 @@ export const syncReservation = action({
     const base = calendarUrl.endsWith("/") ? calendarUrl : calendarUrl + "/";
     const lead = c.reminder_lead_min ?? 60;
     const retLead = c.return_reminder_lead_min ?? lead;
-    const links = await ctx.runQuery(internal.calendar_apple_db._getEventLinksForThreads, { thread_ids: r?.member_thread_ids ?? [thread_id] });
+    const links = await ctx.runQuery(internal.calendar_apple_db._getEventLinksForThreads, { thread_ids: r?.member_thread_ids ?? [thread_id] }) as Array<{ _id: Id<"calendar_event_links">; event_uid: string; event_href: string; ics_hash: string }>;
     const linkByUid = new Map(links.map((l) => [l.event_uid, l]));
 
     const finished = !r || ["cancelled", "declined", "completed"].includes(r.status);

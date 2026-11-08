@@ -160,6 +160,51 @@ export const storefrontRead = httpAction(async (ctx, request) => {
 });
 http.route({ path: "/dbcinema/storefront-read", method: "POST", handler: storefrontRead });
 
+/** DB Cinema's private write path for authoritative, idempotent item-change claims. */
+export const dbcinemaSharedStockWrite = httpAction(async (ctx, request) => {
+    const reply = (status: number, payload: unknown) => new Response(JSON.stringify(payload), {
+      status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+    const expected = process.env.DBCINEMA_SHARED_STOCK_SECRET ?? "";
+    if (expected.length < 32) return reply(503, { ok: false, error: "service_not_configured" });
+    if (request.headers.get("x-shared-stock-token") !== expected) return reply(401, { ok: false, error: "unauthorized" });
+    let input: unknown;
+    try {
+      const text = await request.text();
+      if (new TextEncoder().encode(text).length > 64 * 1024) return reply(413, { ok: false, error: "request_too_large" });
+      input = JSON.parse(text);
+    } catch { return reply(400, { ok: false, error: "invalid_request" }); }
+    try {
+      const result = await ctx.runMutation((internal as any).dbcinema_shared_stock.process, { request: input });
+      if ((result as any)?.sharedStockError === "capacity_conflict") {
+        const operation = input && typeof input === "object" && !Array.isArray(input) &&
+          (input as any).version === 1 &&
+          ["acquire", "beginExecution", "checkExecution"].includes((input as any).operation)
+          ? (input as any).operation as string
+          : undefined;
+        if (operation) return reply(409, { version: 1, operation, error: "capacity_conflict" });
+        return reply(409, { ok: false, error: "stock_request_rejected" });
+      }
+      return reply(200, { version: 1, ...result });
+    } catch (error) {
+      console.warn("[dbcinema shared stock] request rejected", error instanceof Error ? error.message : String(error));
+      const operation = input && typeof input === "object" && !Array.isArray(input) &&
+        (input as any).version === 1 &&
+        ["acquire", "beginExecution", "checkExecution"].includes((input as any).operation)
+        ? (input as any).operation as string
+        : undefined;
+      if ((error as any)?.code === "DBCINEMA_SHARED_STOCK_CAPACITY_CONFLICT" && operation) {
+        return reply(409, { version: 1, operation, error: "capacity_conflict" });
+      }
+      return reply(409, { ok: false, error: "stock_request_rejected" });
+    }
+  });
+http.route({
+  path: "/dbcinema/shared-stock",
+  method: "POST",
+  handler: dbcinemaSharedStockWrite,
+});
+
 /**
  * DB Cinema storefront → RMv2 booking push (2026-08-18).
  *

@@ -64,6 +64,7 @@ import type * as dashboard_attribution_preview from "../dashboard_attribution_pr
 import type * as dashboard_chat from "../dashboard_chat.js";
 import type * as dashboard_insights from "../dashboard_insights.js";
 import type * as dashboard_invariants from "../dashboard_invariants.js";
+import type * as dbcinema_chat from "../dbcinema_chat.js";
 import type * as demand from "../demand.js";
 import type * as demand_loss from "../demand_loss.js";
 import type * as denial_canonicalizer_queries from "../denial_canonicalizer_queries.js";
@@ -272,6 +273,7 @@ import type * as lib_sent_inquiry_offer from "../lib/sent_inquiry_offer.js";
 import type * as lib_sent_rental_request from "../lib/sent_rental_request.js";
 import type * as lib_shadow_compare from "../lib/shadow_compare.js";
 import type * as lib_stock_claims from "../lib/stock_claims.js";
+import type * as lib_storefront_stock from "../lib/storefront_stock.js";
 import type * as lib_telegram_convex from "../lib/telegram_convex.js";
 import type * as lib_thread_messages from "../lib/thread_messages.js";
 import type * as lib_thread_referral_reference from "../lib/thread_referral_reference.js";
@@ -380,6 +382,7 @@ import type * as seed_renter_bot_memories from "../seed/renter_bot_memories.js";
 import type * as seed_renter_bot_rules from "../seed/renter_bot_rules.js";
 import type * as seed_settings from "../seed/settings.js";
 import type * as settings from "../settings.js";
+import type * as stockAuthority from "../stockAuthority.js";
 import type * as sync_account_profiles from "../sync_account_profiles.js";
 import type * as sync_dbcinema_web from "../sync_dbcinema_web.js";
 import type * as sync_state from "../sync_state.js";
@@ -455,6 +458,7 @@ declare const fullApi: ApiFromModules<{
   dashboard_chat: typeof dashboard_chat;
   dashboard_insights: typeof dashboard_insights;
   dashboard_invariants: typeof dashboard_invariants;
+  dbcinema_chat: typeof dbcinema_chat;
   demand: typeof demand;
   demand_loss: typeof demand_loss;
   denial_canonicalizer_queries: typeof denial_canonicalizer_queries;
@@ -663,6 +667,7 @@ declare const fullApi: ApiFromModules<{
   "lib/sent_rental_request": typeof lib_sent_rental_request;
   "lib/shadow_compare": typeof lib_shadow_compare;
   "lib/stock_claims": typeof lib_stock_claims;
+  "lib/storefront_stock": typeof lib_storefront_stock;
   "lib/telegram_convex": typeof lib_telegram_convex;
   "lib/thread_messages": typeof lib_thread_messages;
   "lib/thread_referral_reference": typeof lib_thread_referral_reference;
@@ -771,6 +776,7 @@ declare const fullApi: ApiFromModules<{
   "seed/renter_bot_rules": typeof seed_renter_bot_rules;
   "seed/settings": typeof seed_settings;
   settings: typeof settings;
+  stockAuthority: typeof stockAuthority;
   sync_account_profiles: typeof sync_account_profiles;
   sync_dbcinema_web: typeof sync_dbcinema_web;
   sync_state: typeof sync_state;

@@ -32,6 +32,7 @@ import { computePollHash } from "./hygglo";
 import { queueNotificationEvents } from "./notifications";
 import { websiteWindowUnits } from "./lib/reservations/itemUnits";
 import { buildConfirmedBookingNotificationCopy } from "./lib/notification_events";
+import { reconcileMirroredBookingClaim } from "./dbcinema_shared_stock";
 
 const upsertBatchRef = internal.sync_dbcinema_web.upsertSiteBookingsBatch;
 // This scheduled refresh is an action, as declared by its native registration.
@@ -44,6 +45,17 @@ const STOCK_ACCOUNT = "dbcinema";
 
 type SiteUnit = { hyggloProductId: number; qty: number };
 type SiteLine = { title: string; qty: number; start: number; end: number; units: SiteUnit[] };
+type SiteStockReceipt = {
+  kind?: "booking_confirmation";
+  swapId?: string;
+  bookingId: string;
+  bookingRevision: number;
+  managerRequestId: string;
+  fingerprint: string;
+  executionKey: string;
+  appliedAt: number;
+  windows: Array<{ managerItemId: string; start: number; end: number; quantity: number }>;
+};
 type SiteBooking = {
   id: string;
   revision?: number;
@@ -63,6 +75,7 @@ type SiteBooking = {
   currency: string;
   createdAt: number;
   lineItems: SiteLine[];
+  stockApplicationReceipt?: SiteStockReceipt;
   damageCases?: import("./lib/websiteCases").WebsiteCase[];
   physicalReservations?: Array<{rmv2ItemId: string | null; hyggloProductId?: number | null; qty: number; start: number; end: number; pickupTime?: string | null; returnTime?: string | null}>;
 };
@@ -114,20 +127,16 @@ export const syncDbcinemaWeb = internalAction({
 /**
  * db-cinema-v2 booking.status → RMv2 reservation status.
  *
- * Explicit and total over the storefront's status union (see its schema:
- * pending_payment | confirmed | active | returned | cancelled). Anything NOT in
- * this map is skipped rather than defaulted — `pending_payment` is an unpaid
- * cart, and silently defaulting it to "confirmed" would invent a rental that
- * blocks real availability. Previously only `returned` was special-cased and
- * EVERYTHING else fell through to "confirmed"; that was safe only because the
- * bulk feed pre-filtered to paid statuses, which the webhook deliberately does
- * not (2026-08-18).
+ * Explicit over actionable storefront states. Unpaid checkouts are ignored;
+ * verification holds are mirrored as pending_review, never as confirmed.
+ * Unknown statuses are skipped rather than defaulted.
  */
-const SITE_STATUS_MAP: Record<string, "confirmed" | "completed" | "cancelled"> = {
+const SITE_STATUS_MAP: Record<string, "confirmed" | "completed" | "cancelled" | "pending_review"> = {
   confirmed: "confirmed", // paid, not yet collected → upcoming
   active: "confirmed", // out with the customer (order_step DELIVERED)
   returned: "completed", // back → historical revenue
   cancelled: "cancelled", // retired — must not show as a phantom upcoming
+  pending_verification: "pending_review", // payment may exist, but verification has not passed
 };
 
 export const upsertSiteBookingsBatch = internalMutation({
@@ -192,7 +201,7 @@ export const upsertSiteBookingsBatch = internalMutation({
       );
     }
 
-    const receipts: Array<{bookingId: string; receivedRevision: number; appliedRevision: number | null; outcome: "applied" | "unchanged" | "stale" | "ignored"; reason?: string}> = [];
+    const receipts: Array<{bookingId: string; receivedRevision: number; appliedRevision: number | null; outcome: "applied" | "unchanged" | "stale" | "ignored"; reason?: string; stockAcknowledgement?: Record<string, any>}> = [];
     let upserted = 0;
     let skipped = 0;
     let mappedUnits = 0;
@@ -382,7 +391,8 @@ export const upsertSiteBookingsBatch = internalMutation({
           skipped++; continue;
         }
         if ((mine as { poll_hash?: string }).poll_hash === newPollHash) {
-          receipts.push({ bookingId: b.id, receivedRevision: b.revision ?? 0, appliedRevision: mine.site_revision ?? 0, outcome: "unchanged" });
+          const reconciliation = await reconcileMirroredBookingClaim(ctx, { ...fields, _id: mine._id }, b.stockApplicationReceipt as any);
+          receipts.push({ bookingId: b.id, receivedRevision: b.revision ?? 0, appliedRevision: mine.site_revision ?? 0, outcome: "unchanged", ...(b.stockApplicationReceipt !== undefined ? { stockAcknowledgement: reconciliation as Record<string, any> } : {}) });
           skipped++;
           continue;
         }
@@ -401,6 +411,9 @@ export const upsertSiteBookingsBatch = internalMutation({
           created_at: Date.now(),
         } as never);
       }
+      const reconciliation = reservationId
+        ? await reconcileMirroredBookingClaim(ctx, { ...fields, _id: reservationId }, b.stockApplicationReceipt as any)
+        : undefined;
       await syncWebsiteCases(ctx, b, reservationId, itemById);
       // Notify new/upcoming confirmations, never a historical import or a repeat poll.
       const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -409,7 +422,7 @@ export const upsertSiteBookingsBatch = internalMutation({
         const copy = buildConfirmedBookingNotificationCopy({ renterName: copy_data.renter_name, itemName: copy_data.item_name, gross, net, currency: copy_data.currency, accountSlug: WEB_SLUG });
         await queueNotificationEvents(ctx, [{ type: "booking_confirmed", thread_id: b.id, account_slug: WEB_SLUG, title: copy.title, body: `Website · ${copy.body}`, copy_data, url: `https://dbcinemarentals.com/admin?rental=${encodeURIComponent(b.id)}#messages` }]);
       }
-      receipts.push({ bookingId: b.id, receivedRevision: b.revision ?? 0, appliedRevision: b.revision ?? 0, outcome: "applied" });
+      receipts.push({ bookingId: b.id, receivedRevision: b.revision ?? 0, appliedRevision: b.revision ?? 0, outcome: "applied", ...(b.stockApplicationReceipt !== undefined ? { stockAcknowledgement: reconciliation as Record<string, any> } : {}) });
       upserted++;
     }
 

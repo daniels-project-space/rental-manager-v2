@@ -25,6 +25,21 @@ const operationalSchema = defineSchema({
     components: v.array(v.object({item_id: v.id("items"), qty: v.number()})),
     prepared_at: v.number(),
   }).index("by_order", ["account_slug", "order_id"]),
+  // Direct website item changes reserve only their net-new physical units.
+  // Rows are retained as idempotency/audit receipts; only holds_stock rows
+  // participate in common availability calculations.
+  dbcinema_shared_stock_claims: defineTable({
+    request_id: v.string(), request_payload: v.any(), request_hash: v.string(), fingerprint: v.string(),
+    status: v.union(v.literal("prepared"), v.literal("execution_started"), v.literal("converted"), v.literal("released"), v.literal("compensated_released")),
+    holds_stock: v.boolean(),
+    items: v.array(v.object({item_id: v.id("items"), start: v.number(), end: v.number(), qty: v.number()})),
+    booking_id: v.optional(v.string()), reservation_id: v.optional(v.id("reservations")),
+    execution_key: v.optional(v.string()), evidence_hash: v.optional(v.string()),
+    created_at: v.number(), updated_at: v.number(),
+  })
+    .index("by_request_id", ["request_id"])
+    .index("by_holds_stock", ["holds_stock"])
+    .index("by_booking", ["booking_id"]),
   finance_snapshots: defineTable({
     month: v.string(), revision: v.number(), revenue: v.number(), expenses: v.number(), profit: v.number(),
     daniel_bps: v.number(), daniel: v.number(), leo: v.number(), source_revenue: v.number(),
@@ -354,6 +369,7 @@ const operationalSchema = defineSchema({
     created_at: v.number(),
   })
     .index("by_hygglo_user_id", ["hygglo_user_id"])
+    .index("by_email", ["email"])
     .index("by_v1_renter_profile_id", ["v1_renter_profile_id"])
     .index("by_blacklisted", ["blacklisted"])
     .index("by_total_spend", ["total_spend_gbp"])

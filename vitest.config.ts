@@ -83,6 +83,7 @@ export default defineConfig({
       "convex/storefront-canonical-kits.test.ts",
       "convex/storefront-stock.test.ts",
       "convex/stockAuthority.test.ts",
+      "convex/dbcinema_shared_stock.test.ts",
       "convex/websiteReturns.test.ts",
       "convex/lib/reservations/predicates.website.test.ts",
       "src/lib/push-service-worker.test.ts",

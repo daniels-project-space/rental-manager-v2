@@ -99,7 +99,7 @@ export function evaluateStockWindow(args: {
 }
 
 export async function loadStockSources(ctx: QueryCtx) {
-  const [items, confirmed, ongoing, index, overrides, claims, blackouts, vacations, approvalClaims] = await Promise.all([
+  const [items, confirmed, ongoing, index, overrides, claims, blackouts, vacations, approvalClaims, websiteSwapClaims] = await Promise.all([
     ctx.db.query("items").collect(),
     ctx.db.query("reservations").withIndex("by_status", (q) => q.eq("status", "confirmed")).collect(),
     ctx.db.query("reservations").withIndex("by_status", (q) => q.eq("status", "ongoing")).collect(),
@@ -109,8 +109,11 @@ export async function loadStockSources(ctx: QueryCtx) {
     ctx.db.query("owner_unavailability").collect(),
     ctx.db.query("vacation_periods").withIndex("by_active_start", (q) => q.eq("is_active", true)).collect(),
     ctx.db.query("stock_approval_claims").collect(),
+    (ctx.db as any).query("dbcinema_shared_stock_claims").withIndex("by_holds_stock", (q: any) => q.eq("holds_stock", true)).take(501),
   ]);
-  return { items, reservations: dedupByLogicalRental([...confirmed, ...ongoing].filter((r) => !r.is_obsolete && !r.hygglo_order_id?.startsWith("__probe__"))), productIndex: buildProductIndexMap(index), overrides: buildOverrideMap(overrides), claims, blackouts, vacations, approvalClaims };
+  if (websiteSwapClaims.length > 500) throw Error("Website equipment changes need stock reconciliation before availability can be confirmed.");
+  const sources = { items, reservations: dedupByLogicalRental([...confirmed, ...ongoing].filter((r) => !r.is_obsolete && !r.hygglo_order_id?.startsWith("__probe__"))), productIndex: buildProductIndexMap(index), overrides: buildOverrideMap(overrides), claims, blackouts, vacations, approvalClaims, websiteSwapClaims };
+  return sources as Omit<typeof sources, "websiteSwapClaims"> & { websiteSwapClaims?: typeof websiteSwapClaims };
 }
 
 /** Physical identity for a prepared provider approval, using the same buffered
@@ -204,6 +207,11 @@ export function stockOccupancyForItem(sources: Awaited<ReturnType<typeof loadSto
     });
     if(mirrored)continue;
     for(const component of claim.components)if(String(component.item_id)===String(item._id))occupancy.push({start:claim.start,end:claim.end,qty:component.qty,order_id:claim.order_id});
+  }
+  for (const claim of sources.websiteSwapClaims ?? []) {
+    for (const component of claim.items ?? []) if (String(component.item_id) === String(item._id)) {
+      occupancy.push({ start: new Date(component.start).toISOString().slice(0, 16), end: new Date(component.end).toISOString().slice(0, 16), qty: component.qty, order_id: claim.booking_id ?? claim.request_id });
+    }
   }
   return occupancy;
 }

@@ -64,6 +64,10 @@ export const applyTrust = internalMutation({
     const hasReviews = (review_count ?? 0) > 0;
     if (rating != null && hasReviews) patch.hygglo_rating = rating;
     if (hasReviews) patch.hygglo_review_count = review_count;
+    else if (review_count === 0) {
+      patch.hygglo_rating = undefined;
+      patch.hygglo_review_count = 0;
+    }
     if (total_rentals != null && Number.isInteger(total_rentals) && total_rentals >= 0) {
       patch.total_rentals_count = total_rentals;
       patch.platform_completed_rentals = total_rentals;
@@ -71,25 +75,23 @@ export const applyTrust = internalMutation({
     await ctx.db.patch(renter_id, patch);
 
     // Replace this renter's cached reviews with the renter-SIDE set (with text).
-    if (reviews.length) {
-      const old = await ctx.db
-        .query("renter_reviews")
-        .withIndex("by_renter", (q) => q.eq("renter_id", renter_id))
-        .collect();
-      for (const o of old) await ctx.db.delete(o._id);
-      const now = Date.now();
-      let i = 0;
-      for (const r of reviews) {
-        await ctx.db.insert("renter_reviews", {
-          renter_id,
-          hygglo_review_id: i++,
-          rating: r.rating,
-          text: r.text,
-          author: r.author,
-          created_at: r.created_at,
-          fetched_at: now,
-        });
-      }
+    const old = await ctx.db
+      .query("renter_reviews")
+      .withIndex("by_renter", (q) => q.eq("renter_id", renter_id))
+      .collect();
+    for (const o of old) await ctx.db.delete(o._id);
+    const now = Date.now();
+    let i = 0;
+    for (const r of reviews) {
+      await ctx.db.insert("renter_reviews", {
+        renter_id,
+        hygglo_review_id: i++,
+        rating: r.rating,
+        text: r.text,
+        author: r.author,
+        created_at: r.created_at,
+        fetched_at: now,
+      });
     }
     return { ok: true };
   },

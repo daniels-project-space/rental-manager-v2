@@ -13,7 +13,7 @@ function database() {
   patch: async (id:string,value:any) => { rows.set(id,{...rows.get(id),...value}) },
   query: (table:string) => {
    const equalities: Array<[string,any]>=[];
-   const q:any={withIndex: (_:string, select:any) => {const selector:any={eq:(k:string,v:any)=>{equalities.push([k,v]);return selector}};select(selector);return q}, collect:async()=>[...rows.values()].filter(r=>r.table===table && equalities.every(([k,v])=>r[k]===v)),first:async()=>(await q.collect())[0]??null};return q;
+   const q:any={withIndex: (_:string, select:any) => {const selector:any={eq:(k:string,v:any)=>{equalities.push([k,v]);return selector}};select(selector);return q}, collect:async()=>[...rows.values()].filter(r=>r.table===table && equalities.every(([k,v])=>r[k]===v)),take:async(count:number)=>(await q.collect()).slice(0,count),first:async()=>(await q.collect())[0]??null};return q;
   },
  };
  return {ctx:{db,scheduler:{runAfter:vi.fn()}},rows};
