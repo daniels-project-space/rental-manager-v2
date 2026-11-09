@@ -6,6 +6,8 @@ import {loadThreadReferralReference} from "./lib/thread_referral_reference";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 import { shortItemName } from "./lib/item_display_name";
 import { labBooking } from "./lib/lab_lifecycle";
+import { insertStockInput, patchStockInput } from "./lib/stock_input_writes";
+import { renterBotLabScenario } from "./lib/renter_bot_lab_scenarios";
 /**
  * renter_bot_lab_actions — the ONE Convex entry point the Lab UI is allowed
  * to call, so auditing "does the Lab import any send path" is one file, not
@@ -177,6 +179,101 @@ export const getSelectedListing = internalQuery({
   args: { account_slug: v.string(), product_id: v.number() },
   handler: async (ctx, a) => ctx.db.query("online_listings")
     .withIndex("by_account_product", (q) => q.eq("account_slug", a.account_slug).eq("product_id", a.product_id)).first(),
+});
+
+function assertPreparedScenarioLab() {
+  if (process.env.RENTER_BOT_LAB_SCENARIO_SEEDING !== "enabled") {
+    throw new Error("Prepared scenarios are available only on the isolated Renter Bot Lab backend");
+  }
+}
+
+/** Upsert only the owner-confirmed items used by the prepared Lab examples. */
+export const ensurePreparedScenarioItem = internalMutation({
+  args: { scenarioId: v.string() },
+  handler: async (ctx, { scenarioId }) => {
+    assertPreparedScenarioLab();
+    const scenario = renterBotLabScenario(scenarioId);
+    if (!scenario) throw new Error("Unknown prepared Lab example");
+    const now = Date.now();
+    const existing = await ctx.db
+      .query("items")
+      .withIndex("by_canonical_name", (q) => q.eq("name_canonical", scenario.item.name_canonical))
+      .first();
+    const itemFacts = {
+      ...scenario.item,
+      ...(scenario.item.compatibility ? { compatibility: {
+        ...(scenario.item.compatibility.batteries ? { batteries: [...scenario.item.compatibility.batteries] } : {}),
+        ...(scenario.item.compatibility.cards ? { cards: [...scenario.item.compatibility.cards] } : {}),
+        ...(scenario.item.compatibility.lenses ? { lenses: [...scenario.item.compatibility.lenses] } : {}),
+        ...(scenario.item.compatibility.accessories ? { accessories: [...scenario.item.compatibility.accessories] } : {}),
+        ...(scenario.item.compatibility.included_with_rental ? { included_with_rental: [...scenario.item.compatibility.included_with_rental] } : {}),
+      } } : {}),
+      is_marketing_only: false,
+      status: "active",
+      description_source: "owner-confirmed prepared Lab scenario",
+      updated_at: now,
+    };
+    let operation: "insert" | "update" = "insert";
+    if (existing) {
+      operation = "update";
+      await patchStockInput(ctx, existing._id, itemFacts);
+    } else {
+      await insertStockInput(ctx, "items", { ...itemFacts, created_at: now });
+    }
+    await ctx.db.insert("audit_log", {
+      table_name: "items",
+      actor: "lab-scenario-seed",
+      op: operation,
+      count: 1,
+      source_file: "convex/lib/renter_bot_lab_scenarios.ts",
+      note: `${scenario.id}: ${scenario.item.name_canonical}`,
+      ts: now,
+    });
+    return scenario.item.name_canonical;
+  },
+});
+
+/** Starts a fixed, owner-grounded conversation with its item seeded first. */
+export const startPreparedScenario = action({
+  args: {
+    scenarioId: v.union(
+      v.literal("bmpcc-6k-full-frame-kit"),
+      v.literal("sony-28-70-lens-fit"),
+      v.literal("sony-fx3-batteries"),
+    ),
+  },
+  handler: async (ctx, { scenarioId }): Promise<{
+    threadId: string;
+    accountSlug: string;
+    context: { scenarioTitle: string; displayName: string; items: string[]; examplePrompts: string[] };
+  }> => {
+    assertPreparedScenarioLab();
+    const scenario = renterBotLabScenario(scenarioId);
+    if (!scenario) throw new Error("Unknown prepared Lab example");
+    const itemName = await ctx.runMutation(internal.renter_bot_lab_actions.ensurePreparedScenarioItem, { scenarioId });
+    const threadId = `${PREFIX}prepared-${scenarioId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    await ctx.runMutation(internal.renter_bot_probe.seed, {
+      thread_id: threadId,
+      account_slug: scenario.accountSlug,
+      items: [{ name: itemName }],
+      messages: [],
+    });
+    await ctx.runMutation(internal.renter_bot_lab_order.seed, {
+      thread_id: threadId,
+      account_slug: scenario.accountSlug,
+      item_names: [itemName],
+    });
+    return {
+      threadId,
+      accountSlug: scenario.accountSlug,
+      context: {
+        scenarioTitle: scenario.title,
+        displayName: scenario.displayName,
+        items: [itemName],
+        examplePrompts: [...scenario.prompts],
+      },
+    };
+  },
 });
 
 // Starts (or restarts) a live Lab test conversation — from a saved scenario
