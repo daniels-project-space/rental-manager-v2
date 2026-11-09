@@ -61,12 +61,17 @@ if (production) {
     throw new Error("The isolated Lab deployment URL is invalid.");
   }
 
+  const labDeploymentName = new URL(labUrl).hostname.replace(/\.convex\.cloud$/, "");
+  const labKeyScope = labDeployKey.split("|", 1)[0];
+  if (labKeyScope !== `prod:${labDeploymentName}` && labKeyScope !== labDeploymentName) {
+    throw new Error("The Lab deploy key must be scoped directly to the isolated Lab deployment.");
+  }
+
   // Keep the Lab's functions and prepared-item facts in step with the page.
-  // The deployment key is replaced in this child process only; it never
-  // selects the main Rental Manager Convex deployment.
+  // Let the deployment-scoped key select the backend. Passing --deployment
+  // forces a management API lookup and bypasses the build's deploy-key auth.
   const labEnv = { ...process.env, CONVEX_DEPLOY_KEY: labDeployKey };
   delete labEnv.CONVEX_DEPLOYMENT;
-  const labDeploymentName = new URL(labUrl).hostname.replace(/\.convex\.cloud$/, "");
-  await runInstalledTool("convex", ["env", "set", "RENTER_BOT_LAB_SCENARIO_SEEDING", "enabled", "--deployment", labDeploymentName], labEnv);
-  await runInstalledTool("convex", ["deploy", "--deployment", labDeploymentName, "--typecheck", "disable", "--codegen", "disable", "--message", `Renter Bot Lab ${sourceCommit()}`], labEnv);
+  await runInstalledTool("convex", ["env", "set", "RENTER_BOT_LAB_SCENARIO_SEEDING", "enabled"], labEnv);
+  await runInstalledTool("convex", ["deploy", "--typecheck", "disable", "--codegen", "disable", "--message", `Renter Bot Lab ${sourceCommit()}`], labEnv);
 }
