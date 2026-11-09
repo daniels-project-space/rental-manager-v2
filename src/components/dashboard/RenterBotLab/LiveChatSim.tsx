@@ -14,6 +14,8 @@ export interface SessionContext {
   startDate?: string;
   endDate?: string;
   location?: string;
+  initialMessages?: { role: string; text: string }[];
+  examplePrompts?: string[];
 }
 
 interface ChatTurn {
@@ -21,6 +23,7 @@ interface ChatTurn {
   text: string;
   overallStatus?: string;
   runId?: string;
+  modelId?: string;
 }
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -419,17 +422,24 @@ export function LiveChatSim({
   useEffect(() => () => { for (const threadId of createdFriendThreads.current) void endLiveSession({ threadId }); }, [endLiveSession]);
   const startLiveSession = useAction(api.renter_bot_lab_actions.startLiveSession);
   const simulateFailure = useMutation(api.renter_bot_lab_order.simulateVerificationFailure);
-  const redeemReferral = useMutation(api.renter_bot_lab_order.redeemReferral);
   const currentOrder = useQuery(api.renter_bot_lab_order.get, { thread_id: session.threadId });
   const [failureFeedback, setFailureFeedback] = useState("");
   const [referralInput, setReferralInput] = useState("");
   const sendTestMessage = useAction(api.renter_bot_lab_actions.sendTestMessage);
-  const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const [turns, setTurns] = useState<ChatTurn[]>(() =>
+    (initialSession.context.initialMessages ?? [])
+      .filter((message) => ["renter", "user", "assistant", "owner", "bot"].includes(message.role))
+      .map((message) => ({
+        role: ["renter", "user"].includes(message.role) ? "renter" as const : "bot" as const,
+        text: message.text,
+      })),
+  );
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [examplePromptIndex, setExamplePromptIndex] = useState(0);
 
-  async function send() {
-    const text = input.trim();
+  async function send(examplePrompt?: string) {
+    const text = (examplePrompt ?? input).trim();
     if (!text || sending) return;
     setInput("");
     setTurns((t) => [...t, { role: "renter", text }]);
@@ -453,8 +463,10 @@ export function LiveChatSim({
             `⚠ Reply withheld — ${result.reason ?? blockReason(result.productionGuardFlags)}`,
           overallStatus: result.status.startsWith("referral_") ? undefined : result.overall_status,
           runId: result.runId,
+          modelId: result.model_id,
         },
       ]);
+      if (examplePrompt) setExamplePromptIndex((index) => index + 1);
     } catch (e) {
       setTurns((t) => [
         ...t,
@@ -484,12 +496,25 @@ export function LiveChatSim({
     try {
       const friend = await startLiveSession({ accountSlug: session.accountSlug, items: [], lifecycle: "inquiry" });
       threadId = friend.threadId;
-      const restored = await redeemReferral({ thread_id: threadId, code: referralInput.trim() });
-      if (!restored.ok) throw new Error(restored.error ?? "Could not restore the basket");
+      const code = referralInput.trim();
+      const message = `My friend sent me referral ${code}. Please restore those original items for my own rental request using the same rental dates.`;
+      const reply = await sendTestMessage({ threadId, accountSlug: session.accountSlug, text: message });
       createdFriendThreads.current.push(threadId);
-      setSession({ threadId, accountSlug: session.accountSlug, context: { ...friend.context, items: restored.order?.lines.map(l => l.name) ?? [], productId: restored.order?.lines[0]?.product_id, priceGbp: restored.order?.lines[0]?.daily_price_gbp ?? undefined, startDate: restored.order?.start_date ?? undefined, endDate: restored.order?.end_date ?? undefined } });
-      setTurns([{ role: "bot", text: restored.message ?? "Friend referral recognised. Your basket has been restored with current stock and prices. This is a new request from your own account and still needs the platform's checks." }]);
-      setFailureFeedback("Separate friend inquiry — no verification, payment or approval transferred.");
+      setSession({ threadId, accountSlug: session.accountSlug, context: friend.context });
+      setExamplePromptIndex(0);
+      setTurns([
+        { role: "renter", text: message },
+        {
+          role: "bot",
+          text: reply.draft || `⚠ Reply withheld — ${reply.reason ?? blockReason(reply.productionGuardFlags)}`,
+          overallStatus: reply.overall_status,
+          runId: reply.runId,
+          modelId: reply.model_id,
+        },
+      ]);
+      setFailureFeedback(reply.status === "ok"
+        ? "Separate friend inquiry — any restoration used current stock/prices; no verification, payment or approval transferred."
+        : `The friend’s message was run through the bot and withheld. Review run ${reply.runId} before continuing.`);
       setReferralInput("");
     } catch (e) {
       if (threadId) await endLiveSession({ threadId });
@@ -506,14 +531,17 @@ export function LiveChatSim({
           ? "text-amber-400"
           : "text-[#8b8fa3]";
 
+  const examplePrompts = session.context.examplePrompts ?? [];
+  const nextExamplePrompt = examplePrompts[examplePromptIndex];
+
   return (
     <div className="flex min-h-[560px] flex-col rounded-lg border border-white/10 bg-white/[0.03]">
       <ContextBanner context={session.context} threadId={session.threadId} accountSlug={session.accountSlug} />
       <div className="max-h-[420px] min-h-[120px] flex-1 space-y-3 overflow-y-auto p-4">
         {turns.length === 0 && (
           <p className="text-sm text-[#8b8fa3]">
-            Type as a renter below. Every reply is the real production draft
-            pipeline — nothing here is sent anywhere. The bar above shows
+            Type as a renter below. Every reply uses the isolated Lab draft API
+            and renter-bot pipeline — nothing here is sent to Hygglo. The bar above shows
             exactly what context the AI actually has for this conversation.
           </p>
         )}
@@ -532,12 +560,27 @@ export function LiveChatSim({
                 rubric: {t.overallStatus}
               </p>
             )}
+            {t.modelId && <p className="mt-1 text-[10px] text-[#8b8fa3]">model: {t.modelId}</p>}
           </div>
         ))}
         {sending && (
-          <p className="text-xs text-[#8b8fa3]">Generating real draft…</p>
+          <p className="text-xs text-[#8b8fa3]">Generating Lab reply…</p>
         )}
       </div>
+      {nextExamplePrompt && (
+        <div className="border-t border-white/10 bg-black/10 px-3 py-2" aria-label="Saved example conversation">
+          <p className="text-[11px] text-[#8b8fa3]">Example turn {examplePromptIndex + 1} of {examplePrompts.length}</p>
+          <p className="mt-1 text-xs text-[#b6bac7]">{nextExamplePrompt}</p>
+          <button
+            type="button"
+            onClick={() => void send(nextExamplePrompt)}
+            disabled={sending}
+            className="mt-2 rounded bg-blue-500/15 px-3 py-1.5 text-xs text-blue-200 disabled:opacity-40"
+          >
+            Send next example turn
+          </button>
+        </div>
+      )}
       <div className="border-t border-white/10 p-3 text-xs text-[#8b8fa3]">
         <p>Current platform stage: {currentOrder?.stage?.replace(/_/g, " ") ?? "loading"}</p>
         <button disabled={sending || currentOrder?.stage !== "AWAITING_VERIFICATION"} onClick={failVerification} className="my-2 rounded bg-red-500/20 px-3 py-2 text-red-200 disabled:opacity-40">Simulate final failed verification</button>
@@ -559,7 +602,7 @@ export function LiveChatSim({
           className="flex-1 rounded-md border border-white/10 bg-black/30 px-3 py-2 text-sm text-[#e4e6eb] outline-none focus:border-white/30 disabled:opacity-50"
         />
         <button
-          onClick={send}
+          onClick={() => void send()}
           disabled={sending || !input.trim()}
           className="rounded-md bg-white/10 px-4 py-2 text-sm font-medium text-[#e4e6eb] hover:bg-white/20 disabled:opacity-50"
         >

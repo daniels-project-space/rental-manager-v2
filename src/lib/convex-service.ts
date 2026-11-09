@@ -26,3 +26,34 @@ export function createConvexServiceClient(url = process.env.CONVEX_URL ?? RENTAL
   admin.setAdminAuth(key, { issuer: OWNER_SERVICE_ISSUER, subject: OWNER_SERVICE_SUBJECT });
   return client as ConvexServiceClient;
 }
+
+/** Server-only Convex client for the renter-bot Lab; never falls back to live rental data. */
+export function createRenterBotLabConvexServiceClient(): ConvexServiceClient {
+  if (typeof window !== "undefined") throw new Error("Convex service credentials are server-only");
+  const configuredUrl = process.env.RENTER_BOT_LAB_CONVEX_URL?.trim();
+  if (!configuredUrl) throw new Error("Missing RENTER_BOT_LAB_CONVEX_URL for isolated renter-bot Lab");
+
+  let parsed: URL;
+  try {
+    parsed = new URL(configuredUrl);
+  } catch {
+    throw new Error("Invalid RENTER_BOT_LAB_CONVEX_URL");
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash || !["", "/"].includes(parsed.pathname)) {
+    throw new Error("Invalid RENTER_BOT_LAB_CONVEX_URL");
+  }
+  const url = parsed.origin;
+  if (url === RENTAL_CONVEX_URL) throw new Error("Renter-bot Lab cannot use the production rental deployment");
+  if (parsed.protocol !== "https:" || !parsed.hostname.endsWith(".convex.cloud")) {
+    throw new Error("Renter-bot Lab URL must be an isolated Convex cloud deployment");
+  }
+
+  const key = process.env.RENTER_BOT_LAB_CONVEX_DEPLOY_KEY;
+  if (!key?.trim()) throw new Error("Missing private RENTER_BOT_LAB_CONVEX_DEPLOY_KEY for isolated renter-bot Lab");
+  const client = new ConvexHttpClient(url);
+  const admin = client as ConvexHttpClient & {
+    setAdminAuth(token: string, identity: UserIdentityAttributes): void;
+  };
+  admin.setAdminAuth(key.trim(), { issuer: OWNER_SERVICE_ISSUER, subject: OWNER_SERVICE_SUBJECT });
+  return client as ConvexServiceClient;
+}

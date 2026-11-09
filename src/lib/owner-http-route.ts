@@ -49,14 +49,17 @@ export function withOwnerRoute(handler: Route) {
 }
 
 /** Only for endpoints with their own private server-secret check or minimal public health/key output. */
-export function withServiceRoute(handler: Route) {
+export function withServiceRoute<TClient extends ConvexHttpClient>(
+  handler: (request: Request, client: TClient) => Promise<Response>,
+  clientFactory: () => TClient = createConvexServiceClient as unknown as () => TClient,
+) {
   return async (request: Request): Promise<Response> => {
-    let client: ConvexHttpClient;
+    let client: TClient;
     try {
-      client = createConvexServiceClient();
+      client = clientFactory();
     } catch {
       return NextResponse.json({ ok: false, error: "service_unavailable" }, { status: 503 });
     }
-    return withConvexClientFactory(createConvexServiceClient, () => handler(request, client));
+    return withConvexClientFactory(clientFactory, () => handler(request, client));
   };
 }

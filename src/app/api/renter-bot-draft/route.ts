@@ -25,6 +25,8 @@ import { harvestToolKitItems, harvestToolPrices } from "../../../lib/harvest-too
 import { isPlatformNotice } from "../../../../convex/lib/item_name_match";
 import { sameMount } from "../../../../convex/lib/item_name_match";
 import { withServiceRoute } from "@/lib/owner-http-route";
+import { createRenterBotLabConvexServiceClient, type ConvexServiceClient } from "@/lib/convex-service";
+import { hostedLabDraftApiAuthAllowed, renterBotDraftApiAuthMode } from "@/lib/renter-bot-api-auth";
 import { withConvexClientFactory } from "@/lib/convex-request-context";
 import { createConvexQuerySession } from "@/lib/convex-query-session";
 import { makeFunctionReference } from "convex/server";
@@ -199,10 +201,9 @@ export const maxDuration = 180;
  * (which keeps the guard + setDraft + learning). This is the bot; the old
  * single-shot is only a fallback if this errors.
  */
-export const POST = withServiceRoute(async function POST(req: Request, rawConvex) {
-  const expected = process.env.RENTER_BOT_API_SECRET;
-  const authorization = req.headers.get("authorization");
-  if (!expected || authorization !== `Bearer ${expected}`) {
+const renterBotDraftHandler = async function POST(req: Request, rawConvex: ConvexServiceClient) {
+  const authMode = renterBotDraftApiAuthMode(req.headers.get("authorization"));
+  if (!authMode) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
@@ -214,6 +215,9 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
   }
   const { thread_id } = body;
   if (!thread_id) return NextResponse.json({ ok: false, error: "no_thread_id" }, { status: 400 });
+  if (!hostedLabDraftApiAuthAllowed(authMode, thread_id)) {
+    return NextResponse.json({ ok: false, error: "lab_probe_required" }, { status: 403 });
+  }
   if (!renterBotRuntimeAllowed(thread_id)) return NextResponse.json({ok:false,error:"lab_only_pending_written_consent"},{status:403});
 
   /**
@@ -1480,4 +1484,12 @@ export const POST = withServiceRoute(async function POST(req: Request, rawConvex
       { status: failure.transient ? 503 : 500 },
     );
   }
-});
+};
+
+const productionDraftPost = withServiceRoute(renterBotDraftHandler);
+const hostedLabDraftPost = withServiceRoute(renterBotDraftHandler, createRenterBotLabConvexServiceClient);
+
+export const POST = (req: Request) => {
+  const authMode = renterBotDraftApiAuthMode(req.headers.get("authorization"));
+  return authMode === "hosted-lab" ? hostedLabDraftPost(req) : productionDraftPost(req);
+};

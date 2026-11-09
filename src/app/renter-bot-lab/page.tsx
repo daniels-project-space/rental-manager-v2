@@ -1,4 +1,5 @@
 import { RenterBotLabWorkspace } from "@/components/dashboard/RenterBotLab/RenterBotLabWorkspace";
+import { RenterBotLabProvider } from "./RenterBotLabProvider";
 
 /**
  * Renter Bot Lab — internal-only test surface. Talks to the REAL
@@ -10,5 +11,9 @@ import { RenterBotLabWorkspace } from "@/components/dashboard/RenterBotLab/Rente
  * with the URL. Nothing here can reach a real renter regardless.
  */
 export default function RenterBotLabPage() {
-  return <RenterBotLabWorkspace />;
+  return (
+    <RenterBotLabProvider>
+      <RenterBotLabWorkspace />
+    </RenterBotLabProvider>
+  );
 }
