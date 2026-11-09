@@ -110,6 +110,10 @@ export function ScenarioPicker({
   const [customEndDate, setCustomEndDate] = useState(inFiveDays);
   const [presetStartDateOverride, setPresetStartDateOverride] = useState("");
   const [presetEndDateOverride, setPresetEndDateOverride] = useState("");
+  // V1 examples carry the item and renter turns but predate product IDs. Let
+  // the Lab bind those saved turns to an actual listing on the selected
+  // account before a conversation starts.
+  const [fixtureProductIdOverride, setFixtureProductIdOverride] = useState<string | null>(null);
   const [customLocation, setCustomLocation] = useState("");
   const [productId, setProductId] = useState("");
   const [lifecycle, setLifecycle] = useState<LabLifecycle>("inquiry");
@@ -119,11 +123,16 @@ export function ScenarioPicker({
 
   const list = (fixtures ?? []).filter((fixture) => fixture.account_slug === accountSlug);
   const selectedFixture = list.find((fixture) => fixture._id === fixtureId);
-  const selectedListing = selectedFixture?.seed_context?.product_id != null
-    ? listings?.find((listing) => listing.product_id === selectedFixture.seed_context?.product_id)
+  const linkedProductId = selectedFixture?.seed_context?.product_id;
+  const linkedListing = linkedProductId != null
+    ? listings?.find((listing) => listing.product_id === linkedProductId)
+    : undefined;
+  const fixtureProductId = fixtureProductIdOverride ?? (linkedListing ? String(linkedProductId) : "");
+  const selectedListing = fixtureProductId
+    ? listings?.find((listing) => listing.product_id === Number(fixtureProductId))
     : undefined;
   const selectedFixtureListingReady = selectedFixture?.source !== "v1_scenario_port" ||
-    (selectedFixture.seed_context?.product_id != null && selectedListing != null);
+    selectedListing != null;
   const byType = new Map<string, FixtureOption[]>();
   for (const f of list) {
     const arr = byType.get(f.scenario_type) ?? [];
@@ -147,6 +156,9 @@ export function ScenarioPicker({
       if (Boolean(presetStartDateOverride) !== Boolean(presetEndDateOverride)) return;
       startSession(accountSlug, fixtureId, {
         lifecycle,
+        ...(selectedFixture?.source === "v1_scenario_port" && selectedListing
+          ? { productId: selectedListing.product_id }
+          : {}),
         ...(presetStartDateOverride && presetEndDateOverride
           ? { startDate: presetStartDateOverride, endDate: presetEndDateOverride }
           : {}),
@@ -184,6 +196,7 @@ export function ScenarioPicker({
           onChange={(e) => {
             setAccountSlug(e.target.value);
             setFixtureId("");
+            setFixtureProductIdOverride(null);
             setProductId("");
             setPresetStartDateOverride("");
             setPresetEndDateOverride("");
@@ -207,6 +220,7 @@ export function ScenarioPicker({
           value={fixtureId}
           onChange={(e) => {
             setFixtureId(e.target.value);
+            setFixtureProductIdOverride(null);
             setPresetStartDateOverride("");
             setPresetEndDateOverride("");
           }}
@@ -258,6 +272,26 @@ export function ScenarioPicker({
                     ? "Checking the linked listing…"
                     : `Linked listing #${selectedFixture.seed_context.product_id} is not currently published on this account.`}
               </p>
+            )}
+            {selectedFixture.source === "v1_scenario_port" && (
+              <label className="mt-2 block text-[11px] text-[#8b8fa3]">
+                Listing for this example
+                <select
+                  value={fixtureProductId}
+                  onChange={(e) => setFixtureProductIdOverride(e.target.value)}
+                  disabled={disabled || listings === undefined}
+                  className="mt-1 w-full rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-[#e4e6eb] disabled:opacity-50"
+                >
+                  <option value="">Choose a published listing on this account</option>
+                  {(listings ?? []).map((listing) => (
+                    <option key={listing.product_id} value={String(listing.product_id)}>
+                      {listing.daily_price != null ? `£${listing.daily_price}/day · ` : ""}
+                      {listing.display_name}
+                    </option>
+                  ))}
+                </select>
+                <span className="mt-1 block">The saved renter messages will be tested against the selected listing and its current price.</span>
+              </label>
             )}
           </div>
         )}
