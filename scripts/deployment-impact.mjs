@@ -13,6 +13,12 @@ export function sourceRepository(env = process.env) {
   return env.VERCEL_ENV === "production" ? "https://github.com/daniels-project-space/rental-manager-v2.git" : "origin";
 }
 
+/** Production freshness follows the branch that actually serves production.
+ * The Vercel project deploys `vercel-production`; GitHub Actions uses `main`. */
+export function sourceBranch(env = process.env) {
+  return env.VERCEL_GIT_COMMIT_REF === "vercel-production" ? "vercel-production" : "main";
+}
+
 /** Node built-ins only: this also runs in Vercel's pre-install ignore step. */
 export function classifyChanges(files, before, after) {
   if (!before || !after || before.version !== 1 || after.version !== 1) return all("missing_or_unknown_dependency_manifest");
@@ -59,10 +65,11 @@ export function assertCurrentInputs(commit, layer, root = process.cwd(), env = p
   if (!/^[a-f0-9]{40}$/.test(commit) || !["website", "backend", "trigger"].includes(layer)) throw Error("Invalid production source identity");
   function git(args) { return execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 20_000 }); }
   const repository = sourceRepository(env);
-  let latest, result, stage = "read_main_ref";
+  const branch = sourceBranch(env);
+  let latest, result, stage = "read_release_ref";
   try {
-    latest = git(["ls-remote", repository, "refs/heads/main"]).split(/\s/)[0];
-    if (!/^[a-f0-9]{40}$/.test(latest)) throw Error("Main ref unavailable");
+    latest = git(["ls-remote", repository, `refs/heads/${branch}`]).split(/\s/)[0];
+    if (!/^[a-f0-9]{40}$/.test(latest)) throw Error("Release ref unavailable");
     if (latest === commit) return;
     stage = "fetch_main";
     git(["fetch", "--no-tags", repository, latest]);
@@ -73,7 +80,7 @@ export function assertCurrentInputs(commit, layer, root = process.cwd(), env = p
     const after = JSON.parse(git(["show", `${latest}:${manifestName}`]));
     const files = git(["diff", "--no-renames", "--name-only", "-z", commit, latest]).split("\0").filter(Boolean);
     result = classifyChanges(files, before, after);
-  } catch { throw Error(`Cannot verify production source inputs against current main (${stage})`); }
+  } catch { throw Error(`Cannot verify production source inputs against current ${branch} (${stage})`); }
   if (result[layer]) throw Error(`Production ${layer} inputs are superseded; use the latest qualified Git release`);
 }
 

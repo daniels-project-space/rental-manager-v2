@@ -4,13 +4,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import { classifyChanges, impactSince, assertCurrentInputs, sourceRepository } from "./deployment-impact.mjs";
+import { classifyChanges, impactSince, assertCurrentInputs, sourceRepository, sourceBranch } from "./deployment-impact.mjs";
 
 test("Vercel production verifies the pinned public repository without requiring clone-local origin", () => {
   assert.equal(sourceRepository({ VERCEL_ENV: "production" }), "https://github.com/daniels-project-space/rental-manager-v2.git");
   assert.equal(sourceRepository({ VERCEL_ENV: "production", RM_SOURCE_REMOTE: "https://untrusted.example" }), "https://github.com/daniels-project-space/rental-manager-v2.git");
   assert.equal(sourceRepository({ VERCEL_ENV: "preview" }), "origin");
   assert.equal(sourceRepository({ GITHUB_ACTIONS: "true" }), "origin");
+  assert.equal(sourceBranch({ VERCEL_ENV: "production", VERCEL_GIT_COMMIT_REF: "vercel-production" }), "vercel-production");
+  assert.equal(sourceBranch({ VERCEL_ENV: "production", VERCEL_GIT_COMMIT_REF: "main" }), "main");
+  assert.equal(sourceBranch({ VERCEL_ENV: "preview", VERCEL_GIT_COMMIT_REF: "feature/lab" }), "main");
 });
 
 const manifest = () => ({ version: 1, globals: ["package.json", "pnpm-lock.yaml"], website: { files: ["src/app/page.tsx", "convex/lib/shared.ts"], uncertain: [] }, backend: { files: ["convex/query.ts", "convex/lib/shared.ts"], uncertain: [] }, trigger: { files: ["src/trigger/poll.ts", "src/lib/worker.ts", "convex/lib/shared.ts"], uncertain: [] } });
@@ -112,5 +115,28 @@ test("queued publishers tolerate unrelated newer commits and reject newer layer 
     fs.writeFileSync(path.join(work, "convex/query.ts"), "export const value = 2;\n"); git("add", "."); git("commit", "-qm", "Backend"); git("push", "origin", "main");
     assert.throws(() => assertCurrentInputs(base, "backend", work), /inputs are superseded/);
     assertCurrentInputs(base, "website", work);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+test("production publisher freshness follows the vercel-production release branch", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "rm-production-ref-"));
+  const work = path.join(root, "work"), remote = path.join(root, "origin.git"); fs.mkdirSync(work);
+  function git(...args) { return execFileSync("git", args, { cwd: work, stdio: ["ignore", "pipe", "pipe"] }).toString().trim(); }
+  try {
+    git("init", "-q", "-b", "main"); git("config", "user.email", "local@example.invalid"); git("config", "user.name", "Local contract");
+    fs.mkdirSync(path.join(work, "convex")); fs.writeFileSync(path.join(work, "convex/query.ts"), "export const value = 1;\n");
+    fs.writeFileSync(path.join(work, "deployment-inputs.json"), JSON.stringify(manifest()));
+    git("add", "."); git("commit", "-qm", "Inputs");
+    git("clone", "--bare", work, remote); git("remote", "add", "origin", remote);
+    git("switch", "-q", "-c", "vercel-production");
+    fs.writeFileSync(path.join(work, "README.md"), "Production release\n");
+    git("add", "."); git("commit", "-qm", "Production release"); const release = git("rev-parse", "HEAD");
+    fs.writeFileSync(path.join(work, "README.md"), "Production release docs\n");
+    git("add", "."); git("commit", "-qm", "Release docs"); git("push", "origin", "vercel-production");
+    const productionEnv = { VERCEL_GIT_COMMIT_REF: "vercel-production" };
+    assert.doesNotThrow(() => assertCurrentInputs(release, "backend", work, productionEnv));
+    assert.throws(() => assertCurrentInputs(release, "backend", work, { VERCEL_GIT_COMMIT_REF: "main" }), /Cannot verify production source inputs/);
+    fs.writeFileSync(path.join(work, "convex/query.ts"), "export const value = 2;\n");
+    git("add", "."); git("commit", "-qm", "Backend update"); git("push", "origin", "vercel-production");
+    assert.throws(() => assertCurrentInputs(release, "backend", work, productionEnv), /Production backend inputs are superseded/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
