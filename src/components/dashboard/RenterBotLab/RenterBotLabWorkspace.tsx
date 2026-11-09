@@ -1,13 +1,12 @@
 "use client";
 
-import { OwnerChecksPanel } from "../OwnerChecksPanel";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useAction, useQuery } from "convex/react";
+import { useAction } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
-import { ScenarioPicker, type CustomScenarioInput } from "./ScenarioPicker";
+import { ScenarioPicker } from "./ScenarioPicker";
 import { LiveChatSim, type SessionContext } from "./LiveChatSim";
-import { RunResultsPanel } from "./RunResultsPanel";
+import type { RenterBotLabScenarioId } from "../../../../convex/lib/renter_bot_lab_scenarios";
 
 interface Session {
   threadId: string;
@@ -30,8 +29,7 @@ export function RenterBotLabWorkspace() {
   const [labApiStatus, setLabApiStatus] = useState<LabApiStatus | null>(null);
   const [labApiChecked, setLabApiChecked] = useState(false);
 
-  const fixtures = useQuery(api.renter_bot_lab_actions.listFixtures);
-  const startLiveSession = useAction(api.renter_bot_lab_actions.startLiveSession);
+  const startPreparedScenario = useAction(api.renter_bot_lab_actions.startPreparedScenario);
   const endLiveSession = useAction(api.renter_bot_lab_actions.endLiveSession);
 
   useEffect(() => {
@@ -58,30 +56,16 @@ export function RenterBotLabWorkspace() {
 
   const labApiReady = (labApiStatus?.deployment === "local" || labApiStatus?.deployment === "hosted") &&
     labApiStatus.live_chat_authorized === false && labApiStatus.openrouter_configured === true;
-  const labReady = labApiReady && fixtures !== undefined;
+  const labReady = labApiReady;
   const sourceVersion = labApiStatus?.source_fingerprint.slice(0, 12);
 
-  async function handleStart(
-    accountSlug: string,
-    fixtureId?: string,
-    custom?: CustomScenarioInput,
-  ) {
+  async function handleStart(scenarioId: RenterBotLabScenarioId) {
     setStartError(null);
     try {
-      const result = await startLiveSession({
-        accountSlug,
-        fixtureId: fixtureId as never, // Convex Id<> branding; picker only passes an id from the current account's fixtures
-        items: custom?.items,
-        priceGbp: custom?.priceGbp,
-        startDate: custom?.startDate,
-        endDate: custom?.endDate,
-        location: custom?.location,
-        productId: custom?.productId,
-        lifecycle: custom?.lifecycle,
-      });
+      const result = await startPreparedScenario({ scenarioId });
       setSession({
         threadId: result.threadId,
-        accountSlug,
+        accountSlug: result.accountSlug,
         context: result.context,
       });
     } catch (error) {
@@ -134,39 +118,32 @@ export function RenterBotLabWorkspace() {
         </div>
       </div>
 
-      <div className="mx-auto max-w-7xl px-4 pt-4"><OwnerChecksPanel labOnly accountSlug={session?.accountSlug} onOpen={thread=>router.push(`/?thread=${encodeURIComponent(thread)}`)} /></div>
-
-      <div className="mx-auto grid max-w-6xl grid-cols-1 gap-6 p-4 sm:p-6 lg:grid-cols-[320px_minmax(0,1fr)]">
-        <div className="space-y-4">
+      <main className="mx-auto max-w-5xl space-y-5 p-4 sm:p-6">
+        {!session && (
           <ScenarioPicker
-            fixtures={fixtures}
-            disabled={!!session || !labReady}
-            startSession={handleStart}
+            disabled={!labReady}
+            startScenario={handleStart}
           />
-          {startError && <p className="rounded-md border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-200" role="alert">{startError}</p>}
-          {session && (
-            <button
-              onClick={handleEnd}
-              disabled={ending}
-              className="w-full rounded-md bg-white/10 px-3 py-2 text-sm text-[#e4e6eb] hover:bg-white/20 disabled:opacity-50"
-            >
-              {ending ? "Ending…" : "End session"}
-            </button>
-          )}
-        </div>
+        )}
 
-        <div className="min-w-0 space-y-6">
-          {session ? (
-            <LiveChatSim session={session} />
-          ) : (
-            <div className="rounded-lg border border-white/10 bg-white/[0.03] p-6 text-sm text-[#8b8fa3]">
-              Pick an account and a scenario (or a custom one), then start a
-              test conversation.
+        {startError && <p className="rounded-md border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-200" role="alert">{startError}</p>}
+
+        {session && (
+          <section className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm text-[#8b8fa3]">Example loaded. The next button sends only the saved renter messages.</p>
+              <button
+                onClick={handleEnd}
+                disabled={ending}
+                className="rounded-md bg-white/10 px-3 py-2 text-sm text-[#e4e6eb] hover:bg-white/20 disabled:opacity-50"
+              >
+                {ending ? "Closing…" : "Choose another example"}
+              </button>
             </div>
-          )}
-          <RunResultsPanel />
-        </div>
-      </div>
+            <LiveChatSim session={session} />
+          </section>
+        )}
+      </main>
     </div>
   );
 }

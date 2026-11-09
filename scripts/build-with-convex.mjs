@@ -37,3 +37,36 @@ if (!production) {
     assertCurrentMain(sourceCommit(), "website");
   }
 }
+
+if (production) {
+  const labMode = process.env.RENTER_BOT_LAB_DEPLOYMENT;
+  if (labMode !== "hosted") throw new Error("Production requires the isolated hosted Renter Bot Lab deployment.");
+  if (process.env.RENTER_BOT_LAB_LIVE_CHAT_AUTHORIZED !== "false") {
+    throw new Error("Production release blocked: real renter messaging must remain disabled for the Lab.");
+  }
+
+  const labUrlValue = process.env.RENTER_BOT_LAB_CONVEX_URL?.trim();
+  const publicLabUrlValue = process.env.NEXT_PUBLIC_RENTER_BOT_LAB_CONVEX_URL?.trim();
+  const labDeployKey = process.env.RENTER_BOT_LAB_CONVEX_DEPLOY_KEY?.trim();
+  if (!labUrlValue || !publicLabUrlValue || !labDeployKey) {
+    throw new Error("Production requires the isolated Lab URL and its private Convex deploy key.");
+  }
+  const labUrl = new URL(labUrlValue).origin;
+  const publicLabUrl = new URL(publicLabUrlValue).origin;
+  const mainUrl = new URL(BACKEND_URL).origin;
+  if (labUrl !== publicLabUrl || labUrl === mainUrl) {
+    throw new Error("Lab deployment target must match the Lab UI URL and remain separate from production Convex.");
+  }
+  if (new URL(labUrl).protocol !== "https:" || !new URL(labUrl).hostname.endsWith(".convex.cloud")) {
+    throw new Error("The isolated Lab deployment URL is invalid.");
+  }
+
+  // Keep the Lab's functions and prepared-item facts in step with the page.
+  // The deployment key is replaced in this child process only; it never
+  // selects the main Rental Manager Convex deployment.
+  const labEnv = { ...process.env, CONVEX_DEPLOY_KEY: labDeployKey };
+  delete labEnv.CONVEX_DEPLOYMENT;
+  const labDeploymentName = new URL(labUrl).hostname.replace(/\.convex\.cloud$/, "");
+  await runInstalledTool("convex", ["env", "set", "RENTER_BOT_LAB_SCENARIO_SEEDING", "enabled", "--deployment", labDeploymentName], labEnv);
+  await runInstalledTool("convex", ["deploy", "--deployment", labDeploymentName, "--typecheck", "disable", "--codegen", "disable", "--message", `Renter Bot Lab ${sourceCommit()}`], labEnv);
+}
