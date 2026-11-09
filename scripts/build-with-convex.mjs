@@ -63,8 +63,8 @@ if (production) {
 
   const labDeploymentName = new URL(labUrl).hostname.replace(/\.convex\.cloud$/, "");
   const labKeyScope = labDeployKey.split("|", 1)[0];
-  if (labKeyScope !== `prod:${labDeploymentName}` && labKeyScope !== labDeploymentName) {
-    throw new Error("The Lab deploy key must be scoped directly to the isolated Lab deployment.");
+  if (labKeyScope !== `dev:${labDeploymentName}`) {
+    throw new Error("The Lab deploy key must be scoped directly to the isolated Lab dev deployment.");
   }
 
   // Keep the Lab's functions and prepared-item facts in step with the page.
