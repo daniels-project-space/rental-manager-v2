@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeFunctionReference } from "convex/server";
-import { createConvexServiceClient } from "./convex-service";
+import { createConvexServiceClient, createRenterBotLabConvexServiceClient } from "./convex-service";
 
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
@@ -35,5 +35,32 @@ describe("private rental worker transport", () => {
     const identity = JSON.parse(Buffer.from(authorization.split(":").at(-1)!, "base64").toString());
     expect(identity).toEqual({ issuer: "urn:rental-manager:deployment-service", subject: "rental-manager-service" });
     expect(JSON.parse(init.body).path).toBe("owner_auth_probe:serviceIdentity");
+  });
+});
+
+describe("isolated renter-bot Lab transport", () => {
+  it("refuses the production deployment and requires a separate Lab key", () => {
+    vi.stubEnv("RENTER_BOT_LAB_CONVEX_URL", "https://hearty-oyster-600.convex.cloud");
+    vi.stubEnv("RENTER_BOT_LAB_CONVEX_DEPLOY_KEY", "lab-key");
+    expect(() => createRenterBotLabConvexServiceClient()).toThrow("cannot use the production rental deployment");
+
+    vi.stubEnv("RENTER_BOT_LAB_CONVEX_URL", "https://clean-bulldog-494.convex.cloud");
+    vi.stubEnv("RENTER_BOT_LAB_CONVEX_DEPLOY_KEY", "");
+    expect(() => createRenterBotLabConvexServiceClient()).toThrow("Missing private RENTER_BOT_LAB_CONVEX_DEPLOY_KEY");
+  });
+
+  it("uses the dedicated isolated Lab URL and credential", async () => {
+    vi.stubEnv("RENTER_BOT_LAB_CONVEX_URL", "https://clean-bulldog-494.convex.cloud");
+    vi.stubEnv("RENTER_BOT_LAB_CONVEX_DEPLOY_KEY", "lab-only-key");
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      status: "success", value: { isolated_lab: true }, logLines: [],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetch);
+    const client = createRenterBotLabConvexServiceClient();
+    expect(await client.query(makeFunctionReference<"query">("owner_auth_probe:serviceIdentity"), {}))
+      .toEqual({ isolated_lab: true });
+    const [url, init] = fetch.mock.calls[0];
+    expect(url).toBe("https://clean-bulldog-494.convex.cloud/api/query");
+    expect((init.headers.Authorization as string)).toMatch(/^Convex lab-only-key:/);
   });
 });

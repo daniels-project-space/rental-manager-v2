@@ -1,7 +1,7 @@
 "use client";
 
 import { OwnerChecksPanel } from "../OwnerChecksPanel";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAction, useQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
@@ -15,36 +15,78 @@ interface Session {
   context: SessionContext;
 }
 
+interface LabApiStatus {
+  deployment: string;
+  live_chat_authorized: boolean;
+  openrouter_configured: boolean;
+  source_fingerprint: string;
+}
+
 export function RenterBotLabWorkspace() {
   const router = useRouter();
   const [session, setSession] = useState<Session | null>(null);
   const [ending, setEnding] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+  const [labApiStatus, setLabApiStatus] = useState<LabApiStatus | null>(null);
+  const [labApiChecked, setLabApiChecked] = useState(false);
 
   const fixtures = useQuery(api.renter_bot_lab_actions.listFixtures);
   const startLiveSession = useAction(api.renter_bot_lab_actions.startLiveSession);
   const endLiveSession = useAction(api.renter_bot_lab_actions.endLiveSession);
+
+  useEffect(() => {
+    let mounted = true;
+    async function checkLabApi() {
+      try {
+        const response = await fetch("/api/renter-bot-draft/lab-status", { cache: "no-store" });
+        if (!response.ok) throw new Error("Renter Bot Lab API is unavailable");
+        const status = await response.json() as LabApiStatus;
+        if (mounted) setLabApiStatus(status);
+      } catch {
+        if (mounted) setLabApiStatus(null);
+      } finally {
+        if (mounted) setLabApiChecked(true);
+      }
+    }
+    void checkLabApi();
+    const timer = window.setInterval(() => void checkLabApi(), 30_000);
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const labApiReady = (labApiStatus?.deployment === "local" || labApiStatus?.deployment === "hosted") &&
+    labApiStatus.live_chat_authorized === false && labApiStatus.openrouter_configured === true;
+  const labReady = labApiReady && fixtures !== undefined;
+  const sourceVersion = labApiStatus?.source_fingerprint.slice(0, 12);
 
   async function handleStart(
     accountSlug: string,
     fixtureId?: string,
     custom?: CustomScenarioInput,
   ) {
-    const result = await startLiveSession({
-      accountSlug,
-      fixtureId: fixtureId as never, // Convex Id<> branding; picker only ever passes a real fixture _id
-      items: custom?.items,
-      priceGbp: custom?.priceGbp,
-      startDate: custom?.startDate,
-      endDate: custom?.endDate,
-      location: custom?.location,
-      productId: custom?.productId,
-      lifecycle: custom?.lifecycle,
-    });
-    setSession({
-      threadId: result.threadId,
-      accountSlug,
-      context: result.context,
-    });
+    setStartError(null);
+    try {
+      const result = await startLiveSession({
+        accountSlug,
+        fixtureId: fixtureId as never, // Convex Id<> branding; picker only passes an id from the current account's fixtures
+        items: custom?.items,
+        priceGbp: custom?.priceGbp,
+        startDate: custom?.startDate,
+        endDate: custom?.endDate,
+        location: custom?.location,
+        productId: custom?.productId,
+        lifecycle: custom?.lifecycle,
+      });
+      setSession({
+        threadId: result.threadId,
+        accountSlug,
+        context: result.context,
+      });
+    } catch (error) {
+      setStartError(error instanceof Error ? error.message : "Could not start the Lab conversation");
+    }
   }
 
   async function handleEnd() {
@@ -54,13 +96,14 @@ export function RenterBotLabWorkspace() {
     } finally {
       setSession(null);
       setEnding(false);
+      setStartError(null);
     }
   }
 
   return (
     <div className="min-h-screen bg-[#0b0c10] text-[#e4e6eb]">
       <div className="sticky top-0 z-10 border-b border-white/10 bg-[#0b0c10]/95 px-6 py-3 backdrop-blur">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-3">
             <button
               onClick={() => router.push("/")}
@@ -70,9 +113,24 @@ export function RenterBotLabWorkspace() {
             </button>
             <h1 className="text-sm font-semibold">Renter Bot Lab</h1>
           </div>
-          <span className="rounded-full bg-amber-500/15 px-3 py-1 text-xs font-medium text-amber-400">
-            TEST MODE — real draft pipeline, never sends to a real renter
-          </span>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <span className="rounded-full bg-amber-500/15 px-3 py-1 text-xs font-medium text-amber-400">
+              TEST MODE — never sends to a real renter
+            </span>
+            <span
+              role="status"
+              aria-live="polite"
+              className={`rounded-full px-3 py-1 text-xs font-medium ${labReady ? "bg-emerald-500/15 text-emerald-300" : "bg-white/10 text-[#b6bac7]"}`}
+            >
+              {labReady
+                ? `Lab bot connected · ${sourceVersion} · Model ready · sends off`
+                : !labApiChecked
+                  ? "Checking Lab connection…"
+                  : !labApiReady
+                    ? "Lab API unavailable — isolated backend not ready"
+                    : "Connecting to isolated Lab data…"}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -82,9 +140,10 @@ export function RenterBotLabWorkspace() {
         <div className="space-y-4">
           <ScenarioPicker
             fixtures={fixtures}
-            disabled={!!session}
+            disabled={!!session || !labReady}
             startSession={handleStart}
           />
+          {startError && <p className="rounded-md border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-200" role="alert">{startError}</p>}
           {session && (
             <button
               onClick={handleEnd}
