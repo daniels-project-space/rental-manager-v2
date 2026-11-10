@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { BACKEND_URL, assertCurrentMain, sourceCommit, publishBackend, readBackendIdentity, runInstalledTool } from "./backend-publisher.mjs";
-import { backendFingerprint } from "./backend-fingerprint.mjs";
+import { BACKEND_URL, sourceCommit, runInstalledTool } from "./backend-publisher.mjs";
 
 const labAuthMarker = "RENTER_BOT_LAB_AUTH_CONFIG_VERSION";
 
@@ -14,9 +13,14 @@ async function ensureLabDraftApiAuth(labEnv) {
   console.log("Configured the isolated Lab draft connection.");
 }
 
-// Preview builds share the live backend URL/key. Only an explicitly production
-// Vercel build may publish functions; local and PR builds only compile the UI.
+// Preview builds and the hosted Lab release build the website without
+// publishing functions to the live rental backend.
 const production = process.env.VERCEL_ENV === "production";
+const labDeployment = process.env.RENTER_BOT_LAB_DEPLOYMENT;
+const labLiveChatAuthorized = process.env.RENTER_BOT_LAB_LIVE_CHAT_AUTHORIZED;
+if (production && (labDeployment !== "hosted" || labLiveChatAuthorized !== "false")) {
+  throw new Error("Production release requires the hosted isolated Lab with real renter messaging disabled.");
+}
 const fingerprint = spawnSync(process.execPath, ["scripts/check-shared-stock-implementation.mjs"], { stdio: "inherit" });
 if (fingerprint.error) throw fingerprint.error;
 if (fingerprint.status !== 0) process.exit(fingerprint.status ?? 1);
@@ -32,22 +36,11 @@ if (production) {
 }
 if (!production) {
   await runInstalledTool("next", ["build"]);
-} else if (process.env.RM_SPLIT_DEPLOYMENTS !== "enabled") {
-  // Initial bootstrap retains the existing coupled publication. Enable split
-  // releases only after the identity/lease endpoints and CI publisher qualify.
-  await publishBackend({ nextBuild: true, locked: false });
 } else {
-  const identity = await readBackendIdentity();
-  if (identity.sourceFingerprint === backendFingerprint()) {
-    // Exactly the existing qualified backend; do not republish it for a UI
-    // change. Match the public URL variables Convex's --cmd used to supply.
-    const env = { ...process.env, NEXT_PUBLIC_CONVEX_URL: BACKEND_URL, NEXT_PUBLIC_CONVEX_SITE_URL: BACKEND_URL.replace(".cloud", ".site") };
-    await runInstalledTool("next", ["build"], env);
-    assertCurrentMain(sourceCommit(), "website");
-  } else {
-    await publishBackend({ nextBuild: true, locked: true });
-    assertCurrentMain(sourceCommit(), "website");
-  }
+  // The Rental Manager page serves the isolated Lab, so publish its website
+  // and Lab backend without publishing Convex functions to live rental data.
+  const env = { ...process.env, NEXT_PUBLIC_CONVEX_URL: BACKEND_URL, NEXT_PUBLIC_CONVEX_SITE_URL: BACKEND_URL.replace(".cloud", ".site") };
+  await runInstalledTool("next", ["build"], env);
 }
 
 if (production) {

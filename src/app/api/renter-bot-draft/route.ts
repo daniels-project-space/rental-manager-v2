@@ -1486,6 +1486,24 @@ const renterBotDraftHandler = async function POST(req: Request, rawConvex: Conve
     });
   } catch (e) {
     const failure = generationFailure(e, "agent");
+    if (authMode === "hosted-lab") {
+      const errorClasses: string[] = [];
+      const upstreamStatuses: number[] = [];
+      const visited = new Set<unknown>();
+      let node: unknown = e;
+      for (let depth = 0; node && typeof node === "object" && depth < 5 && !visited.has(node); depth++) {
+        visited.add(node);
+        const value = node as { name?: unknown; statusCode?: unknown; cause?: unknown };
+        if (typeof value.name === "string" && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(value.name)) errorClasses.push(value.name);
+        if (typeof value.statusCode === "number" && Number.isInteger(value.statusCode) && value.statusCode >= 400 && value.statusCode <= 599) upstreamStatuses.push(value.statusCode);
+        node = value.cause;
+      }
+      console.error("[renter-bot-lab] agent generation failed", {
+        error_classes: errorClasses,
+        upstream_statuses: upstreamStatuses,
+        failure_code: failure.error_code,
+      });
+    }
     return NextResponse.json(
       { ok: false, ...failure },
       { status: failure.transient ? 503 : 500 },
