@@ -1,3 +1,7 @@
+import { completeRentalTotal } from "./minimum_rental";
+import type { PriceEvidence } from "./price_claims";
+import type { StockRequest } from "./stock_claims";
+
 export type TravelCompensationTurn = { role: "owner" | "renter"; content: string };
 
 export type TravelCompensationAssessment = {
@@ -13,16 +17,46 @@ export function travelCompensationMaximum(rentalChargeGbp: number | null | undef
   return Math.min(Math.floor(rentalChargeGbp * 10 + 1e-7) / 100, 10);
 }
 
+/** Use a paid rental amount or a complete exact-date Native quote. Daily rates,
+ * partial item prices and alternative quotes do not establish the cap base. */
+export function verifiedRentalChargeGbp(input: {
+  rentalChargeGbp?: number | null;
+  grossPaidGbp?: number | null;
+  deliveryFeeGbp?: number | null;
+  priceEvidence?: PriceEvidence[];
+  priceRequest?: StockRequest;
+}): number | null {
+  const positive = (value: unknown): value is number =>
+    typeof value === "number" && Number.isFinite(value) && value > 0;
+  if (positive(input.rentalChargeGbp)) return input.rentalChargeGbp;
+  if (positive(input.grossPaidGbp)) {
+    const rental = Math.max(0, input.grossPaidGbp - (input.deliveryFeeGbp ?? 0));
+    if (positive(rental)) return rental;
+  }
+  if (input.priceEvidence?.length && input.priceRequest) {
+    const { start_date, end_date } = input.priceRequest;
+    if (!start_date || !end_date) return null;
+    const dateMatchedEvidence = input.priceEvidence.filter(
+      (evidence) => evidence.start_date === start_date && evidence.end_date === end_date,
+    );
+    const exact = completeRentalTotal(dateMatchedEvidence, input.priceRequest);
+    if (exact && positive(exact.total)) return exact.total;
+  }
+  return null;
+}
+
 function sentences(text: string): string[] {
   return text.split(/(?<=[.!?])\s+/).filter(Boolean);
 }
 
 function isPositiveDiscountSentence(sentence: string): boolean {
-  if (/\b(?:can't|cannot|won't|wouldn't|unable to|not able to|don't|do not)\s+(?:offer|give|apply|provide|discount|reduce|take off|do)\b/i.test(sentence)) {
+  if (/\b(?:can't|cannot|won't|wouldn't|unable to|not able to|don't|do not)\s+(?:offer|give|apply|provide|discount|reduce|take off|do)\b/i.test(sentence) ||
+    /\b(?:isn't|aren't|is not|are not|won't be|wouldn't be|can't be|cannot be|not)\s+(?:made\s+)?available\b/i.test(sentence)) {
     return false;
   }
   const hasOfferVerb = /\b(?:offer|apply|give|provide|reduce|discount|compensat(?:e|ion)|take off|make up for|offset|credit|can do)\b/i.test(sentence) ||
-    /\btake\b.{0,16}\boff\b/i.test(sentence);
+    /\btake\b.{0,16}\boff\b/i.test(sentence) ||
+    /\b(?:is|are|would be|will be|can be)\s+(?:made\s+)?available\b/i.test(sentence);
   const hasMoney = /£\s?\d+(?:\.\d{1,2})?|\b\d+(?:\.\d+)?\s?%/i.test(sentence);
   const hasNamedTravelRelief = /\b(?:travel|journey|distance|trip)\s+(?:discount|adjustment|compensation|credit)\b/i.test(sentence);
   return hasOfferVerb && (hasMoney || hasNamedTravelRelief);
@@ -55,7 +89,8 @@ export function isTravelCompensationOffer(text: string): boolean {
 export function isPickupLocationIntent(message: string): boolean {
   const hasLocationTarget = /\b(?:pickup|pick[ -]?up|collection|collect|address|postcode|street|location|meeting point|meetup|shoreditch|camden|trafalgar(?: square)?|northumberland(?: street)?|charing cross)\b/i.test(message);
   if (!hasLocationTarget) return false;
-  return /\b(?:where|which area|what area|exact|postcode|street|real|really|actually|correct|right|genuine|true|confirm|whether|listed|listing says|tell me|share|send me)\b/i.test(message) ||
+  return /\b(?:where|which area|what area|exact|postcode|real|really|actually|correct|right|genuine|true|confirm|whether|listed|listing says|tell me|share|send me)\b/i.test(message) ||
+    /\b(?:which|what)\s+(?:pickup\s+)?(?:street|address)\b|\bstreet\s+address\b/i.test(message) ||
     /\b(?:i thought|i understood|i was told|i expected|i was expecting|the listing (?:says|shows|states)|the ad (?:says|shows)|it (?:says|shows))\b.{0,80}\b(?:pickup|pick[ -]?up|collection|at|in|near)\b/i.test(message) ||
     /\b(?:can|could|would|should)\s+(?:i|we|you)\s+(?:(?:still|then|there)\s+)?(?:collect|pick[ -]?up|meet|get|come)\b/i.test(message) ||
     /\b(?:is|are|was|does)\b.{0,40}\b(?:pickup|pick[ -]?up|collection|location|shoreditch|camden|trafalgar|northumberland|charing cross)\b/i.test(message) ||

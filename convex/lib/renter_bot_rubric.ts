@@ -15,6 +15,7 @@ import {
   isTravelConcern,
   isUnsafePickupLocationClaim,
   mentionsPickupArea,
+  verifiedRentalChargeGbp,
   type TravelCompensationTurn,
 } from "./travel_compensation";
 /**
@@ -141,18 +142,23 @@ export function scoreDraft(input: RubricInput): RubricOutput {
   const compensationHistory = history.length && history[history.length - 1]?.role === "renter" && history[history.length - 1]?.content === latestRenterMessage
     ? history
     : latestRenterMessage ? [...history, { role: "renter" as const, content: latestRenterMessage }] : history;
+  const effectiveRentalChargeGbp = verifiedRentalChargeGbp({
+    rentalChargeGbp: input.rentalChargeGbp,
+    priceEvidence: input.priceEvidence,
+    priceRequest: input.priceRequest,
+  });
   const travelAssessment = assessTravelCompensation({
     history: compensationHistory,
     lastRenterMessage: latestRenterMessage,
     pickupArea: input.pickupArea,
-    rentalChargeGbp: input.rentalChargeGbp,
+    rentalChargeGbp: effectiveRentalChargeGbp,
   });
   const verificationFailed = input.rentalStage === "VERIFICATION_FAILED";
   const compensationContext = verificationFailed || isPickupLocationIntent(latestRenterMessage) ||
     isTravelConcern(latestRenterMessage) || isTravelCompensationOffer(draftText);
   const discountOfferPresent = isDiscountConcessionOffer(draftText);
   const discountPolicyViolation = discountOfferPresent && (verificationFailed ||
-    (compensationContext && (!travelAssessment.eligible || discountConcessionExceedsCap(draftText, input.rentalChargeGbp, travelAssessment.maximumGbp))));
+    (compensationContext && (!travelAssessment.eligible || discountConcessionExceedsCap(draftText, effectiveRentalChargeGbp, travelAssessment.maximumGbp))));
   const pickupQuestion = isPickupLocationIntent(latestRenterMessage);
   const pickupPrivacySources = input.pickupPrivacySources?.length
     ? input.pickupPrivacySources

@@ -38,7 +38,7 @@ import { gatedGenerateText } from "./lib/gatedGenerate";
 import { sameDraftApproval } from "./lib/draft_review";
 import { renterBotRuntimeAllowed } from "./lib/renter_bot_runtime";
 import { guardDraft, type DraftFlag } from "./lib/draft_guard";
-import { assessTravelCompensation } from "./lib/travel_compensation";
+import { assessTravelCompensation, verifiedRentalChargeGbp } from "./lib/travel_compensation";
 import { dnaSummary } from "./lib/renter_dna";
 import {
   sendManualRenterMessage,
@@ -940,7 +940,11 @@ export const generateDraft = action({
       pickupArea,
       pickupAddress,
       pickupConfirmed,
-      rentalChargeGbp,
+      rentalChargeGbp: verifiedRentalChargeGbp({
+        rentalChargeGbp,
+        priceEvidence: routePriceEvidence,
+        priceRequest: routePriceRequest,
+      }),
       pickupPrivacySources:c.pickup_privacy_sources,
       rentalPermissions:c.rental_stage,
       firstPerson: renterAccountVoice(c.account_slug).firstPerson,

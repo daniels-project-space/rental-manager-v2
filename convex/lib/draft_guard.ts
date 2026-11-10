@@ -15,7 +15,7 @@ import { unsupportedKitClaims, type KitEvidence } from "./kit_claims";
 import { unsupportedCameraModeClaims, unsupportedBuiltInNDClaims, type CameraEvidence } from "./camera_mode_claims";
 import { unsupportedLensFocusClaims, type LensFocusEvidence } from "./lens_focus_claims";
 import { renterItemNames } from "./renter_item_names";
-import { assessTravelCompensation, isDiscountConcessionOffer, isPickupLocationIntent, isTravelCompensationOffer, isTravelConcern, isUnsafePickupLocationClaim, mentionsPickupArea, replaceTravelCompensationOffers, stripTravelCompensationOffers } from "./travel_compensation";
+import { assessTravelCompensation, isDiscountConcessionOffer, isPickupLocationIntent, isTravelCompensationOffer, isTravelConcern, isUnsafePickupLocationClaim, mentionsPickupArea, replaceTravelCompensationOffers, stripTravelCompensationOffers, verifiedRentalChargeGbp } from "./travel_compensation";
 /**
  * Draft guard — output policing for AI-generated owner replies (Phase 1).
  *
@@ -877,11 +877,16 @@ const ASSERTS_AVAIL_RE =
   // 10c. ACCOUNT PICKUP LOCATION + TRAVEL COMPENSATION — enforce the owner's
   // sequence against the generated text, not just the model prompt. A pickup
   // area must be disclosed before a renter can qualify for travel relief.
+  const effectiveRentalChargeGbp = verifiedRentalChargeGbp({
+    rentalChargeGbp: opts.rentalChargeGbp,
+    priceEvidence: opts.priceEvidence,
+    priceRequest: opts.priceRequest,
+  });
   const travelCompensation = assessTravelCompensation({
     history: opts.history,
     lastRenterMessage: opts.lastRenterMessage,
     pickupArea: opts.pickupArea,
-    rentalChargeGbp: opts.rentalChargeGbp,
+    rentalChargeGbp: effectiveRentalChargeGbp,
   });
   const asksPickupLocation = isPickupLocationIntent(opts.lastRenterMessage);
   const asksTravel = isTravelConcern(opts.lastRenterMessage);

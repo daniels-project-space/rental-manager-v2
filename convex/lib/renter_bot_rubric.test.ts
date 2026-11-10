@@ -217,6 +217,37 @@ describe("owner-confirmed pickup and travel rules", () => {
     expect(result.results.find((row) => row.category === "discounts_retention")?.status).toBe("fail");
   });
 
+  it("scores the one-time cap from an exact quote and ignores a daily rate alone", () => {
+    const request = {
+      start_date: "2026-11-24",
+      end_date: "2026-11-24",
+      items: [{ name: "BMPCC 6K Full Frame", quantity: 1 }],
+    };
+    const shared = {
+      accountSlug: "dbcinema",
+      draftText: "I can offer a one-time £3.50 travel adjustment on this rental.",
+      lastRenterMessage: "That area works, but it is quite far for me. Could you help with the travel cost?",
+      conversationHistory: [{ role: "owner" as const, content: "Collection is arranged in the Northumberland Street area." }],
+      pickupArea: "Northumberland Street area",
+      rentalChargeGbp: null,
+      priceRequest: request,
+    };
+    const exact = scoreDraft({
+      ...shared,
+      priceEvidence: [{ names: ["BMPCC 6K Full Frame"], kind: "rental", total_gbp: 35, days: 1, quantity: 1,
+        start_date: request.start_date, end_date: request.end_date, call_id: "native:total", source: "native_quote" }],
+    });
+    expect(exact.results.find((row) => row.category === "discounts_retention")?.status).toBe("pass");
+
+    const rateOnly = scoreDraft({
+      ...shared,
+      priceEvidence: [{ names: ["BMPCC 6K Full Frame"], kind: "rental", daily_rate_gbp: 35, base_rate_gbp: 35,
+        days: 1, quantity: 1, start_date: request.start_date, end_date: request.end_date,
+        call_id: "native:daily-rate", source: "native_listing_rate" }],
+    });
+    expect(rateOnly.results.find((row) => row.category === "discounts_retention")?.status).toBe("fail");
+  });
+
   it("grades compensation as a breach after verification has failed", () => {
     const result = scoreDraft({
       accountSlug: "leo",

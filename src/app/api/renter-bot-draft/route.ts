@@ -978,6 +978,7 @@ const renterBotDraftHandler = async function POST(req: Request, rawConvex: Conve
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const globalSettings: any = globalSettingsCache;
     const hub = (hubs || []).find((h: { slug?: string }) => h.slug === account_slug);
+    const pickupArea = typeof hub?.pickup_area === "string" ? hub.pickup_area.trim() : "";
     const communication = (communications || []).find(
       (row: { slug?: string }) => row.slug === account_slug,
     ) as {
@@ -989,23 +990,21 @@ const renterBotDraftHandler = async function POST(req: Request, rawConvex: Conve
         payment?: string;
       };
     } | undefined;
+    if (pickupArea) {
+      groundTruth += `PICKUP AREA FOR THIS ACCOUNT (${account_slug}): ${pickupArea}. For a location question or a listing that names a different place, disclose this area and ask whether it works before proceeding. Never claim the listed place is fake or nonexistent, never say all accounts share one central pickup, and never invent a reason for the difference (including repair, another rental, or consolidation).\n`;
+    } else {
+      groundTruth += `PICKUP AREA: no owner-confirmed area is configured for ${account_slug}. Do not invent a location or claim that a named listing location is fake or nonexistent; say you will confirm this account's pickup area before proceeding.\n`;
+    }
+    groundTruth += `TRAVEL ADJUSTMENT: Do not offer a discount on the first location disclosure, for a location question alone, or for a generic discount request. Only after this account's pickup area was disclosed in an earlier owner message and the renter then explicitly objects to the travel may you offer one one-time adjustment. Its maximum is the lower of 10% of the exact verified rental total or £10. If that exact total is not already verified for the current basket and dates, check it with the Native quote tools before offering any amount. Never offer after failed verification or cancellation. Eligibility belongs only to this conversation and this renter; never carry it over to another chat.\n`;
     if (hub?.pickup_address) {
       groundTruth += bookingConfirmed
         ? `PICKUP LOCATION (booking IS confirmed — OK to share): ${hub.pickup_address}. Give this exact address when arranging pickup and ask them to text "arrived" when they get there — no need to go inside.\n`
         : `PICKUP LOCATION: withhold the exact account address until there is a current confirmed booking. Historical confirmation of a finished rental does not confirm a new request. Say you'll send the exact pickup address once the new booking is confirmed.\n`;
     } else if (!bookingConfirmed) {
-      // No pickup_address configured for this account (dbcinema, as of
-      // 2026-08-18) — but the withhold instruction must STILL be injected.
-      // Previously the whole gate lived inside the `if (hub?.pickup_address)`
-      // above, so an account with no address on file got no location guidance
-      // at all and the only thing standing between a renter and the address
-      // was the system prompt. That matters because the address for such an
-      // account is not absent from the bot's reach: it is written into the
-      // account's TEMPLATES (e.g. "Template: DB Cinema Welcome Text" contains
-      // the full Trafalgar Square meeting point), which search_knowledge can
-      // return at any conversation stage.
+      // Keep an explicit exact-address gate even if this account has only a
+      // vague pickup area configured; templates can still contain addresses.
       groundTruth +=
-        `PICKUP LOCATION: do NOT reveal any street address, postcode, or specific meeting point for this account yet (booking is NOT confirmed) — including any address that appears inside an account template you may retrieve. Say you'll send the exact pickup address the moment the booking is confirmed; you may say "central London" and nothing more specific.\n`;
+        `PICKUP LOCATION: do not reveal any street address, postcode, map link, or specific meeting point until there is a current confirmed booking, including details found in account templates. If a confirmed pickup area is above, disclose only that area and ask if it works; otherwise say you will confirm the area.\n`;
     }
     // Time-aware pickup/return windows (per account) — at 4pm the morning slot
     // is gone, so only offer windows that haven't passed today.

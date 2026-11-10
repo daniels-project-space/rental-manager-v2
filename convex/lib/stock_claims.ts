@@ -246,6 +246,15 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     // Short replies can omit the copula: "Available for your dates" is
     // still a stock verdict. The empty subject uses the same Native subject
     // binding below; it never creates a receipt or an arbitrary item identity.
+    // A monetary concession is not rentable equipment. Keep it out of the
+    // physical stock classifier; travel/discount policy checks it separately.
+    // If the requested item is named in the same clause, still scan it so an
+    // equipment promise cannot hide behind concession wording.
+    const monetaryConcession = /(?:£\s?\d+(?:\.\d{1,2})?|\b\d+(?:\.\d+)?\s?%)/i.test(clause) &&
+      /\b(?:discounts?|travel\s+adjustments?|adjustments?\s+for\s+(?:the\s+)?(?:travel|journey|distance)|compensation|credits?|off\s+(?:the\s+)?(?:rental|hire))\b/i.test(clause);
+    const namesRequestedItem = knownSubjects.some(item => [item.name,...(item.aliases??[])].some(name =>
+      identity(clause).includes(identity(name))));
+    if (monetaryConcession && !namesRequestedItem) continue;
     const match = /(?:\b(?:(isn't|aren't|is not|are not|not)\s+(available|in stock|free)|(?:is|are|it's|that's|they're)\s+(available|in stock|free)|(?:unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|booked|none (?:left|available)))\b|^\s*(?:available|in stock)(?=\s+(?:for|on|from|until|through|during|today|tomorrow|now)\b|[.!?:]|$)\b)/i.exec(availabilityClause);
     if (!match) continue;
     const prefix = availabilityClause.slice(0, match.index);

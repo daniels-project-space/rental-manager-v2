@@ -1026,6 +1026,8 @@ describe("account pickup and travel compensation policy", () => {
     expect(isPickupLocationIntent("I thought pickup was in Shoreditch; is that still right?" )).toBe(true);
     expect(isPickupLocationIntent("Can I collect from the Shoreditch location?" )).toBe(true);
     expect(isPickupLocationIntent("Could you share the exact meeting point?" )).toBe(true);
+    expect(isPickupLocationIntent("Which street is the pickup on?" )).toBe(true);
+    expect(isPickupLocationIntent("Yes, the Northumberland Street area works." )).toBe(false);
   });
 
   it("corrects an implied Shoreditch assumption without inventing an excuse", () => {
@@ -1155,5 +1157,77 @@ describe("account pickup and travel compensation policy", () => {
       rentalChargeGbp: 35,
     });
     expect(confirmed.text).toContain(exactPickup);
+  });
+});
+
+describe("travel-compensation availability phrasing", () => {
+  const ownerDisclosure = {
+    role: "owner" as const,
+    content: "Collection for this rental is arranged in the Northumberland Street area. Would that work for you?",
+  };
+
+  it("recognizes an available travel adjustment and applies the verified one-time cap", () => {
+    const priceRequest = {
+      start_date: "2026-11-24",
+      end_date: "2026-11-24",
+      items: [{ name: "BMPCC 6K Full Frame", quantity: 1 }],
+    };
+    const result = guardDraft("A 10% travel adjustment to help with the journey is available.", {
+      history: [ownerDisclosure],
+      lastRenterMessage: "Yes, the Northumberland Street area works, but it is quite far for me. Could you help with the travel cost?",
+      pickupArea: "Northumberland Street area",
+      pickupAddress: "10 Northumberland Street, London WC2N 5DB, outside the Sherlock Holmes pub.",
+      pickupConfirmed: false,
+      rentalChargeGbp: null,
+      priceRequest,
+      priceEvidence: [{
+        names: ["BMPCC 6K Full Frame"],
+        kind: "rental",
+        total_gbp: 35,
+        days: 1,
+        quantity: 1,
+        start_date: priceRequest.start_date,
+        end_date: priceRequest.end_date,
+        call_id: "native:verified-lab-quote",
+        source: "native_quote",
+      }],
+    });
+
+    expect(result.text).toContain("£3.50");
+    expect(result.text).toContain("one-time");
+    expect(result.text).not.toContain("10%");
+    expect(result.flags.some((flag) => flag.type === "UNGROUNDED_AVAILABILITY")).toBe(false);
+  });
+
+  it("withholds the offer amount when the verified rental total is missing", () => {
+    const result = guardDraft("A 10% travel adjustment to help with the journey is available.", {
+      history: [ownerDisclosure],
+      lastRenterMessage: "The Northumberland Street area works, but it is quite far for me. Could you help with the travel cost?",
+      pickupArea: "Northumberland Street area",
+      pickupAddress: "10 Northumberland Street, London WC2N 5DB, outside the Sherlock Holmes pub.",
+      pickupConfirmed: false,
+      rentalChargeGbp: null,
+      priceRequest: {
+        start_date: "2026-11-24",
+        end_date: "2026-11-24",
+        items: [{ name: "BMPCC 6K Full Frame", quantity: 1 }],
+      },
+      priceEvidence: [{
+        names: ["BMPCC 6K Full Frame"],
+        kind: "rental",
+        base_rate_gbp: 35,
+        daily_rate_gbp: 35,
+        days: 1,
+        quantity: 1,
+        start_date: "2026-11-24",
+        end_date: "2026-11-24",
+        call_id: "native:rate-only",
+        source: "native_listing_rate",
+      }],
+    });
+
+    expect(result.text).toContain("verified rental total");
+    expect(result.text).not.toMatch(/£\s?\d|\d+\s?%/);
+    expect(result.flags.some((flag) => flag.type === "UNGROUNDED_AVAILABILITY")).toBe(false);
   });
 });

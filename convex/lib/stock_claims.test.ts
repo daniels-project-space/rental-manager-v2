@@ -568,3 +568,10 @@ describe("coordinated category references to the preceding quote",()=>{
   expect(unsupportedStockClaims(quote.replace("Both the camera","I can check the pickup time.\nBoth the camera"),receipts,scope).length).toBeGreaterThan(0);
  });
 });
+
+describe("monetary concession availability",()=>{
+ it("does not treat an adjustment as physical stock, while still checking a named item",()=>{
+  expect(unsupportedStockClaims("A 10% travel adjustment to help with the journey is available.",[],{items:[]})).toEqual([]);
+  expect(unsupportedStockClaims("Sony FX3 is available and a 10% travel adjustment is available.",[],request).length).toBeGreaterThan(0);
+ });
+});
