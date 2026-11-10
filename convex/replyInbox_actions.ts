@@ -38,6 +38,7 @@ import { gatedGenerateText } from "./lib/gatedGenerate";
 import { sameDraftApproval } from "./lib/draft_review";
 import { renterBotRuntimeAllowed } from "./lib/renter_bot_runtime";
 import { guardDraft, type DraftFlag } from "./lib/draft_guard";
+import { assessTravelCompensation } from "./lib/travel_compensation";
 import { dnaSummary } from "./lib/renter_dna";
 import {
   sendManualRenterMessage,
@@ -478,6 +479,30 @@ export const generateDraft = action({
     const hardTruthsBlock = c.hard_truths
       ? `HARD TRUTHS (read these last, they override anything above):\n${c.hard_truths}`
       : null;
+    const pickupArea = c.pickup_area?.trim() || null;
+    const pickupAddress = c.pickup_address?.trim() || null;
+    const pickupConfirmed = bookingApproved && !!pickupAddress;
+    const rentalChargeGbp = c.gross_paid_gbp != null
+      ? Math.max(0, c.gross_paid_gbp - (c.delivery_fee_gbp ?? 0))
+      : null;
+    const travelCompensation = assessTravelCompensation({
+      history: c.messages as { role: "owner" | "renter"; content: string }[],
+      lastRenterMessage: lastRenter,
+      pickupArea,
+      rentalChargeGbp,
+    });
+    const pickupLocationBlock = pickupArea
+      ? [
+          `AUTHORITATIVE PICKUP FOR THE SELECTED ACCOUNT (${c.account_slug ?? "unknown"}): this rental's pickup area is ${pickupArea}.`,
+          pickupConfirmed
+            ? `The current booking is confirmed. Exact pickup point: ${pickupAddress}. You may share it now.`
+            : "The current booking is not confirmed. Share only the vague pickup area above; do not reveal any street address, postcode, map link, or exact meeting point.",
+          "If the renter names a different listing area or asks if it is real, do not claim it is fake/nonexistent, do not say all accounts use one central pickup, and do not invent a reason such as repair, another rental, or consolidation. State this account's pickup area and ask whether it works before proceeding.",
+          travelCompensation.eligible && travelCompensation.maximumGbp != null
+            ? `The renter already received this pickup-area disclosure and has now objected to the travel. Offer one travel adjustment of exactly £${travelCompensation.maximumGbp.toFixed(2)} for this rental; this is the lower of 10% of the verified rental charge or £10. Do not offer it again.`
+            : "Do not offer or mention travel compensation on this turn. It becomes eligible only after this pickup area has been disclosed and the renter then explicitly objects to the travel; the verified rental charge must also be known. A generic discount request or listing location alone is not enough.",
+        ].join("\n")
+      : "No owner-confirmed pickup area is configured for this account. Do not invent a location or claim there is only one central pickup; say you will confirm the account's pickup area.";
     const controlledDraftTextBlock = c.draft_text_blocks
       ? [
           ["Opening / greeting", c.draft_text_blocks.opening],
@@ -567,6 +592,7 @@ export const generateDraft = action({
         ? `OPERATOR-CONTROLLED DRAFT WORDING — use the relevant block when this renter asks about that topic. Preserve operational facts exactly, adapt only grammar to the conversation, and never reveal a pickup address before the booking is confirmed:\n${controlledDraftTextBlock}`
         : null,
       hardTruthsBlock,
+      pickupLocationBlock,
       "Draft my reply to the renter's most recent message:",
     ]
       .filter((l) => l !== null)
@@ -911,6 +937,10 @@ export const generateDraft = action({
       account: c.account_slug ?? undefined,
       stage: guardStage,
       pickupWindows: c.pickup_windows ?? undefined,
+      pickupArea,
+      pickupAddress,
+      pickupConfirmed,
+      rentalChargeGbp,
       pickupPrivacySources:c.pickup_privacy_sources,
       rentalPermissions:c.rental_stage,
       firstPerson: renterAccountVoice(c.account_slug).firstPerson,

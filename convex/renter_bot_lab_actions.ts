@@ -7,7 +7,7 @@ import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 import { shortItemName } from "./lib/item_display_name";
 import { labBooking } from "./lib/lab_lifecycle";
 import { insertStockInput, patchStockInput } from "./lib/stock_input_writes";
-import { renterBotLabScenario } from "./lib/renter_bot_lab_scenarios";
+import { renterBotLabScenario, renterBotLabPickupPoint } from "./lib/renter_bot_lab_scenarios";
 /**
  * renter_bot_lab_actions — the ONE Convex entry point the Lab UI is allowed
  * to call, so auditing "does the Lab import any send path" is one file, not
@@ -41,6 +41,17 @@ export const listFixtures = query({
         seed_context: f.seed_context,
       }));
   },
+});
+
+/** Deployment hook for the isolated Lab's owner-approved pickup policy data. */
+export const seedLabLocationPolicy = action({
+  args: {},
+  handler: async (ctx): Promise<{
+    rulesUpdated: number;
+    memoriesUpdated: number;
+    duplicateSeedMemoriesRemoved: number;
+  }> =>
+    ctx.runMutation(internal.renter_bot_seed.migrateLabLocationPolicy, {}),
 });
 
 
@@ -187,6 +198,26 @@ function assertPreparedScenarioLab() {
   }
 }
 
+/** Apply owner-confirmed account pickup points only on the isolated Lab. */
+export const ensureLabPickupPoint = internalMutation({
+  args: { accountSlug: v.string() },
+  handler: async (ctx, { accountSlug }) => {
+    assertPreparedScenarioLab();
+    const point = renterBotLabPickupPoint(accountSlug);
+    if (!point) throw new Error("No owner-confirmed Lab pickup point for this account");
+    const account = await ctx.db.query("accounts").withIndex("by_slug", (q) => q.eq("slug", accountSlug)).first();
+    if (!account) throw new Error("Unknown Lab rental account");
+    const profile = await ctx.db.query("account_profiles").withIndex("by_account", (q) => q.eq("account_id", account._id)).first();
+    if (!profile) throw new Error("Lab account has no pickup profile");
+    await ctx.db.patch(profile._id, {
+      pickup_area: point.area,
+      pickup_address: point.address,
+      updated_at: Date.now(),
+    });
+    return { accountSlug, area: point.area };
+  },
+});
+
 /** Upsert only the owner-confirmed items used by the prepared Lab examples. */
 export const ensurePreparedScenarioItem = internalMutation({
   args: { scenarioId: v.string() },
@@ -320,6 +351,12 @@ export const startLiveSession = action({
     let location = args.location;
     let messages: { role: string; text: string }[] = [];
 
+    // Keep all three account pickup points current in the isolated Lab before
+    // the draft context is loaded. This mutation refuses any non-Lab backend.
+    await ctx.runMutation(internal.renter_bot_lab_actions.ensureLabPickupPoint, {
+      accountSlug: args.accountSlug,
+    });
+
     // Scenario selection must load its owner-confirmed item into the isolated
     // catalogue before the UI queries item context or permits a chat turn.
     if (args.scenarioId) {
@@ -432,6 +469,10 @@ export const sendTestMessage = action({
       internal.renter_bot_harness.getDraftByThread,
       { thread_id: args.threadId },
     );
+    const threadContext = await ctx.runQuery(
+      internal.replyInbox.getThreadContext,
+      { thread_id: args.threadId },
+    );
 
     const draftText = draftResult.status === "ok" ? draftResult.draft ?? "" : "";
     const factsClaimed = (draftResult.facts_claimed ?? []).map((f) => ({
@@ -440,6 +481,12 @@ export const sendTestMessage = action({
       verified: f.verified,
     }));
     const pendingOwnerChecks=await ctx.runQuery(internal.renter_bot_harness.pendingOwnerChecksForDraft,{thread_id:args.threadId,draft_text:draftText});
+    const labPickupPoint = renterBotLabPickupPoint(args.accountSlug);
+    const pickupArea = threadContext?.pickup_area?.trim() || labPickupPoint?.area || null;
+    const pickupAddress = threadContext?.pickup_address?.trim() || labPickupPoint?.address || null;
+    const rentalChargeGbp = threadContext?.gross_paid_gbp != null
+      ? Math.max(0, threadContext.gross_paid_gbp - (threadContext.delivery_fee_gbp ?? 0))
+      : null;
     const rubric = scoreDraft({
       pendingOwnerChecks:pendingOwnerChecks??undefined,
       accountSlug: args.accountSlug,
@@ -452,6 +499,13 @@ export const sendTestMessage = action({
       budgetPriceChecks:draftResult.evidence?.budget_price_checks,
       priceRequest:draftResult.evidence?.stock_request,
       lastRenterMessage:args.text,
+      conversationHistory: (threadContext?.messages ?? []) as { role: "owner" | "renter"; content: string }[],
+      pickupArea,
+      pickupAddress,
+      pickupPrivacySources: threadContext?.pickup_privacy_sources ?? (pickupAddress ? [pickupAddress] : []),
+      pickupConfirmed: Boolean(threadContext?.rental_stage?.booking_confirmed),
+      rentalChargeGbp,
+      rentalStage: threadContext?.rental_stage?.stage ?? null,
     });
 
     const runId: string = await ctx.runMutation(

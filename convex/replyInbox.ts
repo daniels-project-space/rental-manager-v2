@@ -1930,6 +1930,8 @@ export const getThreadContext = internalQuery({
 
     return {
       account_slug: slug ?? null,
+      pickup_area: profile?.pickup_area ?? null,
+      pickup_address: profile?.pickup_address ?? null,
       location: computeLocation(reservation, slug, await loadHubBook(ctx)),
       renter_id: renterId ?? null,
       renter_identity_conflict:identity_conflict,

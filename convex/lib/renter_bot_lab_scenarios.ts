@@ -6,6 +6,26 @@ export const RENTER_BOT_LAB_SCENARIO_IDS = [
 
 export type RenterBotLabScenarioId = (typeof RENTER_BOT_LAB_SCENARIO_IDS)[number];
 
+/** Owner-confirmed pickup facts for isolated Lab conversations only. */
+export const RENTER_BOT_LAB_PICKUP_POINTS = {
+  diogo: {
+    area: "Charing Cross Station area",
+    address: "Next to bus stop H outside Charing Cross Station, London WC2N 5NG. Apple Maps: https://maps.apple/p/XXmY-sP81IyKyI",
+  },
+  leo: {
+    area: "Trafalgar Square area",
+    address: "Outside the Waterstones bookstore at The Grand Building, Trafalgar Square, London WC2N 5EJ, England.",
+  },
+  dbcinema: {
+    area: "Northumberland Street area",
+    address: "10 Northumberland Street, London WC2N 5DB, England, outside the Sherlock Holmes pub.",
+  },
+} as const;
+
+export function renterBotLabPickupPoint(accountSlug: string) {
+  return RENTER_BOT_LAB_PICKUP_POINTS[accountSlug as keyof typeof RENTER_BOT_LAB_PICKUP_POINTS];
+}
+
 interface ScenarioItem {
   name_canonical: string;
   display_name: string;

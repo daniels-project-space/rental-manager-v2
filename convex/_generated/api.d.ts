@@ -159,6 +159,7 @@ import type * as lib_claim_date_scope from "../lib/claim_date_scope.js";
 import type * as lib_claim_duration from "../lib/claim_duration.js";
 import type * as lib_co_occurrence from "../lib/co_occurrence.js";
 import type * as lib_confirmed_headline_order from "../lib/confirmed_headline_order.js";
+import type * as lib_confirmed_headline_reads from "../lib/confirmed_headline_reads.js";
 import type * as lib_confirmed_schedule from "../lib/confirmed_schedule.js";
 import type * as lib_conversation_funnel from "../lib/conversation_funnel.js";
 import type * as lib_conversation_stage_validator from "../lib/conversation_stage_validator.js";
@@ -171,6 +172,8 @@ import type * as lib_default_adapter_units from "../lib/default_adapter_units.js
 import type * as lib_delivery_weight from "../lib/delivery_weight.js";
 import type * as lib_denial_classifier from "../lib/denial_classifier.js";
 import type * as lib_deployment_implementation from "../lib/deployment_implementation.js";
+import type * as lib_dji_mic1_stock_review from "../lib/dji_mic1_stock_review.js";
+import type * as lib_dji_mic2_stock_review from "../lib/dji_mic2_stock_review.js";
 import type * as lib_double_booking from "../lib/double_booking.js";
 import type * as lib_draft_guard from "../lib/draft_guard.js";
 import type * as lib_draft_listing_grounding from "../lib/draft_listing_grounding.js";
@@ -226,6 +229,7 @@ import type * as lib_marketing_only_requests from "../lib/marketing_only_request
 import type * as lib_message_reconciliation from "../lib/message_reconciliation.js";
 import type * as lib_minimum_rental from "../lib/minimum_rental.js";
 import type * as lib_missed_revenue from "../lib/missed_revenue.js";
+import type * as lib_mixed_microphone_stock_review from "../lib/mixed_microphone_stock_review.js";
 import type * as lib_model_output_failure from "../lib/model_output_failure.js";
 import type * as lib_month_projection from "../lib/month_projection.js";
 import type * as lib_monthly_revenue_rows from "../lib/monthly_revenue_rows.js";
@@ -268,6 +272,7 @@ import type * as lib_recommendation_qualification from "../lib/recommendation_qu
 import type * as lib_reconciliation_dirty from "../lib/reconciliation_dirty.js";
 import type * as lib_referral_context from "../lib/referral_context.js";
 import type * as lib_referral_offer from "../lib/referral_offer.js";
+import type * as lib_remus_stock_review from "../lib/remus_stock_review.js";
 import type * as lib_rental_request from "../lib/rental_request.js";
 import type * as lib_rental_request_history from "../lib/rental_request_history.js";
 import type * as lib_rental_stage from "../lib/rental_stage.js";
@@ -283,6 +288,7 @@ import type * as lib_renter_bot_conversation_rubric from "../lib/renter_bot_conv
 import type * as lib_renter_bot_filters from "../lib/renter_bot_filters.js";
 import type * as lib_renter_bot_filters_supplemental from "../lib/renter_bot_filters_supplemental.js";
 import type * as lib_renter_bot_intents from "../lib/renter_bot_intents.js";
+import type * as lib_renter_bot_lab_scenarios from "../lib/renter_bot_lab_scenarios.js";
 import type * as lib_renter_bot_negotiation from "../lib/renter_bot_negotiation.js";
 import type * as lib_renter_bot_rubric from "../lib/renter_bot_rubric.js";
 import type * as lib_renter_bot_runtime from "../lib/renter_bot_runtime.js";
@@ -352,6 +358,7 @@ import type * as lib_supplied_parts_coverage from "../lib/supplied_parts_coverag
 import type * as lib_telegram_convex from "../lib/telegram_convex.js";
 import type * as lib_thread_messages from "../lib/thread_messages.js";
 import type * as lib_thread_referral_reference from "../lib/thread_referral_reference.js";
+import type * as lib_travel_compensation from "../lib/travel_compensation.js";
 import type * as lib_verification_failure from "../lib/verification_failure.js";
 import type * as lib_verified_item_spec from "../lib/verified_item_spec.js";
 import type * as lib_websiteCases from "../lib/websiteCases.js";
@@ -442,6 +449,7 @@ import type * as renter_bot_fixture_seed_v1_scenarios from "../renter_bot_fixtur
 import type * as renter_bot_harness from "../renter_bot_harness.js";
 import type * as renter_bot_lab_actions from "../renter_bot_lab_actions.js";
 import type * as renter_bot_lab_order from "../renter_bot_lab_order.js";
+import type * as renter_bot_lab_status from "../renter_bot_lab_status.js";
 import type * as renter_bot_owner_checks from "../renter_bot_owner_checks.js";
 import type * as renter_bot_probe from "../renter_bot_probe.js";
 import type * as renter_bot_seed from "../renter_bot_seed.js";
@@ -467,11 +475,15 @@ import type * as seed_account_hubs from "../seed/account_hubs.js";
 import type * as seed_bg30_stock_repair from "../seed/bg30_stock_repair.js";
 import type * as seed_data from "../seed/data.js";
 import type * as seed_diogo_profile from "../seed/diogo_profile.js";
+import type * as seed_dji_mic1_stock_review from "../seed/dji_mic1_stock_review.js";
+import type * as seed_dji_mic2_stock_review from "../seed/dji_mic2_stock_review.js";
 import type * as seed_gopro_interview_stock_repair from "../seed/gopro_interview_stock_repair.js";
 import type * as seed_hard_truths from "../seed/hard_truths.js";
 import type * as seed_inventory from "../seed/inventory.js";
 import type * as seed_kit_source_repair from "../seed/kit_source_repair.js";
+import type * as seed_mixed_microphone_stock_review from "../seed/mixed_microphone_stock_review.js";
 import type * as seed_owner_availability_review from "../seed/owner_availability_review.js";
+import type * as seed_remus_stock_review from "../seed/remus_stock_review.js";
 import type * as seed_renter_bot_memories from "../seed/renter_bot_memories.js";
 import type * as seed_renter_bot_rules from "../seed/renter_bot_rules.js";
 import type * as seed_settings from "../seed/settings.js";
@@ -652,6 +664,7 @@ declare const fullApi: ApiFromModules<{
   "lib/claim_duration": typeof lib_claim_duration;
   "lib/co_occurrence": typeof lib_co_occurrence;
   "lib/confirmed_headline_order": typeof lib_confirmed_headline_order;
+  "lib/confirmed_headline_reads": typeof lib_confirmed_headline_reads;
   "lib/confirmed_schedule": typeof lib_confirmed_schedule;
   "lib/conversation_funnel": typeof lib_conversation_funnel;
   "lib/conversation_stage_validator": typeof lib_conversation_stage_validator;
@@ -664,6 +677,8 @@ declare const fullApi: ApiFromModules<{
   "lib/delivery_weight": typeof lib_delivery_weight;
   "lib/denial_classifier": typeof lib_denial_classifier;
   "lib/deployment_implementation": typeof lib_deployment_implementation;
+  "lib/dji_mic1_stock_review": typeof lib_dji_mic1_stock_review;
+  "lib/dji_mic2_stock_review": typeof lib_dji_mic2_stock_review;
   "lib/double_booking": typeof lib_double_booking;
   "lib/draft_guard": typeof lib_draft_guard;
   "lib/draft_listing_grounding": typeof lib_draft_listing_grounding;
@@ -719,6 +734,7 @@ declare const fullApi: ApiFromModules<{
   "lib/message_reconciliation": typeof lib_message_reconciliation;
   "lib/minimum_rental": typeof lib_minimum_rental;
   "lib/missed_revenue": typeof lib_missed_revenue;
+  "lib/mixed_microphone_stock_review": typeof lib_mixed_microphone_stock_review;
   "lib/model_output_failure": typeof lib_model_output_failure;
   "lib/month_projection": typeof lib_month_projection;
   "lib/monthly_revenue_rows": typeof lib_monthly_revenue_rows;
@@ -761,6 +777,7 @@ declare const fullApi: ApiFromModules<{
   "lib/reconciliation_dirty": typeof lib_reconciliation_dirty;
   "lib/referral_context": typeof lib_referral_context;
   "lib/referral_offer": typeof lib_referral_offer;
+  "lib/remus_stock_review": typeof lib_remus_stock_review;
   "lib/rental_request": typeof lib_rental_request;
   "lib/rental_request_history": typeof lib_rental_request_history;
   "lib/rental_stage": typeof lib_rental_stage;
@@ -776,6 +793,7 @@ declare const fullApi: ApiFromModules<{
   "lib/renter_bot_filters": typeof lib_renter_bot_filters;
   "lib/renter_bot_filters_supplemental": typeof lib_renter_bot_filters_supplemental;
   "lib/renter_bot_intents": typeof lib_renter_bot_intents;
+  "lib/renter_bot_lab_scenarios": typeof lib_renter_bot_lab_scenarios;
   "lib/renter_bot_negotiation": typeof lib_renter_bot_negotiation;
   "lib/renter_bot_rubric": typeof lib_renter_bot_rubric;
   "lib/renter_bot_runtime": typeof lib_renter_bot_runtime;
@@ -845,6 +863,7 @@ declare const fullApi: ApiFromModules<{
   "lib/telegram_convex": typeof lib_telegram_convex;
   "lib/thread_messages": typeof lib_thread_messages;
   "lib/thread_referral_reference": typeof lib_thread_referral_reference;
+  "lib/travel_compensation": typeof lib_travel_compensation;
   "lib/verification_failure": typeof lib_verification_failure;
   "lib/verified_item_spec": typeof lib_verified_item_spec;
   "lib/websiteCases": typeof lib_websiteCases;
@@ -935,6 +954,7 @@ declare const fullApi: ApiFromModules<{
   renter_bot_harness: typeof renter_bot_harness;
   renter_bot_lab_actions: typeof renter_bot_lab_actions;
   renter_bot_lab_order: typeof renter_bot_lab_order;
+  renter_bot_lab_status: typeof renter_bot_lab_status;
   renter_bot_owner_checks: typeof renter_bot_owner_checks;
   renter_bot_probe: typeof renter_bot_probe;
   renter_bot_seed: typeof renter_bot_seed;
@@ -960,11 +980,15 @@ declare const fullApi: ApiFromModules<{
   "seed/bg30_stock_repair": typeof seed_bg30_stock_repair;
   "seed/data": typeof seed_data;
   "seed/diogo_profile": typeof seed_diogo_profile;
+  "seed/dji_mic1_stock_review": typeof seed_dji_mic1_stock_review;
+  "seed/dji_mic2_stock_review": typeof seed_dji_mic2_stock_review;
   "seed/gopro_interview_stock_repair": typeof seed_gopro_interview_stock_repair;
   "seed/hard_truths": typeof seed_hard_truths;
   "seed/inventory": typeof seed_inventory;
   "seed/kit_source_repair": typeof seed_kit_source_repair;
+  "seed/mixed_microphone_stock_review": typeof seed_mixed_microphone_stock_review;
   "seed/owner_availability_review": typeof seed_owner_availability_review;
+  "seed/remus_stock_review": typeof seed_remus_stock_review;
   "seed/renter_bot_memories": typeof seed_renter_bot_memories;
   "seed/renter_bot_rules": typeof seed_renter_bot_rules;
   "seed/settings": typeof seed_settings;

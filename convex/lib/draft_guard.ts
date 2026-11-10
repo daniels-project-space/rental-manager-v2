@@ -15,6 +15,7 @@ import { unsupportedKitClaims, type KitEvidence } from "./kit_claims";
 import { unsupportedCameraModeClaims, unsupportedBuiltInNDClaims, type CameraEvidence } from "./camera_mode_claims";
 import { unsupportedLensFocusClaims, type LensFocusEvidence } from "./lens_focus_claims";
 import { renterItemNames } from "./renter_item_names";
+import { assessTravelCompensation, isDiscountConcessionOffer, isPickupLocationIntent, isTravelCompensationOffer, isTravelConcern, isUnsafePickupLocationClaim, mentionsPickupArea, replaceTravelCompensationOffers, stripTravelCompensationOffers } from "./travel_compensation";
 /**
  * Draft guard — output policing for AI-generated owner replies (Phase 1).
  *
@@ -83,6 +84,13 @@ export interface GuardOpts {
   hasPairingData?: boolean;
   /** Owner-configured pickup/return windows, "HH:MM". Empty = skip time checks. */
   pickupWindows?: { start: string; end: string }[];
+  /** Per-account vague pickup area; exact address remains separately gated. */
+  pickupArea?: string | null;
+  /** Exact meeting point; only shared when pickupConfirmed is true. */
+  pickupAddress?: string | null;
+  pickupConfirmed?: boolean;
+  /** Verified rental charge excluding delivery; unknown means no travel offer. */
+  rentalChargeGbp?: number | null;
   /** Accounts that speak in the first person singular ("I", not "we"). */
   firstPerson?: boolean;
   /** Grounding facts (Phase 2). Optional — price/model checks no-op without it. */
@@ -206,6 +214,8 @@ const SEVERITY: Record<string, FlagSeverity> = {
   UNGROUNDED_PRICE: "critical",
   VERIFICATION_CIRCUMVENTION: "critical",
   LOCATION_ASK_FOR_DISCOUNT: "high",
+  TRAVEL_COMPENSATION_GATE: "high",
+  PICKUP_LOCATION_CORRECTED: "high",
   UNGROUNDED_SPEC: "high",
   LENS_FOCUS_HALLUCINATION: "high",
   RENTER_CAMERA_IDENTITY_UNVERIFIED: "high",
@@ -823,14 +833,10 @@ const ASSERTS_AVAIL_RE =
   }
 
   // 10b. LOCATION ASK FOR DISCOUNT PURPOSES — STRIP
-  // Found live via the Lab (2026-08-17): asked about a non-central-area
-  // discount, the draft replied "I'd need to know your postcode... What's
-  // your area?" — DANIEL RULE 7 (distance discount = LISTING_LOCATION only)
-  // is explicit: "NEVER ask renter location". Renter-location questions are
-  // legitimate for a DELIVERY quote (a different rule requires the postcode
-  // there), so this only fires when the draft ties the location-ask to a
-  // discount/benefit in the same breath — a bare delivery-postcode ask is
-  // untouched.
+  // The renter's postcode is not evidence for travel compensation. The
+  // eligibility sequence is based on disclosing this account's pickup area,
+  // then receiving an explicit travel objection. Postcodes remain valid for
+  // a separate delivery quote.
   if (/\b(discounts?|% off|percent off|reduced rates?|special rates?|better rates?|benefits?)\b/i.test(text)) {
     // Only the direct interrogative form — a declarative mention like "I'd
     // need your postcode to work that out" in an earlier sentence is left
@@ -846,7 +852,7 @@ const ASSERTS_AVAIL_RE =
         text = cleaned.join(" ").trim();
         push(
           "LOCATION_ASK_FOR_DISCOUNT",
-          "Stripped renter-location question tied to a discount/benefit (DANIEL RULE 7: distance discount is listing-location only, never ask the renter's location)",
+          "Stripped a renter-postcode question tied to travel compensation; delivery-postcode requests remain separate",
           "stripped",
         );
       }
@@ -862,8 +868,84 @@ const ASSERTS_AVAIL_RE =
       // flag for Daniel to edit rather than guess at a rewrite.
       push(
         "LOCATION_ASK_FOR_DISCOUNT",
-        "Draft ties a discount/benefit to needing the renter's postcode/area (DANIEL RULE 7: distance discount is listing-location only, never ask the renter's location) — phrased as a statement, left in for manual edit",
+        "Draft ties travel compensation to needing the renter's postcode/area; eligibility must use the disclosed pickup area and the renter's objection",
         "flagged",
+      );
+    }
+  }
+
+  // 10c. ACCOUNT PICKUP LOCATION + TRAVEL COMPENSATION — enforce the owner's
+  // sequence against the generated text, not just the model prompt. A pickup
+  // area must be disclosed before a renter can qualify for travel relief.
+  const travelCompensation = assessTravelCompensation({
+    history: opts.history,
+    lastRenterMessage: opts.lastRenterMessage,
+    pickupArea: opts.pickupArea,
+    rentalChargeGbp: opts.rentalChargeGbp,
+  });
+  const asksPickupLocation = isPickupLocationIntent(opts.lastRenterMessage);
+  const asksTravel = isTravelConcern(opts.lastRenterMessage);
+  const travelCompensationContext = asksPickupLocation || asksTravel || isTravelCompensationOffer(text);
+  const verificationFailed = opts.stage === "VERIFICATION_FAILED";
+  if ((verificationFailed || travelCompensationContext) && isDiscountConcessionOffer(text)) {
+    if (verificationFailed || !travelCompensation.eligible || travelCompensation.maximumGbp == null) {
+      text = stripTravelCompensationOffers(text);
+      if (verificationFailed) {
+        if (!text) text = "Your rental request was cancelled because verification failed, so I can't share a pickup point for this booking.";
+      } else if ((asksPickupLocation || asksTravel) && !travelCompensation.pickupAreaDisclosed && opts.pickupArea) {
+        text = `For this rental, collection is arranged from the ${opts.pickupArea}. Would that work for you? I'll share the exact meeting point once the booking is confirmed.`;
+        push(
+          "PICKUP_LOCATION_CORRECTED",
+          "Replaced an unverified pickup explanation with this account's confirmed pickup area before discussing travel compensation",
+          "rewritten",
+        );
+      } else if (!text && asksTravel && travelCompensation.renterObjected && travelCompensation.maximumGbp == null) {
+        text = "I understand. I'll check the verified rental total and confirm what one-time travel adjustment can be applied.";
+      } else if (!text && opts.pickupArea) {
+        text = `For this rental, collection is arranged from the ${opts.pickupArea}. Would that work for you?`;
+      }
+      push(
+        "TRAVEL_COMPENSATION_GATE",
+        "Removed travel compensation because the pickup area was not first disclosed, the renter has not yet objected to that disclosed area, the offer was already used, or the verified rental amount is missing",
+        "rewritten",
+      );
+    } else {
+      text = replaceTravelCompensationOffers(text, travelCompensation.maximumGbp);
+      push(
+        "TRAVEL_COMPENSATION_GATE",
+        `Capped the one-time travel adjustment at £${travelCompensation.maximumGbp.toFixed(2)} for this verified rental amount`,
+        "rewritten",
+      );
+    }
+  }
+
+  // If asked about a listing area, always answer with this account's confirmed
+  // pickup area. Never invent a move, deny the place exists, or collapse the
+  // three accounts into a generic central pickup. Exact details are gated.
+  const asksAboutTravelBeforeDisclosure = asksTravel && !travelCompensation.pickupAreaDisclosed;
+  if (!verificationFailed && (asksPickupLocation || asksAboutTravelBeforeDisclosure) && !opts.pickupArea) {
+    text = "I'll confirm the pickup area for this account before you decide, then share the exact meeting point once the booking is confirmed.";
+    push(
+      "PICKUP_LOCATION_CORRECTED",
+      "Replaced an unverified pickup-location answer because this account has no owner-confirmed pickup area in context",
+      "rewritten",
+    );
+  } else if (!verificationFailed && (asksPickupLocation || asksAboutTravelBeforeDisclosure) && opts.pickupArea) {
+    const areaMentioned = mentionsPickupArea(text, opts.pickupArea);
+    const unsafeLocationClaim = isUnsafePickupLocationClaim(text);
+    const privacySources = opts.pickupPrivacySources?.length
+      ? opts.pickupPrivacySources
+      : opts.pickupAddress ? [opts.pickupAddress] : [];
+    const leakedExactAddress = !opts.pickupConfirmed && hasPickupDisclosure(text, privacySources);
+    const missingRequiredExact = opts.pickupConfirmed && !!opts.pickupAddress && !text.toLowerCase().includes(opts.pickupAddress.toLowerCase());
+    if (!areaMentioned || unsafeLocationClaim || leakedExactAddress || missingRequiredExact) {
+      text = opts.pickupConfirmed && opts.pickupAddress
+        ? `For this confirmed booking, pickup is ${opts.pickupAddress}`
+        : `For this rental, collection is arranged from the ${opts.pickupArea}. Would that work for you? I'll share the exact meeting point once the booking is confirmed.`;
+      push(
+        "PICKUP_LOCATION_CORRECTED",
+        "Replaced a generic, false, missing, or premature pickup-location answer with this account's confirmed location details",
+        "rewritten",
       );
     }
   }

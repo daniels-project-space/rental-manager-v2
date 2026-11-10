@@ -3,6 +3,7 @@ import type { PriceEvidence } from "./price_claims";
 import updatedSetupCapture from "../../src/lib/fixtures/renter-updated-setup-guard.json";
 import { guardDraft } from "./draft_guard";
 import { scoreDraft } from "./renter_bot_rubric";
+import { assessTravelCompensation, isPickupLocationIntent, travelCompensationMaximum } from "./travel_compensation";
 
 const baseOpts = {
   history: [],
@@ -1004,4 +1005,155 @@ describe("independent request authority without a quote",()=>{
   const result=guardDraft("Your booking is approved. Collect the new rental from 123 Owner Lane.",{history:[],lastRenterMessage:"Can I start a separate hire?",stage:"IN_USE",ownerApproved:true,newInquiry:true,pickupPrivacySources:["123 Owner Lane"]});
   expect(result.flags.some(f=>f.type==="FALSE_ACTION_CLAIM")).toBe(true);expect(result.flags.some(f=>f.type==="PICKUP_DETAILS_EARLY")).toBe(true);
  });
+});
+
+describe("account pickup and travel compensation policy", () => {
+  const pickupArea = "Trafalgar Square area";
+  const exactPickup = "Outside Waterstones, Trafalgar Square, London WC2N 5EJ.";
+
+  it("requires area disclosure before an explicit travel objection", () => {
+    const state = assessTravelCompensation({
+      history: [],
+      lastRenterMessage: "The pickup is too far for me; can you help with travel costs?",
+      pickupArea,
+      rentalChargeGbp: 35,
+    });
+    expect(state.eligible).toBe(false);
+    expect(state.pickupAreaDisclosed).toBe(false);
+  });
+
+  it("recognizes location mismatches phrased as assumptions or collection requests", () => {
+    expect(isPickupLocationIntent("I thought pickup was in Shoreditch; is that still right?" )).toBe(true);
+    expect(isPickupLocationIntent("Can I collect from the Shoreditch location?" )).toBe(true);
+    expect(isPickupLocationIntent("Could you share the exact meeting point?" )).toBe(true);
+  });
+
+  it("corrects an implied Shoreditch assumption without inventing an excuse", () => {
+    const renterMessage = "I thought pickup was in Shoreditch; is that still right?";
+    const result = guardDraft("Shoreditch is being consolidated to our central pickup. I can take £10 off for the inconvenience.", {
+      history: [{ role: "renter", content: renterMessage }],
+      lastRenterMessage: renterMessage,
+      pickupArea: "Northumberland Street area",
+      pickupAddress: "10 Northumberland Street, London WC2N 5DB, England, outside the Sherlock Holmes pub.",
+      pickupConfirmed: false,
+      rentalChargeGbp: 40,
+    });
+    expect(result.text).toContain("Northumberland Street area");
+    expect(result.text).not.toMatch(/Shoreditch|consolidat|£10|WC2N 5DB/i);
+    expect(result.flags.map((flag) => flag.type)).toContain("PICKUP_LOCATION_CORRECTED");
+    expect(result.flags.map((flag) => flag.type)).toContain("TRAVEL_COMPENSATION_GATE");
+  });
+
+  it("never turns a failed-verification cancellation into a travel-discount response", () => {
+    const result = guardDraft(
+      "Your booking was cancelled because verification failed. I can't release the pickup point without a confirmed booking. I can take £10 off for the inconvenience.",
+      {
+        history: [],
+        lastRenterMessage: "Verification failed; can I still collect?",
+        stage: "VERIFICATION_FAILED",
+        pickupArea: "Trafalgar Square area",
+        pickupAddress: exactPickup,
+        pickupConfirmed: false,
+        rentalChargeGbp: 35,
+      },
+    );
+    expect(result.text).toContain("booking was cancelled because verification failed");
+    expect(result.text).not.toMatch(/£10|Trafalgar Square|WC2N 5EJ/i);
+    expect(result.flags.map((flag) => flag.type)).toContain("TRAVEL_COMPENSATION_GATE");
+  });
+
+  it("does not treat a generic discount request or distance question as an objection", () => {
+    const history = [{ role: "owner" as const, content: "Collection is arranged in the Trafalgar Square area." }];
+    for (const lastRenterMessage of ["Can I have 10% off?", "What is the distance from the station?"]) {
+      const state = assessTravelCompensation({ history, lastRenterMessage, pickupArea, rentalChargeGbp: 35 });
+      expect(state.eligible).toBe(false);
+      expect(state.renterObjected).toBe(false);
+    }
+  });
+
+  it("allows one capped adjustment after disclosure and an explicit objection", () => {
+    const state = assessTravelCompensation({
+      history: [{ role: "owner", content: "Collection is arranged in the Trafalgar Square area." }],
+      lastRenterMessage: "That is a long way for me. Could you help with the extra travel cost?",
+      pickupArea,
+      rentalChargeGbp: 35,
+    });
+    expect(state.eligible).toBe(true);
+    expect(state.maximumGbp).toBe(3.5);
+    expect(travelCompensationMaximum(34.99)).toBe(3.49);
+    expect(travelCompensationMaximum(250)).toBe(10);
+  });
+
+  it("replaces a fake-location answer and blocks its first-contact discount", () => {
+    const renterMessage = "The listing says pickup is in Shoreditch. Is that real?";
+    const result = guardDraft(
+      "We're consolidating gear in central London rather than Shoreditch. I can offer a 10% distance discount to help with travel.",
+      {
+        history: [{ role: "renter", content: renterMessage }],
+        lastRenterMessage: renterMessage,
+        pickupArea: "Northumberland Street area",
+        pickupAddress: "10 Northumberland Street, London WC2N 5DB, outside the Sherlock Holmes pub.",
+        pickupConfirmed: false,
+        rentalChargeGbp: null,
+      },
+    );
+    expect(result.text).toContain("Northumberland Street area");
+    expect(result.text).not.toMatch(/10%|consolidat|Shoreditch|WC2N 5DB/i);
+    expect(result.flags.map((flag) => flag.type)).toContain("TRAVEL_COMPENSATION_GATE");
+  });
+
+  it("removes a bare money offer when the renter only asks whether the listed pickup is real", () => {
+    const renterMessage = "Is pickup really in Shoreditch?";
+    const result = guardDraft("I can offer £10 off.", {
+      history: [{ role: "renter", content: renterMessage }],
+      lastRenterMessage: renterMessage,
+      pickupArea: "Northumberland Street area",
+      pickupAddress: "10 Northumberland Street, London WC2N 5DB, England, outside the Sherlock Holmes pub.",
+      pickupConfirmed: false,
+      rentalChargeGbp: 35,
+    });
+    expect(result.text).toContain("Northumberland Street area");
+    expect(result.text).not.toContain("£10 off");
+    expect(result.flags.map((flag) => flag.type)).toContain("TRAVEL_COMPENSATION_GATE");
+  });
+
+  it("blocks a postcode leak even when the full pickup address is not repeated", () => {
+    const renterMessage = "Could I have the pickup postcode before I book?";
+    const result = guardDraft("Pickup is in the Northumberland Street area, WC2N 5DB.", {
+      history: [{ role: "renter", content: renterMessage }],
+      lastRenterMessage: renterMessage,
+      pickupArea: "Northumberland Street area",
+      pickupAddress: "10 Northumberland Street, London WC2N 5DB, England, outside the Sherlock Holmes pub.",
+      pickupPrivacySources: ["10 Northumberland Street, London WC2N 5DB, England, outside the Sherlock Holmes pub."],
+      pickupConfirmed: false,
+    });
+    expect(result.text).toContain("Northumberland Street area");
+    expect(result.text).not.toContain("WC2N 5DB");
+    expect(result.flags.map((flag) => flag.type)).toContain("PICKUP_LOCATION_CORRECTED");
+  });
+
+  it("caps a permitted model offer and shares exact pickup only after confirmation", () => {
+    const history = [{ role: "owner" as const, content: "Collection is arranged in the Trafalgar Square area." }];
+    const objection = "That is a long way from me; could you help with the travel cost?";
+    const result = guardDraft("I can offer a 10% travel discount.", {
+      history,
+      lastRenterMessage: objection,
+      pickupArea,
+      pickupAddress: exactPickup,
+      pickupConfirmed: false,
+      rentalChargeGbp: 35,
+    });
+    expect(result.text).toContain("£3.50");
+    expect(result.text).not.toContain("10% travel discount");
+
+    const confirmed = guardDraft("Collection is in central London.", {
+      history,
+      lastRenterMessage: "What is the exact pickup point?",
+      pickupArea,
+      pickupAddress: exactPickup,
+      pickupConfirmed: true,
+      rentalChargeGbp: 35,
+    });
+    expect(confirmed.text).toContain(exactPickup);
+  });
 });

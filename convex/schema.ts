@@ -138,6 +138,10 @@ const operationalSchema = defineSchema({
     hub_label: v.optional(v.string()),
     hub_lat: v.optional(v.number()),
     hub_lng: v.optional(v.number()),
+    // Vague, owner-confirmed pickup area shown before booking confirmation.
+    // Kept separate from hub_label (geographic lookup) and pickup_address
+    // (the exact meeting point, shared only after confirmation).
+    pickup_area: v.optional(v.string()),
     // Per-account PICKUP address (full street + postcode). Shared with the
     // renter only AFTER a booking is confirmed. Editable in Settings.
     pickup_address: v.optional(v.string()),

@@ -5,6 +5,18 @@ import type {OwnerCheck} from "./owner_checks";
 import {unsupportedPriceClaims,type PriceEvidence} from "./price_claims";
 import type {StockRequest} from "./stock_claims";
 import type { BookingRecord } from "./booking_record";
+import { hasPickupDisclosure } from "./booking_reply_claims";
+import {
+  assessTravelCompensation,
+  discountConcessionExceedsCap,
+  isDiscountConcessionOffer,
+  isPickupLocationIntent,
+  isTravelCompensationOffer,
+  isTravelConcern,
+  isUnsafePickupLocationClaim,
+  mentionsPickupArea,
+  type TravelCompensationTurn,
+} from "./travel_compensation";
 /**
  * renter_bot_rubric — scores one renter-bot draft against Daniel's policy
  * categories, for the test harness only (never imported by production
@@ -54,6 +66,13 @@ export interface RubricInput {
   priceEvidence?: PriceEvidence[];
   priceRequest?: StockRequest;
   lastRenterMessage?: string;
+  conversationHistory?: TravelCompensationTurn[];
+  pickupArea?: string | null;
+  pickupAddress?: string | null;
+  pickupPrivacySources?: string[];
+  pickupConfirmed?: boolean;
+  rentalChargeGbp?: number | null;
+  rentalStage?: string | null;
   bookingRecord?: BookingRecord;
   replacementValueComparisons?:ReplacementValueComparison[];
   budgetPriceChecks?:BudgetPriceCheck[];
@@ -117,6 +136,32 @@ export function scoreDraft(input: RubricInput): RubricOutput {
   const allViolations = [...real.violations, ...supplemental.filter(v=>!nativePricing||!["MADE_UP_PRICE","UNVERIFIABLE_PRICE"].includes(v.category))];
   const cats = new Set(allViolations.map((v) => v.category));
   if(nativePriceFailures.length)cats.add("NATIVE_PRICE_UNSUPPORTED");
+  const latestRenterMessage = input.lastRenterMessage ?? "";
+  const history = input.conversationHistory ?? [];
+  const compensationHistory = history.length && history[history.length - 1]?.role === "renter" && history[history.length - 1]?.content === latestRenterMessage
+    ? history
+    : latestRenterMessage ? [...history, { role: "renter" as const, content: latestRenterMessage }] : history;
+  const travelAssessment = assessTravelCompensation({
+    history: compensationHistory,
+    lastRenterMessage: latestRenterMessage,
+    pickupArea: input.pickupArea,
+    rentalChargeGbp: input.rentalChargeGbp,
+  });
+  const verificationFailed = input.rentalStage === "VERIFICATION_FAILED";
+  const compensationContext = verificationFailed || isPickupLocationIntent(latestRenterMessage) ||
+    isTravelConcern(latestRenterMessage) || isTravelCompensationOffer(draftText);
+  const discountOfferPresent = isDiscountConcessionOffer(draftText);
+  const discountPolicyViolation = discountOfferPresent && (verificationFailed ||
+    (compensationContext && (!travelAssessment.eligible || discountConcessionExceedsCap(draftText, input.rentalChargeGbp, travelAssessment.maximumGbp))));
+  const pickupQuestion = isPickupLocationIntent(latestRenterMessage);
+  const pickupPrivacySources = input.pickupPrivacySources?.length
+    ? input.pickupPrivacySources
+    : input.pickupAddress ? [input.pickupAddress] : [];
+  const pickupPrivacyLeak = !input.pickupConfirmed && hasPickupDisclosure(draftText, pickupPrivacySources);
+  const wrongPickupArea = !verificationFailed && pickupQuestion && !!input.pickupArea && !mentionsPickupArea(draftText, input.pickupArea);
+  const missingConfirmedPickup = !verificationFailed && pickupQuestion && !!input.pickupConfirmed && !!input.pickupAddress &&
+    !draftText.toLowerCase().includes(input.pickupAddress.toLowerCase());
+  const unsafePickupClaim = isUnsafePickupLocationClaim(draftText);
 
   const results: RubricCategoryResult[] = [];
   const add = (
@@ -203,12 +248,27 @@ export function scoreDraft(input: RubricInput): RubricOutput {
     "No automated check yet — negotiation-stance correctness needs conversation-level state (HOLD_FIRM/OFFER_ALTERNATIVES/SOFT_YIELD), not scoreable from a single draft in this pass.",
   );
 
-  // ── Discounts / retention ──
-  add(
-    "discounts_retention",
-    "n_a",
-    "No automated check yet — discount-tier correctness needs the renter's full context (spend/distance/duration), not scoreable from draft text alone in this pass.",
-  );
+  // ── Travel compensation sequence ──
+  if (discountPolicyViolation) {
+    add(
+      "discounts_retention",
+      "fail",
+      "Travel compensation was offered before this account's pickup area was disclosed and objected to, after a prior offer, without a verified rental total, or above the one-time cap.",
+      draftText,
+    );
+  } else if (compensationContext) {
+    add(
+      "discounts_retention",
+      "pass",
+      "No premature, repeated, unpriced, or over-cap travel compensation offer was detected.",
+    );
+  } else {
+    add(
+      "discounts_retention",
+      "n_a",
+      "This turn does not concern pickup distance or travel compensation.",
+    );
+  }
 
   // ── Follow-up texting ──
   add(
@@ -229,13 +289,26 @@ export function scoreDraft(input: RubricInput): RubricOutput {
     add("cross_account_consistency", "pass", "No cross-account leak detected.");
   }
 
-  // ── Location handling ──
-  if (has(cats, "VAGUE_CONFIRMED_LOCATION", "PREMATURE_CONFIRMATION")) {
+  // ── Account-specific pickup handling ──
+  if (unsafePickupClaim || pickupPrivacyLeak || wrongPickupArea || missingConfirmedPickup ||
+    has(cats, "VAGUE_CONFIRMED_LOCATION", "PREMATURE_CONFIRMATION")) {
     add(
       "location_handling",
       "fail",
-      "Draft was vague about a confirmed location, or confirmed/revealed pickup details before booking was actually approved.",
-      evidenceFor(allViolations, "VAGUE_CONFIRMED_LOCATION", "PREMATURE_CONFIRMATION"),
+      "Draft gave a false pickup explanation, the wrong or missing account area, exact pickup details too early, or omitted the confirmed meeting point.",
+      [
+        unsafePickupClaim ? "unsupported location excuse" : null,
+        pickupPrivacyLeak ? "exact pickup detail disclosed before confirmation" : null,
+        wrongPickupArea ? "expected account area: " + input.pickupArea : null,
+        missingConfirmedPickup ? "confirmed booking missing its exact meeting point" : null,
+        evidenceFor(allViolations, "VAGUE_CONFIRMED_LOCATION", "PREMATURE_CONFIRMATION"),
+      ].filter(Boolean).join("; ") || undefined,
+    );
+  } else if (!verificationFailed && pickupQuestion && !input.pickupArea) {
+    add(
+      "location_handling",
+      "flag",
+      "The renter asked about pickup, but this test had no owner-confirmed account area to verify the answer against.",
     );
   } else if (has(cats, "LOCATION_PLACEHOLDER")) {
     add(

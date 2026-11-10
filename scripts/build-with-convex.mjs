@@ -83,4 +83,7 @@ if (production) {
   await runInstalledTool("convex", ["env", "set", "RENTER_BOT_LAB_SCENARIO_SEEDING", "enabled"], labEnv);
   await ensureLabDraftApiAuth(labEnv);
   await runInstalledTool("convex", ["deploy", "--typecheck", "disable", "--codegen", "disable", "--message", `Renter Bot Lab ${sourceCommit()}`], labEnv);
+  // Reconcile legacy-imported policy rows after deploying the function code.
+  // This mutation is guarded inside Convex and can target only the isolated Lab.
+  await runInstalledTool("convex", ["run", "renter_bot_lab_actions:seedLabLocationPolicy"], labEnv);
 }

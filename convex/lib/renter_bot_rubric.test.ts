@@ -159,6 +159,78 @@ describe("renter_bot_rubric.scoreDraft", () => {
   });
 });
 
+describe("owner-confirmed pickup and travel rules", () => {
+  it("fails the Lab's false central-location explanation and first-turn discount", () => {
+    const renterMessage = "The listing says pickup is in Shoreditch. Is that real? It is a long way for me. Can you take 10% off for travel?";
+    const result = scoreDraft({
+      accountSlug: "dbcinema",
+      draftText: "That listing is currently being consolidated to our central location, so collection is in central London. I can certainly offer 10% off to make up for the travel. I'll send the exact pickup address the moment the booking is confirmed.",
+      lastRenterMessage: renterMessage,
+      conversationHistory: [{ role: "renter", content: renterMessage }],
+      pickupArea: "Northumberland Street area",
+      pickupAddress: "10 Northumberland Street, London WC2N 5DB, England, outside the Sherlock Holmes pub.",
+      rentalChargeGbp: null,
+    });
+    expect(result.results.find((row) => row.category === "location_handling")?.status).toBe("fail");
+    expect(result.results.find((row) => row.category === "discounts_retention")?.status).toBe("fail");
+    expect(result.overall_status).toBe("fail");
+  });
+
+  it("keeps a generic discount request outside the travel-compensation rule", () => {
+    const result = scoreDraft({
+      accountSlug: "leo",
+      draftText: "I can't offer a discount on a one-day rental; the single-day rate is fixed.",
+      lastRenterMessage: "Could you take £10 off as a general discount for a one-day rental?",
+    });
+    expect(result.results.find((row) => row.category === "discounts_retention")?.status).toBe("n_a");
+  });
+
+  it("passes one capped offer only after the account area disclosure and renter objection", () => {
+    const objection = "That is a long way for me. Could you help with the extra travel cost?";
+    const result = scoreDraft({
+      accountSlug: "leo",
+      draftText: "I can offer a one-time £3.50 travel adjustment on this rental.",
+      lastRenterMessage: objection,
+      conversationHistory: [
+        { role: "owner", content: "For this rental, collection is arranged from the Trafalgar Square area." },
+        { role: "renter", content: objection },
+      ],
+      pickupArea: "Trafalgar Square area",
+      rentalChargeGbp: 35,
+    });
+    expect(result.results.find((row) => row.category === "discounts_retention")?.status).toBe("pass");
+  });
+
+  it("fails a percentage offer above the £10 cap", () => {
+    const objection = "That is a long way for me. Could you help with the extra travel cost?";
+    const result = scoreDraft({
+      accountSlug: "leo",
+      draftText: "I can offer 10% off for travel.",
+      lastRenterMessage: objection,
+      conversationHistory: [
+        { role: "owner", content: "Collection is in the Trafalgar Square area." },
+        { role: "renter", content: objection },
+      ],
+      pickupArea: "Trafalgar Square area",
+      rentalChargeGbp: 200,
+    });
+    expect(result.results.find((row) => row.category === "discounts_retention")?.status).toBe("fail");
+  });
+
+  it("grades compensation as a breach after verification has failed", () => {
+    const result = scoreDraft({
+      accountSlug: "leo",
+      draftText: "Your booking was cancelled because verification failed. I can't release the pickup point without a confirmed booking. I can take £10 off for the inconvenience.",
+      lastRenterMessage: "Verification failed; can I still collect?",
+      rentalStage: "VERIFICATION_FAILED",
+      pickupArea: "Trafalgar Square area",
+      pickupAddress: "Outside Waterstones at The Grand Building, Trafalgar Square, London WC2N 5EJ.",
+    });
+    expect(result.results.find((row) => row.category === "discounts_retention")?.status).toBe("fail");
+    expect(result.results.find((row) => row.category === "location_handling")?.status).toBe("pass");
+  });
+});
+
 
 describe("Native price grading",()=>{
  const request={start_date:"2026-10-22",end_date:"2026-10-23",items:[{name:"TTArtisan 11mm f2.8 Fisheye (Sony E)",quantity:1}]};

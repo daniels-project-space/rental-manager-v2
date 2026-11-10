@@ -72,7 +72,7 @@ export const RENTER_BOT_MEMORIES_V1: SeedMemory[] = [
     scope: "operational",
     title: "DANIEL RULE 7 — Discounts",
     content:
-      "Distance discount = LISTING_LOCATION only. NEVER ask renter location. Non-central → auto 10%. Delivery postcode = delivery quote only. NEVER reveal thresholds/percentages.",
+      "Travel compensation is not automatic. First disclose the selected account's pickup area and ask whether it works. Only after the renter then explicitly objects to the travel may one compensation be offered for that booking: the lower of 10% of the verified rental charge or £10. Never infer eligibility from listing location or distance. If the charge is unknown, do not quote or promise an amount. Any 24-hour no-reply follow-up remains an unsent draft.",
     tags: ["daniel-rule", "pricing", "discount", "distance"],
     priority: 10,
   },
@@ -203,7 +203,7 @@ export const RENTER_BOT_MEMORIES_V1: SeedMemory[] = [
     scope: "operational",
     title: "Edge: Fake Location Handling",
     content:
-      "Listing at non-central area (Shoreditch, Camden, etc.) → acknowledge by name, natural excuse (out of stock / on rental / service / consolidating), offer Trafalgar + 10% distance discount. Never call listings fake.",
+      "When a listing area differs from the selected account's confirmed pickup area, state the pickup area for this rental and ask if it works. Do not call any location fake or nonexistent, claim there is only one pickup point, or invent an operational reason. Use the account's verified reason only; provide exact meeting details only after booking confirmation. Never offer travel compensation in this first disclosure.",
     tags: ["edge", "location", "discount"],
     priority: 9,
   },
@@ -342,7 +342,7 @@ export const RENTER_BOT_MEMORIES_V1: SeedMemory[] = [
     "Ninja V works as an HDMI 4K monitor (not recording) without an SSD. Recording 4K ProRes RAW needs a compatible SSD — pricing higher when bundled.",
     tags: ["faq", "monitor", "atomos"], priority: 6 },
   { scope: "faq", title: "FAQ: Pickup Process", content:
-    "Renter arrives at Trafalgar Square, waits by statue of James the Second next to Sainsbury Wing entrance of the National Gallery, texts they arrived. Do NOT enter any building.",
+    "Pickup points differ by account. Before a booking is confirmed, share only the selected account's pickup area. After confirmation, share that account's exact pickup point and arrival instructions. Never use a universal Trafalgar Square meeting point or another account's details.",
     tags: ["faq", "pickup", "location"], priority: 8 },
   { scope: "faq", title: "FAQ: Experience Required", content:
     "We don't ask. Provide quick-start tips on request. Renter is responsible for operating gear safely.",
@@ -380,7 +380,7 @@ export const RENTER_BOT_MEMORIES_V1: SeedMemory[] = [
     scope: "template",
     title: "Template: DB Cinema Welcome Text",
     content:
-      "Hi! Thanks for your booking with DB Cinema. We'll be in touch shortly to confirm pickup details. Pickup is at Trafalgar Square, by the statue of James the Second next to the Sainsbury Wing entrance of the National Gallery. If you have any questions, just message here. — Daniel",
+      "Hi! Thanks for your booking with DB Cinema. Pickup is arranged in the Northumberland Street area. Please confirm that area works for you; I'll share the exact meeting point once the booking is confirmed. If you have any questions, just message here. — Daniel",
     tags: ["template", "welcome", "dbcinema"],
     priority: 10,
   },
@@ -388,7 +388,7 @@ export const RENTER_BOT_MEMORIES_V1: SeedMemory[] = [
     scope: "template",
     title: "Template: DB Cinema Booking Confirmed Text",
     content:
-      "Your booking is confirmed. Pickup at Trafalgar Square (statue of James the Second, Sainsbury Wing entrance) at the agreed time. Please text 'arrived' on this chat when you get there — DO NOT go inside. — Daniel",
+      "Your booking is confirmed. Pickup is at 10 Northumberland Street, London WC2N 5DB, outside the Sherlock Holmes pub. Please message here when you arrive. — Daniel",
     tags: ["template", "confirmed", "dbcinema"],
     priority: 10,
   },
@@ -404,7 +404,7 @@ export const RENTER_BOT_MEMORIES_V1: SeedMemory[] = [
     scope: "template",
     title: "Template: Leo Adams Welcome Text",
     content:
-      "Hi! Thanks for your booking. We'll sort the pickup details with you shortly. Pickup is at Trafalgar Square — I'll send the exact spot when we're close to the date. Any questions, just shout. — Leo",
+      "Hi! Thanks for your booking. Pickup is arranged in the Trafalgar Square area. Please confirm that area works for you; I'll share the exact meeting point once the booking is confirmed. Any questions, just shout. — Leo",
     tags: ["template", "welcome", "leo"],
     priority: 10,
   },
@@ -412,7 +412,7 @@ export const RENTER_BOT_MEMORIES_V1: SeedMemory[] = [
     scope: "template",
     title: "Template: Leo Adams Booking Confirmed Text",
     content:
-      "All sorted on this end — pickup at Trafalgar Square (statue of James the Second, Sainsbury Wing entrance) at the agreed time. Text 'arrived' when you get there please. — Leo",
+      "All sorted on this end — pickup is outside the Waterstones bookstore at The Grand Building, Trafalgar Square, London WC2N 5EJ. Message here when you arrive, please. — Leo",
     tags: ["template", "confirmed", "leo"],
     priority: 10,
   },
@@ -428,7 +428,7 @@ export const RENTER_BOT_MEMORIES_V1: SeedMemory[] = [
     scope: "template",
     title: "Template: DB Cinema Travel Discount",
     content:
-      "That listing is currently being consolidated to our central location. Pickup is at Trafalgar Square — I can offer 10% off to make up for the move. Let me know if that works. — Daniel",
+      "Do not use this as an automatic or first-contact offer. Only after the DB Cinema pickup area has been disclosed and the renter then explicitly objects to travel, check the verified rental charge and offer at most once the lower of 10% or £10. If the charge is unknown, do not promise an amount.",
     tags: ["template", "travel-discount", "dbcinema"],
     priority: 10,
   },
@@ -452,7 +452,7 @@ export const RENTER_BOT_MEMORIES_V1: SeedMemory[] = [
     scope: "template",
     title: "Template: DB Cinema Arrival Reminder",
     content:
-      "Once you arrive at Trafalgar Square, please wait by the statue of James the Second, next to the Sainsbury Wing entrance of the National Gallery and text you arrived in this chat. We will be with you in a second. PLEASE DO NOT GO IN ANYWHERE.",
+      "After the booking is confirmed, use DB Cinema's exact pickup point: 10 Northumberland Street, London WC2N 5DB, outside the Sherlock Holmes pub. Ask the renter to message this chat when they arrive.",
     tags: ["template", "arrival", "dbcinema"],
     priority: 10,
   },

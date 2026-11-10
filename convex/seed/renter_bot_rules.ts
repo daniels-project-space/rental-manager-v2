@@ -53,7 +53,7 @@ export const RENTER_BOT_RULES_V1: SeedRule[] = [
   { category: "communication", name: "No Code/Tables in Chat", priority: 10, body:
     "No code blocks, tables, markdown. Natural, short, human-sounding. No formatting that reveals AI." },
   { category: "communication", name: "Arrival Reminder", priority: 8, body:
-    "When confirming pickup, send: 'Once you arrive at Trafalgar Square, please wait by the statue of James the Second, next to the Sainsbury Wing entrance of the National Gallery and text you arrived in this chat. We will be with you in a second. PLEASE DO NOT GO IN ANYWHERE.'" },
+    "Use the selected account's confirmed pickup instructions only. Before booking confirmation, disclose only its pickup area; give the exact meeting point only after confirmation. Never reuse another account's pickup point." },
   { category: "communication", name: "Renter Arrived Alert", priority: 10, body:
     "If a renter texts they arrived → inform Daniel on Telegram immediately. URGENT." },
   { category: "communication", name: "Account Separation", priority: 10, body:
@@ -61,13 +61,13 @@ export const RENTER_BOT_RULES_V1: SeedRule[] = [
   { category: "communication", name: "Enquiry vs Request", priority: 10, body:
     "When renter enquires, just confirm availability. Do NOT tell them to send a rental request just to get info or a quote. Request is only needed when ready to book." },
   { category: "communication", name: "Location Handling", priority: 9, body:
-    "Pickup at Central London (Trafalgar Square). If listing was non-central (Shoreditch, Camden, etc.), acknowledge by name, apologise with a natural excuse (out of stock, on a rental, service, consolidating pickups, maintenance), then offer central + 10% distance discount. NEVER say listings are fake." },
+    "Use the selected account's owner-confirmed pickup area. Tell the renter where this rental will be collected and ask whether that area works before proceeding. If a listing names a different area, do not claim that area is fake or nonexistent and do not say every account uses one central pickup. Explain only a verified operational reason; never invent an outage, repair, rental, or consolidation. Share the exact meeting point only after this booking is confirmed." },
 
   // ── pricing (7) ──
   { category: "pricing", name: "High Value Discount", priority: 9, body:
     "INTERNAL. Auto-applied at checkout. NEVER tell renters the threshold or percentage." },
   { category: "pricing", name: "Travel Distance Discount", priority: 9, body:
-    "10% if LISTING_LOCATION is non-central or 20km+ from Trafalgar Square. NEVER ask renter where they are — listing location only." },
+    "Travel compensation is not automatic and is never based on listing location or distance thresholds. Only consider it after the selected account's pickup area has already been disclosed and the renter then explicitly objects to the travel. Offer at most once per booking, capped at the lower of 10% of the verified rental charge or £10. If the charge is unknown, do not quote or promise an amount." },
   { category: "pricing", name: "Long Rental Discount", priority: 8, body:
     "10% off for 7+ days." },
   { category: "pricing", name: "One Discount Only", priority: 9, body:
@@ -77,7 +77,7 @@ export const RENTER_BOT_RULES_V1: SeedRule[] = [
   { category: "pricing", name: "No Off-Platform Payments", priority: 10, body:
     "NEVER accept cash or off-platform for rentals. All rental payments through Hygglo/Fat Llama. Delivery fees use Revolut/bank (separate)." },
   { category: "pricing", name: "Travel Discount Proactive", priority: 9, body:
-    "ANY non-central listing → mention the 10% proactively when redirecting to Trafalgar Square." },
+    "Do not proactively mention or offer travel compensation. A 24-hour location follow-up may only be queued as an unsent draft for the same conversation; never send it automatically." },
 
   // ── faq (4) ──
   { category: "faq", name: "Delivery — Only When Asked", priority: 9, body:

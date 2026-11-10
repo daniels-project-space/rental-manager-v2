@@ -176,6 +176,7 @@ export const listAccountHubs = query({
       display_name: string;
       hub_postcode: string | null;
       hub_label: string | null;
+      pickup_area: string | null;
       pickup_address: string | null;
       pickup_hours: { start: string; end: string }[] | null;
     }[] = [];
@@ -191,6 +192,7 @@ export const listAccountHubs = query({
         display_name: a.display_name ?? a.slug,
         hub_postcode: profile?.hub_postcode ?? null,
         hub_label: profile?.hub_label ?? null,
+        pickup_area: profile?.pickup_area ?? null,
         pickup_address: profile?.pickup_address ?? null,
         pickup_hours: profile?.pickup_hours ?? null,
       });

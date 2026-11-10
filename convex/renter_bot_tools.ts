@@ -745,7 +745,7 @@ const UNVERIFIED_DISTANCE_DISCOUNT = {
   distance_discount_applies: null,
   distance_discount_verification: "unverified" as const,
   distance_discount_guidance:
-    "The quoted total is the base price; no distance discount has been applied. A discounted offer requires verified eligibility and a verified reduced quote or recorded owner approval.",
+    "The quoted total is the base price; no travel compensation is included. Compensation is considered only after this account's pickup area has been disclosed and the renter then objects to the travel; it is capped at the lower of 10% of the verified rental charge or £10.",
 };
 
 export const lookup_pricing = query({
@@ -2022,7 +2022,6 @@ export const check_location = action({
       heavy_max_km: heavyMaxKm,
       within_delivery_range: deliverable,
       within_heavy_range: km <= heavyMaxKm,
-      non_central: km > 5, // triggers the 10% distance discount rule
       note: deliverable
         ? `~${km}km from our ${hub.hub_label ?? "hub"} — within delivery range (offer delivery or pickup).`
         : `~${km}km — beyond our ${maxKm}km delivery range; offer pickup only.`,

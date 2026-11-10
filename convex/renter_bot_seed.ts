@@ -260,3 +260,101 @@ export const seedAll = internalMutation({
     };
   },
 });
+
+/**
+ * Reconcile location policy across legacy-imported knowledge rows in the
+ * isolated Lab. Earlier seedAll runs only updated `v1-port` rows, leaving
+ * same-title imported memories active beside the corrected copies.
+ */
+export const migrateLabLocationPolicy = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    if (process.env.RENTER_BOT_LAB_SCENARIO_SEEDING !== "enabled") {
+      throw new Error("Location-policy migration is available only on the isolated Renter Bot Lab backend");
+    }
+
+    const locationRuleKinds = new Set([
+      "Arrival Reminder",
+      "Location Handling",
+      "Travel Distance Discount",
+      "Travel Discount Proactive",
+    ]);
+    const locationMemoryTitles = new Set([
+      "DANIEL RULE 7 — Discounts",
+      "Edge: Fake Location Handling",
+      "FAQ: Pickup Process",
+      "Template: DB Cinema Welcome Text",
+      "Template: DB Cinema Booking Confirmed Text",
+      "Template: Leo Adams Welcome Text",
+      "Template: Leo Adams Booking Confirmed Text",
+      "Template: DB Cinema Travel Discount",
+      "Template: DB Cinema Arrival Reminder",
+    ]);
+    const now = Date.now();
+    let rulesUpdated = 0;
+    let memoriesUpdated = 0;
+    let duplicateSeedMemoriesRemoved = 0;
+
+    const rules = await ctx.db.query("rules").collect();
+    for (const seed of RENTER_BOT_RULES_V1.filter((row) => locationRuleKinds.has(row.name))) {
+      const matches = rules.filter((row) => row.category === seed.category && row.rule_kind === seed.name && !row.account_id);
+      if (matches.length) {
+        for (const row of matches) {
+          await ctx.db.patch(row._id, { rule_body: seed.body, priority: seed.priority, enabled: true });
+          rulesUpdated += 1;
+        }
+      } else {
+        await ctx.db.insert("rules", {
+          rule_kind: seed.name,
+          rule_body: seed.body,
+          category: seed.category,
+          priority: seed.priority,
+          enabled: true,
+          source: "v1-port",
+          created_at: now,
+        });
+      }
+    }
+
+    const memories = await ctx.db.query("memories").collect();
+    for (const seed of RENTER_BOT_MEMORIES_V1) {
+      const matches = memories.filter((row) => row.scope === seed.scope && row.title === seed.title);
+      const legacyMatches = matches.filter((row) => row.source !== "v1-port");
+      if (locationMemoryTitles.has(seed.title)) {
+        if (matches.length) {
+          for (const row of matches) {
+            await ctx.db.patch(row._id, {
+              content: seed.content,
+              tags: seed.tags,
+              priority: seed.priority,
+              updated_at: now,
+            });
+            memoriesUpdated += 1;
+          }
+        } else {
+          await ctx.db.insert("memories", {
+            scope: seed.scope,
+            title: seed.title,
+            content: seed.content,
+            tags: seed.tags,
+            priority: seed.priority,
+            source: "v1-port",
+            created_at: now,
+          });
+        }
+      }
+
+      // Undo duplicate v1-port rows created when the legacy source guard in
+      // seedAll missed an imported record with the same scope/title. Keep the
+      // imported row; location titles above are reconciled to the owner rules.
+      if (legacyMatches.length) {
+        for (const row of matches.filter((match) => match.source === "v1-port")) {
+          await ctx.db.delete(row._id);
+          duplicateSeedMemoriesRemoved += 1;
+        }
+      }
+    }
+
+    return { rulesUpdated, memoriesUpdated, duplicateSeedMemoriesRemoved };
+  },
+});
