@@ -1,7 +1,6 @@
 /** Small, owner-grounded scenarios used by the isolated Renter Bot Lab. */
 export const RENTER_BOT_LAB_SCENARIO_IDS = [
   "bmpcc-6k-full-frame-kit",
-  "sony-28-70-lens-fit",
   "sony-fx3-batteries",
 ] as const;
 
@@ -34,9 +33,9 @@ export interface RenterBotLabScenario {
   title: string;
   accountSlug: "leo" | "dbcinema";
   displayName: string;
+  /** Seed a normal, pending rental request with a current future date range. */
+  rentalSetup: { startInDays: number; durationDays: number };
   item: ScenarioItem;
-  summary: string;
-  prompts: string[];
 }
 
 export const RENTER_BOT_LAB_SCENARIOS: RenterBotLabScenario[] = [
@@ -45,6 +44,7 @@ export const RENTER_BOT_LAB_SCENARIOS: RenterBotLabScenario[] = [
     title: "Blackmagic 6K Full Frame kit",
     accountSlug: "dbcinema",
     displayName: "BMPCC 6K Full Frame Kit",
+    rentalSetup: { startInDays: 14, durationDays: 1 },
     item: {
       name_canonical: "BMPCC 6K Full Frame",
       display_name: "BMPCC 6K Full Frame Kit",
@@ -72,39 +72,13 @@ export const RENTER_BOT_LAB_SCENARIOS: RenterBotLabScenario[] = [
         ],
       },
     },
-    summary: "Check that the bot names the confirmed card, batteries and kit accessories.",
-    prompts: [
-      "Hi, what exactly comes with the BMPCC 6K Full Frame kit, including the memory card and batteries?",
-    ],
-  },
-  {
-    id: "sony-28-70-lens-fit",
-    title: "Sony 28–70mm lens fit",
-    accountSlug: "leo",
-    displayName: "Sony FE 28–70mm f/3.5–5.6 OSS",
-    item: {
-      name_canonical: "Sony FE 28–70mm f/3.5–5.6 OSS",
-      display_name: "Sony FE 28–70mm f/3.5–5.6 OSS",
-      name_input: "Sony FE 28–70mm f/3.5–5.6 OSS",
-      slug: "lab-sony-fe-28-70mm-oss",
-      kind: "lens",
-      sub_kind: "zoom",
-      qty: 2,
-      unit_kind: "unit",
-      lens_mount: "Sony E",
-      notes: "Owner-confirmed autofocus lens. Its widest focal length is 28mm, so it does not cover 24mm.",
-    },
-    summary: "Check honest autofocus and focal-range matching before offering the lens.",
-    prompts: [
-      "I need an autofocus lens that starts at 24mm. Does this one cover that?",
-      "28mm is okay for me. Could I use this lens then?",
-    ],
   },
   {
     id: "sony-fx3-batteries",
     title: "Sony FX3 kit batteries",
     accountSlug: "leo",
     displayName: "Sony FX3 Camera Kit",
+    rentalSetup: { startInDays: 14, durationDays: 1 },
     item: {
       name_canonical: "Sony FX3",
       display_name: "Sony FX3 Camera Kit",
@@ -121,13 +95,26 @@ export const RENTER_BOT_LAB_SCENARIOS: RenterBotLabScenario[] = [
       },
       notes: "Owner-confirmed: each FX3 camera kit includes three Sony NP-FZ100 batteries. At least 12 batteries are available across shared stock.",
     },
-    summary: "Check the exact battery type and per-camera quantity from confirmed stock facts.",
-    prompts: [
-      "How many batteries come with the Sony FX3, and what type are they?",
-    ],
   },
 ];
 
 export function renterBotLabScenario(id: string): RenterBotLabScenario | undefined {
   return RENTER_BOT_LAB_SCENARIOS.find((scenario) => scenario.id === id);
+}
+
+export function renterBotLabRentalDates(
+  scenario: RenterBotLabScenario,
+  today = new Date(),
+): { startDate: string; endDate: string } {
+  const start = new Date(Date.UTC(
+    today.getUTCFullYear(),
+    today.getUTCMonth(),
+    today.getUTCDate() + scenario.rentalSetup.startInDays,
+  ));
+  const end = new Date(Date.UTC(
+    start.getUTCFullYear(),
+    start.getUTCMonth(),
+    start.getUTCDate() + Math.max(0, scenario.rentalSetup.durationDays - 1),
+  ));
+  return { startDate: start.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) };
 }

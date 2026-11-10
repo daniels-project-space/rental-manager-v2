@@ -41,11 +41,14 @@ describe("Renter Bot Lab status", () => {
     vi.stubEnv("RENTER_BOT_LAB_API_SECRET", "isolated-api-secret");
     vi.stubEnv("OPENROUTER_API_KEY", "configured");
     vi.stubEnv("VERCEL_GIT_COMMIT_SHA", validEnv.VERCEL_GIT_COMMIT_SHA);
-    const response = GET();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+    const response = await GET();
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(await response.json()).toMatchObject({ deployment: "hosted", live_chat_authorized: false });
+    expect(await response.json()).toMatchObject({
+      deployment: "hosted", live_chat_authorized: false, generation_ready: false,
+    });
     vi.stubEnv("RENTER_BOT_LAB_LIVE_CHAT_AUTHORIZED", "true");
-    expect(GET().status).toBe(404);
+    expect((await GET()).status).toBe(404);
   });
 });

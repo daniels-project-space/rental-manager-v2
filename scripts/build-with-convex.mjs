@@ -1,6 +1,61 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { BACKEND_URL, assertCurrentMain, sourceCommit, publishBackend, readBackendIdentity, runInstalledTool } from "./backend-publisher.mjs";
 import { backendFingerprint } from "./backend-fingerprint.mjs";
+
+const labAuthMarker = "RENTER_BOT_LAB_AUTH_CONFIG_VERSION";
+function managedEnvironmentValue(value, name, depth = 0) {
+  if (depth > 6 || value === null || typeof value !== "object") return undefined;
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      const found = managedEnvironmentValue(child, name, depth + 1);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  const rowName = typeof value.name === "string" ? value.name : value.key;
+  if (rowName === name && typeof value.value === "string") return value.value;
+  if (typeof value[name] === "string") return value[name];
+  for (const child of Object.values(value)) {
+    const found = managedEnvironmentValue(child, name, depth + 1);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+async function ensureLabDraftApiAuth(labUrl, labDeployKey) {
+  const labApiSecret = process.env.RENTER_BOT_LAB_API_SECRET?.trim();
+  if (!labApiSecret) throw new Error("Production requires RENTER_BOT_LAB_API_SECRET.");
+  const secretMarker = "lab-auth-v1:" + createHash("sha256").update(labApiSecret).digest("hex");
+  const authHeaders = { Authorization: "Convex " + labDeployKey };
+  const listResponse = await fetch(new URL("/api/v1/list_environment_variables", labUrl), {
+    headers: authHeaders,
+    cache: "no-store",
+  });
+  if (!listResponse.ok) {
+    throw new Error("Could not verify the isolated Lab draft connection (Convex status " + listResponse.status + ").");
+  }
+  const listed = await listResponse.json();
+  const currentSecret = managedEnvironmentValue(listed, "RENTER_BOT_API_SECRET");
+  const currentMarker = managedEnvironmentValue(listed, labAuthMarker);
+  if (currentMarker === secretMarker && (currentSecret === undefined || currentSecret === labApiSecret)) return;
+
+  const updateResponse = await fetch(new URL("/api/v1/update_environment_variables", labUrl), {
+    method: "POST",
+    headers: { ...authHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      changes: [
+        { name: "RENTER_BOT_API_SECRET", value: labApiSecret },
+        { name: labAuthMarker, value: secretMarker },
+      ],
+    }),
+    cache: "no-store",
+  });
+  if (!updateResponse.ok) {
+    throw new Error("Could not configure the isolated Lab draft connection (Convex status " + updateResponse.status + ").");
+  }
+  console.log("Configured the isolated Lab draft connection.");
+}
 
 // Preview builds share the live backend URL/key. Only an explicitly production
 // Vercel build may publish functions; local and PR builds only compile the UI.
@@ -62,6 +117,9 @@ if (production) {
   }
 
   const labDeploymentName = new URL(labUrl).hostname.replace(/\.convex\.cloud$/, "");
+  if (labDeploymentName !== "clean-bulldog-494") {
+    throw new Error("The Renter Bot Lab release must target the isolated clean-bulldog-494 deployment.");
+  }
   const labKeyScope = labDeployKey.split("|", 1)[0];
   if (labKeyScope !== `dev:${labDeploymentName}`) {
     throw new Error("The Lab deploy key must be scoped directly to the isolated Lab dev deployment.");
@@ -73,5 +131,6 @@ if (production) {
   const labEnv = { ...process.env, CONVEX_DEPLOY_KEY: labDeployKey };
   delete labEnv.CONVEX_DEPLOYMENT;
   await runInstalledTool("convex", ["env", "set", "RENTER_BOT_LAB_SCENARIO_SEEDING", "enabled"], labEnv);
+  await ensureLabDraftApiAuth(labUrl, labDeployKey);
   await runInstalledTool("convex", ["deploy", "--typecheck", "disable", "--codegen", "disable", "--message", `Renter Bot Lab ${sourceCommit()}`], labEnv);
 }

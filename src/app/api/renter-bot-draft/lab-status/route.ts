@@ -46,8 +46,70 @@ export function renterBotLabStatusFromEnv(env: LabStatusEnvironment) {
     openrouter_configured: true as const, source_fingerprint: fingerprint };
 }
 
-export function GET() {
+const LAB_BACKEND_HOST = "clean-bulldog-494.convex.cloud";
+const LAB_AUTH_MARKER = "RENTER_BOT_LAB_AUTH_CONFIG_VERSION";
+let cachedGenerationReady: { until: number; value: boolean } | undefined;
+let generationReadyCheck: Promise<boolean> | undefined;
+
+function managedEnvironmentValue(value: unknown, name: string, depth = 0): string | undefined {
+  if (depth > 6 || value === null || typeof value !== "object") return undefined;
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      const found = managedEnvironmentValue(child, name, depth + 1);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const rowName = typeof record.name === "string" ? record.name : record.key;
+  if (rowName === name && typeof record.value === "string") return record.value;
+  if (typeof record[name] === "string") return record[name] as string;
+  for (const child of Object.values(record)) {
+    const found = managedEnvironmentValue(child, name, depth + 1);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+async function ensureLabBackendGenerationReady(env: LabStatusEnvironment): Promise<boolean> {
+  const labUrl = isolatedCloudLabUrl(env.RENTER_BOT_LAB_CONVEX_URL);
+  const deployKey = env.RENTER_BOT_LAB_CONVEX_DEPLOY_KEY?.trim();
+  const labApiSecret = env.RENTER_BOT_LAB_API_SECRET?.trim();
+  if (!labUrl || !deployKey || !labApiSecret || new URL(labUrl).hostname !== LAB_BACKEND_HOST) return false;
+
+  const now = Date.now();
+  if (cachedGenerationReady && cachedGenerationReady.until > now) return cachedGenerationReady.value;
+  if (generationReadyCheck) return generationReadyCheck;
+
+  generationReadyCheck = (async () => {
+    try {
+      const authHeaders = { Authorization: "Convex " + deployKey };
+      const listResponse = await fetch(new URL("/api/v1/list_environment_variables", labUrl), {
+        headers: authHeaders,
+        cache: "no-store",
+      });
+      if (!listResponse.ok) return false;
+      const listed = await listResponse.json() as unknown;
+      const secretHash = createHash("sha256").update(labApiSecret).digest("hex");
+      const expectedMarker = "lab-auth-v1:" + secretHash;
+      const currentSecret = managedEnvironmentValue(listed, "RENTER_BOT_API_SECRET");
+      const currentMarker = managedEnvironmentValue(listed, LAB_AUTH_MARKER);
+      return currentMarker === expectedMarker && (currentSecret === undefined || currentSecret === labApiSecret);
+    } catch {
+      return false;
+    } finally {
+      generationReadyCheck = undefined;
+    }
+  })();
+
+  const ready = await generationReadyCheck;
+  cachedGenerationReady = { until: Date.now() + 30_000, value: ready };
+  return ready;
+}
+
+export async function GET() {
   const status = renterBotLabStatusFromEnv(process.env);
   if (!status) return new Response(null, { status: 404, headers: { "Cache-Control": "no-store" } });
-  return new Response(JSON.stringify(status), { status: 200, headers: noStoreHeaders });
+  const generation_ready = await ensureLabBackendGenerationReady(process.env);
+  return new Response(JSON.stringify({ ...status, generation_ready }), { status: 200, headers: noStoreHeaders });
 }

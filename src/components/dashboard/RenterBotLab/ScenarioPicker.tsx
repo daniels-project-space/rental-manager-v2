@@ -16,10 +16,10 @@ export function ScenarioPicker({
     <section aria-labelledby="prepared-scenarios" className="space-y-3">
       <div>
         <h2 id="prepared-scenarios" className="text-base font-semibold text-[#e4e6eb]">
-          Ready-to-run examples
+          Load a rental
         </h2>
         <p className="mt-1 text-xs text-[#8b8fa3]">
-          Choose a card. Item facts and renter messages are already loaded.
+          Each card loads the item, a one-day request and its calculated rental total. You write the renter’s first message.
         </p>
       </div>
       {RENTER_BOT_LAB_SCENARIOS.map((scenario) => (
@@ -28,17 +28,13 @@ export function ScenarioPicker({
           <p className="mt-1 text-xs text-[#8b8fa3]">
             {scenario.accountSlug === "dbcinema" ? "DB Cinema" : "Leo"} · {scenario.displayName}
           </p>
-          <p className="mt-2 text-xs leading-5 text-[#b6bac7]">{scenario.summary}</p>
-          <p className="mt-2 text-[11px] text-[#8b8fa3]">
-            {scenario.prompts.length} prepared renter {scenario.prompts.length === 1 ? "message" : "messages"}
-          </p>
           <button
             type="button"
             onClick={() => startScenario(scenario.id)}
             disabled={disabled}
             className="mt-3 w-full rounded-md bg-emerald-500/20 px-3 py-2 text-sm font-medium text-emerald-300 transition-colors hover:bg-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Load example
+            Load rental
           </button>
         </article>
       ))}

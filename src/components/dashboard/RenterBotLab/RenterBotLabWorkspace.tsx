@@ -6,7 +6,11 @@ import { useAction } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import { ScenarioPicker } from "./ScenarioPicker";
 import { LiveChatSim, type SessionContext } from "./LiveChatSim";
-import type { RenterBotLabScenarioId } from "../../../../convex/lib/renter_bot_lab_scenarios";
+import {
+  renterBotLabRentalDates,
+  renterBotLabScenario,
+  type RenterBotLabScenarioId,
+} from "../../../../convex/lib/renter_bot_lab_scenarios";
 
 interface Session {
   threadId: string;
@@ -18,6 +22,7 @@ interface LabApiStatus {
   deployment: string;
   live_chat_authorized: boolean;
   openrouter_configured: boolean;
+  generation_ready: boolean;
   source_fingerprint: string;
 }
 
@@ -29,7 +34,7 @@ export function RenterBotLabWorkspace() {
   const [labApiStatus, setLabApiStatus] = useState<LabApiStatus | null>(null);
   const [labApiChecked, setLabApiChecked] = useState(false);
 
-  const startPreparedScenario = useAction(api.renter_bot_lab_actions.startPreparedScenario);
+  const startLiveSession = useAction(api.renter_bot_lab_actions.startLiveSession);
   const endLiveSession = useAction(api.renter_bot_lab_actions.endLiveSession);
 
   useEffect(() => {
@@ -55,18 +60,36 @@ export function RenterBotLabWorkspace() {
   }, []);
 
   const labApiReady = (labApiStatus?.deployment === "local" || labApiStatus?.deployment === "hosted") &&
-    labApiStatus.live_chat_authorized === false && labApiStatus.openrouter_configured === true;
+    labApiStatus.live_chat_authorized === false && labApiStatus.openrouter_configured === true &&
+    labApiStatus.generation_ready === true;
   const labReady = labApiReady;
   const sourceVersion = labApiStatus?.source_fingerprint.slice(0, 12);
 
   async function handleStart(scenarioId: RenterBotLabScenarioId) {
     setStartError(null);
     try {
-      const result = await startPreparedScenario({ scenarioId });
+      const scenario = renterBotLabScenario(scenarioId);
+      if (!scenario) throw new Error("That Lab scenario is no longer available");
+      const { startDate, endDate } = renterBotLabRentalDates(scenario);
+      const result = await startLiveSession({
+        accountSlug: scenario.accountSlug,
+        items: [scenario.item.name_canonical],
+        lifecycle: "awaiting_owner_approval",
+        startDate,
+        endDate,
+        dates: startDate + " to " + endDate,
+      });
       setSession({
         threadId: result.threadId,
-        accountSlug: result.accountSlug,
-        context: result.context,
+        accountSlug: scenario.accountSlug,
+        context: {
+          scenarioTitle: scenario.title,
+          itemName: scenario.item.name_canonical,
+          displayName: scenario.displayName,
+          items: result.context.items,
+          startDate,
+          endDate,
+        },
       });
     } catch (error) {
       setStartError(error instanceof Error ? error.message : "Could not start the Lab conversation");
@@ -131,7 +154,7 @@ export function RenterBotLabWorkspace() {
         {session && (
           <section className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm text-[#8b8fa3]">Example loaded. The next button sends only the saved renter messages.</p>
+              <p className="text-sm text-[#8b8fa3]">Rental loaded. Type any first message and continue the chat naturally.</p>
               <button
                 onClick={handleEnd}
                 disabled={ending}

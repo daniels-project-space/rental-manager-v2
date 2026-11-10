@@ -238,7 +238,6 @@ export const startPreparedScenario = action({
   args: {
     scenarioId: v.union(
       v.literal("bmpcc-6k-full-frame-kit"),
-      v.literal("sony-28-70-lens-fit"),
       v.literal("sony-fx3-batteries"),
     ),
   },
@@ -270,7 +269,7 @@ export const startPreparedScenario = action({
         scenarioTitle: scenario.title,
         displayName: scenario.displayName,
         items: [itemName],
-        examplePrompts: [...scenario.prompts],
+        examplePrompts: [],
       },
     };
   },

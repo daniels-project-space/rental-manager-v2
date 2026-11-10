@@ -1,19 +1,44 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { useAction, useQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 
 export interface SessionContext {
   scenarioTitle: string;
+  itemName: string;
   displayName: string;
   items: string[];
-  examplePrompts: string[];
+  startDate: string;
+  endDate: string;
 }
 
 interface ChatTurn {
   role: "renter" | "bot";
   text: string;
+}
+
+function rentalDateLabel(value: string) {
+  const date = new Date(value + "T12:00:00Z");
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "Europe/London",
+  }).format(date);
+}
+
+function rentalPeriodLabel(startDate: string, endDate: string) {
+  if (startDate === endDate) return rentalDateLabel(startDate) + " · 1 day";
+  return rentalDateLabel(startDate) + " – " + rentalDateLabel(endDate);
+}
+
+function poundAmount(value: number) {
+  return new Intl.NumberFormat("en-GB", {
+    style: "currency",
+    currency: "GBP",
+  }).format(value);
 }
 
 export function LiveChatSim({
@@ -23,20 +48,23 @@ export function LiveChatSim({
 }) {
   const sendTestMessage = useAction(api.renter_bot_lab_actions.sendTestMessage);
   const item = useQuery(api.renter_bot_lab_actions.getItemContext, {
-    itemName: session.context.items[0],
+    itemName: session.context.itemName,
     accountSlug: session.accountSlug,
   });
+  const order = useQuery(api.renter_bot_lab_order.get, { thread_id: session.threadId });
   const [turns, setTurns] = useState<ChatTurn[]>([]);
-  const [promptIndex, setPromptIndex] = useState(0);
+  const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const nextPrompt = session.context.examplePrompts[promptIndex];
-  const canSend = Boolean(nextPrompt) && item?.found === true && !sending;
+  const canSend = Boolean(message.trim()) && item?.found === true && order != null && !sending;
 
-  async function sendNextPrompt() {
-    if (!nextPrompt || !canSend) return;
-    const text = nextPrompt;
+  async function sendMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const text = message.trim();
+    if (!text || !canSend) return;
+
+    setMessage("");
     setError(null);
     setTurns((current) => [...current, { role: "renter", text }]);
     setSending(true);
@@ -46,18 +74,16 @@ export function LiveChatSim({
         accountSlug: session.accountSlug,
         text,
       });
-      setTurns((current) => [
-        ...current,
-        {
-          role: "bot",
-          text: result.draft || (result.status === "ok"
-            ? `Reply withheld by a safety check${result.reason ? `: ${result.reason}` : "."}`
-            : `Reply generation failed${result.reason ? `: ${result.reason}` : "."}`),
-        },
-      ]);
-      setPromptIndex((current) => current + 1);
+      if (result.draft) {
+        setTurns((current) => [...current, { role: "bot", text: result.draft }]);
+      } else if (result.reason?.includes("canonical_generation_error_error")) {
+        setError("The isolated reply connection failed. Refresh the Lab and try again.");
+      } else if (result.status === "skipped") {
+        setError("The bot held this reply for review" + (result.reason ? ": " + result.reason : "."));
+      } else {
+        setError("The bot did not return a reply. You can continue the test or try again.");
+      }
     } catch (cause) {
-      setTurns((current) => current.at(-1)?.role === "renter" ? current.slice(0, -1) : current);
       setError(cause instanceof Error ? cause.message : "The test reply could not be generated.");
     } finally {
       setSending(false);
@@ -65,42 +91,53 @@ export function LiveChatSim({
   }
 
   return (
-    <section className="overflow-hidden rounded-lg border border-white/10 bg-white/[0.03]" aria-label="Prepared conversation">
+    <section className="overflow-hidden rounded-lg border border-white/10 bg-white/[0.03]" aria-label="Rental test chat">
       <div className="border-b border-white/10 p-4">
         <p className="text-base font-semibold text-[#e4e6eb]">{session.context.scenarioTitle}</p>
         <p className="mt-1 text-xs text-[#8b8fa3]">
           {session.accountSlug === "dbcinema" ? "DB Cinema" : "Leo"} · isolated test conversation
         </p>
-        <div className="mt-3 rounded-md border border-white/10 bg-black/20 p-3" aria-live="polite">
-          <p className="text-sm font-medium text-[#e4e6eb]">
-            {item?.display_name ?? session.context.displayName}
-          </p>
-          {item === undefined ? (
-            <p className="mt-1 text-xs text-[#8b8fa3]">Loading the item facts…</p>
-          ) : !item.found ? (
-            <p className="mt-1 text-xs text-red-300">This item is missing from the isolated Lab catalogue, so the conversation is paused.</p>
-          ) : (
-            <>
-              <p className="mt-1 text-xs text-[#8b8fa3]">{item.kind}{item.sub_kind ? ` · ${item.sub_kind.replace(/_/g, " ")}` : ""}</p>
-              {item.notes && <p className="mt-2 text-xs leading-5 text-[#b6bac7]">{item.notes}</p>}
-              {item.included_with_rental?.length ? (
-                <p className="mt-2 text-xs leading-5 text-[#b6bac7]">
-                  Included: {item.included_with_rental.join(" · ")}
-                </p>
-              ) : null}
-            </>
-          )}
+
+        <div className="mt-3 grid gap-2 rounded-md border border-white/10 bg-black/20 p-3 text-xs sm:grid-cols-2">
+          <div>
+            <p className="text-[#8b8fa3]">Rental item</p>
+            <p className="mt-1 font-medium text-[#e4e6eb]">
+              {item?.found ? item.display_name : session.context.displayName}
+            </p>
+          </div>
+          <div>
+            <p className="text-[#8b8fa3]">Rental request</p>
+            <p className="mt-1 font-medium text-[#e4e6eb]">
+              {rentalPeriodLabel(session.context.startDate, session.context.endDate)}
+            </p>
+          </div>
+          <div>
+            <p className="text-[#8b8fa3]">Request total</p>
+            <p className="mt-1 font-medium text-[#e4e6eb]">
+              {order === undefined ? "Loading price…" : order?.total_gbp == null ? "Price not available" : poundAmount(order.total_gbp)}
+            </p>
+          </div>
+          <div>
+            <p className="text-[#8b8fa3]">Pickup and return times</p>
+            <p className="mt-1 font-medium text-[#e4e6eb]">To confirm in the chat</p>
+          </div>
         </div>
+        {item?.found === false && (
+          <p className="mt-2 text-xs text-red-300">This item is missing from the isolated Lab catalogue, so the chat is paused.</p>
+        )}
       </div>
 
-      <div className="min-h-40 space-y-3 p-4" aria-live="polite">
-        {turns.length === 0 && item?.found && (
-          <p className="text-sm text-[#8b8fa3]">The selected item and its confirmed facts are loaded. Run the prepared renter message below.</p>
+      <div className="min-h-48 space-y-3 p-4" aria-live="polite">
+        {turns.length === 0 && item?.found && order && (
+          <p className="text-sm text-[#8b8fa3]">
+            Rental details are loaded. Start with any message; the bot can look up the item and request details as the conversation needs them.
+          </p>
         )}
         {turns.map((turn, index) => (
           <div
-            key={`${index}-${turn.role}`}
-            className={`max-w-[88%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm ${turn.role === "renter" ? "ml-auto bg-blue-500/20 text-blue-100" : "bg-white/[0.06] text-[#e4e6eb]"}`}
+            key={index + "-" + turn.role}
+            className={"max-w-[88%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm " +
+              (turn.role === "renter" ? "ml-auto bg-blue-500/20 text-blue-100" : "bg-white/[0.06] text-[#e4e6eb]")}
           >
             {turn.text}
           </div>
@@ -109,25 +146,33 @@ export function LiveChatSim({
         {error && <p className="rounded-md bg-red-400/10 p-2 text-xs text-red-200" role="alert">{error}</p>}
       </div>
 
-      <div className="border-t border-white/10 bg-black/10 p-4">
-        {nextPrompt ? (
-          <>
-            <p className="text-[11px] text-[#8b8fa3]">Prepared message {promptIndex + 1} of {session.context.examplePrompts.length}</p>
-            <p className="mt-1 text-sm text-[#e4e6eb]">{nextPrompt}</p>
-            <button
-              type="button"
-              onClick={() => void sendNextPrompt()}
-              disabled={!canSend}
-              className="mt-3 rounded-md bg-blue-500/20 px-4 py-2 text-sm font-medium text-blue-100 hover:bg-blue-500/30 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {sending ? "Waiting for reply…" : "Run next message"}
-            </button>
-          </>
-        ) : (
-          <p className="text-sm text-emerald-300">Example complete. Choose another card to run a different conversation.</p>
-        )}
-        <p className="mt-3 text-[11px] text-[#8b8fa3]">Messages stay in the isolated test backend. Real renter messaging is disabled.</p>
-      </div>
+      <form onSubmit={(event) => void sendMessage(event)} className="border-t border-white/10 bg-black/10 p-4">
+        <label htmlFor="renter-lab-message" className="mb-2 block text-xs font-medium text-[#b6bac7]">
+          Your renter message
+        </label>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <textarea
+            id="renter-lab-message"
+            value={message}
+            onChange={(event) => setMessage(event.target.value)}
+            disabled={!item?.found || order == null || sending}
+            maxLength={4000}
+            rows={2}
+            placeholder="Type anything to start the conversation…"
+            className="min-h-12 flex-1 resize-y rounded-md border border-white/10 bg-[#0b0c10] px-3 py-2 text-sm text-[#e4e6eb] placeholder:text-[#6e7282] focus:border-blue-400/50 focus:outline-none disabled:opacity-50"
+          />
+          <button
+            type="submit"
+            disabled={!canSend}
+            className="rounded-md bg-blue-500/20 px-5 py-2 text-sm font-medium text-blue-100 hover:bg-blue-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {sending ? "Waiting…" : "Send"}
+          </button>
+        </div>
+        <p className="mt-3 text-[11px] text-[#8b8fa3]">
+          Test messages stay in the isolated Lab. No renter messages are sent.
+        </p>
+      </form>
     </section>
   );
 }
