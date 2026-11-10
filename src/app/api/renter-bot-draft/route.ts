@@ -203,7 +203,7 @@ export const maxDuration = 180;
  * single-shot is only a fallback if this errors.
  */
 const renterBotDraftHandler = async function POST(req: Request, rawConvex: ConvexServiceClient) {
-  const authMode = renterBotDraftApiAuthMode(req.headers.get("authorization"));
+  const authMode = renterBotDraftApiAuthMode(req.headers.get("authorization"), undefined, req.headers.get("x-renter-bot-lab"));
   if (!authMode) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
@@ -1515,6 +1515,6 @@ const productionDraftPost = withServiceRoute(renterBotDraftHandler);
 const hostedLabDraftPost = withServiceRoute(renterBotDraftHandler, createRenterBotLabConvexServiceClient);
 
 export const POST = (req: Request) => {
-  const authMode = renterBotDraftApiAuthMode(req.headers.get("authorization"));
+  const authMode = renterBotDraftApiAuthMode(req.headers.get("authorization"), undefined, req.headers.get("x-renter-bot-lab"));
   return authMode === "hosted-lab" ? hostedLabDraftPost(req) : productionDraftPost(req);
 };

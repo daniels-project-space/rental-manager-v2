@@ -10,7 +10,13 @@ type RenterBotDraftApiAuthEnvironment = {
 export function renterBotDraftApiAuthMode(
   authorization: string | null,
   env: RenterBotDraftApiAuthEnvironment = process.env as RenterBotDraftApiAuthEnvironment,
+  labRequest?: string | null,
 ): RenterBotDraftApiAuthMode | null {
+  if (labRequest === "true") {
+    if (env.RENTER_BOT_LAB_DEPLOYMENT === "hosted" && env.RENTER_BOT_LAB_LIVE_CHAT_AUTHORIZED === "false" &&
+        env.RENTER_BOT_LAB_API_SECRET && authorization === `Bearer ${env.RENTER_BOT_LAB_API_SECRET}`) return "hosted-lab";
+    return null;
+  }
   if (env.RENTER_BOT_API_SECRET && authorization === `Bearer ${env.RENTER_BOT_API_SECRET}`) return "service";
   if (env.RENTER_BOT_LAB_DEPLOYMENT === "hosted" && env.RENTER_BOT_LAB_LIVE_CHAT_AUTHORIZED === "false" &&
       env.RENTER_BOT_LAB_API_SECRET && authorization === `Bearer ${env.RENTER_BOT_LAB_API_SECRET}`) return "hosted-lab";

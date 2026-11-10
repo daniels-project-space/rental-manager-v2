@@ -651,6 +651,7 @@ export const generateDraft = action({
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${apiSecret}`,
+            ...(thread_id.startsWith("__probe__") ? { "X-Renter-Bot-Lab": "true" } : {}),
           },
           body: JSON.stringify({
             thread_id,

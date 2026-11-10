@@ -23,4 +23,11 @@ describe("renter-bot draft API credentials", () => {
     expect(renterBotDraftApiAuthMode("Bearer lab-secret", { ...hosted, RENTER_BOT_LAB_LIVE_CHAT_AUTHORIZED: undefined })).toBeNull();
     expect(renterBotDraftApiAuthMode("Bearer wrong", hosted)).toBeNull();
   });
+
+  it("keeps marked Lab requests isolated even if the service secret is identical", () => {
+    const sharedSecret = { ...hosted, RENTER_BOT_API_SECRET: "same-secret", RENTER_BOT_LAB_API_SECRET: "same-secret" };
+    expect(renterBotDraftApiAuthMode("Bearer same-secret", sharedSecret)).toBe("service");
+    expect(renterBotDraftApiAuthMode("Bearer same-secret", sharedSecret, "true")).toBe("hosted-lab");
+    expect(renterBotDraftApiAuthMode("Bearer service-secret", sharedSecret, "true")).toBeNull();
+  });
 });
