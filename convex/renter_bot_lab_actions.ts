@@ -280,6 +280,10 @@ export const startPreparedScenario = action({
 export const startLiveSession = action({
   args: {
     accountSlug: v.string(),
+    scenarioId: v.optional(v.union(
+      v.literal("bmpcc-6k-full-frame-kit"),
+      v.literal("sony-fx3-batteries"),
+    )),
     fixtureId: v.optional(v.id("renter_bot_fixtures")),
     items: v.optional(v.array(v.string())),
     priceGbp: v.optional(v.number()),
@@ -315,6 +319,21 @@ export const startLiveSession = action({
     let endDate = args.endDate;
     let location = args.location;
     let messages: { role: string; text: string }[] = [];
+
+    // Scenario selection must load its owner-confirmed item into the isolated
+    // catalogue before the UI queries item context or permits a chat turn.
+    if (args.scenarioId) {
+      assertPreparedScenarioLab();
+      const scenario = renterBotLabScenario(args.scenarioId);
+      if (!scenario || scenario.accountSlug !== args.accountSlug) {
+        throw new Error("Lab scenario/account mismatch");
+      }
+      const seededItemName = await ctx.runMutation(
+        internal.renter_bot_lab_actions.ensurePreparedScenarioItem,
+        { scenarioId: args.scenarioId },
+      );
+      itemNames = [seededItemName];
+    }
 
     if (args.fixtureId) {
       const fixture = await ctx.runQuery(

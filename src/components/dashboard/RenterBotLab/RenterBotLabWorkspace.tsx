@@ -73,6 +73,7 @@ export function RenterBotLabWorkspace() {
       const { startDate, endDate } = renterBotLabRentalDates(scenario);
       const result = await startLiveSession({
         accountSlug: scenario.accountSlug,
+        scenarioId,
         items: [scenario.item.name_canonical],
         lifecycle: "awaiting_owner_approval",
         startDate,
