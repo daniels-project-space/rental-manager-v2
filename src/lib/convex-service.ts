@@ -48,12 +48,10 @@ export function createRenterBotLabConvexServiceClient(): ConvexServiceClient {
     throw new Error("Renter-bot Lab URL must be an isolated Convex cloud deployment");
   }
 
-  const key = process.env.RENTER_BOT_LAB_CONVEX_DEPLOY_KEY;
-  if (!key?.trim()) throw new Error("Missing private RENTER_BOT_LAB_CONVEX_DEPLOY_KEY for isolated renter-bot Lab");
-  const client = new ConvexHttpClient(url);
-  const admin = client as ConvexHttpClient & {
-    setAdminAuth(token: string, identity: UserIdentityAttributes): void;
-  };
-  admin.setAdminAuth(key.trim(), { issuer: OWNER_SERVICE_ISSUER, subject: OWNER_SERVICE_SUBJECT });
-  return client as ConvexServiceClient;
+  // The generation route and Mastra tools call public Lab functions only.
+  // They do not need a deployment/admin token, which is reserved for publishing
+  // the isolated backend. Keep this server client anonymous and confined to
+  // the non-production Convex URL.
+  // Lab-only mutations independently reject non-probe thread IDs.
+  return new ConvexHttpClient(url) as ConvexServiceClient;
 }

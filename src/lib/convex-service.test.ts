@@ -39,28 +39,25 @@ describe("private rental worker transport", () => {
 });
 
 describe("isolated renter-bot Lab transport", () => {
-  it("refuses the production deployment and requires a separate Lab key", () => {
+  it("refuses the production deployment and requires a dedicated isolated URL", () => {
     vi.stubEnv("RENTER_BOT_LAB_CONVEX_URL", "https://hearty-oyster-600.convex.cloud");
-    vi.stubEnv("RENTER_BOT_LAB_CONVEX_DEPLOY_KEY", "lab-key");
     expect(() => createRenterBotLabConvexServiceClient()).toThrow("cannot use the production rental deployment");
 
-    vi.stubEnv("RENTER_BOT_LAB_CONVEX_URL", "https://clean-bulldog-494.convex.cloud");
-    vi.stubEnv("RENTER_BOT_LAB_CONVEX_DEPLOY_KEY", "");
-    expect(() => createRenterBotLabConvexServiceClient()).toThrow("Missing private RENTER_BOT_LAB_CONVEX_DEPLOY_KEY");
+    vi.stubEnv("RENTER_BOT_LAB_CONVEX_URL", "");
+    expect(() => createRenterBotLabConvexServiceClient()).toThrow("Missing RENTER_BOT_LAB_CONVEX_URL");
   });
 
-  it("uses the dedicated isolated Lab URL and credential", async () => {
+  it("uses only public functions on the dedicated isolated Lab URL", async () => {
     vi.stubEnv("RENTER_BOT_LAB_CONVEX_URL", "https://clean-bulldog-494.convex.cloud");
-    vi.stubEnv("RENTER_BOT_LAB_CONVEX_DEPLOY_KEY", "lab-only-key");
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       status: "success", value: { isolated_lab: true }, logLines: [],
     }), { status: 200, headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetch);
     const client = createRenterBotLabConvexServiceClient();
-    expect(await client.query(makeFunctionReference<"query">("owner_auth_probe:serviceIdentity"), {}))
+    expect(await client.query(makeFunctionReference<"query">("renter_bot_lab_probe:publicStatus"), {}))
       .toEqual({ isolated_lab: true });
     const [url, init] = fetch.mock.calls[0];
     expect(url).toBe("https://clean-bulldog-494.convex.cloud/api/query");
-    expect((init.headers.Authorization as string)).toMatch(/^Convex lab-only-key:/);
+    expect(init.headers.Authorization).toBeUndefined();
   });
 });
