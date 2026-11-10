@@ -76,7 +76,7 @@ export function LiveChatSim({
       });
       if (result.draft) {
         setTurns((current) => [...current, { role: "bot", text: result.draft }]);
-      } else if (result.reason?.includes("canonical_generation_error_error")) {
+      } else if (result.generation_error || result.reason?.startsWith("canonical_generation_")) {
         setError("The isolated reply connection failed. Refresh the Lab and try again.");
       } else if (result.status === "skipped") {
         setError("The bot held this reply for review" + (result.reason ? ": " + result.reason : "."));
