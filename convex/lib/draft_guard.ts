@@ -15,7 +15,7 @@ import { unsupportedKitClaims, type KitEvidence } from "./kit_claims";
 import { unsupportedCameraModeClaims, unsupportedBuiltInNDClaims, type CameraEvidence } from "./camera_mode_claims";
 import { unsupportedLensFocusClaims, type LensFocusEvidence } from "./lens_focus_claims";
 import { renterItemNames } from "./renter_item_names";
-import { assessTravelCompensation, isDiscountConcessionOffer, isPickupLocationIntent, isTravelCompensationOffer, isTravelConcern, isUnsafePickupLocationClaim, mentionsPickupArea, replaceTravelCompensationOffers, stripTravelCompensationOffers, verifiedRentalChargeGbp } from "./travel_compensation";
+import { assessTravelCompensation, isDiscountConcessionOffer, isPickupLocationIntent, isTravelCompensationOffer, isTravelConcern, isUnsafePickupLocationClaim, mentionsPickupArea, replaceTravelCompensationOffers, stripTravelCompensationOffers, verifiedRentalChargeGbp, withoutAuthorizedTravelCompensationClaim } from "./travel_compensation";
 /**
  * Draft guard — output policing for AI-generated owner replies (Phase 1).
  *
@@ -892,7 +892,15 @@ const ASSERTS_AVAIL_RE =
   const asksTravel = isTravelConcern(opts.lastRenterMessage);
   const travelCompensationContext = asksPickupLocation || asksTravel || isTravelCompensationOffer(text);
   const verificationFailed = opts.stage === "VERIFICATION_FAILED";
-  if ((verificationFailed || travelCompensationContext) && isDiscountConcessionOffer(text)) {
+  const firstLocationAndDiscountRequest = asksPickupLocation && !travelCompensation.pickupAreaDisclosed &&
+    /\b(?:discount|\boff\b|price break|cheaper|reduce|lower (?:the|my) (?:price|rate)|travel.{0,20}(?:cost|adjustment|compensation|credit|discount)|compensation|credit)\b/i.test(opts.lastRenterMessage) &&
+    (/\b(?:discount|\boff\b|price break|cheaper|travel.{0,20}(?:cost|adjustment|compensation|credit|discount)|compensation|price adjustment|credit)\b/i.test(text) ||
+      /\b(?:can't|cannot|won't|unable to|not able to|fixed (?:rate|price)|rates? (?:are|is) fixed|not possible|not an option)\b/i.test(text));
+  let travelCompensationAuthorized = false;
+  if (firstLocationAndDiscountRequest && opts.pickupArea) {
+    text = `For this rental, collection is arranged from the ${opts.pickupArea}. Would that work for you? I'll share the exact meeting point once the booking is confirmed.`;
+    push("TRAVEL_COMPENSATION_GATE", "Deferred discount discussion until the renter responds to the confirmed pickup area", "rewritten");
+  } else if ((verificationFailed || travelCompensationContext) && isDiscountConcessionOffer(text)) {
     if (verificationFailed || !travelCompensation.eligible || travelCompensation.maximumGbp == null) {
       text = stripTravelCompensationOffers(text);
       if (verificationFailed) {
@@ -916,6 +924,7 @@ const ASSERTS_AVAIL_RE =
       );
     } else {
       text = replaceTravelCompensationOffers(text, travelCompensation.maximumGbp);
+      travelCompensationAuthorized = true;
       push(
         "TRAVEL_COMPENSATION_GATE",
         `Capped the one-time travel adjustment at £${travelCompensation.maximumGbp.toFixed(2)} for this verified rental amount`,
@@ -941,7 +950,7 @@ const ASSERTS_AVAIL_RE =
     const privacySources = opts.pickupPrivacySources?.length
       ? opts.pickupPrivacySources
       : opts.pickupAddress ? [opts.pickupAddress] : [];
-    const leakedExactAddress = !opts.pickupConfirmed && hasPickupDisclosure(text, privacySources);
+    const leakedExactAddress = !opts.pickupConfirmed && hasPickupDisclosure(text, privacySources, opts.pickupArea);
     const missingRequiredExact = opts.pickupConfirmed && !!opts.pickupAddress && !text.toLowerCase().includes(opts.pickupAddress.toLowerCase());
     if (!areaMentioned || unsafeLocationClaim || leakedExactAddress || missingRequiredExact) {
       text = opts.pickupConfirmed && opts.pickupAddress
@@ -1130,7 +1139,8 @@ const ASSERTS_AVAIL_RE =
   }
 
   if(opts.bookingRecord&&!hasSingleBookingRecord(text,opts.bookingRecord))push("BOOKING_RECORD_UNVERIFIED","The historical financial record was edited, omitted or duplicated.","flagged");
-  if (opts.priceEvidence !== undefined) for (const detail of unsupportedPriceClaims(nativeInformationForText({replacement_value_comparisons:opts.replacementValueComparisons,budget_price_checks:opts.budgetPriceChecks},text,text).claim_text, opts.priceEvidence, opts.priceRequest ?? opts.stockRequest ?? {items:[]}, opts.lastRenterMessage,opts.bookingRecord)) {
+  const priceValidationText=withoutAuthorizedTravelCompensationClaim(text,travelCompensation.maximumGbp,travelCompensationAuthorized);
+  if (opts.priceEvidence !== undefined) for (const detail of unsupportedPriceClaims(nativeInformationForText({replacement_value_comparisons:opts.replacementValueComparisons,budget_price_checks:opts.budgetPriceChecks},priceValidationText,priceValidationText).claim_text, opts.priceEvidence, opts.priceRequest ?? opts.stockRequest ?? {items:[]}, opts.lastRenterMessage,opts.bookingRecord)) {
     push("PRICE_HALLUCINATION", detail, "flagged");
   }
   if (opts.priceEvidence !== undefined) for (const detail of incompleteSetupQuotes(nativeInformationForText({replacement_value_comparisons:opts.replacementValueComparisons,budget_price_checks:opts.budgetPriceChecks},text,text).claim_text, opts.priceEvidence)) {
@@ -1308,7 +1318,7 @@ const ASSERTS_AVAIL_RE =
       (opts.rentalPermissions?.booking_dates||opts.newInquiry) && unsupportedBookingDateClaims(text,opts.rentalPermissions?.booking_dates??{},opts.newInquiry).length>0)) {
     push("PREMATURE_CONFIRMATION", "Claims confirmation or acceptance outside the current platform order's authority", "flagged");
   }
-  if ((opts.newInquiry || permissions && !permissions.can_share_pickup_address) && hasPickupDisclosure(text,opts.pickupPrivacySources)) {
+  if ((opts.newInquiry || permissions && !permissions.can_share_pickup_address) && hasPickupDisclosure(text,opts.pickupPrivacySources,opts.pickupArea)) {
     push("PICKUP_DETAILS_EARLY", "Shares pickup details without a current confirmed platform order", "flagged");
   }
 

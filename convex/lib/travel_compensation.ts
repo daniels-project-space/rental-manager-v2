@@ -50,7 +50,7 @@ function sentences(text: string): string[] {
 }
 
 function isPositiveDiscountSentence(sentence: string): boolean {
-  if (/\b(?:can't|cannot|won't|wouldn't|unable to|not able to|don't|do not)\s+(?:offer|give|apply|provide|discount|reduce|take off|do)\b/i.test(sentence) ||
+  if (/\b(?:can't|cannot|won't|wouldn't|unable to|not able to|not allowed to|don't|do not)\s+(?:(?:offer|give|apply|provide|discount|reduce|do)\b|take\b.{0,24}\boff\b)/i.test(sentence) ||
     /\b(?:isn't|aren't|is not|are not|won't be|wouldn't be|can't be|cannot be|not)\s+(?:made\s+)?available\b/i.test(sentence)) {
     return false;
   }
@@ -156,6 +156,15 @@ export function replaceTravelCompensationOffers(text: string, maximumGbp: number
       : sentence)
     .join(" ")
     .trim();
+}
+
+/** Exclude only the exact adjustment that the policy gate has already authorized
+ * from ordinary price validation. Other prices in the reply remain checked. */
+export function withoutAuthorizedTravelCompensationClaim(text:string,maximumGbp:number|null,authorized:boolean):string {
+  if(!authorized||maximumGbp==null)return text;
+  const canonical=`I can offer a one-time £${maximumGbp.toFixed(2)} travel adjustment on this rental.`;
+  const escaped=canonical.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+  return text.replace(new RegExp(escaped,"gi"),"");
 }
 
 export function stripTravelCompensationOffers(text: string): string {

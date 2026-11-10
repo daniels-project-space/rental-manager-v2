@@ -201,6 +201,15 @@ describe("owner-confirmed pickup and travel rules", () => {
     expect(result.results.find((row) => row.category === "discounts_retention")?.status).toBe("pass");
   });
 
+  it("does not flag the exact capped travel adjustment as an unsupported rental price",()=>{
+    const objection="Yes, the Northumberland Street area works, but it is quite far for me. Could you help with the travel cost?";
+    const request={start_date:"2026-11-24",end_date:"2026-11-24",items:[{name:"BMPCC 6K Full Frame",quantity:1}]};
+    const priceEvidence:PriceEvidence[]=[{names:["BMPCC 6K Full Frame"],kind:"rental",daily_rate_gbp:35,total_gbp:35,days:1,quantity:1,start_date:request.start_date,end_date:request.end_date,call_id:"lab-order-quote",source:"lab_order_quote"}];
+    const result=scoreDraft({accountSlug:"dbcinema",draftText:"I can offer a one-time £3.50 travel adjustment on this rental.",lastRenterMessage:objection,
+      conversationHistory:[{role:"owner",content:"Collection is arranged from the Northumberland Street area."},{role:"renter",content:objection}],pickupArea:"Northumberland Street area",rentalChargeGbp:35,priceRequest:request,priceEvidence});
+    expect(result.filter_violation_categories).not.toContain("NATIVE_PRICE_UNSUPPORTED");
+  });
+
   it("fails a percentage offer above the £10 cap", () => {
     const objection = "That is a long way for me. Could you help with the extra travel cost?";
     const result = scoreDraft({

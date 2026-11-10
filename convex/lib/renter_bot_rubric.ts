@@ -16,6 +16,7 @@ import {
   isUnsafePickupLocationClaim,
   mentionsPickupArea,
   verifiedRentalChargeGbp,
+  withoutAuthorizedTravelCompensationClaim,
   type TravelCompensationTurn,
 } from "./travel_compensation";
 /**
@@ -132,11 +133,6 @@ export function scoreDraft(input: RubricInput): RubricOutput {
     accountSlug,
     factsClaimed,
   );
-  const nativePricing=input.priceEvidence!==undefined&&input.priceRequest!==undefined;
-  const nativePriceFailures=nativePricing?unsupportedPriceClaims(nativeInformationForText({replacement_value_comparisons:input.replacementValueComparisons,budget_price_checks:input.budgetPriceChecks},draftText,draftText).claim_text,input.priceEvidence!,input.priceRequest!,input.lastRenterMessage??"",input.bookingRecord):[];
-  const allViolations = [...real.violations, ...supplemental.filter(v=>!nativePricing||!["MADE_UP_PRICE","UNVERIFIABLE_PRICE"].includes(v.category))];
-  const cats = new Set(allViolations.map((v) => v.category));
-  if(nativePriceFailures.length)cats.add("NATIVE_PRICE_UNSUPPORTED");
   const latestRenterMessage = input.lastRenterMessage ?? "";
   const history = input.conversationHistory ?? [];
   const compensationHistory = history.length && history[history.length - 1]?.role === "renter" && history[history.length - 1]?.content === latestRenterMessage
@@ -153,6 +149,14 @@ export function scoreDraft(input: RubricInput): RubricOutput {
     pickupArea: input.pickupArea,
     rentalChargeGbp: effectiveRentalChargeGbp,
   });
+  const authorizedTravelOffer=travelAssessment.eligible&&isDiscountConcessionOffer(draftText)&&
+    !discountConcessionExceedsCap(draftText,effectiveRentalChargeGbp,travelAssessment.maximumGbp);
+  const priceValidationText=withoutAuthorizedTravelCompensationClaim(draftText,travelAssessment.maximumGbp,authorizedTravelOffer);
+  const nativePricing=input.priceEvidence!==undefined&&input.priceRequest!==undefined;
+  const nativePriceFailures=nativePricing?unsupportedPriceClaims(nativeInformationForText({replacement_value_comparisons:input.replacementValueComparisons,budget_price_checks:input.budgetPriceChecks},priceValidationText,priceValidationText).claim_text,input.priceEvidence!,input.priceRequest!,input.lastRenterMessage??"",input.bookingRecord):[];
+  const allViolations = [...real.violations, ...supplemental.filter(v=>!nativePricing||!["MADE_UP_PRICE","UNVERIFIABLE_PRICE"].includes(v.category))];
+  const cats = new Set(allViolations.map((v) => v.category));
+  if(nativePriceFailures.length)cats.add("NATIVE_PRICE_UNSUPPORTED");
   const verificationFailed = input.rentalStage === "VERIFICATION_FAILED";
   const compensationContext = verificationFailed || isPickupLocationIntent(latestRenterMessage) ||
     isTravelConcern(latestRenterMessage) || isTravelCompensationOffer(draftText);
@@ -163,7 +167,7 @@ export function scoreDraft(input: RubricInput): RubricOutput {
   const pickupPrivacySources = input.pickupPrivacySources?.length
     ? input.pickupPrivacySources
     : input.pickupAddress ? [input.pickupAddress] : [];
-  const pickupPrivacyLeak = !input.pickupConfirmed && hasPickupDisclosure(draftText, pickupPrivacySources);
+  const pickupPrivacyLeak = !input.pickupConfirmed && hasPickupDisclosure(draftText, pickupPrivacySources,input.pickupArea);
   const wrongPickupArea = !verificationFailed && pickupQuestion && !!input.pickupArea && !mentionsPickupArea(draftText, input.pickupArea);
   const missingConfirmedPickup = !verificationFailed && pickupQuestion && !!input.pickupConfirmed && !!input.pickupAddress &&
     !draftText.toLowerCase().includes(input.pickupAddress.toLowerCase());

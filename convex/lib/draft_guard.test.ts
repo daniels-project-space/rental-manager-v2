@@ -3,7 +3,7 @@ import type { PriceEvidence } from "./price_claims";
 import updatedSetupCapture from "../../src/lib/fixtures/renter-updated-setup-guard.json";
 import { guardDraft } from "./draft_guard";
 import { scoreDraft } from "./renter_bot_rubric";
-import { assessTravelCompensation, isPickupLocationIntent, travelCompensationMaximum } from "./travel_compensation";
+import { assessTravelCompensation, isDiscountConcessionOffer, isPickupLocationIntent, travelCompensationMaximum } from "./travel_compensation";
 
 const baseOpts = {
   history: [],
@@ -1028,6 +1028,39 @@ describe("account pickup and travel compensation policy", () => {
     expect(isPickupLocationIntent("Could you share the exact meeting point?" )).toBe(true);
     expect(isPickupLocationIntent("Which street is the pickup on?" )).toBe(true);
     expect(isPickupLocationIntent("Yes, the Northumberland Street area works." )).toBe(false);
+  });
+
+  it("does not misread discount refusals as positive offers",()=>{
+    expect(isDiscountConcessionOffer("I'm unable to take 10% off for a one-day rental.")).toBe(false);
+    expect(isDiscountConcessionOffer("I can't take £10 off the rental.")).toBe(false);
+    expect(isDiscountConcessionOffer("I'm not allowed to take £10 off the rental.")).toBe(false);
+    expect(isDiscountConcessionOffer("I can offer a 10% travel adjustment.")).toBe(true);
+  });
+
+  it("defers a discount refusal or offer until the renter answers the first pickup-area disclosure",()=>{
+    const renterMessage="The listing says pickup is in Shoreditch. Is that right? It's quite a journey; can you take 10% off?";
+    const result=guardDraft("Collection is from the Northumberland Street area. I can't take 10% off, but I can send the postcode now.",{
+      history:[{role:"renter",content:renterMessage}],lastRenterMessage:renterMessage,
+      pickupArea:"Northumberland Street area",pickupAddress:"10 Northumberland Street, London WC2N 5DB, England, outside the Sherlock Holmes pub.",
+      pickupPrivacySources:["10 Northumberland Street, London WC2N 5DB, England","outside the Sherlock Holmes pub"],pickupConfirmed:false,
+    });
+    expect(result.text).toContain("Northumberland Street area");
+    expect(result.text).not.toMatch(/discount|10%|postcode|WC2N|Shoreditch/i);
+    expect(result.flags.map(flag=>flag.type)).toContain("TRAVEL_COMPENSATION_GATE");
+  });
+
+  it("allows the disclosed area and approved cap without treating the adjustment as a fake rental price",()=>{
+    const request={start_date:"2026-11-24",end_date:"2026-11-24",items:[{name:"BMPCC 6K Full Frame",quantity:1}]};
+    const priceEvidence:PriceEvidence[]=[{names:["BMPCC 6K Full Frame"],kind:"rental",daily_rate_gbp:35,total_gbp:35,days:1,quantity:1,start_date:request.start_date,end_date:request.end_date,call_id:"lab-order-quote",source:"lab_order_quote"}];
+    const history=[{role:"owner" as const,content:"For this rental, collection is arranged from the Northumberland Street area."}];
+    const objection="Yes, the Northumberland Street area works, but it is quite far for me. Could you offer a one-time travel adjustment?";
+    const candidate="Since it is a bit of a journey for you, I can offer a one-time 10% travel adjustment (£3.50 off), bringing the rental to £31.50 for the day.";
+    const result=guardDraft(candidate,{history,lastRenterMessage:objection,pickupArea:"Northumberland Street area",pickupAddress:"10 Northumberland Street, London WC2N 5DB, England, outside the Sherlock Holmes pub.",pickupPrivacySources:["10 Northumberland Street, London WC2N 5DB, England","outside the Sherlock Holmes pub"],pickupConfirmed:false,rentalChargeGbp:35,priceRequest:request,priceEvidence});
+    expect(result.text).toContain("one-time £3.50 travel adjustment");
+    expect(result.text).not.toContain("£31.50");
+    expect(result.flags.some(flag=>flag.type==="PRICE_HALLUCINATION")).toBe(false);
+    const withSeparateUnsupportedTotal=guardDraft(`${candidate} The BMPCC 6K Full Frame rental total is £31.50.`,{history,lastRenterMessage:objection,pickupArea:"Northumberland Street area",pickupAddress:"10 Northumberland Street, London WC2N 5DB, England, outside the Sherlock Holmes pub.",pickupPrivacySources:["10 Northumberland Street, London WC2N 5DB, England","outside the Sherlock Holmes pub"],pickupConfirmed:false,rentalChargeGbp:35,priceRequest:request,priceEvidence});
+    expect(withSeparateUnsupportedTotal.flags.some(flag=>flag.type==="PRICE_HALLUCINATION")).toBe(true);
   });
 
   it("corrects an implied Shoreditch assumption without inventing an excuse", () => {

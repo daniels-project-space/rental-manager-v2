@@ -54,8 +54,13 @@ describe('current rental reply permissions',()=>{
   expect(hasPickupDisclosure('Delivery to your W1A 2AB postcode needs a location check.')).toBe(false);
   expect(hasPickupDisclosure('Pickup is in central London. I can send the exact address once confirmed.',[address,'central London'])).toBe(false);
  });
+ it('allows the owner-approved vague area while still protecting the exact pickup details',()=>{
+  const source='The Grand Building, Trafalgar Square, London, WC2N 5EJ, outside Waterstones bookstore';
+  expect(hasPickupDisclosure('Collection is arranged from the Trafalgar Square area. Would that work for you?',[source],'Trafalgar Square area')).toBe(false);
+  expect(hasPickupDisclosure('The exact pickup is outside Waterstones bookstore, Trafalgar Square, London WC2N 5EJ.',[source],'Trafalgar Square area')).toBe(true);
+ });
  it('uses the same disclosure predicate in the generation guard without forbidding a real return',()=>{
-  const text=`You can collect from ${address}.`,opts={history:[],lastRenterMessage:'Where do I collect?',pickupPrivacySources:[address]};
+  const text=`You can collect from ${address}.`,opts={history:[],lastRenterMessage:'Can you send the pickup details now?',pickupPrivacySources:[address]};
   expect(guardDraft(text,{...opts,stage:'COMPLETED'}).flags.some(f=>f.type==='PICKUP_DETAILS_EARLY')).toBe(true);
   expect(guardDraft(text,{...opts,stage:'CONFIRMED_UPCOMING'}).flags.some(f=>f.type==='PICKUP_DETAILS_EARLY')).toBe(false);
   expect(guardDraft(`Return it to ${address}.`,{...opts,stage:'IN_USE'}).flags.some(f=>f.type==='PICKUP_DETAILS_EARLY')).toBe(false);

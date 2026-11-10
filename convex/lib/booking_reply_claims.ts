@@ -32,10 +32,11 @@ export function claimsBookingConfirmation(text:string) {
 const normal=(text:string)=>text.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
 /** Known private details are disclosures even inside a negative/conditional.
  * A delivery address supplied by the renter is not a pickup-location assertion. */
-export function hasPickupDisclosure(text:string,sources:string[]=[]):boolean {
+export function hasPickupDisclosure(text:string,sources:string[]=[],allowedArea?:string|null):boolean {
  const value=` ${normal(text)} `;
+ const area=normal(allowedArea??'');
  const fragments=sources.flatMap(source=>[source,...source.split(/[\n,]/),...(source.match(/\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/gi)??[])]).map(normal)
-  .filter(part=>part.length>=4&&!/^(?:central london|london|uk|united kingdom|england)$/.test(part));
+  .filter(part=>part.length>=4&&!/^(?:central london|london|uk|united kingdom|england)$/.test(part)&&!(area&&` ${area} `.includes(` ${part} `)));
  if(fragments.some(part=>value.includes(` ${part} `)))return true;
  return text.split(/(?<=[.!?])\s+|\n+/).some(sentence=>/\b(?:pick\s*up|pickup|collect(?:ion)?|meet|return|drop[ -]?off)\b/i.test(sentence) &&
   (/\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i.test(sentence)||/\b\d+[a-z]?\s+(?:[a-z]+\s+){0,4}(?:street|road|avenue|lane|square|mall|place|drive|close|way)\b/i.test(sentence)));
