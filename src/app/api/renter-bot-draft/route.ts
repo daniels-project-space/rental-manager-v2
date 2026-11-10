@@ -33,6 +33,7 @@ import { makeFunctionReference } from "convex/server";
 import { api } from "../../../../convex/_generated/api";
 import {
   getRenterBotAgent,
+  getRenterBotLabAgent,
   getRenterBotAgentForModel,
   type RenterBotOutput,
 } from "@/mastra/agents/renter_bot";
@@ -1146,6 +1147,8 @@ const renterBotDraftHandler = async function POST(req: Request, rawConvex: Conve
     if (!obj) {
       const agent = modelOverride
         ? await getRenterBotAgentForModel(modelOverride)
+        : authMode === "hosted-lab"
+          ? await getRenterBotLabAgent()
         : await getRenterBotAgent();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result: any = await withConvexClientFactory(() => convex, () => withRenterToolScope(renterToolScope, () => (agent as any).generate(baseMessages, {
@@ -1256,7 +1259,11 @@ const renterBotDraftHandler = async function POST(req: Request, rawConvex: Conve
               content: `[SYSTEM NOTE: you set needs_human=true without calling search_knowledge this turn. It found this potentially relevant match — "${top.title}": "${top.content}". If this genuinely answers the renter's question, use it (cite it in factsClaimed with sourceTool "search_knowledge") and set needs_human=false. If it does not actually answer what they asked, you may still set needs_human=true.]`,
             },
           ];
-          const retryAgent = modelOverride ? await getRenterBotAgentForModel(modelOverride) : await getRenterBotAgent();
+          const retryAgent = modelOverride
+            ? await getRenterBotAgentForModel(modelOverride)
+            : authMode === "hosted-lab"
+              ? await getRenterBotLabAgent()
+              : await getRenterBotAgent();
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const retryResult: any = await withConvexClientFactory(() => convex, () => withRenterToolScope(renterToolScope, () => (retryAgent as any).generate(retryMessages, {
             maxSteps: 6,

@@ -19,7 +19,7 @@
 import "server-only";
 
 import { Agent } from "@mastra/core/agent";
-import { getRenterBotModel, getVaultOpenRouterModel } from "@/lib/llm-client";
+import { getRenterBotLabModel, getRenterBotModel, getVaultOpenRouterModel } from "@/lib/llm-client";
 import { RENTER_MODEL_RETRIES } from "@/lib/renter-model-policy";
 import { CONVERSATION_STAGES, RENTER_BOT_INTENTS } from "@/../convex/lib/renter_bot_intents";
 import { RENTER_BOT_TOOLS } from "../tools/renter_bot_tools";
@@ -140,6 +140,7 @@ export { RENTER_BOT_OUTPUT_SCHEMA, type RenterBotOutput } from "@/lib/renter-bot
 // ── Agent factory ──────────────────────────────────────────────
 
 let _agent: Agent | null = null;
+let _labAgent: Agent | null = null;
 
 /**
  * Returns a lazy-singleton agent. The agent is built on first call because
@@ -181,4 +182,19 @@ export async function getRenterBotAgent(): Promise<Agent> {
     maxRetries: RENTER_MODEL_RETRIES,
   });
   return _agent;
+}
+
+export async function getRenterBotLabAgent(): Promise<Agent> {
+  if (_labAgent) return _labAgent;
+  const model = await getRenterBotLabModel();
+  _labAgent = new Agent({
+    id: "renter-bot-v1-lab",
+    name: "Renter Bot (Lab)",
+    instructions: RENTER_BOT_SYSTEM_PROMPT,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    model: model as any,
+    tools: RENTER_BOT_TOOLS,
+    maxRetries: RENTER_MODEL_RETRIES,
+  });
+  return _labAgent;
 }

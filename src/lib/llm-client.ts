@@ -94,6 +94,16 @@ export async function getRenterBotModel() {
   return openrouter(RENTER_BOT_MODEL_ID);
 }
 
+/**
+ * The isolated Lab may use its explicitly configured project key. Keep this
+ * separate from the general renter bot, whose credential remains Vault-backed.
+ */
+export async function getRenterBotLabModel() {
+  const labApiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!labApiKey) return getRenterBotModel();
+  return createOpenRouter({ apiKey: labApiKey })(RENTER_BOT_MODEL_ID);
+}
+
 /** Vault-backed model accessor for server-only dashboard widget routes. */
 export async function getVaultOpenRouterModel(modelId: string) {
   return (await getOpenRouter())(modelId);
