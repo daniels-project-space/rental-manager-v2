@@ -1,58 +1,33 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { BACKEND_URL, assertCurrentMain, sourceCommit, publishBackend, readBackendIdentity, runInstalledTool } from "./backend-publisher.mjs";
 import { backendFingerprint } from "./backend-fingerprint.mjs";
 
 const labAuthMarker = "RENTER_BOT_LAB_AUTH_CONFIG_VERSION";
-function managedEnvironmentValue(value, name, depth = 0) {
-  if (depth > 6 || value === null || typeof value !== "object") return undefined;
-  if (Array.isArray(value)) {
-    for (const child of value) {
-      const found = managedEnvironmentValue(child, name, depth + 1);
-      if (found !== undefined) return found;
-    }
-    return undefined;
-  }
-  const rowName = typeof value.name === "string" ? value.name : value.key;
-  if (rowName === name && typeof value.value === "string") return value.value;
-  if (typeof value[name] === "string") return value[name];
-  for (const child of Object.values(value)) {
-    const found = managedEnvironmentValue(child, name, depth + 1);
-    if (found !== undefined) return found;
-  }
-  return undefined;
+function dotenvValue(value) {
+  if (/[\r\n]/.test(value)) throw new Error("Lab API secret contains unsupported line breaks.");
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
-async function ensureLabDraftApiAuth(labUrl, labDeployKey) {
+async function ensureLabDraftApiAuth(labEnv) {
   const labApiSecret = process.env.RENTER_BOT_LAB_API_SECRET?.trim();
   if (!labApiSecret) throw new Error("Production requires RENTER_BOT_LAB_API_SECRET.");
   const secretMarker = "lab-auth-v1:" + createHash("sha256").update(labApiSecret).digest("hex");
-  const authHeaders = { Authorization: "Convex " + labDeployKey };
-  const listResponse = await fetch(new URL("/api/v1/list_environment_variables", labUrl), {
-    headers: authHeaders,
-    cache: "no-store",
-  });
-  if (!listResponse.ok) {
-    throw new Error("Could not verify the isolated Lab draft connection (Convex status " + listResponse.status + ").");
-  }
-  const listed = await listResponse.json();
-  const currentSecret = managedEnvironmentValue(listed, "RENTER_BOT_API_SECRET");
-  const currentMarker = managedEnvironmentValue(listed, labAuthMarker);
-  if (currentMarker === secretMarker && (currentSecret === undefined || currentSecret === labApiSecret)) return;
-
-  const updateResponse = await fetch(new URL("/api/v1/update_environment_variables", labUrl), {
-    method: "POST",
-    headers: { ...authHeaders, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      changes: [
-        { name: "RENTER_BOT_API_SECRET", value: labApiSecret },
-        { name: labAuthMarker, value: secretMarker },
-      ],
-    }),
-    cache: "no-store",
-  });
-  if (!updateResponse.ok) {
-    throw new Error("Could not configure the isolated Lab draft connection (Convex status " + updateResponse.status + ").");
+  const directory = await mkdtemp(join(tmpdir(), "renter-bot-lab-auth-"));
+  const envFile = join(directory, "lab.env");
+  const content = [
+    `RENTER_BOT_API_SECRET=${dotenvValue(labApiSecret)}`,
+    `${labAuthMarker}=${dotenvValue(secretMarker)}`,
+    "",
+  ].join("\n");
+  try {
+    await writeFile(envFile, content, { encoding: "utf8", mode: 0o600 });
+    await runInstalledTool("convex", ["env", "set", "--force", "--from-file", envFile], labEnv);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
   console.log("Configured the isolated Lab draft connection.");
 }
@@ -131,6 +106,6 @@ if (production) {
   const labEnv = { ...process.env, CONVEX_DEPLOY_KEY: labDeployKey };
   delete labEnv.CONVEX_DEPLOYMENT;
   await runInstalledTool("convex", ["env", "set", "RENTER_BOT_LAB_SCENARIO_SEEDING", "enabled"], labEnv);
-  await ensureLabDraftApiAuth(labUrl, labDeployKey);
+  await ensureLabDraftApiAuth(labEnv);
   await runInstalledTool("convex", ["deploy", "--typecheck", "disable", "--codegen", "disable", "--message", `Renter Bot Lab ${sourceCommit()}`], labEnv);
 }
