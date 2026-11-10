@@ -1,34 +1,16 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BACKEND_URL, assertCurrentMain, sourceCommit, publishBackend, readBackendIdentity, runInstalledTool } from "./backend-publisher.mjs";
 import { backendFingerprint } from "./backend-fingerprint.mjs";
 
 const labAuthMarker = "RENTER_BOT_LAB_AUTH_CONFIG_VERSION";
-function dotenvValue(value) {
-  if (/[\r\n]/.test(value)) throw new Error("Lab API secret contains unsupported line breaks.");
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-}
 
 async function ensureLabDraftApiAuth(labEnv) {
   const labApiSecret = process.env.RENTER_BOT_LAB_API_SECRET?.trim();
   if (!labApiSecret) throw new Error("Production requires RENTER_BOT_LAB_API_SECRET.");
   const secretMarker = "lab-auth-v1:" + createHash("sha256").update(labApiSecret).digest("hex");
-  const directory = await mkdtemp(join(tmpdir(), "renter-bot-lab-auth-"));
-  const envFile = join(directory, "lab.env");
-  const content = [
-    `RENTER_BOT_API_SECRET=${dotenvValue(labApiSecret)}`,
-    `${labAuthMarker}=${dotenvValue(secretMarker)}`,
-    "",
-  ].join("\n");
-  try {
-    await writeFile(envFile, content, { encoding: "utf8", mode: 0o600 });
-    await runInstalledTool("convex", ["env", "set", "--force", "--from-file", envFile], labEnv);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+  await runInstalledTool("convex", ["env", "set", "RENTER_BOT_API_SECRET", labApiSecret], labEnv);
+  await runInstalledTool("convex", ["env", "set", labAuthMarker, secretMarker], labEnv);
   console.log("Configured the isolated Lab draft connection.");
 }
 
