@@ -1404,3 +1404,20 @@ it("shows a failed rubric candidate for diagnosis without feeding it into the ne
  const row=[...f.rows.values()].find(r=>r.table==="renter_bot_harness_runs");expect(row).toMatchObject({draft_text:candidate,overall_status:"fail"});
  expect(mutations.some(n=>n.endsWith("appendAssistantMessage"))).toBe(false);
 });
+
+it("continues the Lab with a final guarded reply when only non-blocking review flags remain",async()=>{
+ const f=database(),mutations:string[]=[];
+ const draft="For this item, collection is only available from the Northumberland Street area. Would that work for you? I'll share the exact meeting point once the booking is confirmed.";
+ const context={
+  pickup_area:"Northumberland Street area",
+  pickup_address:"10 Northumberland Street, London WC2N 5DB, outside the Sherlock Holmes pub.",
+  messages:[],
+  rental_stage:{stage:"inquiry",booking_confirmed:false},
+ };
+ const ctx={runQuery:async(ref:any)=>{const name=getFunctionName(ref);return name.endsWith("getConversationForThread")?{account_slug:"dbcinema"}:name.endsWith("pendingOwnerChecksForDraft")?[]:name.endsWith("getThreadContext")?context:null;},
+  runAction:async()=>({status:"ok",draft,flags:[{type:"PICKUP_LOCATION_CORRECTED",severity:"high",action:"rewritten",detail:"Rewrote the area-only model answer with the grounded account pickup explanation"}],facts_claimed:[],model_id:"test-model"}),
+  runMutation:async(ref:any,args:any)=>{const name=getFunctionName(ref);mutations.push(name);return name.endsWith("insertRun")?invoke(insertRun,f.ctx,args):null;}};
+ const result=await invoke(sendTestMessage,ctx,{threadId:"__probe__pickup-corrected",accountSlug:"dbcinema",text:"Hi, it says you are based in Shoreditch. Is that correct?"});
+ expect(result).toMatchObject({draft,overall_status:"flag",assistantContextAdded:true});
+ expect(mutations.some(n=>n.endsWith("appendAssistantMessage"))).toBe(true);
+});

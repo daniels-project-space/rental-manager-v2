@@ -17,6 +17,7 @@ interface ChatTurn {
   role: "renter" | "bot";
   text: string;
   status?: "pass" | "fail" | "flag";
+  contextAdded?: boolean;
 }
 
 function rentalDateLabel(value: string) {
@@ -80,6 +81,7 @@ export function LiveChatSim({
           role: "bot",
           text: result.draft,
           status: result.overall_status,
+          contextAdded: result.assistantContextAdded,
         }]);
       } else if (result.generation_error || result.reason?.startsWith("canonical_generation_")) {
         setError("The isolated reply connection failed. Refresh the Lab and try again.");
@@ -147,9 +149,14 @@ export function LiveChatSim({
                   turn.status === "flag" ? "border border-amber-400/40 bg-amber-400/10 text-amber-100" :
                     "bg-white/[0.06] text-[#e4e6eb]")}
           >
-            {turn.role === "bot" && turn.status !== "pass" && (
+            {turn.role === "bot" && turn.status === "fail" && (
               <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide">
-                {turn.status === "fail" ? "Failed checks · candidate only, not added to chat history" : "Needs review · candidate only, not added to chat history"}
+                Failed checks · candidate only, not added to chat history
+              </span>
+            )}
+            {turn.role === "bot" && turn.status === "flag" && (
+              <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide">
+                {turn.contextAdded ? "Review flag · final draft included in test chat; see run results" : "Review flag · candidate only, not added to chat history"}
               </span>
             )}
             {turn.text}

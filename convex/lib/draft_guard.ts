@@ -1518,10 +1518,18 @@ const ASSERTS_AVAIL_RE =
 
   // 24. LOW-VALUE RENTAL ACCEPTED WITHOUT UPSELL — FLAG (factPack-gated)
   if (opts.commercialContext?.status === "below" || (opts.commercialContext === undefined && factPack?.lowValueInstruction)) {
-    const accepts = !/\b(?:not available|isn't available|unavailable|booked out)\b/i.test(text) &&
-      /\b(available|free for|sorted|confirmed|all set|booked for you|good to go|locked in|reserved for you)\b/i.test(
-        text,
-      );
+    // Pickup availability is a location/logistics fact, not acceptance of a
+    // below-minimum rental. Evaluate short clauses so a later pickup clause
+    // does not hide a separate affirmative rental-availability claim.
+    const acceptanceClauses = text
+      .split(/(?<=[.!?;])\s+|,\s*|\b(?:and|but|though|while)\b/i)
+      .map((clause) => clause.trim())
+      .filter(Boolean);
+    const accepts = acceptanceClauses.some((clause) =>
+      !/\b(?:collection|pickup|pick[ -]?up|handover)\b/i.test(clause) &&
+      !/\b(?:not available|isn't available|unavailable|booked out)\b/i.test(clause) &&
+      /\b(available|free for|sorted|confirmed|all set|booked for you|good to go|locked in|reserved for you)\b/i.test(clause),
+    );
     const hasUpsell =
       /\b(also|add|pair|bundle|minimum|booking total|complement|together with|suggest|recommend)\b/i.test(
         text,

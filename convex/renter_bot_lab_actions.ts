@@ -533,10 +533,10 @@ export const sendTestMessage = action({
       },
     );
 
-    // A candidate that fails the Lab rubric (or needs review) is diagnostic
-    // output, not a simulated message the renter could have received. Keep it
-    // visible in the run record, but never feed it into the next model turn.
-    const assistantContextAdded = Boolean(draftText) && rubric.overall_status === "pass";
+    // A failed candidate is diagnostic output, not a simulated message the
+    // renter could have received. A non-blocking flag remains visible in the
+    // run record while the final guarded draft can continue the Lab dialogue.
+    const assistantContextAdded = Boolean(draftText) && rubric.overall_status !== "fail";
     if (assistantContextAdded) {
       await ctx.runMutation(internal.renter_bot_lab_actions.appendAssistantMessage, {
         thread_id: args.threadId, account_slug: args.accountSlug, text: draftText, run_id: runId,
