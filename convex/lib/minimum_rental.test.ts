@@ -82,13 +82,14 @@ describe("prospective minimum-value context",()=>{
  });
  it("does not confuse pickup-point availability with accepting a below-minimum rental",()=>{
   const below=context([{...price,total_gbp:30}]);
-  const pickupOnly="For this item, collection is only available from the Northumberland Street area. Would that work for you?";
+  const pickupOnly="For this item, collection is only available from the Northumberland Street area. Would that work for you? I'll share the exact meeting point once the booking is confirmed.";
   const pickup=guardDraft(pickupOnly,{history:[],lastRenterMessage:"Hi, it says you are based in Shoreditch. Is that correct?",pickupArea:"Northumberland Street area",commercialContext:below});
   expect(pickup.text).toContain("collection is only available");
   expect(pickup.flags.some(f=>f.type==="LOW_VALUE_BLOCK")).toBe(false);
 
   const mixed=guardDraft("The item is available for those dates, though collection is only available from the Northumberland Street area.",{history:[],lastRenterMessage:"Is it available?",pickupArea:"Northumberland Street area",commercialContext:below});
   expect(mixed.flags.some(f=>f.type==="LOW_VALUE_BLOCK")).toBe(true);
+  expect(guardDraft("Your booking is confirmed.",{history:[],lastRenterMessage:"Can I book it?",commercialContext:below}).flags.some(f=>f.type==="LOW_VALUE_BLOCK")).toBe(true);
  });
  it("keeps the relevant shoot-question fallback required by the Native commercial guidance",()=>{
   const question="It is available for those dates. What kind of project are you shooting?";

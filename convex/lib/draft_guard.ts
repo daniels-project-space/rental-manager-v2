@@ -1525,11 +1525,17 @@ const ASSERTS_AVAIL_RE =
       .split(/(?<=[.!?;])\s+|,\s*|\b(?:and|but|though|while)\b/i)
       .map((clause) => clause.trim())
       .filter(Boolean);
-    const accepts = acceptanceClauses.some((clause) =>
-      !/\b(?:collection|pickup|pick[ -]?up|handover)\b/i.test(clause) &&
-      !/\b(?:not available|isn't available|unavailable|booked out)\b/i.test(clause) &&
-      /\b(available|free for|sorted|confirmed|all set|booked for you|good to go|locked in|reserved for you)\b/i.test(clause),
-    );
+    const accepts = acceptanceClauses.some((clause) => {
+      // Future conditions such as "I'll share the point once the booking is
+      // confirmed" do not claim that the current booking was accepted.
+      const currentClaim = clause.split(/\b(?:once|when|if|after|before|until|as soon as|the moment)\b/i, 1)[0].trim();
+      const explicitlyConfirmedBooking =
+        /\b(?:your|the|this)\s+(?:booking|rental|request|order|reservation)\s+(?:is\s+)?confirmed\b|\bconfirmed\s+(?:booking|rental|request|order|reservation)\b/i.test(currentClaim);
+      return !!currentClaim &&
+        !/\b(?:collection|pickup|pick[ -]?up|handover)\b/i.test(currentClaim) &&
+        !/\b(?:not available|isn't available|unavailable|booked out)\b/i.test(currentClaim) &&
+        (/\b(available|free for|sorted|all set|booked for you|good to go|locked in|reserved for you)\b/i.test(currentClaim) || explicitlyConfirmedBooking);
+    });
     const hasUpsell =
       /\b(also|add|pair|bundle|minimum|booking total|complement|together with|suggest|recommend)\b/i.test(
         text,
