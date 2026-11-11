@@ -13,6 +13,8 @@ export interface ItemSpec {
   weight_kg?: number | null;
   size_score?: number | null;
   kind?: string | null;
+  item_type?: string | null;
+  name?: string | null;
 }
 
 /** Fallback {sizeScore, weightKg} by RMv2 item.kind, mirroring db-cinema's
@@ -92,6 +94,114 @@ export function classifyOrderWeight(items: Array<{ spec: ItemSpec; qty: number }
   const vehicleLabel =
     vehicle === "van" ? "Van" : vehicle === "car" ? "Car" : "Bike/tube";
   return { totalWeightKg, maxSizeScore, bigItems, vehicle, vehicleLabel, heaviestKg };
+}
+
+/**
+ * DB Cinema checkout's delivery bands, applied to the selected rental basket.
+ * Keep the bands, load interpolation, and round-trip margin aligned with
+ * convex/delivery.ts in db-cinema-v2. The rental manager supplies the selected
+ * account's origin and owner inventory specs; no model-provided item weights
+ * or prices enter this calculation.
+ */
+const CHECKOUT_PRICING: Record<Vehicle, [number, number][]> = {
+  motorcycle: [[15, 20], [20, 27], [28, 38], [35, 48], [42, 55], [50, 68]],
+  car: [[21, 28], [28, 38], [39, 53], [49, 67], [59, 77], [70, 95]],
+  van: [[45, 65], [55, 75], [70, 95], [80, 105], [90, 115], [105, 140]],
+};
+const CHECKOUT_ZONE_MAX_KM = [3, 5, 10, 15, 20, 30];
+const CHECKOUT_LOAD_SPAN: Record<Vehicle, [number, number]> = {
+  motorcycle: [1, 6],
+  car: [3, 16],
+  van: [8, 42],
+};
+const DEFAULT_DELIVERY_MARGIN_PCT = 10;
+
+export type DeliveryPriceQuote =
+  | {
+      ok: true;
+      fee: number;
+      oneWay: number;
+      vehicle: Vehicle;
+      vehicleLabel: string;
+      km: number;
+      load: number;
+      totalWeightKg: number;
+    }
+  | { ok: false; reason: "empty_basket" | "out_of_range" };
+
+/** Exact weighted round-trip price calculation used by DB Cinema checkout. */
+export function quoteDeliveryPrice(
+  items: Array<{ spec: ItemSpec; qty: number }>,
+  km: number,
+  maxKm = 30,
+  marginPct = DEFAULT_DELIVERY_MARGIN_PCT,
+): DeliveryPriceQuote {
+  if (!items.length) return { ok: false, reason: "empty_basket" };
+  if (!Number.isFinite(km) || km < 0 || km > maxKm) {
+    return { ok: false, reason: "out_of_range" };
+  }
+
+  let totalScore = 0;
+  let totalWeightKg = 0;
+  let maxScore = 1;
+  let bigItems = 0;
+  let hasDJ = false;
+  let hasSpeaker = false;
+  for (const { spec, qty } of items) {
+    const resolved = specForItem(spec);
+    const count = Math.max(1, Math.floor(qty));
+    totalScore += resolved.sizeScore * count;
+    totalWeightKg += resolved.weightKg * count;
+    maxScore = Math.max(maxScore, resolved.sizeScore);
+    if (resolved.sizeScore >= 4 || resolved.weightKg >= 5) bigItems += count;
+    const itemType = (spec.item_type ?? "").toLowerCase();
+    const name = (spec.name ?? "").toLowerCase();
+    hasDJ ||= itemType === "dj-deck" || spec.kind === "dj_audio" || /\b(?:dj|cdj|xdj|ddj)\b/.test(name);
+    hasSpeaker ||= itemType === "speaker" || /\b(?:speaker|subwoofer|pa system)\b/.test(name);
+  }
+
+  let vehicle: Vehicle;
+  if (
+    (hasDJ && hasSpeaker) ||
+    bigItems >= 2 ||
+    totalWeightKg > 20 ||
+    totalScore >= 10
+  ) {
+    vehicle = "van";
+  } else if (
+    maxScore <= 2 &&
+    bigItems === 0 &&
+    totalWeightKg <= 8 &&
+    // Match DB Cinema: the courier cutoff uses distinct basket lines/specs;
+    // quantities affect weight and load separately.
+    items.length <= 3
+  ) {
+    vehicle = "motorcycle";
+  } else {
+    vehicle = "car";
+  }
+
+  const zoneIndex = CHECKOUT_ZONE_MAX_KM.findIndex((zoneMax) => km <= zoneMax);
+  if (zoneIndex < 0) return { ok: false, reason: "out_of_range" };
+  const [low, high] = CHECKOUT_PRICING[vehicle][zoneIndex];
+  const load = totalScore + totalWeightKg * 0.25;
+  const [loadStart, loadEnd] = CHECKOUT_LOAD_SPAN[vehicle];
+  const loadFactor = Math.max(0, Math.min(1, (load - loadStart) / (loadEnd - loadStart)));
+  const oneWay = Math.round(low + (high - low) * loadFactor);
+  const fee = Math.round(oneWay * 2 * (1 + marginPct / 100));
+  const vehicleLabel =
+    vehicle === "van" ? "Large van" : vehicle === "car" ? "Small car courier" : "Motorcycle courier";
+
+  return {
+    ok: true,
+    fee,
+    oneWay,
+    vehicle,
+    vehicleLabel,
+    km: Math.round(km * 10) / 10,
+    load: Math.round(load),
+    totalWeightKg,
+  };
 }
 
 /**

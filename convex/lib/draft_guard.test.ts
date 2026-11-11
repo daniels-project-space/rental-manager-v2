@@ -509,13 +509,22 @@ describe("UNGROUNDED_DELIVERY_FEE", () => {
     lastRenterMessage: "how much would delivery cost to E1 6AN?",
     factPack: { pricing: { itemPrices: [{ name: "BMPCC 6K Pro", min: 80, max: 80 }] } },
   };
-  const fired = (draft: string) =>
-    guardDraft(draft, opts).flags.some((f) => f.type === "UNGROUNDED_DELIVERY_FEE");
+  const fired = (draft: string, quote?: number) => {
+    const withQuote = quote == null
+      ? opts
+      : {
+          ...opts,
+          factPack: {
+            ...opts.factPack,
+            pricing: { ...opts.factPack.pricing, deliveryFeeGbp: quote },
+          },
+        };
+    return guardDraft(draft, withQuote).flags.some((f) => f.type === "UNGROUNDED_DELIVERY_FEE");
+  };
 
   it("catches the exact invented quote seen live", () => {
-    // Verbatim from a sweep transcript. We hold no delivery rate anywhere and
-    // the policy is "request postcode + courier quote", so this is a
-    // commercial commitment on a price we do not know.
+    // Verbatim from a Lab sweep transcript. This price was not generated from
+    // the renter's postcode and current basket.
     expect(
       fired(
         "Addison Lee courier rates depend on the exact time of day and traffic, but to E1 6AN it's typically around £15, £25 each way at direct cost.",
@@ -530,12 +539,32 @@ describe("UNGROUNDED_DELIVERY_FEE", () => {
     expect(r.flags.some((f) => f.type === "UNGROUNDED_DELIVERY_FEE")).toBe(true);
   });
 
-  it("leaves the correct answer alone", () => {
-    expect(
-      fired(
-        "I use Addison Lee, so the cost is their live courier quote for the distance. I can pull an exact quote once the booking is set up.",
-      ),
-    ).toBe(false);
+  it("accepts only the exact verified round-trip fee", () => {
+    expect(fired("Delivery to E1 6AN is £44 round trip.", 44)).toBe(false);
+    const mismatch = guardDraft("Delivery to E1 6AN is £45 round trip.", {
+      ...opts,
+      factPack: {
+        ...opts.factPack,
+        pricing: { ...opts.factPack.pricing, deliveryFeeGbp: 44 },
+      },
+    }).flags.find((f) => f.type === "UNGROUNDED_DELIVERY_FEE");
+    expect(mismatch).toMatchObject({ severity: "critical" });
+  });
+
+  it("does not confuse a daily rental price with the delivery fee", () => {
+    expect(fired("The camera is £80/day and I can arrange courier delivery.")).toBe(false);
+  });
+
+  it("rejects claims that the checkout fee is live or depends on pickup times", () => {
+    const result = guardDraft(
+      "Delivery uses live courier pricing that depends on drop-off and collection times; I can confirm the exact rate after booking.",
+      opts,
+    );
+    expect(result.flags.some((f) => f.type === "DELIVERY_QUOTE_MISREPRESENTATION")).toBe(true);
+  });
+
+  it("rejects a free-delivery claim without a verified zero-fee quote", () => {
+    expect(fired("Delivery is free to E1 6AN.")).toBe(true);
   });
 
   it("does not fire on the rental price in a delivery conversation", () => {
@@ -1025,6 +1054,7 @@ describe("account pickup and travel compensation policy", () => {
   it("recognizes location mismatches phrased as assumptions or collection requests", () => {
     expect(isPickupLocationIntent("I thought pickup was in Shoreditch; is that still right?" )).toBe(true);
     expect(isPickupLocationIntent("Can I collect from the Shoreditch location?" )).toBe(true);
+    expect(isPickupLocationIntent("so not Shoreditch?" )).toBe(true);
     expect(isPickupLocationIntent("Could you share the exact meeting point?" )).toBe(true);
     expect(isPickupLocationIntent("Which street is the pickup on?" )).toBe(true);
     expect(isPickupLocationIntent("Yes, the Northumberland Street area works." )).toBe(false);
@@ -1045,6 +1075,7 @@ describe("account pickup and travel compensation policy", () => {
       pickupPrivacySources:["10 Northumberland Street, London WC2N 5DB, England","outside the Sherlock Holmes pub"],pickupConfirmed:false,
     });
     expect(result.text).toContain("Northumberland Street area");
+    expect(result.text).toContain("collection is only available");
     expect(result.text).not.toMatch(/discount|10%|postcode|WC2N|Shoreditch/i);
     expect(result.flags.map(flag=>flag.type)).toContain("TRAVEL_COMPENSATION_GATE");
   });
@@ -1063,7 +1094,7 @@ describe("account pickup and travel compensation policy", () => {
     expect(withSeparateUnsupportedTotal.flags.some(flag=>flag.type==="PRICE_HALLUCINATION")).toBe(true);
   });
 
-  it("corrects an implied Shoreditch assumption without inventing an excuse", () => {
+  it("replaces unsupported consolidation with the grounded item-availability reason", () => {
     const renterMessage = "I thought pickup was in Shoreditch; is that still right?";
     const result = guardDraft("Shoreditch is being consolidated to our central pickup. I can take £10 off for the inconvenience.", {
       history: [{ role: "renter", content: renterMessage }],
@@ -1074,6 +1105,7 @@ describe("account pickup and travel compensation policy", () => {
       rentalChargeGbp: 40,
     });
     expect(result.text).toContain("Northumberland Street area");
+    expect(result.text).toContain("collection is only available");
     expect(result.text).not.toMatch(/Shoreditch|consolidat|£10|WC2N 5DB/i);
     expect(result.flags.map((flag) => flag.type)).toContain("PICKUP_LOCATION_CORRECTED");
     expect(result.flags.map((flag) => flag.type)).toContain("TRAVEL_COMPENSATION_GATE");
@@ -1133,8 +1165,64 @@ describe("account pickup and travel compensation policy", () => {
       },
     );
     expect(result.text).toContain("Northumberland Street area");
+    expect(result.text).toContain("collection is only available");
     expect(result.text).not.toMatch(/10%|consolidat|Shoreditch|WC2N 5DB/i);
     expect(result.flags.map((flag) => flag.type)).toContain("TRAVEL_COMPENSATION_GATE");
+  });
+
+  it("rewrites the exact area-only answer from the Lab transcript on first disclosure", () => {
+    const result = guardDraft(
+      "Hi! We're actually based around the Northumberland Street area in central London for collection and return. Does that location work for you?",
+      {
+        history: [],
+        lastRenterMessage: "The listing says pickup is in Shoreditch. Is that real?",
+        pickupArea: "Northumberland Street area",
+        pickupAddress: "10 Northumberland Street, London WC2N 5DB, outside the Sherlock Holmes pub.",
+        pickupConfirmed: false,
+      },
+    );
+
+    expect(result.text).toContain("collection is only available");
+    expect(result.text).toContain("Northumberland Street area");
+    expect(result.text).not.toMatch(/Shoreditch|WC2N 5DB|Sherlock Holmes/i);
+    expect(result.flags.map((flag) => flag.type)).toContain("PICKUP_LOCATION_CORRECTED");
+  });
+
+  it("adds the missing account-specific reason when a renter follows up with 'so not Shoreditch?'", () => {
+    const result = guardDraft(
+      "That's right, collection and return are from the Northumberland Street area in central London rather than Shoreditch. Would that area work for you?",
+      {
+        history: [{
+          role: "owner",
+          content: "We're actually based around the Northumberland Street area in central London for collection and return. Does that location work for you?",
+        }],
+        lastRenterMessage: "so not Shoreditch?",
+        pickupArea: "Northumberland Street area",
+        pickupAddress: "10 Northumberland Street, London WC2N 5DB, outside the Sherlock Holmes pub.",
+        pickupConfirmed: false,
+      },
+    );
+
+    expect(result.text).toContain("collection is only available");
+    expect(result.text).toContain("Northumberland Street area");
+    expect(result.text).not.toMatch(/Shoreditch|WC2N 5DB|Sherlock Holmes/i);
+    expect(result.flags.map((flag) => flag.type)).toContain("PICKUP_LOCATION_CORRECTED");
+  });
+
+  it("keeps a truthful item-availability explanation without rewriting it", () => {
+    const result = guardDraft(
+      "For this item, collection is only available from the Northumberland Street area. Would that work for you?",
+      {
+        history: [],
+        lastRenterMessage: "The listing says pickup is in Shoreditch. Is that real?",
+        pickupArea: "Northumberland Street area",
+        pickupAddress: "10 Northumberland Street, London WC2N 5DB, outside the Sherlock Holmes pub.",
+        pickupConfirmed: false,
+      },
+    );
+
+    expect(result.text).toContain("collection is only available");
+    expect(result.flags.map((flag) => flag.type)).not.toContain("PICKUP_LOCATION_CORRECTED");
   });
 
   it("removes a bare money offer when the renter only asks whether the listed pickup is real", () => {

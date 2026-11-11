@@ -434,7 +434,8 @@ export const sendTestMessage = action({
     args,
   ): Promise<{
     draft: string;
-    overall_status: string;
+    overall_status: "pass" | "fail" | "flag";
+    assistantContextAdded: boolean;
     runId: string;
     productionGuardFlags: unknown;
     generation_error?:CanonicalGenerationError;
@@ -532,7 +533,11 @@ export const sendTestMessage = action({
       },
     );
 
-    if (draftText) {
+    // A candidate that fails the Lab rubric (or needs review) is diagnostic
+    // output, not a simulated message the renter could have received. Keep it
+    // visible in the run record, but never feed it into the next model turn.
+    const assistantContextAdded = Boolean(draftText) && rubric.overall_status === "pass";
+    if (assistantContextAdded) {
       await ctx.runMutation(internal.renter_bot_lab_actions.appendAssistantMessage, {
         thread_id: args.threadId, account_slug: args.accountSlug, text: draftText, run_id: runId,
       });
@@ -551,6 +556,7 @@ export const sendTestMessage = action({
       model_id: draftResult.model_id,
       draft: draftText,
       overall_status: rubric.overall_status,
+      assistantContextAdded,
       runId,
       productionGuardFlags: draftResult.flags ?? draftResult.review?.flags ?? [],
       generation_error:draftResult.generation_error,

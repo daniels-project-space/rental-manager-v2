@@ -160,6 +160,30 @@ describe("renter_bot_rubric.scoreDraft", () => {
 });
 
 describe("owner-confirmed pickup and travel rules", () => {
+  it("fails an area-only correction and passes the grounded item-availability reason", () => {
+    const common = {
+      accountSlug: "dbcinema",
+      lastRenterMessage: "so not Shoreditch?",
+      conversationHistory: [{
+        role: "owner" as const,
+        content: "Collection is arranged from the Northumberland Street area.",
+      }],
+      pickupArea: "Northumberland Street area",
+      pickupAddress: "10 Northumberland Street, London WC2N 5DB, outside the Sherlock Holmes pub.",
+    };
+    const areaOnly = scoreDraft({
+      ...common,
+      draftText: "That's right, collection is from the Northumberland Street area rather than Shoreditch. Would that work for you?",
+    });
+    const explained = scoreDraft({
+      ...common,
+      draftText: "For this item, collection is only available from the Northumberland Street area. Would that work for you?",
+    });
+
+    expect(areaOnly.results.find((row) => row.category === "location_handling")?.status).toBe("fail");
+    expect(explained.results.find((row) => row.category === "location_handling")?.status).toBe("pass");
+  });
+
   it("fails the Lab's false central-location explanation and first-turn discount", () => {
     const renterMessage = "The listing says pickup is in Shoreditch. Is that real? It is a long way for me. Can you take 10% off for travel?";
     const result = scoreDraft({

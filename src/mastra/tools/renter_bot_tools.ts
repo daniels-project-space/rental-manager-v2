@@ -371,14 +371,20 @@ export const getOrderEditStateTool = createTool({
 export const checkLocationTool = createTool({
   id: "check_location",
   description:
-    "Compute the DELIVERY DISTANCE from THIS account hub to the renter postcode (postcodes.io + haversine) and whether it is within our delivery range. Call whenever the renter asks about delivery / drop-off / travel, or gives a postcode or area. Returns distance_km, within_delivery_range, and non_central (for the 10% distance discount).",
+    "For a renter's complete UK postcode, check the selected account's delivery range and quote the exact ROUND-TRIP delivery fee for the current Lab basket. The server uses that account's hub, inventory weight/size where recorded, the same category defaults and distance/weight bands as DB Cinema checkout. State only delivery_fee_gbp as the delivery price; do not call it a live courier quote or make it time-dependent. If the postcode, basket, or kit contents cannot be verified, do not estimate. This tool never authorizes a pickup travel discount; that has a separate conversation gate.",
   inputSchema: z.object({
     renter_postcode: z.string().describe("The renter UK postcode (e.g. E1 6AN)."),
-    account_slug: z.string().describe("The account_slug from get_renter_context."),
   }),
   outputSchema: z.unknown(),
   execute: async (input) => {
-    return await convex().action(anyApi.renter_bot_tools.check_location, input);
+    const scope = currentRenterToolScope();
+    if (!scope?.threadId.startsWith("__probe__")) {
+      return { ok: false, reason: "Delivery quotes are available only in the isolated Lab." };
+    }
+    return await convex().action(anyApi.renter_bot_tools.check_location, {
+      ...input,
+      thread_id: scope.threadId,
+    });
   },
 });
 

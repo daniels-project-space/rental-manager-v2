@@ -146,6 +146,60 @@ function toolTelemetry(steps: unknown) {
   return { steps: stepCount, total: calls.length, byName, duplicates, errors, shape, queries };
 }
 
+function deliveryQuoteFromSteps(steps: unknown, threadId: string) {
+  const toolNames = new Map<string, string>();
+  let verifiedQuote:
+    | {
+        fee_gbp: number;
+        account_slug: string;
+        thread_id: string;
+        basket_updated_at: number;
+        inventory_updated_at: number;
+        source: "db_cinema_weighted_checkout_v1";
+      }
+    | undefined;
+  for (const step of (steps as Array<{ toolCalls?: unknown; toolResults?: unknown }>) ?? []) {
+    for (const call of (step?.toolCalls as Array<Record<string, unknown>>) ?? []) {
+      const payload = (call?.payload ?? call) as Record<string, unknown>;
+      const id = payload?.toolCallId ?? payload?.tool_call_id;
+      if (id != null) {
+        toolNames.set(String(id), String(payload?.toolName ?? payload?.tool_name ?? ""));
+      }
+    }
+    for (const result of (step?.toolResults as Array<Record<string, unknown>>) ?? []) {
+      const payload = (result?.payload ?? result) as Record<string, unknown>;
+      const id = payload?.toolCallId ?? payload?.tool_call_id;
+      const name = String(
+        payload?.toolName ?? payload?.tool_name ?? (id == null ? "" : toolNames.get(String(id)) ?? ""),
+      );
+      if (name !== "check_location") continue;
+      const output = payload?.result ?? payload?.output;
+      if (!output || typeof output !== "object") continue;
+      const quote = output as Record<string, unknown>;
+      if (
+        quote.ok === true &&
+        quote.within_delivery_range === true &&
+        quote.quote_source === "db_cinema_weighted_checkout_v1" &&
+        Number.isSafeInteger(quote.delivery_fee_gbp) &&
+        typeof quote.account_slug === "string" &&
+        quote.thread_id === threadId &&
+        typeof quote.basket_updated_at === "number" &&
+        typeof quote.inventory_updated_at === "number"
+      ) {
+        verifiedQuote = {
+          fee_gbp: quote.delivery_fee_gbp as number,
+          account_slug: quote.account_slug,
+          thread_id: threadId,
+          basket_updated_at: quote.basket_updated_at,
+          inventory_updated_at: quote.inventory_updated_at,
+          source: "db_cinema_weighted_checkout_v1",
+        };
+      }
+    }
+  }
+  return verifiedQuote;
+}
+
 const CONVERSATION_CRAFT = `
 CONVERSATION CRAFT — write from the Native evidence and workflow supplied:
 
@@ -1141,6 +1195,7 @@ const renterBotDraftHandler = async function POST(req: Request, rawConvex: Conve
     // this tool-call signal is the ONLY grounding check available.
     let usedTools = false;
     let text = "";
+    let deliveryQuote: ReturnType<typeof deliveryQuoteFromSteps>;
     // Quick Reply is an explicit, on-demand OpenRouter/Haiku call with no
     // subscription lane and no automatic stronger-model route.
     if (!obj) {
@@ -1177,6 +1232,7 @@ const renterBotDraftHandler = async function POST(req: Request, rawConvex: Conve
       harvestToolPrices(result?.steps, offeredPrices);
       for (const n of harvestToolKitItems(result?.steps)) kitSuppliedByTool.add(n);
       toolStats = toolTelemetry(result?.steps);
+      deliveryQuote = deliveryQuoteFromSteps(result?.steps, thread_id);
       toolReceipts.push(...renterToolReceipts(result?.steps));
       kitEvidence.push(...recommendationKitEvidence(toolReceipts));
       // TOKEN TELEMETRY. Prompt caching fails SILENTLY — under the provider's
@@ -1442,6 +1498,7 @@ const renterBotDraftHandler = async function POST(req: Request, rawConvex: Conve
       factsEmitted,
       toolStats,
       toolShape: toolStats?.shape ?? null,
+      deliveryQuote,
       // Convex round trips saved by the request-scoped memo, and how many were
       // actually issued. Reported so the hydration cost stays visible rather
       // than being assumed fixed.

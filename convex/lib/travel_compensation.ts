@@ -89,12 +89,23 @@ export function isTravelCompensationOffer(text: string): boolean {
 export function isPickupLocationIntent(message: string): boolean {
   const hasLocationTarget = /\b(?:pickup|pick[ -]?up|collection|collect|address|postcode|street|location|meeting point|meetup|shoreditch|camden|trafalgar(?: square)?|northumberland(?: street)?|charing cross)\b/i.test(message);
   if (!hasLocationTarget) return false;
+  // Short follow-ups such as "so not Shoreditch?" inherit their meaning from
+  // the previous turn, so do not require the renter to repeat "pickup".
+  if (/\b(?:so|then)\s+not\b/i.test(message)) return true;
   return /\b(?:where|which area|what area|exact|postcode|real|really|actually|correct|right|genuine|true|confirm|whether|listed|listing says|tell me|share|send me)\b/i.test(message) ||
     /\b(?:which|what)\s+(?:pickup\s+)?(?:street|address)\b|\bstreet\s+address\b/i.test(message) ||
     /\b(?:i thought|i understood|i was told|i expected|i was expecting|the listing (?:says|shows|states)|the ad (?:says|shows)|it (?:says|shows))\b.{0,80}\b(?:pickup|pick[ -]?up|collection|at|in|near)\b/i.test(message) ||
     /\b(?:can|could|would|should)\s+(?:i|we|you)\s+(?:(?:still|then|there)\s+)?(?:collect|pick[ -]?up|meet|get|come)\b/i.test(message) ||
     /\b(?:is|are|was|does)\b.{0,40}\b(?:pickup|pick[ -]?up|collection|location|shoreditch|camden|trafalgar|northumberland|charing cross)\b/i.test(message) ||
     /\b(?:pickup|pick[ -]?up|collection|location)\b.{0,35}\b(?:in|at|near|from)\b/i.test(message);
+}
+
+/** A grounded explanation that an item's collection is tied to its account pickup point. */
+export function hasPickupHandoffExplanation(text: string): boolean {
+  return sentences(text).some((sentence) =>
+    /\b(?:only available|available only|can only be (?:collected|picked up)|collection is only available|pickup is only available)\b/i.test(sentence) &&
+    /\b(?:collection|pickup|collect|collected|pick[ -]?up|picked up)\b/i.test(sentence),
+  );
 }
 
 export function isTravelConcern(message: string): boolean {

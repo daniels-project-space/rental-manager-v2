@@ -257,6 +257,15 @@ export const generateDraft = action({
       "say I'll confirm the exact time rather than committing to it.\n" +
       "- Respect the delivery policy and business rules below; don't promise delivery " +
       "outside the stated area or invent terms.\n" +
+      "- If the renter supplies a full UK postcode and asks about delivery, call " +
+      "check_location. When it returns delivery_fee_gbp, quote that exact amount as " +
+      "the round-trip fee for the current basket. Do not describe it as live courier " +
+      "pricing or say it depends on pickup/return times. If no verified fee returns, " +
+      "explain that delivery is unavailable for this postcode/basket when the tool " +
+      "reports an out-of-range or heavy-item restriction, and offer pickup. If the " +
+      "tool cannot quote because information is missing or unverified, ask only for " +
+      "the missing information and never estimate. A delivery " +
+      "fee is separate from the gated pickup-travel adjustment.\n" +
       "- NEVER mention internal policy, flags, ratings, or blacklisting to the renter.\n" +
       (c.response_style
         ? `\nMatch this house voice exactly: ${JSON.stringify(c.response_style)}.\n`
@@ -493,11 +502,11 @@ export const generateDraft = action({
     });
     const pickupLocationBlock = pickupArea
       ? [
-          `AUTHORITATIVE PICKUP FOR THE SELECTED ACCOUNT (${c.account_slug ?? "unknown"}): this rental's pickup area is ${pickupArea}.`,
+          `AUTHORITATIVE PICKUP FOR THE SELECTED ACCOUNT (${c.account_slug ?? "unknown"}): this rental's pickup area is ${pickupArea}. This listing is only available for collection from this account's configured pickup point.`,
           pickupConfirmed
             ? `The current booking is confirmed. Exact pickup point: ${pickupAddress}. You may share it now.`
             : "The current booking is not confirmed. Share only the vague pickup area above; do not reveal any street address, postcode, map link, or exact meeting point.",
-          "If the renter names a different listing area or asks if it is real, do not claim it is fake/nonexistent, do not say all accounts use one central pickup, and do not invent a reason such as repair, another rental, or consolidation. State this account's pickup area and ask whether it works before proceeding. If the same first message also asks for a discount, neither offer nor reject a discount until the renter has responded to that pickup-area question.",
+          "If the renter names a different listing area or asks if it is real, acknowledge the mismatch naturally and explain that this listing is only available for collection from this account's configured pickup point. Do not merely repeat the area or say 'rather than [other area]'. Do not say the other area is fake/nonexistent or that all accounts use one central pickup. Do not add a separate reason such as repair, another rental, relocation, or consolidation unless owner-confirmed facts explicitly support it. Ask whether this account's vague pickup area works before proceeding, and share the exact point only after confirmation. If the same first message also asks for a discount, neither offer nor reject a discount until the renter has responded to that pickup-area question.",
           travelCompensation.eligible && travelCompensation.maximumGbp != null
             ? `The renter already received this pickup-area disclosure and has now objected to the travel. Offer one travel adjustment of exactly £${travelCompensation.maximumGbp.toFixed(2)} for this rental; this is the lower of 10% of the verified rental charge or £10. Do not offer it again.`
             : "Do not offer or mention travel compensation on this turn. It becomes eligible only after this pickup area has been disclosed and the renter then explicitly objects to the travel; the verified rental charge must also be known. A generic discount request or listing location alone is not enough.",
@@ -614,6 +623,7 @@ export const generateDraft = action({
     // still empty.
     let generationMeta: { diagnostic_candidate?: string; native_quote_diagnostic?: string; evidence?: DraftEvidence; model_id?: string; draft_intent?: string; draft_stage?: string; cost_usd?: number; facts_claimed?: Array<{ kind: string; value: string; sourceTool: string; sourceCallId: string; verified: boolean }> } = {};
     let routeStockRequest: StockRequest | undefined;
+    let routeDeliveryFeeGbp: number | undefined;
     let freshInquiryItems: Array<{ name: string; dailyRateGbp?: number }> = [];
     // Names the draft route resolved but has NO kit text for — see
     // draft_guard KIT_HALLUCINATION.
@@ -712,6 +722,14 @@ export const generateDraft = action({
           rental_request?:DraftEvidence["rental_request"];
           availabilityReceipts?: Array<{ item_name: string; start_date: string; end_date: string; requested_units: number; available: boolean | null; free_units: number | null; checked_at: number; call_id: string; kind?: string; owned?: boolean; new_inquiry?:true; identity_names?:string[]; basket?: StockReceipt["basket"] }>;
           stockRequest?: StockRequest;
+          deliveryQuote?: {
+            fee_gbp: number;
+            account_slug: string;
+            thread_id: string;
+            basket_updated_at: number;
+            inventory_updated_at: number;
+            source: "db_cinema_weighted_checkout_v1";
+          };
           factsClaimed?: unknown;
           owner_checks?: OwnerCheck[];
           needs_human?: boolean;
@@ -816,6 +834,26 @@ export const generateDraft = action({
           routeMarketingItems = j.marketingItems ?? [];
           routeOfferedPrices = j.offeredPrices ?? [];
           routeBookingModified = j.bookingModified === true;
+          if (
+            !routeBookingModified &&
+            thread_id.startsWith("__probe__") &&
+            j.deliveryQuote?.thread_id === thread_id &&
+            j.deliveryQuote.account_slug === c.account_slug &&
+            j.deliveryQuote.source === "db_cinema_weighted_checkout_v1" &&
+            Number.isSafeInteger(j.deliveryQuote.fee_gbp)
+          ) {
+            const currentDeliverySpecs = await ctx.runQuery(
+              internal.renter_bot_tools.__service_deliverySpecs,
+              { thread_id },
+            );
+            if (
+              currentDeliverySpecs.ok &&
+              currentDeliverySpecs.basket_updated_at === j.deliveryQuote.basket_updated_at &&
+              currentDeliverySpecs.inventory_updated_at === j.deliveryQuote.inventory_updated_at
+            ) {
+              routeDeliveryFeeGbp = j.deliveryQuote.fee_gbp;
+            }
+          }
           routeHasPairingData = j.hasPairingData === true;
           routeGrounded = j.groundedDuringTurn ?? {};
         // Surface tool telemetry through CONVEX logs. The route's own
@@ -972,7 +1010,7 @@ export const generateDraft = action({
       groundedDuringTurn: routeGrounded,
       bookingModified: routeBookingModified,
       hasPairingData: routeHasPairingData,
-      factPack: c.fact_pack || listingFacts.some((f) => f.daily_price != null) || freshInquiryItems.length || noKitItems.length || routeOfferedPrices.length
+      factPack: c.fact_pack || listingFacts.some((f) => f.daily_price != null) || freshInquiryItems.length || noKitItems.length || routeOfferedPrices.length || routeDeliveryFeeGbp != null
         ? {
             // Merge the REAL listing prices in so the guard treats a correct £70
             // quote as valid (the generic catalog would flag it vs its £40 range).
@@ -988,7 +1026,8 @@ export const generateDraft = action({
             pricing:
               listingFacts.some((f) => f.daily_price != null) ||
               freshInquiryItems.length ||
-              routeOfferedPrices.length
+              routeOfferedPrices.length ||
+              routeDeliveryFeeGbp != null
               ? {
                   itemPrices: [
                     ...listingFacts
@@ -1002,6 +1041,7 @@ export const generateDraft = action({
                   // these the guard flags the bot for quoting a number we
                   // supplied. See route.ts `offeredPrices`.
                   offeredPrices: routeOfferedPrices,
+                  deliveryFeeGbp: routeDeliveryFeeGbp,
                 }
               : undefined,
             verifiedListingItem: c.fact_pack?.verifiedListingItem,

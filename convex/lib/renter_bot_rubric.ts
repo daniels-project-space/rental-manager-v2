@@ -9,6 +9,7 @@ import { hasPickupDisclosure } from "./booking_reply_claims";
 import {
   assessTravelCompensation,
   discountConcessionExceedsCap,
+  hasPickupHandoffExplanation,
   isDiscountConcessionOffer,
   isPickupLocationIntent,
   isTravelCompensationOffer,
@@ -169,6 +170,8 @@ export function scoreDraft(input: RubricInput): RubricOutput {
     : input.pickupAddress ? [input.pickupAddress] : [];
   const pickupPrivacyLeak = !input.pickupConfirmed && hasPickupDisclosure(draftText, pickupPrivacySources,input.pickupArea);
   const wrongPickupArea = !verificationFailed && pickupQuestion && !!input.pickupArea && !mentionsPickupArea(draftText, input.pickupArea);
+  const missingPickupExplanation = !verificationFailed && pickupQuestion && !!input.pickupArea &&
+    !input.pickupConfirmed && !hasPickupHandoffExplanation(draftText);
   const missingConfirmedPickup = !verificationFailed && pickupQuestion && !!input.pickupConfirmed && !!input.pickupAddress &&
     !draftText.toLowerCase().includes(input.pickupAddress.toLowerCase());
   const unsafePickupClaim = isUnsafePickupLocationClaim(draftText);
@@ -300,16 +303,17 @@ export function scoreDraft(input: RubricInput): RubricOutput {
   }
 
   // ── Account-specific pickup handling ──
-  if (unsafePickupClaim || pickupPrivacyLeak || wrongPickupArea || missingConfirmedPickup ||
+  if (unsafePickupClaim || pickupPrivacyLeak || wrongPickupArea || missingPickupExplanation || missingConfirmedPickup ||
     has(cats, "VAGUE_CONFIRMED_LOCATION", "PREMATURE_CONFIRMATION")) {
     add(
       "location_handling",
       "fail",
-      "Draft gave a false pickup explanation, the wrong or missing account area, exact pickup details too early, or omitted the confirmed meeting point.",
+      "Draft gave a false pickup explanation, omitted the item-specific reason for this account's pickup area, used the wrong area, disclosed exact details too early, or omitted the confirmed meeting point.",
       [
         unsafePickupClaim ? "unsupported location excuse" : null,
         pickupPrivacyLeak ? "exact pickup detail disclosed before confirmation" : null,
         wrongPickupArea ? "expected account area: " + input.pickupArea : null,
+        missingPickupExplanation ? "missing grounded reason for this listing's account-specific pickup point" : null,
         missingConfirmedPickup ? "confirmed booking missing its exact meeting point" : null,
         evidenceFor(allViolations, "VAGUE_CONFIRMED_LOCATION", "PREMATURE_CONFIRMATION"),
       ].filter(Boolean).join("; ") || undefined,

@@ -15,7 +15,7 @@ import { unsupportedKitClaims, type KitEvidence } from "./kit_claims";
 import { unsupportedCameraModeClaims, unsupportedBuiltInNDClaims, type CameraEvidence } from "./camera_mode_claims";
 import { unsupportedLensFocusClaims, type LensFocusEvidence } from "./lens_focus_claims";
 import { renterItemNames } from "./renter_item_names";
-import { assessTravelCompensation, isDiscountConcessionOffer, isPickupLocationIntent, isTravelCompensationOffer, isTravelConcern, isUnsafePickupLocationClaim, mentionsPickupArea, replaceTravelCompensationOffers, stripTravelCompensationOffers, verifiedRentalChargeGbp, withoutAuthorizedTravelCompensationClaim } from "./travel_compensation";
+import { assessTravelCompensation, hasPickupHandoffExplanation, isDiscountConcessionOffer, isPickupLocationIntent, isTravelCompensationOffer, isTravelConcern, isUnsafePickupLocationClaim, mentionsPickupArea, replaceTravelCompensationOffers, stripTravelCompensationOffers, verifiedRentalChargeGbp, withoutAuthorizedTravelCompensationClaim } from "./travel_compensation";
 /**
  * Draft guard — output policing for AI-generated owner replies (Phase 1).
  *
@@ -99,7 +99,7 @@ export interface GuardOpts {
       itemPrices?: { name: string; min: number; max: number }[];
       /** Add-on prices the fact pack itself offered — see the check below. */
       offeredPrices?: number[];
-      /** A REAL delivery fee, if we ever hold one. Today we never do. */
+      /** Verified account-and-basket-specific round-trip delivery fee. */
       deliveryFeeGbp?: number | null;
     };
     verifiedListingItem?: string;
@@ -193,8 +193,9 @@ const SEVERITY: Record<string, FlagSeverity> = {
   CAMERA_FEATURE_HALLUCINATION: "critical",
   // High, not critical: it misleads but does not create a wrong booking.
   INVENTED_POPULARITY: "high",
-  // High: it is a money commitment, but escalating beats withholding the reply.
-  UNGROUNDED_DELIVERY_FEE: "high",
+  // Delivery is a material booking cost; a mismatch must stop the draft.
+  UNGROUNDED_DELIVERY_FEE: "critical",
+  DELIVERY_QUOTE_MISREPRESENTATION: "critical",
   CHAIN_OF_THOUGHT: "critical",
   PRICE_HALLUCINATION: "critical",
   // Same class as a hallucinated price: the renter plans around it and turns
@@ -890,6 +891,8 @@ const ASSERTS_AVAIL_RE =
   });
   const asksPickupLocation = isPickupLocationIntent(opts.lastRenterMessage);
   const asksTravel = isTravelConcern(opts.lastRenterMessage);
+  const pickupAreaDisclosure = (area: string) =>
+    `For this item, collection is only available from the ${area}. Would that work for you? I'll share the exact meeting point once the booking is confirmed.`;
   const travelCompensationContext = asksPickupLocation || asksTravel || isTravelCompensationOffer(text);
   const verificationFailed = opts.stage === "VERIFICATION_FAILED";
   const firstLocationAndDiscountRequest = asksPickupLocation && !travelCompensation.pickupAreaDisclosed &&
@@ -898,7 +901,7 @@ const ASSERTS_AVAIL_RE =
       /\b(?:can't|cannot|won't|unable to|not able to|fixed (?:rate|price)|rates? (?:are|is) fixed|not possible|not an option)\b/i.test(text));
   let travelCompensationAuthorized = false;
   if (firstLocationAndDiscountRequest && opts.pickupArea) {
-    text = `For this rental, collection is arranged from the ${opts.pickupArea}. Would that work for you? I'll share the exact meeting point once the booking is confirmed.`;
+    text = pickupAreaDisclosure(opts.pickupArea);
     push("TRAVEL_COMPENSATION_GATE", "Deferred discount discussion until the renter responds to the confirmed pickup area", "rewritten");
   } else if ((verificationFailed || travelCompensationContext) && isDiscountConcessionOffer(text)) {
     if (verificationFailed || !travelCompensation.eligible || travelCompensation.maximumGbp == null) {
@@ -906,7 +909,7 @@ const ASSERTS_AVAIL_RE =
       if (verificationFailed) {
         if (!text) text = "Your rental request was cancelled because verification failed, so I can't share a pickup point for this booking.";
       } else if ((asksPickupLocation || asksTravel) && !travelCompensation.pickupAreaDisclosed && opts.pickupArea) {
-        text = `For this rental, collection is arranged from the ${opts.pickupArea}. Would that work for you? I'll share the exact meeting point once the booking is confirmed.`;
+        text = pickupAreaDisclosure(opts.pickupArea);
         push(
           "PICKUP_LOCATION_CORRECTED",
           "Replaced an unverified pickup explanation with this account's confirmed pickup area before discussing travel compensation",
@@ -915,7 +918,7 @@ const ASSERTS_AVAIL_RE =
       } else if (!text && asksTravel && travelCompensation.renterObjected && travelCompensation.maximumGbp == null) {
         text = "I understand. I'll check the verified rental total and confirm what one-time travel adjustment can be applied.";
       } else if (!text && opts.pickupArea) {
-        text = `For this rental, collection is arranged from the ${opts.pickupArea}. Would that work for you?`;
+        text = pickupAreaDisclosure(opts.pickupArea);
       }
       push(
         "TRAVEL_COMPENSATION_GATE",
@@ -952,13 +955,14 @@ const ASSERTS_AVAIL_RE =
       : opts.pickupAddress ? [opts.pickupAddress] : [];
     const leakedExactAddress = !opts.pickupConfirmed && hasPickupDisclosure(text, privacySources, opts.pickupArea);
     const missingRequiredExact = opts.pickupConfirmed && !!opts.pickupAddress && !text.toLowerCase().includes(opts.pickupAddress.toLowerCase());
-    if (!areaMentioned || unsafeLocationClaim || leakedExactAddress || missingRequiredExact) {
+    const missingHandoffExplanation = !opts.pickupConfirmed && !hasPickupHandoffExplanation(text);
+    if (!areaMentioned || unsafeLocationClaim || leakedExactAddress || missingRequiredExact || missingHandoffExplanation) {
       text = opts.pickupConfirmed && opts.pickupAddress
         ? `For this confirmed booking, pickup is ${opts.pickupAddress}`
-        : `For this rental, collection is arranged from the ${opts.pickupArea}. Would that work for you? I'll share the exact meeting point once the booking is confirmed.`;
+        : pickupAreaDisclosure(opts.pickupArea);
       push(
         "PICKUP_LOCATION_CORRECTED",
-        "Replaced a generic, false, missing, or premature pickup-location answer with this account's confirmed location details",
+        "Replaced a generic, false, missing, or premature pickup-location answer with this account's confirmed area and item-specific availability reason",
         "rewritten",
       );
     }
@@ -1386,24 +1390,83 @@ const ASSERTS_AVAIL_RE =
       );
   }
 
-  // 22d. INVENTED DELIVERY FEE. We hold no delivery rate, and the policy is to
-  // get a courier quote — so a figure here is a commercial commitment on a
-  // price we do not know. Live-caught: "to E1 6AN it's typically around £15,
-  // £25 each way at direct cost." The renter plans around that number and
-  // either we honour it or correct it after they have committed.
-  if (factPack?.pricing?.deliveryFeeGbp == null) {
-    const deliverySentence = text
-      .split(/(?<=[.!?])\s+|\n+/)
-      .find(
-        (x: string) =>
-          /\b(deliver\w*|courier|drop.?off|addison)\b/i.test(x) && /£\s?\d/.test(x),
-      );
-    if (deliverySentence)
-      push(
-        "UNGROUNDED_DELIVERY_FEE",
-        `States a delivery price we do not hold — the rate comes from a courier quote: "${deliverySentence.trim().slice(0, 110)}"`,
-        "flagged",
-      );
+  // 22d. A delivery price must come from the current account + basket quote,
+  // and must match it exactly. Avoid treating an unrelated daily rental price
+  // in the same sentence as a delivery fee.
+  const deliveryTerms = /\b(?:deliver\w*|courier|drop[\s-]?off|postage|shipping)\b/i;
+  const deliverySentences = text
+    .split(/(?<=[.!?])\s+|\n+/)
+    .filter((sentence) => deliveryTerms.test(sentence));
+  const deliveryAmountClaims = deliverySentences.flatMap((sentence) => {
+    const terms = [...sentence.matchAll(/\b(?:deliver\w*|courier|drop[\s-]?off|postage|shipping)\b/gi)]
+      .map((match) => ({ start: match.index ?? 0, end: (match.index ?? 0) + match[0].length }));
+    const amounts = [...sentence.matchAll(/£\s?(\d+(?:\.\d{1,2})?)|\bGBP\s?(\d+(?:\.\d{1,2})?)/gi)]
+      .map((match) => ({
+        value: Number(match[1] ?? match[2]),
+        start: match.index ?? 0,
+        end: (match.index ?? 0) + match[0].length,
+      }));
+    const linkedClaims = amounts.flatMap((amount) => {
+      const linked = terms
+        .map((term) => {
+          const gap = term.end <= amount.start
+            ? sentence.slice(term.end, amount.start)
+            : sentence.slice(amount.end, term.start);
+          return { gap, distance: gap.length };
+        })
+        .filter(({ gap, distance }) =>
+          distance <= 28 &&
+          !/\b(?:plus|excluding|without|not including|in addition|total|subtotal|camera|lens|rental|equipment|per day|daily)\b|\/\s?(?:day|hour|rental)/i.test(gap),
+        )
+        .sort((a, b) => a.distance - b.distance)[0];
+      return linked ? [{ value: amount.value, distance: linked.distance }] : [];
+    });
+    if (linkedClaims.length) return linkedClaims;
+    // Some fabricated quotes put the price far from the word "delivery" in
+    // the same sentence. Fall back only when there is no clear rental/item
+    // price in that sentence to confuse with the delivery amount.
+    if (
+      amounts.length &&
+      !/\b(?:camera|lens|rental|equipment|per day|daily|item|kit|hire)\b/i.test(sentence)
+    ) {
+      return [{ value: amounts[0].value, distance: 100 }];
+    }
+    return [];
+  });
+  const verifiedDeliveryFee = factPack?.pricing?.deliveryFeeGbp;
+  const mismatchedDeliveryAmount = deliveryAmountClaims.find(({ value }) =>
+    verifiedDeliveryFee == null || Math.round(value * 100) !== Math.round(verifiedDeliveryFee * 100),
+  )?.value;
+  if (
+    mismatchedDeliveryAmount != null
+  ) {
+    push(
+      "UNGROUNDED_DELIVERY_FEE",
+      verifiedDeliveryFee == null
+        ? `States a delivery price without a current account-and-basket quote: £${mismatchedDeliveryAmount}.`
+        : `States a delivery price that differs from the verified round-trip quote of £${verifiedDeliveryFee}: £${mismatchedDeliveryAmount}.`,
+      "flagged",
+    );
+  }
+  const unsupportedDeliveryProcess = deliverySentences.find((sentence) =>
+    /\blive\s+(?:courier|delivery)\s+(?:quote|price|pricing)\b|\b(?:courier|delivery)(?:\s+(?:fee|charge|cost|price|pricing|quote))?\s+(?:depends?|varies?|is subject to)\s+(?:on\s+)?[^.!?]{0,55}\b(?:pickup|collection|drop[\s-]?off|return|time|traffic)\b|\b(?:get|provide|confirm|pull)\s+(?:an?\s+)?(?:exact\s+)?(?:courier|delivery)?\s*(?:quote|rate|price)\s+(?:only\s+)?(?:once|after)\s+(?:the\s+)?(?:booking|reservation)\b|\b(?:exact\s+)?(?:delivery\s+)?(?:rate|price|quote)\s+(?:only\s+)?(?:once|after)\s+(?:the\s+)?(?:booking|reservation)\b/i.test(sentence),
+  );
+  if (unsupportedDeliveryProcess) {
+    push(
+      "DELIVERY_QUOTE_MISREPRESENTATION",
+      `Misstates the checkout quote as live/time-dependent or unavailable until booking: "${unsupportedDeliveryProcess.trim().slice(0, 110)}"`,
+      "flagged",
+    );
+  }
+  const freeDeliveryClaim = deliverySentences.find((sentence) =>
+    /\b(?:free|included|no charge|no extra cost|at no cost)\b/i.test(sentence),
+  );
+  if (freeDeliveryClaim && verifiedDeliveryFee !== 0) {
+    push(
+      "UNGROUNDED_DELIVERY_FEE",
+      `Claims delivery is free or included without a verified zero-fee quote: "${freeDeliveryClaim.trim().slice(0, 110)}"`,
+      "flagged",
+    );
   }
 
   const adminActionText = text.replace(/[’‘]/g, "\'");

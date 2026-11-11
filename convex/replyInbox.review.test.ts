@@ -1386,3 +1386,21 @@ it("persists and returns a failed Lab run's real diagnostics, cost and boundary 
  const row=[...f.rows.values()].find(r=>r.table==="renter_bot_harness_runs");expect(row).toMatchObject({model_id:error.model_id,cost_usd:error.cost_usd,generation_error:error,overall_status:"fail"});
  expect(mutations.some(n=>n.endsWith("appendAssistantMessage"))).toBe(false);
 });
+
+it("shows a failed rubric candidate for diagnosis without feeding it into the next Lab turn",async()=>{
+ const f=database(),mutations:string[]=[];
+ const candidate="That's right, collection is from the Northumberland Street area rather than Shoreditch. Would that work for you?";
+ const context={
+  pickup_area:"Northumberland Street area",
+  pickup_address:"10 Northumberland Street, London WC2N 5DB, outside the Sherlock Holmes pub.",
+  messages:[{role:"owner",content:"Collection is arranged from the Northumberland Street area."}],
+  rental_stage:{stage:"inquiry",booking_confirmed:false},
+ };
+ const ctx={runQuery:async(ref:any)=>{const name=getFunctionName(ref);return name.endsWith("getConversationForThread")?{account_slug:"leo"}:name.endsWith("pendingOwnerChecksForDraft")?[]:name.endsWith("getThreadContext")?context:null;},
+  runAction:async()=>({status:"ok",draft:candidate,flags:[],facts_claimed:[],model_id:"test-model"}),
+  runMutation:async(ref:any,args:any)=>{const name=getFunctionName(ref);mutations.push(name);return name.endsWith("insertRun")?invoke(insertRun,f.ctx,args):null;}};
+ const result=await invoke(sendTestMessage,ctx,{threadId:"__probe__rubric-failure",accountSlug:"leo",text:"so not Shoreditch?"});
+ expect(result).toMatchObject({draft:candidate,overall_status:"fail",assistantContextAdded:false});
+ const row=[...f.rows.values()].find(r=>r.table==="renter_bot_harness_runs");expect(row).toMatchObject({draft_text:candidate,overall_status:"fail"});
+ expect(mutations.some(n=>n.endsWith("appendAssistantMessage"))).toBe(false);
+});

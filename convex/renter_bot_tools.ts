@@ -70,6 +70,11 @@ import {
   requestedListingContext,
 } from "./lib/renter_booking";
 import { additionMountRequirements } from "./lib/booking_addition_mount";
+import {
+  classifyOrderWeight,
+  quoteDeliveryPrice,
+  tooHeavyForLocation,
+} from "./lib/delivery_weight";
 /**
  * Convex queries that back the Mastra renter-bot tools (5 of the 7 — the
  * other two are `search` (in convex/knowledge.ts) and `getTemplate`
@@ -89,6 +94,7 @@ import {
   internalQueryOf,
   internalQuery,
 } from "./owner_functions";
+import type { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import {
@@ -1926,21 +1932,155 @@ export const select_rental_request = query({
   },
 });
 
-// ── Tool: check_location (delivery distance, db-cinema-v2 method) ──────────────
-// Geocode the renter's postcode + this account's hub via postcodes.io, haversine
-// the distance, and check it against the account's delivery range (hub_max_km).
+/** Trusted physical specifications for the Lab's current rental basket. */
+export const __service_deliverySpecs = internalQuery({
+  args: { thread_id: v.string() },
+  handler: async (ctx, { thread_id }) => {
+    if (!thread_id.startsWith("__probe__")) {
+      return { ok: false as const, reason: "Delivery quotes are isolated to Lab sessions." };
+    }
+    const order = await ctx.db
+      .query("renter_bot_lab_orders")
+      .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
+      .unique();
+    if (!order) return { ok: false as const, reason: "No selected rental basket is loaded." };
+
+    const items: Array<{
+      spec: {
+        kind: string;
+        name: string;
+        weight_kg: number | null;
+        size_score: number | null;
+      };
+      qty: number;
+    }> = [];
+    let inventory_updated_at = 0;
+    const addItem = async (itemId: Id<"items">, qty: number) => {
+      const item = await ctx.db.get(itemId);
+      if (!item || item.status !== "active" || item.is_marketing_only) return false;
+      items.push({
+        spec: {
+          kind: item.kind,
+          name: item.name_canonical,
+          weight_kg: item.weight_kg ?? null,
+          size_score: item.size_score ?? null,
+        },
+        qty: Math.max(1, Math.floor(qty)),
+      });
+      inventory_updated_at = Math.max(
+        inventory_updated_at,
+        item.updated_at ?? item._creationTime,
+      );
+      return true;
+    };
+
+    for (const line of order.items) {
+      const lineQty = Math.max(1, Math.floor(line.qty ?? 1));
+      if (line.product_id != null) {
+        const product = await ctx.db
+          .query("hygglo_products")
+          .withIndex("by_account_product", (q) =>
+            q.eq("accountSlug", order.account_slug).eq("productId", line.product_id as number),
+          )
+          .unique();
+        inventory_updated_at = Math.max(
+          inventory_updated_at,
+          product?.lastSyncedAt ?? 0,
+          product?.marketingOnlyUpdatedAt ?? 0,
+        );
+        if (product?.isMarketingOnly) {
+          return { ok: false as const, reason: "The selected listing is not a confirmed rental item." };
+        }
+        const mapping = await ctx.db
+          .query("listing_resolution_override")
+          .withIndex("by_account_product", (q) =>
+            q.eq("account_slug", order.account_slug).eq("product_id", line.product_id as number),
+          )
+          .unique();
+        inventory_updated_at = Math.max(
+          inventory_updated_at,
+          mapping?.updated_at ?? 0,
+        );
+        if (mapping?.components.length) {
+          for (const component of mapping.components) {
+            if (!Number.isFinite(component.qty) || component.qty < 1 ||
+                !(await addItem(component.item_id, component.qty * lineQty))) {
+              return { ok: false as const, reason: "The selected kit contents need confirmation before delivery can be priced." };
+            }
+          }
+          continue;
+        }
+
+        const primaryId = mapping?.stock_item_id ?? product?.masterItemId ?? line.item_id;
+        const looksLikeBundle = /\b(?:kit|set|bundle|combo)\b|\b\d+\s?x\b/i.test(line.name);
+        if (!primaryId || looksLikeBundle || !(await addItem(primaryId, lineQty))) {
+          return { ok: false as const, reason: "The selected listing's full physical contents need confirmation before delivery can be priced." };
+        }
+        continue;
+      }
+
+      if (!line.item_id || !(await addItem(line.item_id, lineQty))) {
+        return { ok: false as const, reason: "The selected item's physical weight is not confirmed for delivery pricing." };
+      }
+      const primary = await ctx.db.get(line.item_id);
+      for (const supplied of primary?.supplied_stock ?? []) {
+        if (!(await addItem(supplied.item_id, supplied.qty * lineQty))) {
+          return { ok: false as const, reason: "An included kit component needs confirmation before delivery can be priced." };
+        }
+      }
+    }
+
+    if (!items.length) return { ok: false as const, reason: "No confirmed items are loaded in this rental." };
+    return {
+      ok: true as const,
+      thread_id,
+      account_slug: order.account_slug,
+      basket_updated_at: order.updated_at,
+      inventory_updated_at,
+      items,
+    };
+  },
+});
+
+// ── Tool: check_location (account-specific, weight-based checkout quote) ───────
+// The selected account hub + the current Lab basket are authoritative; the
+// renter must have supplied a full UK postcode before a round-trip price exists.
 export const check_location = action({
-  args: { renter_postcode: v.string(), account_slug: v.string() },
+  args: { renter_postcode: v.string(), thread_id: v.string() },
   handler: async (
     ctx,
-    { renter_postcode, account_slug },
+    { renter_postcode, thread_id },
   ): Promise<Record<string, unknown>> => {
+    if (!thread_id.startsWith("__probe__")) {
+      return { ok: false, reason: "Delivery quotes are isolated to Lab sessions." };
+    }
+    const deliverySpecs = await ctx.runQuery(
+      internal.renter_bot_tools.__service_deliverySpecs,
+      { thread_id },
+    );
+    if (!deliverySpecs.ok) return deliverySpecs;
+    const account_slug = deliverySpecs.account_slug;
+
+    const threadContext = await ctx.runQuery(
+      internal.replyInbox.getThreadContext,
+      { thread_id },
+    );
+    const postcodePattern = /\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/gi;
+    const renterPostcodes = (threadContext?.messages ?? [])
+      .filter((message) => message.role === "renter")
+      .flatMap((message) => [...message.content.matchAll(postcodePattern)].map((match) => match[1]));
+    const clean = renter_postcode.replace(/[\s-]+/g, "").toUpperCase();
+    const latestPostcode = renterPostcodes.at(-1)?.replace(/[\s-]+/g, "").toUpperCase();
+    if (!latestPostcode || latestPostcode !== clean) {
+      return { ok: false, reason: "Use the renter's latest full UK postcode; do not estimate from an area name." };
+    }
+
     const geocode = async (pc: string) => {
-      const clean = pc.replace(/\s+/g, "").toUpperCase();
-      if (clean.length < 5) return null;
+      const normalized = pc.replace(/[\s-]+/g, "").toUpperCase();
+      if (normalized.length < 5) return null;
       try {
         const r = await fetch(
-          `https://api.postcodes.io/postcodes/${encodeURIComponent(clean)}`,
+          `https://api.postcodes.io/postcodes/${encodeURIComponent(normalized)}`,
         );
         if (!r.ok) return null;
         const res = (
@@ -1997,7 +2137,7 @@ export const check_location = action({
     const hubGeo = await geocode(hub.hub_postcode);
     if (!hubGeo)
       return { ok: false, reason: "Couldn't resolve the hub location." };
-    const renterGeo = await geocode(renter_postcode);
+    const renterGeo = await geocode(clean);
     if (!renterGeo)
       return {
         ok: false,
@@ -2013,7 +2153,7 @@ export const check_location = action({
     const maxKm = settings?.hub_max_km ?? 30;
     const heavyMaxKm = settings?.hub_heavy_max_km ?? maxKm;
     const deliverable = km <= maxKm;
-    return {
+    if (!deliverable) return {
       ok: true,
       distance_km: km,
       hub_label: hub.hub_label ?? hub.hub_postcode,
@@ -2022,9 +2162,47 @@ export const check_location = action({
       heavy_max_km: heavyMaxKm,
       within_delivery_range: deliverable,
       within_heavy_range: km <= heavyMaxKm,
-      note: deliverable
-        ? `~${km}km from our ${hub.hub_label ?? "hub"} — within delivery range (offer delivery or pickup).`
-        : `~${km}km — beyond our ${maxKm}km delivery range; offer pickup only.`,
+      note: `~${km}km — beyond our ${maxKm}km delivery range; offer pickup only.`,
+    };
+    const heavyRange = tooHeavyForLocation(
+      classifyOrderWeight(deliverySpecs.items),
+      km,
+      heavyMaxKm,
+      maxKm,
+    );
+    if (heavyRange.tooHeavy) {
+      return {
+        ok: true,
+        distance_km: km,
+        hub_label: hub.hub_label ?? hub.hub_postcode,
+        renter_area: renterGeo.label,
+        max_km: maxKm,
+        heavy_max_km: heavyMaxKm,
+        within_delivery_range: false,
+        within_heavy_range: false,
+        note: `~${km}km — this basket is beyond our heavy-item delivery range; offer pickup only.`,
+      };
+    }
+    const quote = quoteDeliveryPrice(deliverySpecs.items, km, maxKm, 10);
+    if (!quote.ok) return { ok: false, reason: "The current basket is outside the delivery pricing range." };
+    return {
+      ok: true,
+      distance_km: quote.km,
+      hub_label: hub.hub_label ?? hub.hub_postcode,
+      renter_area: renterGeo.label,
+      max_km: maxKm,
+      heavy_max_km: heavyMaxKm,
+      within_delivery_range: true,
+      within_heavy_range: km <= heavyMaxKm,
+      delivery_fee_gbp: quote.fee,
+      delivery_round_trip: true,
+      delivery_vehicle: quote.vehicleLabel,
+      quote_source: "db_cinema_weighted_checkout_v1",
+      account_slug,
+      thread_id,
+      basket_updated_at: deliverySpecs.basket_updated_at,
+      inventory_updated_at: deliverySpecs.inventory_updated_at,
+      note: `~${quote.km}km from our ${hub.hub_label ?? "hub"} — the exact round-trip delivery charge for this basket is £${quote.fee}.`,
     };
   },
 });
