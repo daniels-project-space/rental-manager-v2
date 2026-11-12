@@ -11,6 +11,8 @@ export interface SessionContext {
   items: string[];
   startDate: string;
   endDate: string;
+  initialBotMessage?: string;
+  friendReference?: string;
 }
 
 interface ChatTurn {
@@ -18,6 +20,7 @@ interface ChatTurn {
   text: string;
   status?: "pass" | "fail" | "flag";
   contextAdded?: boolean;
+  automatic?: boolean;
 }
 
 function rentalDateLabel(value: string) {
@@ -44,9 +47,11 @@ function poundAmount(value: number) {
 }
 
 export function LiveChatSim({
-  session,
+  session, onStartFriend, startingFriend,
 }: {
   session: { threadId: string; accountSlug: string; context: SessionContext };
+  onStartFriend: (reference: string) => void;
+  startingFriend: boolean;
 }) {
   const sendTestMessage = useAction(api.renter_bot_lab_actions.sendTestMessage);
   const item = useQuery(api.renter_bot_lab_actions.getItemContext, {
@@ -54,7 +59,9 @@ export function LiveChatSim({
     accountSlug: session.accountSlug,
   });
   const order = useQuery(api.renter_bot_lab_order.get, { thread_id: session.threadId });
-  const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const [turns, setTurns] = useState<ChatTurn[]>(() => session.context.initialBotMessage
+    ? [{ role: "bot", text: session.context.initialBotMessage, automatic: true }]
+    : []);
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -100,7 +107,7 @@ export function LiveChatSim({
   return (
     <section className="overflow-hidden rounded-lg border border-white/10 bg-white/[0.03]" aria-label="Rental test chat">
       <div className="border-b border-white/10 p-4">
-        <p className="text-base font-semibold text-[#e4e6eb]">{session.context.scenarioTitle}</p>
+        <p className="text-base font-semibold text-[#e4e6eb]">Example: {session.context.scenarioTitle}</p>
         <p className="mt-1 text-xs text-[#8b8fa3]">
           {session.accountSlug === "dbcinema" ? "DB Cinema" : "Leo"} · isolated test conversation
         </p>
@@ -109,19 +116,19 @@ export function LiveChatSim({
           <div>
             <p className="text-[#8b8fa3]">Rental item</p>
             <p className="mt-1 font-medium text-[#e4e6eb]">
-              {item?.found ? item.display_name : session.context.displayName}
+              {order === undefined ? "Loading items…" : order?.lines.length ? order.lines.map(line => line.display_name || line.name).join(", ") : "No items yet"}
             </p>
           </div>
           <div>
             <p className="text-[#8b8fa3]">Rental request</p>
             <p className="mt-1 font-medium text-[#e4e6eb]">
-              {rentalPeriodLabel(session.context.startDate, session.context.endDate)}
+              {rentalPeriodLabel(order?.start_date ?? session.context.startDate, order?.end_date ?? session.context.endDate)}
             </p>
           </div>
           <div>
-            <p className="text-[#8b8fa3]">Request total</p>
+            <p className="text-[#8b8fa3]">Rental price</p>
             <p className="mt-1 font-medium text-[#e4e6eb]">
-              {order === undefined ? "Loading price…" : order?.total_gbp == null ? "Price not available" : poundAmount(order.total_gbp)}
+              {order === undefined ? "Loading price…" : !order?.lines.length ? "No items yet" : order.total_gbp == null ? "Price not available" : poundAmount(order.total_gbp)}
             </p>
           </div>
           <div>
@@ -132,12 +139,21 @@ export function LiveChatSim({
         {item?.found === false && (
           <p className="mt-2 text-xs text-red-300">This item is missing from the isolated Lab catalogue, so the chat is paused.</p>
         )}
+        {session.context.friendReference && !order?.lines.length && (
+          <p className="mt-3 text-xs text-[#b6bac7]">The friend starts a separate inquiry. Include this reference in your message: <span className="select-all font-mono">{session.context.friendReference}</span></p>
+        )}
+        {order?.stage === "VERIFICATION_FAILED" && order.referral_code && (
+          <button type="button" onClick={() => onStartFriend(order.referral_code!)} disabled={sending || startingFriend}
+            className="mt-3 rounded-md bg-white/10 px-3 py-2 text-xs text-[#e4e6eb] hover:bg-white/20 disabled:opacity-50">
+            {startingFriend ? "Starting…" : "Try as the friend"}
+          </button>
+        )}
       </div>
 
       <div className="min-h-48 space-y-3 p-4" aria-live="polite">
         {turns.length === 0 && item?.found && order && (
           <p className="text-sm text-[#8b8fa3]">
-            Rental details are loaded. Start with any message; the bot can look up the item and request details as the conversation needs them.
+            {session.context.friendReference ? "Start the friend's separate inquiry with any message." : "Rental details are loaded. Start with any message; the bot can look up the item and request details as the conversation needs them."}
           </p>
         )}
         {turns.map((turn, index) => (
@@ -153,6 +169,9 @@ export function LiveChatSim({
               <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide">
                 Failed checks · candidate only, not added to chat history
               </span>
+            )}
+            {turn.role === "bot" && turn.automatic && (
+              <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide">Automatic test reply</span>
             )}
             {turn.role === "bot" && turn.status === "flag" && (
               <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide">

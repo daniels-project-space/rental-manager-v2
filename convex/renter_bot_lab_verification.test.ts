@@ -51,6 +51,14 @@ function setup() {
  return f;
 }
 describe("authoritative Lab verification failure and friend handoff",()=>{
+ it("does not reprice a prepared listing as a generic item when restoring a friend's basket",async()=>{
+  const f=setup();
+  Object.assign(f.tables.renter_bot_lab_orders[0].items[0], {source_product_id:1097510,daily_price_gbp:49,pricing_basis:"listing"});
+  await fail(f.ctx);
+  const before=structuredClone(f.tables);
+  expect(await redeem(f.ctx)).toMatchObject({ok:false,reason:"referral_listing_mapping_unverified"});
+  expect(f.tables).toEqual(before);
+ });
  it("accepts yes only against the exact sent Native referral offer with fresh prices and dates",async()=>{
   for(const variant of ["valid","no_offer","wrong_referral","wrong_price","old_context","read_only","missing_technical_proof","valid_technical_proof"]){
    const f=setup();f.tables.renter_bot_lab_orders[0].items[0].product_id=1;await fail(f.ctx);
@@ -78,6 +86,8 @@ describe("authoritative Lab verification failure and friend handoff",()=>{
   expect(await fail(f.ctx)).toMatchObject({already_applied:true});
   expect(f.tables.hygglo_messages.filter(m=>m.thread_id==="__probe__atomic")).toHaveLength(1);expect(f.tables.renter_bot_lab_referrals).toHaveLength(1);
   expect(f.tables.hygglo_messages.find(m=>m.thread_id==="__probe__atomic").body_text).toContain("approval isn't guaranteed");
+  expect(f.tables.hygglo_messages.find(m=>m.thread_id==="__probe__atomic").body_text).toMatch(/verified friend/i);
+  expect(f.tables.hygglo_messages.find(m=>m.thread_id==="__probe__atomic").body_text).not.toMatch(/Hygglo|Fat Llama/i);
   expect(f.tables.renter_bot_lab_orders[0].items).toHaveLength(1);
  });
  it("rejects real threads and stages other than awaiting verification without changes",async()=>{

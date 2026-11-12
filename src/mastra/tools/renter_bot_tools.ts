@@ -371,7 +371,7 @@ export const getOrderEditStateTool = createTool({
 export const checkLocationTool = createTool({
   id: "check_location",
   description:
-    "For a renter's complete UK postcode, check the selected account's delivery range and current Lab basket. This tool does not yet verify a price against DB Cinema checkout: when delivery_pricing_status is needs_checkout_verification, say you will check the delivery and collection charge, and do not invent or estimate an amount. This tool never authorizes a pickup travel discount; that has a separate conversation gate.",
+    "For a renter's complete UK postcode, check the selected account's delivery range and current Lab basket. When delivery_pricing_status is verified_checkout, quote delivery_fee_gbp as the total for delivery and collection. When it is needs_checkout_verification, say you will check the delivery and collection charge; do not invent or estimate an amount. This tool never authorizes a pickup travel discount; that has a separate conversation gate.",
   inputSchema: z.object({
     renter_postcode: z.string().describe("The renter UK postcode (e.g. E1 6AN)."),
   }),

@@ -3,7 +3,7 @@
 export const FRIEND_BOOKING_NEXT_STEPS = "This is your own new request, not a confirmed booking. Please submit it from your account and complete the platform's approval, payment and verification steps. Your friend's approval, payment and verification don't transfer, even if your account was verified before.";
 
 export function verificationFailureReply(code: string) {
-  return `Hygglo couldn't approve verification, so this booking has been cancelled. If you'd like, a friend can make a new booking from their own account and take responsibility for the rental. Ask them to say you sent them and share basket referral ${code}. We'll recognise the referral and check the basket's current availability and price for them. Their booking still needs Hygglo's own checks, even if their account was verified before. You can also ask us to check suitable lower-value equipment; this may change the verification requirements, but approval isn't guaranteed. Please don't share account login details.`;
+  return `Unfortunately, verification wasn't approved, so this booking was automatically cancelled. If you have a verified friend who can take responsibility for the rental, they can make a new request from their own account. Ask them to mention that you sent them and share basket reference ${code}; we'll recognise it and check the same equipment's current availability and price for them. Their request still needs its own checks, even if they were verified before. We can also look for suitable lower-value equipment, which may help with approval, although approval isn't guaranteed. Please don't share account login details.`;
 }
 
 /** Require an explicit referral and one opaque code; names never link renters. */

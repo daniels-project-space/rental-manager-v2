@@ -70,6 +70,8 @@ import {
   requestedListingContext,
 } from "./lib/renter_booking";
 import { additionMountRequirements } from "./lib/booking_addition_mount";
+import { checkoutDeliveryQuote } from "./lib/checkout_delivery_quote";
+import { matchesPreparedListing } from "./lib/renter_bot_lab_listing_snapshot";
 import {
   classifyOrderWeight,
   quoteDeliveryPrice,
@@ -1954,6 +1956,8 @@ export const __service_deliverySpecs = internalQuery({
       };
       qty: number;
     }> = [];
+    const checkoutItems = new Map<number, number>();
+    let checkoutIdentityComplete = order.account_slug === "dbcinema";
     let inventory_updated_at = 0;
     const addItem = async (itemId: Id<"items">, qty: number) => {
       const item = await ctx.db.get(itemId);
@@ -1991,6 +1995,8 @@ export const __service_deliverySpecs = internalQuery({
         if (product?.isMarketingOnly) {
           return { ok: false as const, reason: "The selected listing is not a confirmed rental item." };
         }
+        if (!product || product.isPublished !== true || product.isMarketingOnly !== false) checkoutIdentityComplete = false;
+        else checkoutItems.set(line.product_id, (checkoutItems.get(line.product_id) ?? 0) + lineQty);
         const mapping = await ctx.db
           .query("listing_resolution_override")
           .withIndex("by_account_product", (q) =>
@@ -2023,6 +2029,12 @@ export const __service_deliverySpecs = internalQuery({
         return { ok: false as const, reason: "The selected item's physical weight is not confirmed for delivery pricing." };
       }
       const primary = await ctx.db.get(line.item_id);
+      if (line.source_product_id != null && primary && matchesPreparedListing(order.account_slug, line.source_product_id, primary.name_canonical) &&
+          typeof line.source_synced_at === "number" && typeof line.source_checked_at === "number" &&
+          line.source_synced_at <= Date.now() && line.source_checked_at <= Date.now() &&
+          Date.now() - line.source_synced_at <= 48 * 60 * 60 * 1000 && Date.now() - line.source_checked_at <= 48 * 60 * 60 * 1000) {
+        checkoutItems.set(line.source_product_id, (checkoutItems.get(line.source_product_id) ?? 0) + lineQty);
+      } else checkoutIdentityComplete = false;
       for (const supplied of primary?.supplied_stock ?? []) {
         if (!(await addItem(supplied.item_id, supplied.qty * lineQty))) {
           return { ok: false as const, reason: "An included kit component needs confirmation before delivery can be priced." };
@@ -2038,6 +2050,9 @@ export const __service_deliverySpecs = internalQuery({
       basket_updated_at: order.updated_at,
       inventory_updated_at,
       items,
+      checkout: checkoutIdentityComplete && order.start_date && order.end_date
+        ? { startDate: order.start_date, endDate: order.end_date, items: [...checkoutItems].map(([productId, qty]) => ({ productId, qty })) }
+        : null,
     };
   },
 });
@@ -2073,6 +2088,18 @@ export const check_location = action({
     const latestPostcode = renterPostcodes.at(-1)?.replace(/[\s-]+/g, "").toUpperCase();
     if (!latestPostcode || latestPostcode !== clean) {
       return { ok: false, reason: "Use the renter's latest full UK postcode; do not estimate from an area name." };
+    }
+
+    if (deliverySpecs.checkout) {
+      const receipt = await checkoutDeliveryQuote({ account: account_slug, postcode: clean, ...deliverySpecs.checkout });
+      if (receipt) return {
+        ok: true, within_delivery_range: true, distance_km: receipt.km,
+        delivery_round_trip: true, delivery_fee_gbp: receipt.fee,
+        delivery_vehicle: receipt.vehicle, delivery_pricing_status: "verified_checkout",
+        quote_source: "db_cinema_weighted_checkout_v1", account_slug, thread_id,
+        basket_updated_at: deliverySpecs.basket_updated_at, inventory_updated_at: deliverySpecs.inventory_updated_at,
+        note: `The exact DB Cinema checkout quotes £${receipt.fee} for delivery and collection of this basket.`,
+      };
     }
 
     const geocode = async (pc: string) => {
@@ -2652,6 +2679,17 @@ async function findOwnedAlternatives(
   const rejectedStockOptions: Array<Record<string, unknown>> = [];
   const stockSources =
     start_date && end_date ? await loadStockSources(ctx) : null;
+  // The resolved target is separate from the candidate baskets. A positively
+  // available alternative does not prove that target is unavailable, but an
+  // exact non-rentable physical record can supply its own dated negative check.
+  const targetStockItem = stockSources && targetId && !targetRentable
+    ? stockSources.items.find(i => String(i._id) === targetId) : undefined;
+  const targetCheck = targetStockItem && stockSources && start_date && end_date
+    ? { ...stockForItem(stockSources, targetStockItem, {
+        item_name: targetStockItem.name_canonical, start_date, end_date, quantity: quantity ?? 1,
+        thread_id: thread_id ?? undefined,
+      }), start_date, end_date } : null;
+  const targetStockReceipt = targetCheck?.available === false && targetCheck.owned === false ? targetCheck : null;
   for (const it of ranked) {
     // Replacement value, never the daily hire rate, determines this filter.
     if (
@@ -2984,6 +3022,7 @@ async function findOwnedAlternatives(
     target_rentable: targetRentable,
     target_identity_resolved: targetId != null,
     target_item_id: targetId != null ? String(targetId) : null,
+    target_stock_receipt: targetStockReceipt,
     lower_value_only: lower_value_only === true,
     target_replacement_cost_gbp: targetValue,
     lower_value_reason:

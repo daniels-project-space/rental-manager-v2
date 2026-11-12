@@ -50,7 +50,14 @@ export function acceptsReplacement(text:string,q:ReplacementAcceptanceQuote,owne
  const offers=owner.quoted_replacements??[];
  const candidate=offers.filter(p=>p.context_key===q.context_key&&p.epoch===q.epoch&&p.physical_identity_key===q.physical_identity_key&&p.base_physical_identity_key===q.base_physical_identity_key&&p.start_date===q.start_date&&p.end_date===q.end_date&&keys(p.items)===keys(q.added)&&keys(p.removed_listings)===keys(q.removed)&&sameMoney(p.total_gbp,q.total_gbp)&&sameMoney(p.base_total_gbp,q.base_total_gbp));
  const ownerTotals=amendmentMoneyClaims(owner.body_text).filter(m=>m.role==="total"&&sameMoney(m.amount,q.total_gbp));
- if(candidate.length!==1||offers.length!==1||!ownerTotals.length||!matchesQuotedDates(owner.body_text,q)||!/\b(?:swap|replace|replacement)\b/i.test(owner.body_text)||/\b(?:or|alternatively|either|options?)\b/i.test(owner.body_text)||![...q.added,...q.removed].every(l=>named(owner.body_text,l,[...q.added,...q.removed])))return false;
+ const selected=/^(?:(?:yes|yep|yeah|okay|ok|sure)[,!\s]+)?(?:please[,!\s]+)?(?:switch|change)\s+(?:it|the\s+(?:booking|rental|request))\s+to\s+(.+)$/i.exec(message);
+ const exactSelection=!!selected && !/\b(?:or|rather than|instead|except)\b/i.test(selected[1]) && directItemSelection(`add ${selected[1]}`,q.added).matches;
+ if(candidate.length!==1||offers.length!==1||!ownerTotals.length||!matchesQuotedDates(owner.body_text,q)||!/\b(?:swap|replace|replacement|switch)\b/i.test(owner.body_text)||
+   /\b(?:or|alternatively|either|options?)\b/i.test(owner.body_text)&&!exactSelection||![...q.added,...q.removed].every(l=>named(owner.body_text,l,[...q.added,...q.removed])))return false;
  if(swap)return true;
+ // A named confirmation can refer to the already-sent exact swap rather
+ // than restating its removed item. All immutable quote checks above remain
+ // mandatory, and the renter's selection must exactly match every added line.
+ if(selected) return exactSelection;
  return isReplacementReference(message);
 }

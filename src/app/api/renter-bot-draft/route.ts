@@ -470,7 +470,7 @@ const renterBotDraftHandler = async function POST(req: Request, rawConvex: Conve
    */
   const itemsWithoutKitData: string[] = [];
   const itemsWithKitData: string[] = [];
-  const kitEvidence: Array<{ names: string[]; contents: string[]; booked_camera?: boolean; booked_item?: boolean; kind?: string }> = [];
+  const kitEvidence: Array<{ names: string[]; contents: string[]; booked_camera?: boolean; booked_item?: boolean; requested_item?: boolean; kind?: string }> = [];
   /**
    * Items a TOOL returned real kit text for during the turn, lower-cased.
    *
@@ -810,6 +810,7 @@ const renterBotDraftHandler = async function POST(req: Request, rawConvex: Conve
         if (hasKnownKit) itemsWithKitData.push(it.listing_name ?? it.name ?? "");
         if (hasKnownKit) {
           kitEvidence.push({ names: [...new Set([it.name, it.listing_name, it.inventory_name].filter((n): n is string => !!n).flatMap(renterItemNames))],
+            requested_item: true,
             booked_camera: lc.is_confirmed === true && /^camera(?:_body)?$/.test(it.kind ?? ""),
             booked_item: lc.is_confirmed === true,
             kind: it.kind ?? undefined,
@@ -1045,7 +1046,7 @@ const renterBotDraftHandler = async function POST(req: Request, rawConvex: Conve
       };
     } | undefined;
     if (pickupArea) {
-      groundTruth += `PICKUP AREA FOR THIS ACCOUNT (${account_slug}): ${pickupArea}. For a location question or a listing that names a different place, disclose this area and ask whether it works before proceeding. Never claim the listed place is fake or nonexistent, never say all accounts share one central pickup, and never invent a reason for the difference (including repair, another rental, or consolidation).\n`;
+      groundTruth += `PICKUP AREA FOR THIS ACCOUNT (${account_slug}): ${pickupArea}. When asked about a different location, explain naturally that collection of this requested equipment is only available from this area, and ask if that works before proceeding. Do not simply repeat the area without connecting it to the equipment. Never claim the listed place is fake or nonexistent, never say all accounts share one central pickup, and never invent a reason for the difference (including repair, another rental, or consolidation).\n`;
     } else {
       groundTruth += `PICKUP AREA: no owner-confirmed area is configured for ${account_slug}. Do not invent a location or claim that a named listing location is fake or nonexistent; say you will confirm this account's pickup area before proceeding.\n`;
     }

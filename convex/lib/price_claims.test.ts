@@ -7,6 +7,36 @@ const request:StockRequest={start_date:"2026-10-02",end_date:"2026-10-04",items:
 const prices:PriceEvidence[]=[{names:["BMPCC 6K Pro"],kind:"rental",days:3,quantity:1,daily_rate_gbp:30,base_rate_gbp:35,total_gbp:90,start_date:"2026-10-02",end_date:"2026-10-04",call_id:"real-alt",source:"hygglo_tier"},
 {names:["BMPCC 6K Full Frame"],kind:"rental",days:3,quantity:1,daily_rate_gbp:43.33,base_rate_gbp:50,total_gbp:130,call_id:"selected",source:"hygglo_tier"}];
 const check=(text:string, evidence=prices,scope=request)=>unsupportedPriceClaims(text,evidence,scope);
+describe("a verified replacement proposal", () => {
+ const scope:StockRequest={start_date:"2026-11-26",end_date:"2026-11-26",items:[{name:"BMPCC 6K Full Frame",quantity:1}]};
+ const replacement:PriceEvidence={names:[],kind:"basket",days:1,total_gbp:18,start_date:scope.start_date!,end_date:scope.end_date!,
+  items:[{name:"Sony A7 III",quantity:1}],source:"native_lab_proposal",call_id:"proposal",
+  proposal:{base_items:scope.items,added_items:[{name:"Sony A7 III",quantity:1}],removed_items:scope.items,base_total_gbp:50}};
+ const line:PriceEvidence={names:["Sony A7 III"],kind:"rental",days:1,quantity:1,total_gbp:18,start_date:scope.start_date!,end_date:scope.end_date!,
+  source:"native_lab_proposal",call_id:"proposal:line:1046235",quote_role:"addition"};
+ const text="As an alternative, I'd recommend our Sony A7 III Camera Body Kit. Swapping to the Sony A7 III would bring the rental total to £18 for the day.";
+ it("accepts the exact replacement total with its matching source basket",()=>expect(check(text,[replacement,line],scope)).toEqual([]));
+ it("rejects different amounts, dates, cameras and unproven replacement baskets",()=>{
+  for(const changed of [text.replace("£18","£50"),text.replace("Sony A7 III would","Sony FX3 would"),text.replace("for the day","for 3 days")])
+   expect(check(changed,[replacement,line],scope),changed).not.toEqual([]);
+  expect(check(text,[line],scope)).not.toEqual([]);
+  expect(check(text,[{...replacement,start_date:"2026-11-27"},line],scope)).not.toEqual([]);
+  const longer={...scope,end_date:"2026-11-27"};
+  expect(check(text,[{...replacement,days:2,end_date:longer.end_date}, {...line,days:2,end_date:longer.end_date}],longer)).not.toEqual([]);
+  expect(check(text.replace("for the day","for the day and for 3 days"),[replacement,line],scope)).not.toEqual([]);
+ });
+});
+describe("a dated single-item rental total", () => {
+ const scope:StockRequest={start_date:"2026-11-26",end_date:"2026-11-26",items:[{name:"BMPCC 6K Full Frame",quantity:1}]};
+ const quote:PriceEvidence={names:[scope.items[0].name],kind:"rental",days:1,quantity:1,total_gbp:50,start_date:scope.start_date!,end_date:scope.end_date!,call_id:"test",source:"lab_order_quote"};
+ const text="For your requested date on 26 November (1 day), the camera rental total is £50.";
+ it("accepts the current item's exact dated amount",()=>expect(check(text,[quote],scope)).toEqual([]));
+ it("still rejects a changed amount, date, duration, quantity, or different model",()=>{
+  for(const changed of [text.replace("£50","£60"),text.replace("26 November","27 November"),text.replace("1 day","2 days"),text.replace("camera rental","Sony FX3 rental")])
+   expect(check(changed,[quote],scope),changed).not.toEqual([]);
+  expect(check(text,[{...quote,quantity:2}],scope)).not.toEqual([]);
+ });
+});
 describe("separate item prices after a parenthesized daily rate",()=>{
  const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"BMPCC 6K Full Frame",quantity:1}]};
  const receipts:PriceEvidence[]=[

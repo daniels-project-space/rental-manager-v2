@@ -1,6 +1,9 @@
 const normal = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
 const clean = (value: string) => value.trim().replace(/^(?:an?|the)\s+/i, "").replace(/\s+(?:camera(?:\s+body)?|body)$/i, "").trim();
 const generic = /^(?:(?:own|current|rental|booked|chosen|specific|other|second|different|same|new|main)\s*)*$/i;
+// Value and suitability descriptions identify a class of options, not the
+// make or model of a camera the renter owns.
+const genericDescription = /^(?:(?:lower[ -](?:value|cost|priced)|higher[ -](?:value|cost|priced)|cheaper|affordable|suitable|available|budget)\s*)+$/i;
 const sentences = (text: string) => text.replace(/’/g, "'").split(/(?<=[.!?])\s+|\n+/);
 
 /** The latest explicit self-description supplies identity. Lens mounts,
@@ -40,8 +43,11 @@ export function unsupportedRenterCameraClaims(text: string, messages: string[]):
     // they do not label the renter's camera. Do not consume that clause, so
     // a nested "your Sony body" still gets its own identity check.
     for (const match of sentence.matchAll(/\b(?:your|which|what)\s+(?!\s*(?:is|are|was|were)\b)([^,;.!?]{0,60}?)\b(?:camera(?:\s+body)?|body)\b/gi)) {
+      // "What Sony camera options do we have?" names a menu of potential
+      // rentals, not a model already owned or used by the renter.
+      if (/^\s+options?\b/i.test(sentence.slice(match.index! + match[0].length))) continue;
       const reference = clean(match[1]);
-      if (!reference || generic.test(reference)) continue;
+      if (!reference || generic.test(reference) || genericDescription.test(reference)) continue;
       const claim = normal(reference);
       // A stated exact model establishes its brand; a brand never establishes
       // a particular model. Token boundaries preserve FX3 versus FX30.

@@ -37,7 +37,8 @@ import { getActionLlmModel } from "./item_resolver";
 import { gatedGenerateText } from "./lib/gatedGenerate";
 import { sameDraftApproval } from "./lib/draft_review";
 import { renterBotRuntimeAllowed } from "./lib/renter_bot_runtime";
-import { guardDraft, type DraftFlag } from "./lib/draft_guard";
+import { guardDraft, guardFinalDraft, type DraftFlag } from "./lib/draft_guard";
+import { discloseReplacementSource } from "./lib/renter_replacement_proposal";
 import { assessTravelCompensation, verifiedRentalChargeGbp } from "./lib/travel_compensation";
 import { dnaSummary } from "./lib/renter_dna";
 import {
@@ -90,6 +91,7 @@ export const generateDraft = action({
     draft_intent?: string;
     draft_stage?: string;
     cost_usd?: number;
+    verified_delivery_fee_gbp?: number;
     evidence?: DraftEvidence;
     for_message_id?: string | null;
     diagnostic_candidate?: string;
@@ -948,6 +950,9 @@ export const generateDraft = action({
       }
     }
 
+    if (thread_id.startsWith("__probe__") && routePriceEvidence?.length)
+      checkedDraft = discloseReplacementSource(checkedDraft, routePriceEvidence);
+
     // ── Output policing (Phase 1 guard) ──────────────────────────
     // Port of the V1 FILTER + CONTRACT layers: auto-clean unambiguous garbage
     // (internal leaks, leaked reasoning, "Hygglo", timestamps, markdown, Leo/
@@ -1010,7 +1015,7 @@ export const generateDraft = action({
       groundedDuringTurn: routeGrounded,
       bookingModified: routeBookingModified,
       hasPairingData: routeHasPairingData,
-      factPack: c.fact_pack || listingFacts.some((f) => f.daily_price != null) || freshInquiryItems.length || noKitItems.length || routeOfferedPrices.length || routeDeliveryFeeGbp != null
+      factPack: c.fact_pack || listingFacts.some((f) => f.daily_price != null) || freshInquiryItems.length || noKitItems.length || routeKitEvidence.length || routeOfferedPrices.length || routeDeliveryFeeGbp != null
         ? {
             // Merge the REAL listing prices in so the guard treats a correct £70
             // quote as valid (the generic catalog would flag it vs its £40 range).
@@ -1064,7 +1069,7 @@ export const generateDraft = action({
           .map((r) => ({ name: r.item, available: r.available as boolean, quantity: r.quantity, free_units: r.free_units })),
       } : undefined,
     };
-    let guard = guardDraft(checkedDraft, guardOptions);
+    let guard = guardFinalDraft(checkedDraft, guardOptions);
     // Hard backstop for ANY unresolved critical-severity guardDraft flag.
     // Live-reproduced repeatedly on a bare first-contact "is X available":
     // UNGROUNDED_AVAILABILITY + UNGROUNDED_PRICE (confident "not available" +
@@ -1150,6 +1155,7 @@ export const generateDraft = action({
       status: "ok",
       for_message_id: c.last_message_id,
       draft: finalDraft,
+      verified_delivery_fee_gbp: routeDeliveryFeeGbp ?? undefined,
       confidence: guard.confidence,
       flags: guard.flags,
       ...generationMeta,

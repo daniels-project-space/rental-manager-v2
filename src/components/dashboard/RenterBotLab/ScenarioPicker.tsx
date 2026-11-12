@@ -19,7 +19,7 @@ export function ScenarioPicker({
           Load a rental
         </h2>
         <p className="mt-1 text-xs text-[#8b8fa3]">
-          Each card loads the item, a one-day request and its calculated rental total. You write the renter’s first message.
+          Each card loads a rental example with its item and dates. You write the renter’s messages.
         </p>
       </div>
       {RENTER_BOT_LAB_SCENARIOS.map((scenario) => (
@@ -28,6 +28,9 @@ export function ScenarioPicker({
           <p className="mt-1 text-xs text-[#8b8fa3]">
             {scenario.accountSlug === "dbcinema" ? "DB Cinema" : "Leo"} · {scenario.displayName}
           </p>
+          {scenario.startStage === "verification_failed" && (
+            <p className="mt-1 text-xs text-[#8b8fa3]">A failed verification cancels the test booking and shows the automatic reply.</p>
+          )}
           <button
             type="button"
             onClick={() => startScenario(scenario.id)}

@@ -4,6 +4,10 @@ import { shortItemName } from "./item_display_name";
  * known model names; advertising titles and comparison models stay literal. */
 export function renterItemNames(name: string): string[] {
   const names = [name, shortItemName(name)];
+  // A bare, complete Sony model is common renter-facing shorthand; preserve
+  // the full variant and generation so A7 III never becomes A7S III or A7 II.
+  const sony = /^Sony\s+(A7(?:S|R|C)?\s*(?:II|III|IV|V))$/i.exec(name.trim());
+  if (sony) names.push(sony[1]);
   const bm = /^(?:BMPCC|Blackmagic(?:\s+Pocket\s+Cinema\s+Camera|\s+Cinema\s+Camera)?)\s+6K\s+(Pro|Full\s+Frame|FF)$/i.exec(name.trim());
   if (bm) {
     const variant = /^pro$/i.test(bm[1]) ? "Pro" : "Full Frame";

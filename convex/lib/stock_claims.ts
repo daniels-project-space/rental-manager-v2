@@ -266,7 +266,12 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     let dateScope = itemQuoteDateScope(clause, quoteHeader, request.start_date);
     const datedPrefix = dateScope.matched_text ? prefix.replace(dateScope.matched_text, "__stock_date__") : prefix;
     const extensionSubject = /^I\s+(?:can't|cannot|can not|am not able to)\s+extend\s+(.+?)\s+(?:through|until|to)\s+__stock_date__\s+(?:as|because)\s+(?:it's|it is)\s*$/i.exec(datedPrefix.trim());
-    const subject = subjectOf(extensionSubject?.[1] ?? prefix.replace(/\s+(?:is|are)\s*$/i, ""));
+    // A descriptive clause can retain an explicit previous subject: "I'd
+    // recommend the A7 III. It's a full-frame E-mount body and is available."
+    // The descriptors do not establish specs or permit a different model to
+    // inherit this stock check; technical claims are checked separately.
+    const descriptiveIt = /^it(?:'s| is)\s+(?:an?\s+)?(?:(?:full[ -]frame|aps[ -]?c|mirrorless|cinema|4k|sony|e[ -]mount|rf[ -]mount|l[ -]mount|ef[ -]mount)\s+){0,8}(?:camera|body|lens)\s+and\s*$/i.test(prefix.trim());
+    const subject = subjectOf(descriptiveIt ? "it" : extensionSubject?.[1] ?? prefix.replace(/\s+(?:is|are)\s*$/i, ""));
     // "paired with" coordinates two offered items; it does not assert that
     // the lens is included inside each member's existing kit.
     const kitParts=/\bpaired\s+with\b/i.test(subject.name) ? [subject.name] : subject.name.split(/\s+with\s+/i);

@@ -17,13 +17,14 @@ export function withoutDurationReference(reference: string, calendarReference?: 
 }
 export function claimedRentalDays(text: string): number | null {
   const matches = [...text.matchAll(new RegExp(`(?:\\b(?:for|across|over|total\\s+for)\\s+(?:(?:the|these|those|your|a|an)\\s+)?|\\(\\s*)(${count})[ -]+days?\\b`,"gi"))];
-  if (!matches.length) return /\b(?:for|across|over|total\s+for)\s+(?:(?:[a-z]+|\d+)[ -]+){1,5}days?\b/i.test(text)
+  const oneDay = [...text.matchAll(/\b(?:for|across|over|total\s+for)\s+(?:the|a)\s+day\b(?!\s+(?:after|before|of)\b)/gi)];
+  if (!matches.length && !oneDay.length) return /\b(?:for|across|over|total\s+for)\s+(?:(?:[a-z]+|\d+)[ -]+){1,5}days?\b/i.test(text)
     || /\b(?:for|across|over)\s+(?:the\s+)?\d+\s*(?:[-–]|to|or)\s*\d+\s*days?\b/i.test(text) ? NaN : null;
-  const values=matches.map(match=>{
+  const values=[...oneDay.map(()=>1), ...matches.map(match=>{
     if (/^\d+$/.test(match[1])) return Number(match[1]);
     const words = match[1].toLowerCase().split(/[ -]+/);
     const first = small.indexOf(words[0]);
     return first >= 0 ? first : (tens.indexOf(words[0])+2)*10+(words[1] ? small.indexOf(words[1]) : 0);
-  });
+  })];
   return values.every(value=>value===values[0])?values[0]:NaN;
 }

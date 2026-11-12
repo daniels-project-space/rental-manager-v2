@@ -35,3 +35,32 @@ it("prices the actual distance before rounding it for display", async () => {
   expect(inRange).not.toHaveProperty("delivery_fee_gbp");
   expect(inRange.note).not.toMatch(/£/);
 });
+
+it("returns only the exact checkout receipt for the current Lab basket and renter postcode", async () => {
+  vi.stubEnv("RENTAL_MANAGER_ACCESS", "open");
+  const timestamp = Date.parse("2026-11-26T12:00:00Z");
+  const calls: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, request: RequestInit) => {
+    const body = JSON.parse(String(request.body)); calls.push(body.path);
+    const value = body.path === "catalog:discovery"
+      ? {page:[{slug:"blackmagic-kit-1103089"}],isDone:true}
+      : body.path === "catalog:getListingBySlug"
+        ? {_id:"website-listing",slug:"blackmagic-kit-1103089",bookable:true,marketingOnly:false}
+        : {ok:true,fee:46,km:1.3,vehicle:"car",groups:[{start:timestamp,end:timestamp,fee:46}]};
+    return new Response(JSON.stringify({status:"success",value}));
+  }));
+  const ctx = {runQuery:vi.fn(async (ref:Parameters<typeof getFunctionName>[0]) => {
+    switch (getFunctionName(ref)) {
+      case "renter_bot_tools:__service_deliverySpecs": return {ok:true,account_slug:"dbcinema",basket_updated_at:1,inventory_updated_at:2,
+        items:[],checkout:{startDate:"2026-11-26",endDate:"2026-11-26",items:[{productId:1103089,qty:1}]}};
+      case "replyInbox:getThreadContext": return {messages:[{role:"renter",content:"Delivery to SW1A 1AA?"}]};
+      default: throw Error("Unexpected query");
+    }
+  })};
+  expect(await (check_location as any)._handler(ctx,{thread_id:"__probe__delivery",renter_postcode:"SW1A 1AA"}))
+    .toMatchObject({ok:true,delivery_fee_gbp:46,delivery_round_trip:true,quote_source:"db_cinema_weighted_checkout_v1",basket_updated_at:1,inventory_updated_at:2});
+  expect(calls).toEqual(["catalog:discovery","catalog:getListingBySlug","delivery:quote"]);
+  calls.length=0;
+  expect(await (check_location as any)._handler(ctx,{thread_id:"__probe__delivery",renter_postcode:"E1 6AN"})).toMatchObject({ok:false});
+  expect(calls).toEqual([]);
+});

@@ -1,13 +1,28 @@
 import { withoutVerificationQuestions } from "./renter_statement_scope";
 import { renterItemNames } from "./renter_item_names";
 
-export type KitEvidence = { names: string[]; contents: string[]; booked_camera?: boolean; booked_item?: boolean; kind?: string };
+export type KitEvidence = { names: string[]; contents: string[]; booked_camera?: boolean; booked_item?: boolean; requested_item?: boolean; kind?: string };
 const categories = [
   ["charger", /\bchargers?\b/i], ["battery", /\bbatter(?:y|ies)\b/i], ["card", /\b(?:cards?|sd|cfast|cf\s*express)\b/i],
   ["cage", /\bcages?\b/i], ["tripod", /\btripods?\b/i], ["microphone", /\b(?:mics?|microphones?)\b/i],
   ["case", /\b(?:cases?|bags?)\b/i], ["filter", /\bfilters?\b/i], ["monitor", /\bmonitors?\b/i],
   ["gimbal", /\bgimbals?\b/i], ["adapter", /\badapters?\b/i], ["ssd", /\bssd\b/i],
 ] as const;
+
+/** A compact, native answer for explicit inclusion questions, independent of
+ * model wording. An incomplete manifest never proves an item is absent. */
+export function requestedIncludedKitEntries(message: string, evidence: KitEvidence[]): string[] {
+  if (!/\b(?:includ(?:e|es|ed)|come(?:s)? with|what(?:'s| is) (?:in|included)|supplied with)\b/i.test(message)) return [];
+  if (/\b(?:extra|spare|additional|separately|instead|without|replace|swap)\b/i.test(message)) return [];
+  const selected = evidence.filter(e => e.requested_item || e.booked_camera || e.booked_item);
+  if (selected.length !== 1) return [];
+  const requested = categories.filter(([, pattern]) => pattern.test(message));
+  if (!requested.length) return [];
+  return [...new Set(selected[0].contents.filter(content =>
+    content.length <= 120 && !/[\n.!?;]/.test(content) &&
+    !/\b(?:no|not|without|excluding|optional|available separately|subject to)\b/i.test(content) &&
+    requested.some(([, pattern]) => pattern.test(content))))];
+}
 /** Avoid catalogue reads for unrelated uses such as “the price includes VAT”. */
 export function kitClaimsNeedEvidence(text:string) {
   return /\b(?:comes with|ships with|bundled with|includes?|included)\b/i.test(text)
@@ -115,6 +130,28 @@ export function unsupportedKitClaims(text: string, evidence: KitEvidence[], init
     const ownerText=match&&match[0].toLowerCase()!=="included" ? sentence.slice(0,match.index) : sentence;
     const named = evidence.filter(e => e.names.some(name => name && namesItem(ownerText, name)));
     if (named.length) subject = named;
+    // In a replacement proposal both cameras are mentioned, but a following
+    // "the kit" refers to the replacement, not both kits together. Resolve
+    // only a single explicitly named destination; ambiguous choices remain
+    // multi-owner and therefore fail closed.
+    const replacement = /\breplacing\s+(.+?)\s+with\s+(.+?)(?=\s+\b(?:would|will|could|should|brings?|means?)\b|[,;.]|$)/i.exec(ownerText);
+    const replacementSource = replacement?.[1].replace(/^\s*(?:the|your)\s+/i, "").trim();
+    const selectedSource = replacementSource && normalize(replacementSource).length >= 4 && selected.length === 1 &&
+      selected[0].names.some(n => normalize(n) === normalize(replacementSource) || normalize(n).startsWith(`${normalize(replacementSource)} `));
+    if (replacement && (selectedSource || evidence.some(e => e.names.some(n => n && namesItem(replacement[1], n))))) {
+      const target = evidence.filter(e => e.names.some(n => n && namesItem(replacement[2], n)));
+      if (target.length === 1) subject = target;
+    }
+    // "Replacing the BMPCC would remove its included kit" refers to the
+    // single selected booking, even if a different camera was discussed in
+    // the previous sentence. Resolve the abbreviated owner only against that
+    // selected identity; never borrow accessories from an unrelated option.
+    const removedOwner=/\b(?:replacing|removing|swapping)\s+(?:the|your)\s+(.+?)\s+(?:would|will)\s+(?:also\s+)?remove\s+its\b/i.exec(sentence)?.[1];
+    if (!named.length && removedOwner && normalize(removedOwner).length>=4) {
+      const booking = selected.length ? selected : evidence.filter(e=>e.booked_item || e.booked_camera);
+      const exact = booking.filter(e=>e.names.some(n=>normalize(n)===normalize(removedOwner) || normalize(n).startsWith(`${normalize(removedOwner)} `)));
+      if(exact.length===1)subject=exact;
+    }
     const bullet = includedList && /^\s*(?:[-•*]\s+|\d+\s*[x×]\s+)/i.test(sentence);
     if (!match && !bullet) { includedList = false; continue; }
     if (/\b(?:does not|doesn't|not|without)\s+(?:come|ship|include)/i.test(sentence)) { includedList = false; continue; }

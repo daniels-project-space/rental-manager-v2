@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PriceEvidence } from "./price_claims";
 import updatedSetupCapture from "../../src/lib/fixtures/renter-updated-setup-guard.json";
-import { guardDraft } from "./draft_guard";
+import { guardDraft, guardFinalDraft } from "./draft_guard";
 import { scoreDraft } from "./renter_bot_rubric";
 import { assessTravelCompensation, isDiscountConcessionOffer, isPickupLocationIntent, travelCompensationMaximum } from "./travel_compensation";
 
@@ -1081,6 +1081,46 @@ describe("account pickup and travel compensation policy", () => {
     expect(isPickupLocationIntent("Where are you with the delivery quote?")).toBe(false);
   });
 
+  it("preserves a separately verified kit answer when correcting pickup, but not unsupported or ambiguous claims", () => {
+    const options = {
+      history: [], lastRenterMessage: "Are you based in Dalston, and does the kit include a 1TB card?",
+      pickupArea: "Northumberland Street area", pickupConfirmed: false,
+      factPack: {kitEvidence: [{names:["BMPCC 6K Full Frame"], requested_item:true,
+        contents:["1× Lexar Professional 1TB CFexpress Type B card"]}]},
+    };
+    const location = "Pickup is around Northumberland Street. Would that work for you?";
+    const valid = guardDraft(`The kit includes one 1TB CFexpress Type B card. ${location}`, options);
+    expect(valid.text).toContain("The kit includes 1× Lexar Professional 1TB CFexpress Type B card.");
+    expect(valid.text).toContain("equipment is at our pickup point");
+    const liveWording = guardDraft(`Hi, collection is around Northumberland Street. Yes, the kit includes a 1TB Lexar Professional CFexpress Type B card.`, options);
+    expect(liveWording.text).toContain("The kit includes 1× Lexar Professional 1TB CFexpress Type B card.");
+    expect(liveWording.text).not.toMatch(/Yes, the kit/i);
+    for (const bad of ["The kit includes two 1TB CFexpress Type B cards.",
+      "The kit includes one 2TB CFexpress Type B card.",
+      "The kit includes one 1TB CFexpress Type B card and free delivery."]) {
+      expect(guardDraft(`${bad} ${location}`, options).text).not.toContain(bad);
+    }
+    const ambiguous = {...options, factPack:{kitEvidence:[...options.factPack.kitEvidence,
+      {names:["Other camera"],booked_camera:true,contents:["1× Lexar Professional 1TB CFexpress Type B card"]}]}};
+    expect(guardDraft(`The kit includes one 1TB CFexpress Type B card. ${location}`, ambiguous).text).not.toContain("The kit includes");
+  });
+
+  it("checks unresolved critical claims against the final rewritten answer", () => {
+    const options = {
+      history: [], lastRenterMessage: "Is this in Shoreditch and does the kit include a 1TB card?",
+      pickupArea: "Northumberland Street area", pickupConfirmed: false,
+      stockEvidence: [], stockRequest: {items:[{name:"BMPCC 6K Full Frame",quantity:1}]},
+      factPack:{kitEvidence:[{names:["BMPCC 6K Full Frame"], requested_item:true, contents:["1× Lexar Professional 1TB CFexpress Type B card"]}]},
+    };
+    const candidate = "For collection, this kit is available from the Northumberland Street area rather than Shoreditch. The kit includes a 1TB card.";
+    expect(guardDraft(candidate, options).flags).toContainEqual(expect.objectContaining({type:"UNGROUNDED_AVAILABILITY",action:"flagged"}));
+    const final = guardFinalDraft(candidate, options);
+    expect(final.text).toContain("1× Lexar Professional 1TB CFexpress Type B card");
+    expect(final.flags.some(f => f.action === "flagged" && f.severity === "critical")).toBe(false);
+    const uncorrected = guardFinalDraft("The BMPCC 6K Full Frame is available for your dates.", {...options,lastRenterMessage:"Is the BMPCC available?"});
+    expect(uncorrected.flags).toContainEqual(expect.objectContaining({type:"UNGROUNDED_AVAILABILITY",action:"flagged"}));
+  });
+
   it("keeps a courier round-trip question separate from a request for the pickup point", () => {
     expect(isPickupLocationIntent("How much is delivery and collection to SW1A 1AA?")).toBe(false);
     expect(isPickupLocationIntent("How much is delivery, and where is the pickup point?")).toBe(true);
@@ -1236,6 +1276,88 @@ describe("account pickup and travel compensation policy", () => {
     expect(result.flags.map((flag) => flag.type)).toContain("PICKUP_LOCATION_CORRECTED");
   });
 
+  it("preserves a verified round-trip delivery quote while correcting a separate pickup question", () => {
+    const lastRenterMessage = "Is collection in Shoreditch? If not, can you deliver this camera to E1 6AN and how much would delivery cost?";
+    const result = guardDraft("Collection is in central London rather than Shoreditch. Delivery and collection cost £62.", {
+      history: [], lastRenterMessage, pickupArea: "Northumberland Street area", pickupConfirmed: false,
+      factPack: { pricing: { deliveryFeeGbp: 62 } },
+      priceEvidence: [], priceRequest: { items: [] },
+    });
+    expect(result.text).toMatch(/collection is only available/i);
+    expect(result.text).toContain("Northumberland Street area");
+    expect(result.text).toMatch(/delivery and collection would cost £62 in total/i);
+    expect(result.flags.some(flag => flag.type === "PICKUP_LOCATION_CORRECTED")).toBe(true);
+    expect(result.flags.some(flag => flag.type === "UNGROUNDED_DELIVERY_FEE" || flag.type === "PRICE_HALLUCINATION")).toBe(false);
+  });
+
+  it("does not invent a delivery price when correcting a mixed pickup and delivery question", () => {
+    const result = guardDraft("Collection is in central London.", {
+      history: [], lastRenterMessage: "Is collection in Shoreditch? Can you deliver instead?",
+      pickupArea: "Northumberland Street area", pickupConfirmed: false,
+    });
+    expect(result.text).toMatch(/collection is only available/i);
+    expect(result.text).toMatch(/full delivery postcode/i);
+    expect(result.text).not.toMatch(/£/);
+  });
+
+  it("does not treat courier round-trip collection as a separate pickup location question", () => {
+    const draft = "Delivery and collection cost £62 in total.";
+    const result = guardDraft(draft, {
+      history: [], lastRenterMessage: "How much is delivery and collection to E1 6AN?",
+      pickupArea: "Northumberland Street area", pickupConfirmed: false,
+      factPack: { pricing: { deliveryFeeGbp: 62 } },
+    });
+    expect(result.text).toBe(draft);
+    expect(result.flags.some(flag => flag.type === "PICKUP_LOCATION_CORRECTED")).toBe(false);
+  });
+
+  it("retains the exact current rental total when correcting a separate pickup question", () => {
+    const priceRequest = { start_date: "2026-11-26", end_date: "2026-11-26", items: [{ name: "BMPCC 6K Full Frame", quantity: 1 }] };
+    const quote = { names: ["BMPCC 6K Full Frame"], kind: "rental" as const, days: 1, quantity: 1,
+      total_gbp: 50, start_date: "2026-11-26", end_date: "2026-11-26", call_id: "test", source: "lab_order_quote" };
+    const basket = { names: [], items: priceRequest.items, kind: "basket" as const, days: 1,
+      total_gbp: 50, start_date: "2026-11-26", end_date: "2026-11-26", call_id: "basket", source: "lab_order_quote" };
+    const options = { history: [], lastRenterMessage: "Is pickup in Shoreditch, and how much is the camera rental for the date I requested?",
+      pickupArea: "Northumberland Street area", pickupConfirmed: false, priceRequest, priceEvidence: [quote, basket] };
+    const result = guardDraft("Pickup is in central London. Your rental total is £50.", options);
+    expect(result.text).toMatch(/collection is only available/i);
+    expect(result.text).toContain("Your rental total is £50.");
+    expect(result.flags.filter(flag => flag.type === "PRICE_HALLUCINATION")).toEqual([]);
+    const noQuote = guardDraft("Pickup is in central London.", { ...options, priceEvidence: [] });
+    expect(noQuote.text).not.toMatch(/£/);
+    const otherItem = guardDraft("Pickup is in central London.", { ...options, lastRenterMessage: "Is pickup in Shoreditch, and how much is another camera rental?" });
+    expect(otherItem.text).not.toMatch(/£/);
+  });
+
+  it("keeps configured pickup and return windows when a location answer is corrected", () => {
+    const options = { history: [], lastRenterMessage: "Is pickup in Shoreditch? What are the pickup and return hours?",
+      pickupArea: "Northumberland Street area", pickupConfirmed: false,
+      pickupWindows: [{ start: "10:00", end: "12:00" }, { start: "19:00", end: "21:00" }] };
+    const result = guardDraft("Pickup is in central London. The windows are 10:00 to 12:00 and 19:00 to 21:00.", options);
+    expect(result.text).toMatch(/collection is only available/i);
+    expect(result.text).toContain("10:00 to 12:00 or 19:00 to 21:00");
+    expect(result.text).toContain("exact times work within your rental dates");
+    const missing = guardDraft("Pickup is in central London.", { ...options, pickupWindows: [] });
+    expect(missing.text).toContain("I'll check the pickup and return hours");
+    expect(missing.text).not.toContain("10:00");
+    const invalid = guardDraft("Pickup is in central London.", { ...options, pickupWindows: [{ start: "28:00", end: "29:00" }] });
+    expect(invalid.text).not.toContain("28:00");
+  });
+
+  it("answers a proposed pickup time even when a location correction is needed", () => {
+    const options = { history: [], pickupArea: "Northumberland Street area", pickupConfirmed: false,
+      pickupWindows: [{ start: "10:00", end: "12:00" }, { start: "19:00", end: "21:00" }] };
+    const ask = (time: string) => guardDraft("Pickup is near Northumberland Street.", {
+      ...options, lastRenterMessage: `Is pickup in Shoreditch, and can I collect it at ${time} on the rental date?`,
+    });
+    expect(ask("8am").text).toContain("08:00 is outside our pickup and return windows");
+    expect(ask("11am").text).toMatch(/11:00 is within our usual windows .*I'll check that exact time/);
+    expect(ask("11am").text).not.toMatch(/11:00 (?:is confirmed|is booked|will work)/i);
+    const unknown = guardDraft("Pickup is near Northumberland Street.", { ...options, pickupWindows: [],
+      lastRenterMessage: "Is pickup in Shoreditch, and can I collect it at 8am?" });
+    expect(unknown.text).toContain("I'll check whether 08:00 works");
+  });
+
   it("answers a location follow-up without repeating the full first reply", () => {
     const first = guardDraft("We're based near Northumberland Street.", {
       history: [], lastRenterMessage: "Is the Shoreditch location correct?",
@@ -1245,8 +1367,8 @@ describe("account pickup and travel compensation policy", () => {
       history: [{ role: "owner", content: first.text }], lastRenterMessage: "So not Shoreditch?",
       pickupArea: "Northumberland Street area", pickupConfirmed: false,
     });
-    expect(first.text).toContain("equipment you've requested is handled through our pickup point");
-    expect(second.text).toContain("equipment is handled through our pickup point");
+    expect(first.text).toContain("equipment is at our pickup point");
+    expect(second.text).toContain("That's right. For this rental, collection is only available from the Northumberland Street area");
     expect(second.text).not.toBe(first.text);
     expect(second.text).not.toMatch(/rather than Shoreditch|postcode|WC2N|discount/i);
     expect(second.text).not.toContain("exact meeting point");

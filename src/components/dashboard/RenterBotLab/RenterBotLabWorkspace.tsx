@@ -16,6 +16,7 @@ interface Session {
   threadId: string;
   accountSlug: string;
   context: SessionContext;
+  sourceThreadId?: string;
 }
 
 interface LabApiStatus {
@@ -30,6 +31,7 @@ export function RenterBotLabWorkspace() {
   const router = useRouter();
   const [session, setSession] = useState<Session | null>(null);
   const [ending, setEnding] = useState(false);
+  const [startingFriend, setStartingFriend] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const [labApiStatus, setLabApiStatus] = useState<LabApiStatus | null>(null);
   const [labApiChecked, setLabApiChecked] = useState(false);
@@ -90,6 +92,7 @@ export function RenterBotLabWorkspace() {
           items: result.context.items,
           startDate,
           endDate,
+          initialBotMessage: result.context.initialBotMessage,
         },
       });
     } catch (error) {
@@ -101,11 +104,26 @@ export function RenterBotLabWorkspace() {
     setEnding(true);
     try {
       if (session) await endLiveSession({ threadId: session.threadId });
+      if (session?.sourceThreadId) await endLiveSession({ threadId: session.sourceThreadId });
     } finally {
       setSession(null);
       setEnding(false);
       setStartError(null);
     }
+  }
+
+  async function handleStartFriend(reference: string) {
+    if (!session) return;
+    setStartingFriend(true);
+    setStartError(null);
+    try {
+      const result = await startLiveSession({accountSlug:session.accountSlug,items:[],lifecycle:"inquiry",
+        startDate:session.context.startDate,endDate:session.context.endDate});
+      setSession({threadId:result.threadId,accountSlug:session.accountSlug,sourceThreadId:session.threadId,
+        context:{...session.context,scenarioTitle:"Friend's new inquiry",items:[],initialBotMessage:undefined,friendReference:reference}});
+    } catch (error) {
+      setStartError(error instanceof Error ? error.message : "Could not start the friend's test conversation");
+    } finally { setStartingFriend(false); }
   }
 
   return (
@@ -164,7 +182,7 @@ export function RenterBotLabWorkspace() {
                 {ending ? "Closing…" : "Choose another example"}
               </button>
             </div>
-            <LiveChatSim session={session} />
+            <LiveChatSim key={session.threadId} session={session} onStartFriend={handleStartFriend} startingFriend={startingFriend} />
           </section>
         )}
       </main>

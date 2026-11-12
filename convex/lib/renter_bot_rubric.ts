@@ -67,6 +67,7 @@ export interface RubricInput {
   productionFlags?: ProductionFlag[];
   /** Native generation evidence, separate from the model's self-report. */
   priceEvidence?: PriceEvidence[];
+  verifiedDeliveryFeeGbp?: number | null;
   priceRequest?: StockRequest;
   lastRenterMessage?: string;
   conversationHistory?: TravelCompensationTurn[];
@@ -154,7 +155,7 @@ export function scoreDraft(input: RubricInput): RubricOutput {
     !discountConcessionExceedsCap(draftText,effectiveRentalChargeGbp,travelAssessment.maximumGbp);
   const priceValidationText=withoutAuthorizedTravelCompensationClaim(draftText,travelAssessment.maximumGbp,authorizedTravelOffer);
   const nativePricing=input.priceEvidence!==undefined&&input.priceRequest!==undefined;
-  const nativePriceFailures=nativePricing?unsupportedPriceClaims(nativeInformationForText({replacement_value_comparisons:input.replacementValueComparisons,budget_price_checks:input.budgetPriceChecks},priceValidationText,priceValidationText).claim_text,input.priceEvidence!,input.priceRequest!,input.lastRenterMessage??"",input.bookingRecord):[];
+  const nativePriceFailures=nativePricing?unsupportedPriceClaims(nativeInformationForText({replacement_value_comparisons:input.replacementValueComparisons,budget_price_checks:input.budgetPriceChecks},priceValidationText,priceValidationText).claim_text,input.priceEvidence!,input.priceRequest!,input.lastRenterMessage??"",input.bookingRecord,input.verifiedDeliveryFeeGbp):[];
   const allViolations = [...real.violations, ...supplemental.filter(v=>!nativePricing||!["MADE_UP_PRICE","UNVERIFIABLE_PRICE"].includes(v.category))];
   const cats = new Set(allViolations.map((v) => v.category));
   if(nativePriceFailures.length)cats.add("NATIVE_PRICE_UNSUPPORTED");

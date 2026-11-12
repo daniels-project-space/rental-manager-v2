@@ -35,6 +35,20 @@ describe("renter camera identity provenance", () => {
   it("keeps neutral setup questions and conditional suggestions answerable", () => {
     expect(check("Which current camera body do you use? If you use a Sony body, check its manual.", [])).toEqual([]);
   });
+  it("does not interpret a class of available alternatives as the renter's camera model", () => {
+    expect(check("I will check what lower-value camera options we have available for 26 November and see what might work best for you.", [])).toEqual([]);
+    expect(check("What cheaper camera options do we have?", [])).toEqual([]);
+    expect(check("I will check what suitable lower-value camera options we have available for your shoot.", [])).toEqual([]);
+    expect(check("What compact Sony camera options do we have?", [])).toEqual([]);
+    expect(check("Which Sony camera are you using?", [])).toHaveLength(1);
+    expect(check("Your Sony FX3 camera needs an adapter.", [])).toHaveLength(1);
+    const message="Could I try renting something lower value instead? What would you suggest?";
+    const candidate="I will check with the team to see what suitable lower-value camera options we have available that might work for your shoot.";
+    const guarded=guardDraft(candidate,{history:[],lastRenterMessage:message,stage:"VERIFICATION_FAILED"});
+    expect(guarded.flags.some(flag=>flag.type==="RENTER_CAMERA_IDENTITY_UNVERIFIED")).toBe(false);
+    const scored=scoreDraft({accountSlug:"dbcinema",draftText:guarded.text,productionFlags:guarded.flags,lastRenterMessage:message});
+    expect(scored.results.find(result=>result.category==="renter_camera_identity")?.status).toBe("pass");
+  });
   it("does not promote an offered body in a relative clause to renter identity", () => {
     const saved="I have the Sony A7 V available for 20-21 October, which is a cheaper full-frame Sony E-mount body that meets your video requirements.";
     expect(check(saved,[])).toEqual([]);

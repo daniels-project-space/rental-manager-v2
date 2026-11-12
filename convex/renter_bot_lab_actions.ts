@@ -7,7 +7,10 @@ import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 import { shortItemName } from "./lib/item_display_name";
 import { labBooking } from "./lib/lab_lifecycle";
 import { insertStockInput, patchStockInput } from "./lib/stock_input_writes";
-import { renterBotLabScenario, renterBotLabPickupPoint } from "./lib/renter_bot_lab_scenarios";
+import { insertProduct, patchProduct } from "./lib/product_context";
+import { renterBotLabScenario, renterBotLabPickupPoint, renterBotLabRentalDates } from "./lib/renter_bot_lab_scenarios";
+import { preparedListingPrice, type PreparedListingPrice } from "./lib/renter_bot_lab_listing_snapshot";
+import { preparedAlternativeSnapshot } from "./lib/renter_bot_lab_alternative_snapshot";
 /**
  * renter_bot_lab_actions — the ONE Convex entry point the Lab UI is allowed
  * to call, so auditing "does the Lab import any send path" is one file, not
@@ -230,6 +233,21 @@ export const ensurePreparedScenarioItem = internalMutation({
       .query("items")
       .withIndex("by_canonical_name", (q) => q.eq("name_canonical", scenario.item.name_canonical))
       .first();
+    // The owner confirmed these shared physical pools. The Lab uses its own
+    // stock rows and never copies or edits a real reservation.
+    let suppliedStock = existing?.supplied_stock;
+    if (scenario.item.name_canonical === "BMPCC 6K Full Frame") {
+      const ensurePool = async (name: string, slug: string, qty: number) => {
+        const found = await ctx.db.query("items").withIndex("by_canonical_name", q => q.eq("name_canonical", name)).first();
+        if (found) return found._id;
+        return insertStockInput(ctx, "items", { name_canonical: name, name_input: name, slug, kind: "accessory",
+          qty, unit_kind: "unit", track_independent_stock: true, status: "active", is_marketing_only: false,
+          created_at: now, updated_at: now });
+      };
+      const battery = await ensurePool("NP-F570 batteries", "lab-np-f570-batteries", 12);
+      await ensurePool("EF to L mount", "lab-ef-to-l-mount", 1);
+      if (!suppliedStock?.length) suppliedStock = [{item_id:battery, qty:5, source:"Owner-confirmed Lab kit allocation"}];
+    }
     const itemFacts = {
       ...scenario.item,
       ...(scenario.item.compatibility ? { compatibility: {
@@ -239,6 +257,7 @@ export const ensurePreparedScenarioItem = internalMutation({
         ...(scenario.item.compatibility.accessories ? { accessories: [...scenario.item.compatibility.accessories] } : {}),
         ...(scenario.item.compatibility.included_with_rental ? { included_with_rental: [...scenario.item.compatibility.included_with_rental] } : {}),
       } } : {}),
+      ...(suppliedStock?.length ? {supplied_stock:suppliedStock} : {}),
       is_marketing_only: false,
       status: "active",
       description_source: "owner-confirmed prepared Lab scenario",
@@ -264,35 +283,175 @@ export const ensurePreparedScenarioItem = internalMutation({
   },
 });
 
+/** Link the one prepared listing whose physical mapping has been verified
+ * against Rental Manager. Conflicting existing Lab mappings are never replaced. */
+export const ensurePreparedListing = internalMutation({
+  args: { scenarioId:v.string(), price:v.object({product_id:v.number(),daily_price_gbp:v.number(),
+    price_tiers:v.array(v.object({days:v.number(),pricePerDay:v.number()})),source_synced_at:v.number(),checked_at:v.number(),mapping_verified:v.optional(v.boolean())}) },
+  handler: async (ctx, {scenarioId, price}) => {
+    assertPreparedScenarioLab();
+    const scenario=renterBotLabScenario(scenarioId);
+    if (!scenario || scenario.accountSlug!=="dbcinema" || scenario.item.name_canonical!=="BMPCC 6K Full Frame" || price.product_id!==1103089 || price.mapping_verified!==true)
+      return false;
+    const item=await ctx.db.query("items").withIndex("by_canonical_name",q=>q.eq("name_canonical",scenario.item.name_canonical)).unique();
+    if(!item || item.status!=="active" || item.is_marketing_only) return false;
+    const mapping=await ctx.db.query("listing_resolution_override").withIndex("by_account_product",q=>q.eq("account_slug",scenario.accountSlug).eq("product_id",price.product_id)).unique();
+    const product=await ctx.db.query("hygglo_products").withIndex("by_account_product",q=>q.eq("accountSlug",scenario.accountSlug).eq("productId",price.product_id)).unique();
+    const listing=await ctx.db.query("online_listings").withIndex("by_account_product",q=>q.eq("account_slug",scenario.accountSlug).eq("product_id",price.product_id)).unique();
+    if(mapping && (mapping.components.length!==1 || mapping.components[0].item_id!==item._id || mapping.components[0].qty!==1)) return false;
+    if(product && (product.masterItemId!==item._id || product.isMarketingOnly || product.isPublished!==true)) return false;
+    const now=Date.now();
+    if(!mapping) await insertStockInput(ctx,"listing_resolution_override",{account_slug:scenario.accountSlug,product_id:price.product_id,
+      components:[{item_id:item._id,qty:1}],source:"verified prepared Lab listing",updated_at:now});
+    const fields={name:scenario.item.name_canonical,masterItemId:item._id,isMarketingOnly:false,isPublished:true,
+      prices:price.price_tiers,lastSyncedAt:price.source_synced_at};
+    if(product) await patchProduct(ctx,product._id,fields,product);
+    else await insertProduct(ctx,{accountSlug:scenario.accountSlug,productId:price.product_id,...fields});
+    const listingFields={name:scenario.item.name_canonical,daily_price:price.daily_price_gbp,is_published:true,updated_at:now};
+    if(listing) await ctx.db.patch(listing._id,listingFields);
+    else await ctx.db.insert("online_listings",{account_slug:scenario.accountSlug,product_id:price.product_id,...listingFields});
+    return true;
+  },
+});
+
+/** Seed a source-verified lower-value alternative into the isolated test
+ * inventory. Stock and bookings here are simulated, never live allocations. */
+export const ensurePreparedAlternative = internalMutation({
+  args:{scenarioId:v.string(),snapshot:v.union(v.null(),v.object({original_value_gbp:v.number(),replacement_value_gbp:v.number(),qty:v.number(),
+    daily_price_gbp:v.number(),price_tiers:v.array(v.object({days:v.number(),pricePerDay:v.number()})),source_synced_at:v.number()}))},
+  handler:async(ctx,{scenarioId,snapshot})=>{
+    assertPreparedScenarioLab();
+    const scenario=renterBotLabScenario(scenarioId);
+    if(!scenario || scenario.accountSlug!=="dbcinema" || scenario.item.name_canonical!=="BMPCC 6K Full Frame")return false;
+    // The owner confirmed no A7S III body is held. This is physical-stock
+    // evidence for the isolated Lab, not a change to any published listing.
+    // Never override an existing imported catalogue record.
+    const unowned=await ctx.db.query("items").withIndex("by_canonical_name",q=>q.eq("name_canonical","Sony A7S III")).first();
+    if(!unowned)await insertStockInput(ctx,"items",{name_canonical:"Sony A7S III",name_input:"Sony A7S III",slug:"lab-sony-a7s-iii-unowned",
+      kind:"camera",qty:0,unit_kind:"kit",status:"active",is_marketing_only:true,description_source:"owner-confirmed Lab non-owned camera",
+      created_at:Date.now(),updated_at:Date.now()});
+    const existing=await ctx.db.query("items").withIndex("by_canonical_name",q=>q.eq("name_canonical","Sony A7 III")).unique();
+    const marker="source-verified prepared Lab alternative";
+    const fixture=!existing || existing.description_source===marker;
+    // An imported row keeps its stock count and status. Only the specifically
+    // owner-confirmed kit facts are reconciled after the source checks pass.
+    if(existing && !fixture && (existing.status!=="active" || existing.is_marketing_only ||
+      !/^camera(?:_body)?$/.test(existing.kind??"") || !Number.isSafeInteger(existing.qty) || existing.qty<1))return false;
+    const account="dbcinema",productId=1046235;
+    const mapping=await ctx.db.query("listing_resolution_override").withIndex("by_account_product",q=>q.eq("account_slug",account).eq("product_id",productId)).unique();
+    const product=await ctx.db.query("hygglo_products").withIndex("by_account_product",q=>q.eq("accountSlug",account).eq("productId",productId)).unique();
+    const listing=await ctx.db.query("online_listings").withIndex("by_account_product",q=>q.eq("account_slug",account).eq("product_id",productId)).unique();
+    const managed=mapping?.source==="verified DB Cinema checkout listing" && !!existing && mapping.components.length===1 &&
+      mapping.components[0].item_id===existing._id && mapping.components[0].qty===1;
+    const withdraw=async()=>{
+      if(existing && fixture && existing.status!=="inactive")await patchStockInput(ctx,existing._id,{status:"inactive",updated_at:Date.now()});
+      // Withdraw only the Lab-managed offering. Imported item rows and
+      // unrelated offers stay untouched when the source cannot be checked.
+      if(managed && product?.masterItemId===existing?._id && product.isPublished===true)
+        await patchProduct(ctx,product._id,{isPublished:false},product);
+      if(managed && listing?.is_published)await ctx.db.patch(listing._id,{is_published:false,updated_at:Date.now()});
+      return false;
+    };
+    if(!snapshot)return withdraw();
+    if(!Number.isFinite(snapshot.original_value_gbp) ||
+       !Number.isFinite(snapshot.replacement_value_gbp) || snapshot.replacement_value_gbp<=0 ||
+       snapshot.replacement_value_gbp>=snapshot.original_value_gbp || !Number.isSafeInteger(snapshot.qty) || snapshot.qty<1) return withdraw();
+    const now=Date.now();
+    const target=await ctx.db.query("items").withIndex("by_canonical_name",q=>q.eq("name_canonical","BMPCC 6K Full Frame")).unique();
+    if(!target || target.status!=="active" || target.is_marketing_only || existing?.is_marketing_only)return withdraw();
+    if(mapping && (!existing || mapping.components.length!==1 || mapping.components[0].item_id!==existing._id || mapping.components[0].qty!==1))return withdraw();
+    if(product && (!existing || product.masterItemId!==existing._id || product.isMarketingOnly || product.isPublished!==true && !managed))return withdraw();
+    const existingSupplied=existing?.supplied_stock ?? [];
+    for(const part of existingSupplied) {
+      const item=await ctx.db.get(part.item_id);
+      if(item && /\bnp[\s-]*fz100\b/i.test(item.name_canonical) && item.name_canonical!=="Sony NP-FZ100 batteries")return withdraw();
+    }
+    let battery=await ctx.db.query("items").withIndex("by_canonical_name",q=>q.eq("name_canonical","Sony NP-FZ100 batteries")).first();
+    if(!battery){
+      const id=await insertStockInput(ctx,"items",{name_canonical:"Sony NP-FZ100 batteries",name_input:"Sony NP-FZ100 batteries",slug:"lab-sony-np-fz100-batteries",
+        kind:"accessory",qty:12,unit_kind:"unit",track_independent_stock:true,status:"active",is_marketing_only:false,created_at:now,updated_at:now});
+      battery=await ctx.db.get(id);
+    }
+    if(!battery || battery.status!=="active" || battery.is_marketing_only || !battery.track_independent_stock || battery.unit_kind!=="unit")return withdraw();
+    const preservedContents=(existing?.compatibility?.included_with_rental??[]).filter(content=>
+      !/\bnp[\s-]*fz100\b|\b(?:sd(?:hc|xc)?|cf\s*express|cfast|memory\s+card|cards?)\b|\bchargers?\b/i.test(content));
+    const facts={...(fixture?{qty:snapshot.qty,status:"active" as const,description_source:marker}:{}),
+      replacement_cost_gbp:snapshot.replacement_value_gbp,battery_type:"Sony NP-FZ100",
+      compatibility:{...existing?.compatibility,batteries:["Sony NP-FZ100"],cards:["SD"],
+        included_with_rental:[...preservedContents,"3× Sony NP-FZ100 batteries","2× 128GB SD cards","Sony dual battery charger"]},
+      supplied_stock:[...existingSupplied.filter(part=>String(part.item_id)!==String(battery!._id)),
+        {item_id:battery._id,qty:3,source:"Owner-confirmed Lab kit allocation"}],updated_at:now};
+    const id=existing?existing._id:await insertStockInput(ctx,"items",{name_canonical:"Sony A7 III",name_input:"Sony A7 III",slug:"lab-sony-a7-iii",
+      kind:"camera",unit_kind:"kit",is_marketing_only:false,created_at:now,...facts,
+      qty:snapshot.qty,status:"active",description_source:marker});
+    if(existing)await patchStockInput(ctx,id,facts);
+    // Equipment identity is distinct from stock and kit contents. Only add a
+    // manufacturer review when the isolated fixture has no existing review.
+    const spec=await ctx.db.query("item_specs").withIndex("by_item",q=>q.eq("item_id",id)).first();
+    if(!spec){
+      const source_url="https://electronics.sony.com/imaging/interchangeable-lens-cameras/full-frame/p/ilce7m3-b";
+      const verified_model="ILCE-7M3";
+      await ctx.db.insert("item_specs",{item_id:id,item_name_canonical:"Sony A7 III",description:"Sony Alpha 7 III full-frame interchangeable-lens camera.",
+        source:"manufacturer-verified",source_url,verified_model,verified_at:now,created_at:now,
+        camera_capabilities:{role:"interchangeable_lens",sensor_format:"full_frame",native_mount:"E",internal_4k:true,source_url,verified_model,verified_at:now}});
+    }
+    await patchStockInput(ctx,target._id,{replacement_cost_gbp:snapshot.original_value_gbp,updated_at:now});
+    if(!mapping)await insertStockInput(ctx,"listing_resolution_override",{account_slug:account,product_id:productId,
+      components:[{item_id:id,qty:1}],source:"verified DB Cinema checkout listing",updated_at:now});
+    const fields={name:"Sony A7 III Camera Body Kit",masterItemId:id,isMarketingOnly:false,isPublished:true,
+      prices:snapshot.price_tiers,lastSyncedAt:snapshot.source_synced_at};
+    if(product)await patchProduct(ctx,product._id,fields,product);else await insertProduct(ctx,{accountSlug:account,productId,...fields});
+    const offer={name:fields.name,daily_price:snapshot.daily_price_gbp,is_published:true,updated_at:now};
+    if(listing)await ctx.db.patch(listing._id,offer);else await ctx.db.insert("online_listings",{account_slug:account,product_id:productId,...offer});
+    return true;
+  },
+});
+
 /** Starts a fixed, owner-grounded conversation with its item seeded first. */
 export const startPreparedScenario = action({
   args: {
     scenarioId: v.union(
       v.literal("bmpcc-6k-full-frame-kit"),
       v.literal("sony-fx3-batteries"),
+      v.literal("verification-failed"),
     ),
   },
   handler: async (ctx, { scenarioId }): Promise<{
     threadId: string;
     accountSlug: string;
-    context: { scenarioTitle: string; displayName: string; items: string[]; examplePrompts: string[] };
+    context: { scenarioTitle: string; displayName: string; items: string[]; examplePrompts: string[]; initialBotMessage?: string };
   }> => {
     assertPreparedScenarioLab();
     const scenario = renterBotLabScenario(scenarioId);
     if (!scenario) throw new Error("Unknown prepared Lab example");
+    const supportsAlternative = scenario.accountSlug === "dbcinema" && scenario.item.name_canonical === "BMPCC 6K Full Frame";
+    const [preparedPrice, preparedAlternative] = await Promise.all([
+      preparedListingPrice(scenario.id, scenario.accountSlug),
+      supportsAlternative ? preparedAlternativeSnapshot() : Promise.resolve(null),
+    ]);
+    const { startDate, endDate } = renterBotLabRentalDates(scenario);
     const itemName = await ctx.runMutation(internal.renter_bot_lab_actions.ensurePreparedScenarioItem, { scenarioId });
+    if (preparedPrice) await ctx.runMutation(internal.renter_bot_lab_actions.ensurePreparedListing, {scenarioId,price:preparedPrice});
+    if (supportsAlternative) await ctx.runMutation(internal.renter_bot_lab_actions.ensurePreparedAlternative, {scenarioId,snapshot:preparedAlternative});
     const threadId = `${PREFIX}prepared-${scenarioId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     await ctx.runMutation(internal.renter_bot_probe.seed, {
       thread_id: threadId,
       account_slug: scenario.accountSlug,
       items: [{ name: itemName }],
       messages: [],
+      booking: scenario.startStage === "verification_failed" ? labBooking("awaiting_verification", startDate, endDate) : undefined,
     });
     await ctx.runMutation(internal.renter_bot_lab_order.seed, {
       thread_id: threadId,
       account_slug: scenario.accountSlug,
       item_names: [itemName],
+      prepared_price: preparedPrice,
+      start_date: startDate,
+      end_date: endDate,
     });
+    const failure = scenario.startStage === "verification_failed"
+      ? await ctx.runMutation(internal.renter_bot_lab_order.__service_simulateVerificationFailure, { thread_id: threadId, referral_code: crypto.randomUUID() })
+      : null;
     return {
       threadId,
       accountSlug: scenario.accountSlug,
@@ -301,6 +460,7 @@ export const startPreparedScenario = action({
         displayName: scenario.displayName,
         items: [itemName],
         examplePrompts: [],
+        ...(failure ? { initialBotMessage: failure.message } : {}),
       },
     };
   },
@@ -314,6 +474,7 @@ export const startLiveSession = action({
     scenarioId: v.optional(v.union(
       v.literal("bmpcc-6k-full-frame-kit"),
       v.literal("sony-fx3-batteries"),
+      v.literal("verification-failed"),
     )),
     fixtureId: v.optional(v.id("renter_bot_fixtures")),
     items: v.optional(v.array(v.string())),
@@ -340,6 +501,7 @@ export const startLiveSession = action({
       startDate?: string;
       endDate?: string;
       location?: string;
+      initialBotMessage?: string;
     };
   }> => {
     const threadId = `${PREFIX}lab-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -350,6 +512,8 @@ export const startLiveSession = action({
     let endDate = args.endDate;
     let location = args.location;
     let messages: { role: string; text: string }[] = [];
+    let preparedPrice: PreparedListingPrice | null | undefined;
+    let simulateVerificationFailure = false;
 
     // Keep all three account pickup points current in the isolated Lab before
     // the draft context is loaded. This mutation refuses any non-Lab backend.
@@ -361,14 +525,24 @@ export const startLiveSession = action({
     // catalogue before the UI queries item context or permits a chat turn.
     if (args.scenarioId) {
       assertPreparedScenarioLab();
+      if (args.fixtureId || args.productId != null) throw new Error("Prepared examples cannot be combined with another listing or fixture");
       const scenario = renterBotLabScenario(args.scenarioId);
       if (!scenario || scenario.accountSlug !== args.accountSlug) {
         throw new Error("Lab scenario/account mismatch");
       }
+      const supportsAlternative = scenario.accountSlug === "dbcinema" && scenario.item.name_canonical === "BMPCC 6K Full Frame";
+      const [scenarioPrice, preparedAlternative] = await Promise.all([
+        preparedListingPrice(scenario.id, scenario.accountSlug),
+        supportsAlternative ? preparedAlternativeSnapshot() : Promise.resolve(null),
+      ]);
+      preparedPrice = scenarioPrice;
+      simulateVerificationFailure = scenario.startStage === "verification_failed";
       const seededItemName = await ctx.runMutation(
         internal.renter_bot_lab_actions.ensurePreparedScenarioItem,
         { scenarioId: args.scenarioId },
       );
+      if (preparedPrice) await ctx.runMutation(internal.renter_bot_lab_actions.ensurePreparedListing, {scenarioId:args.scenarioId,price:preparedPrice});
+      if (supportsAlternative) await ctx.runMutation(internal.renter_bot_lab_actions.ensurePreparedAlternative, {scenarioId:args.scenarioId,snapshot:preparedAlternative});
       itemNames = [seededItemName];
     }
 
@@ -390,7 +564,7 @@ export const startLiveSession = action({
 
     startDate = args.startDate ?? startDate;
     endDate = args.endDate ?? endDate;
-    const lifecycle = args.lifecycle ?? "inquiry";
+    const lifecycle = simulateVerificationFailure ? "awaiting_verification" : args.lifecycle ?? "inquiry";
     const booking = labBooking(lifecycle, startDate, endDate);
 
     if (args.productId != null) {
@@ -417,10 +591,14 @@ export const startLiveSession = action({
       start_date: startDate,
       end_date: endDate,
       base_product_id: args.productId,
+      prepared_price: preparedPrice,
     });
+    const failure = simulateVerificationFailure
+      ? await ctx.runMutation(internal.renter_bot_lab_order.__service_simulateVerificationFailure, { thread_id: threadId, referral_code: crypto.randomUUID() })
+      : null;
     return {
       threadId,
-      context: { items: itemNames, productId: args.productId, lifecycle, priceGbp, dates, startDate, endDate, location },
+      context: { items: itemNames, productId: args.productId, lifecycle: failure ? "verification_failed" : lifecycle, priceGbp, dates, startDate, endDate, location, ...(failure ? { initialBotMessage: failure.message } : {}) },
     };
   },
 });
@@ -495,6 +673,7 @@ export const sendTestMessage = action({
       factsClaimed,
       productionFlags: draftResult.flags??draftResult.review?.flags,
       priceEvidence:draftResult.evidence?.prices,
+      verifiedDeliveryFeeGbp:draftResult.verified_delivery_fee_gbp,
         bookingRecord:draftResult.evidence?.booking_record,
       replacementValueComparisons:draftResult.evidence?.replacement_value_comparisons,
       budgetPriceChecks:draftResult.evidence?.budget_price_checks,

@@ -130,6 +130,9 @@ type OrderLine = {
   qty: number;
   daily_price_gbp?: number;
   pricing_basis?: "listing" | "catalog";
+  source_product_id?: number;
+  source_synced_at?: number;
+  source_checked_at?: number;
   price_tiers?: PriceTier[];
   origin: string;
 };
@@ -270,9 +273,19 @@ export const seed = internalMutation({
      * the renter pays, which is the one number they care about.
      */
     base_product_id: v.optional(v.number()),
+    /** An exact read-only listing-price snapshot for a prepared scenario.
+     * Null means verification failed; do not fall back to another price. */
+    prepared_price: v.optional(v.union(v.null(), v.object({
+      product_id: v.number(), daily_price_gbp: v.number(),
+      price_tiers: v.array(v.object({ days: v.number(), pricePerDay: v.number() })),
+      source_synced_at: v.number(), checked_at: v.number(), mapping_verified: v.optional(v.boolean()),
+    }))),
   },
   handler: async (ctx, a) => {
     assertLabThread(a.thread_id);
+    if (a.prepared_price !== undefined && (a.base_product_id != null || a.item_names.length !== 1)) {
+      throw new Error("A prepared listing price requires exactly one prepared item");
+    }
     const existing = await ctx.db
       .query("renter_bot_lab_orders")
       .withIndex("by_thread", (q) => q.eq("thread_id", a.thread_id))
@@ -309,19 +322,36 @@ export const seed = internalMutation({
     for (const name of lines.length ? [] : a.item_names) {
       const m = bestMatch(name, owned, (i) => i.name_canonical, (i) => (i.aliases ?? []) as string[]);
       const hit = m.match && m.confident ? m.match : null;
-      const pricedPid = hit ? await listingPidForItem(ctx, a.account_slug, String(hit._id)) : undefined;
+      const isPrepared = a.prepared_price !== undefined;
+      const exactPreparedItem = hit?.name_canonical === name;
+      const prepared = isPrepared && exactPreparedItem ? a.prepared_price : null;
+      let preparedProductId: number | undefined;
+      if (prepared?.mapping_verified === true && hit) {
+        const mapping = await ctx.db.query("listing_resolution_override").withIndex("by_account_product", q =>
+          q.eq("account_slug", a.account_slug).eq("product_id", prepared.product_id)).unique();
+        const product = await ctx.db.query("hygglo_products").withIndex("by_account_product", q =>
+          q.eq("accountSlug", a.account_slug).eq("productId", prepared.product_id)).unique();
+        if (mapping?.components.length === 1 && mapping.components[0].item_id === hit._id && mapping.components[0].qty === 1 &&
+            product?.masterItemId === hit._id && product.isPublished === true && !product.isMarketingOnly)
+          preparedProductId = prepared.product_id;
+      }
+      const pricedPid = !isPrepared && hit ? await listingPidForItem(ctx, a.account_slug, String(hit._id)) : undefined;
       // Price the SEEDED items too. Leaving them undefined made total_gbp null
       // for every scenario, so the bot was told "do not quote a total" on a
       // perfectly ordinary booking and the Lab panel could never show one.
       lines.push({
         item_id: hit ? hit._id : undefined,
+        ...(preparedProductId != null ? {product_id:preparedProductId} : {}),
         name: hit ? hit.name_canonical : name,
         qty: 1,
-        daily_price_gbp: hit
+        daily_price_gbp: isPrepared ? prepared?.daily_price_gbp : hit
           ? await resolveDailyPrice(ctx, a.account_slug, String(hit._id), hit.name_canonical)
           : undefined,
-        pricing_basis: pricedPid != null ? "listing" as const : "catalog" as const,
-        price_tiers: pricedPid != null ? await tiersForProduct(ctx, a.account_slug, pricedPid) : undefined,
+        pricing_basis: isPrepared || pricedPid != null ? "listing" as const : "catalog" as const,
+        price_tiers: isPrepared ? prepared?.price_tiers : pricedPid != null ? await tiersForProduct(ctx, a.account_slug, pricedPid) : undefined,
+        source_product_id: prepared?.product_id,
+        source_synced_at: prepared?.source_synced_at,
+        source_checked_at: prepared?.checked_at,
         origin: "seed",
       });
     }
@@ -857,6 +887,9 @@ export const simulateVerificationFailure = mutation({
   },
 });
 
+/** Internal counterpart keeps prepared simulations inside the isolated Lab. */
+export const __service_simulateVerificationFailure = internalMutationOf(simulateVerificationFailure);
+
 /** Explicit basket handoff. No inherited verification, payment or approval. */
 export const redeemReferral = mutation({
   args: { thread_id: v.string(), code: v.string(), preview_only:v.optional(v.boolean()), request_message_id:v.optional(v.string()),
@@ -914,6 +947,11 @@ export const redeemReferral = mutation({
           if(!listing||typeof listing.daily_price!=="number")return {ok:false,error:"A basket listing is no longer priced. Ask the owner to check it"};
           lines.push({...old,name:listing.name??old.name,daily_price_gbp:listing.daily_price,price_tiers:await tiersForProduct(ctx,target.account_slug,old.product_id),pricing_basis:"listing" as const});
         }
+      } else if (old.source_product_id != null) {
+        // A prepared scenario has an exact source listing price, but no verified
+        // local listing-to-stock mapping. Never replace it with another listing's
+        // generic item price when rebuilding the basket.
+        return { ok: false, error: "The original listing needs a current price and stock mapping before restoring the basket", reason: "referral_listing_mapping_unverified" };
       } else if (old.item_id) {
         const item = await ctx.db.get(old.item_id);
         if (!item || item.status !== "active" || item.is_marketing_only || (item.qty ?? 0) < old.qty) return { ok: false, error: "An item is no longer owned and available" };

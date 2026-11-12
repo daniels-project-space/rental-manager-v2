@@ -2,6 +2,14 @@ import { renterItemNames } from "./renter_item_names";
 import { describe, expect, it } from "vitest";
 import { unsupportedKitClaims } from "./kit_claims";
 const kit = { names: ["Sony A7 V"], contents: ["Sony A7 V", "NP-FZ100 batteries", "256GB card"] };
+it("attributes a removed kit's components to the single selected item rather than the proposed replacement",()=>{
+ const original={names:["BMPCC 6K Full Frame"],contents:["5× NP-F570 batteries","Tilta cage","1× EF-to-L mount adapter"],booked_camera:true};
+ const alternative={names:["Sony A7 III"],contents:["3× Sony NP-FZ100 batteries"],kind:"camera"};
+ const text="I'd recommend the Sony A7 III. Replacing the BMPCC would also remove its included kit (such as the EF-to-L mount adapter, Tilta cage, and NP-F570 batteries).";
+ expect(unsupportedKitClaims(text,[original,alternative],["BMPCC 6K Full Frame"])).toEqual([]);
+ expect(unsupportedKitClaims(text.replace("Tilta cage","DJI microphone"),[original,alternative],["BMPCC 6K Full Frame"])).not.toEqual([]);
+ expect(unsupportedKitClaims(text.replace("BMPCC","Sony FX3"),[original,alternative],["BMPCC 6K Full Frame"])).not.toEqual([]);
+});
 describe("inclusion owner scopes in actual booked-kit replies", () => {
  const camera={names:renterItemNames("BMPCC 6K Full Frame"),contents:["Canon EF-to-L mount adapter"],booked_camera:true};
  const lens={names:["Canon EF 16-35mm f2.8"],contents:["Canon EF 16-35mm f2.8"]};
@@ -122,6 +130,9 @@ describe("per-item included-content claims", () => {
     const newer = { names: ["Sony A7 III"], contents: ["NP-FZ100 batteries"] };
     expect(unsupportedKitClaims("Sony A7 III includes NP-FZ100 batteries.", [older, newer])).toEqual([]);
     expect(unsupportedKitClaims("Sony A7 II includes NP-FZ100 batteries.", [older, newer]).map(f => f.content)).toEqual(["battery"]);
+    expect(unsupportedKitClaims("The A7 III kit includes NP-FZ100 batteries.", [older, newer])).toEqual([]);
+    expect(unsupportedKitClaims("The A7 II kit includes NP-FZ100 batteries.", [older, newer]).map(f => f.content)).toEqual(["battery"]);
+    expect(unsupportedKitClaims("The A7S III kit includes NP-FZ100 batteries.", [older, newer])).not.toEqual([]);
   });
   it("preserves actual-kit clarification without treating excluded types as inclusions", () => {
     const bm = { names: ["Blackmagic 6K Full Frame"], contents: ["5 × NP-F570 batteries", "1 × 1TB CFexpress Type B card"] };
@@ -240,5 +251,21 @@ describe("included components do not take ownership of their parent kit",()=>{
  });
  it("does not lend the camera contents to a separately named lens",()=>{
   expect(unsupportedKitClaims("Blackmagic 6K Full Frame is the camera. Canon EF 24-105mm f4 includes a 1TB CFexpress Type B card.",[camera,...components])).not.toEqual([]);
+ });
+});
+
+describe("replacement proposals retain the replacement kit as the subject", () => {
+ const oldKit={names:renterItemNames("BMPCC 6K Full Frame"),contents:["5 × NP-F570 batteries","1TB CFexpress Type B card"]};
+ const sony={names:renterItemNames("Sony A7 III"),contents:["3 × Sony NP-FZ100 batteries","2× 128GB SD cards","Sony dual battery charger"]};
+ const fx3={names:["Sony FX3"],contents:["3 × Sony NP-FZ100 batteries"]};
+ const text="I'd recommend our Sony A7 III instead. Replacing the BMPCC 6K Full Frame with the A7 III body kit would bring the total to £18. The kit comes with 3× NP-FZ100 batteries, a dual charger, and 2× 128GB SD cards.";
+ it("checks the captured follow-up against the proposed kit",()=>expect(unsupportedKitClaims(text,[oldKit,sony],oldKit.names)).toEqual([]));
+ it("resolves the abbreviated source only against the uniquely selected kit",()=>{
+  const abbreviated=text.replace("BMPCC 6K Full Frame with", "BMPCC 6K with");
+  expect(unsupportedKitClaims(abbreviated,[oldKit,sony],["BMPCC 6K Full Frame"])).toEqual([]);
+ });
+ it("still rejects incorrect contents and unclear replacement choices",()=>{
+  expect(unsupportedKitClaims(text.replace("3× NP-FZ100","5× NP-F570"),[oldKit,sony],oldKit.names)).not.toEqual([]);
+  expect(unsupportedKitClaims(text.replace("A7 III body kit would", "A7 III or Sony FX3 would"),[oldKit,sony,fx3],oldKit.names)).not.toEqual([]);
  });
 });

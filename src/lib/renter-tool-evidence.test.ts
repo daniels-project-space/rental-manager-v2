@@ -54,6 +54,22 @@ it("does not turn a failed aggregate proposal into an independent negative camer
  expect(stockReceipts(renterToolReceipts([{toolName:"check_availability",result}])).map(r=>[r.result.item_name,r.result.available])).toEqual([["BMPCC 6K Pro",true],["NP-F570 batteries",false]]);
 });
 describe("successful tool receipts", () => {
+  it("retains only an exact, independently checked non-rentable recommendation target", () => {
+    const target = { item_id: "target-id", item_name: "Sony A7S III", source: "shared_inventory_confirmed_rentals",
+      available: false, owned: false, start_date: "2026-11-26", end_date: "2026-11-26", requested_units: 1,
+      free_units: 0, checked_at: 1 };
+    const result = { target_identity_resolved: true, target_rentable: false, target_item_id: "target-id",
+      target: "Sony A7S III", target_stock_receipt: target, alternatives: [] };
+    const harvest = (value: unknown) => stockReceipts(renterToolReceipts([{ toolName: "find_owned_alternatives", toolCallId: "one", result: value }]));
+    expect(harvest(result).map(r => r.result.item_name)).toEqual(["Sony A7S III"]);
+    for (const changed of [
+      { ...result, target_identity_resolved: false }, { ...result, target_rentable: true },
+      { ...result, target_item_id: "different" }, { ...result, target: "Sony A7 III" },
+      { ...result, target_stock_receipt: { ...target, owned: true } },
+      { ...result, target_stock_receipt: { ...target, source: "model" } },
+      { ...result, target_stock_receipt: { ...target, available: true } },
+    ]) expect(harvest(changed)).toEqual([]);
+  });
   it("carries authoritative alternative kits without accepting call arguments or marketing prose", () => {
     const a = { name: "BMPCC 6K Full Frame", listing_name: "Misleading SEO title", kit_source: "physical_mapping_and_inventory", kit_contents: ["NP-F570 batteries", "1TB CFexpress Type B"] };
     const argsOnly = renterToolReceipts([{ payload: { toolName: "find_owned_alternatives", args: { alternatives: [a] } } }]);

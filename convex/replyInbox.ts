@@ -22,6 +22,7 @@ import {negotiationFromMessages} from "./lib/renter_bot_negotiation";
 import { bookingRecord, hasSingleBookingRecord } from "./lib/booking_record";
 import {claimsBookingConfirmation,claimsCurrentOwnerApproval,hasPickupDisclosure,pickupPrivacySources,unsupportedBookingDateClaims} from "./lib/booking_reply_claims";
 import { renterPriceEvidence } from "../src/lib/renter-price-evidence";
+import { resolvePickupHours } from "../src/lib/pickup-hours";
 import { unsupportedPriceClaims, type PriceEvidence } from "./lib/price_claims";
 import { performJointStockCheck } from "./renter_bot_tools";
 import { qualifyRecommendationBasket } from "./lib/recommendation_qualification";
@@ -1506,10 +1507,7 @@ export const getThreadContext = internalQuery({
     // availability independent from Leo/DB Cinema while still giving a safe
     // shared default to accounts that have not been configured yet.
     const settingsRow = await ctx.db.query("settings").first();
-    const pickupHours =
-      profile?.pickup_hours && profile.pickup_hours.length
-        ? profile.pickup_hours
-        : settingsRow?.pickup_hours;
+    const pickupHours = resolvePickupHours(profile?.pickup_hours, settingsRow?.pickup_hours);
     const businessHoursText =
       pickupHours && pickupHours.length
         ? `Pickup/collection windows (Europe/London): ${pickupHours.map((h) => `${h.start}–${h.end}`).join(", ")}. Only confirm times inside these windows.`

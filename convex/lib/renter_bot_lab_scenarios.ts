@@ -2,6 +2,7 @@
 export const RENTER_BOT_LAB_SCENARIO_IDS = [
   "bmpcc-6k-full-frame-kit",
   "sony-fx3-batteries",
+  "verification-failed",
 ] as const;
 
 export type RenterBotLabScenarioId = (typeof RENTER_BOT_LAB_SCENARIO_IDS)[number];
@@ -53,12 +54,14 @@ export interface RenterBotLabScenario {
   title: string;
   accountSlug: "leo" | "dbcinema";
   displayName: string;
+  /** A final platform failure event, simulated entirely within the Lab. */
+  startStage?: "verification_failed";
   /** Seed a normal, pending rental request with a current future date range. */
   rentalSetup: { startInDays: number; durationDays: number };
   item: ScenarioItem;
 }
 
-export const RENTER_BOT_LAB_SCENARIOS: RenterBotLabScenario[] = [
+const BASE_SCENARIOS: RenterBotLabScenario[] = [
   {
     id: "bmpcc-6k-full-frame-kit",
     title: "Blackmagic 6K Full Frame kit",
@@ -109,13 +112,21 @@ export const RENTER_BOT_LAB_SCENARIOS: RenterBotLabScenario[] = [
       qty: 4,
       unit_kind: "kit",
       battery_type: "Sony NP-FZ100",
+      card_type: "CFexpress Type A",
       compatibility: {
         batteries: ["Sony NP-FZ100"],
-        included_with_rental: ["3× Sony NP-FZ100 batteries"],
+        cards: ["CFexpress Type A"],
+        included_with_rental: ["3× Sony NP-FZ100 batteries", "1× 320GB CFexpress Type A card", "Sony dual battery charger"],
       },
-      notes: "Owner-confirmed: each FX3 camera kit includes three Sony NP-FZ100 batteries. At least 12 batteries are available across shared stock.",
+      notes: "Owner-confirmed: each FX3 camera kit includes three Sony NP-FZ100 batteries, a dual charger, and a 320GB CFexpress card. At least 12 batteries are available across shared stock.",
     },
   },
+];
+
+export const RENTER_BOT_LAB_SCENARIOS: RenterBotLabScenario[] = [
+  ...BASE_SCENARIOS,
+  { ...BASE_SCENARIOS[0], id: "verification-failed", title: "Verification failed",
+    startStage: "verification_failed" },
 ];
 
 export function renterBotLabScenario(id: string): RenterBotLabScenario | undefined {

@@ -101,6 +101,7 @@ export function isPickupLocationIntent(message: string): boolean {
   const courierRoundTrip = /\b(?:deliver(?:y|ed)?|courier)\b/i.test(message) && /\b(?:collection|collect|pick[ -]?up)\b/i.test(message);
   const asksOwnPickup = /\b(?:can|could|would|where|when)\s+(?:i|we)\s+(?:collect|pick[ -]?up)\b/i.test(message) ||
     /\b(?:collect|pick[ -]?up)\s+(?:it\s+)?(?:myself|ourselves|in person)\b/i.test(message) ||
+    /\b(?:is|are|was)\s+(?:the\s+)?(?:pickup|pick[ -]?up|collection)\s+(?:in|at|near|from)\b/i.test(message) ||
     /\b(?:where|which|what|your)\b.{0,35}\b(?:pickup|pick[ -]?up|collection)\s+(?:address|postcode|point|location|area)\b/i.test(message) ||
     /\bwhere\b.{0,25}\b(?:pickup|pick[ -]?up|collection|collect)\b/i.test(message);
   if (courierRoundTrip && !asksOwnPickup) return false;

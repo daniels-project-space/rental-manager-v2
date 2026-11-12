@@ -1,11 +1,43 @@
 import {describe,it,expect} from "vitest";
 import {acceptsReplacement,requiresReplacementTransaction,type ReplacementAcceptanceQuote} from "./renter_replacement_acceptance";
-import {replacementProposalsFromEvidence,type SentReplacementProposal} from "./renter_replacement_proposal";
+import {discloseReplacementSource,replacementProposalsFromEvidence,type SentReplacementProposal} from "./renter_replacement_proposal";
 const old={product_id:1163215,name:"TTArtisan 11mm f2.8",qty:1,line_total_gbp:42},next={product_id:1115113,name:"Sony GM 16-35mm f2.8",qty:1,line_total_gbp:40};
 const q:ReplacementAcceptanceQuote={context_key:"base",epoch:109,physical_identity_key:"new-physical",base_physical_identity_key:"old-physical",start_date:"2026-10-20",end_date:"2026-10-21",total_gbp:40,base_total_gbp:42,added:[next],removed:[old]};
 const record:SentReplacementProposal={context_key:q.context_key,epoch:q.epoch,physical_identity_key:q.physical_identity_key,base_physical_identity_key:q.base_physical_identity_key,quoted_for_message_id:"previous",items:[{product_id:next.product_id,qty:1}],removed_listings:[{product_id:old.product_id,qty:1}],base_items:[{name:old.name,quantity:1}],added_items:[{name:next.name,quantity:1}],removed_items:[{name:old.name,quantity:1}],start_date:q.start_date,end_date:q.end_date,total_gbp:40,base_total_gbp:42};
 const owner={body_text:"We can swap the TTArtisan 11mm f2.8 for Sony GM 16-35mm f2.8 for 20–21 October. Your updated booking total would be £40. Shall I make that swap?",quoted_replacements:[record]};
 describe("Native replacement consent",()=>{
+ it("accepts the renter's named, priced confirmation of an exact transmitted switch",()=>{
+  const previous={product_id:1103089,name:"BMPCC 6K Full Frame",qty:1,line_total_gbp:50};
+  const chosen={product_id:1046235,name:"Sony A7 III",qty:1,line_total_gbp:18};
+  const quote:ReplacementAcceptanceQuote={...q,start_date:"2026-11-26",end_date:"2026-11-26",total_gbp:18,base_total_gbp:50,added:[chosen],removed:[previous]};
+  const sent:SentReplacementProposal={...record,start_date:quote.start_date,end_date:quote.end_date,total_gbp:18,base_total_gbp:50,
+   items:[{product_id:chosen.product_id,qty:1}],removed_listings:[{product_id:previous.product_id,qty:1}],
+   base_items:[{name:previous.name,quantity:1}],removed_items:[{name:previous.name,quantity:1}],added_items:[{name:chosen.name,quantity:1}]};
+  const offered={quoted_replacements:[sent],body_text:"If you'd like to switch from the BMPCC 6K Full Frame to the Sony A7 III, that would bring the total for the day to £18. Let me know if you'd like me to update your request to the A7 III."};
+  expect(acceptsReplacement("Yes please, switch it to the A7 III for £18.",quote,offered)).toBe(true);
+  const omitted={...offered,body_text:"The Sony A7S III isn't available for 26 November. I'd recommend our Sony A7 III instead. Swapping to the Sony A7 III would bring your total to £18 for the day. Let me know if you'd like me to update your request to that."};
+  expect(acceptsReplacement("Yes please, switch it to the A7 III for £18.",quote,omitted)).toBe(false);
+  const evidence={names:[],kind:"basket" as const,source:"native_lab_proposal",call_id:"actual",start_date:quote.start_date,end_date:quote.end_date,total_gbp:18,
+   proposal:{base_items:sent.base_items,added_items:sent.added_items,removed_items:sent.removed_items,physical_identity_key:sent.physical_identity_key,
+    base_physical_identity_key:sent.base_physical_identity_key,base_total_gbp:50,added_listings:[{product_id:chosen.product_id,quantity:1}],removed_listings:[{product_id:previous.product_id,quantity:1}]}};
+  const clarified=discloseReplacementSource(omitted.body_text,[evidence]);
+  expect(clarified).toContain("This would replace 1 × BMPCC 6K Full Frame in your current request.");
+  expect(acceptsReplacement("Yes please, switch it to the A7 III for £18.",quote,{...omitted,body_text:clarified})).toBe(true);
+  expect(discloseReplacementSource(omitted.body_text.replace("£18","£19"),[evidence])).not.toContain("This would replace");
+  expect(discloseReplacementSource(omitted.body_text,[{...evidence,source:"unverified"}])).toBe(omitted.body_text);
+  const choice="The Sony A7S III isn't available. Swapping to the A7 III would bring the rental total to £18 for the day (£32 less than the BMPCC 6K). Let me know if you would like me to switch your request over to the A7 III or stick with the BMPCC 6K.";
+  const choiceWithSource=discloseReplacementSource(choice,[evidence]);
+  expect(choiceWithSource).toContain("This would replace 1 × BMPCC 6K Full Frame");
+  expect(acceptsReplacement("Yes please, switch it to the A7 III for £18.",quote,{...omitted,body_text:choiceWithSource})).toBe(true);
+  expect(acceptsReplacement("yes",quote,{...omitted,body_text:choiceWithSource})).toBe(false);
+  const natural="I'd recommend our Sony A7 III kit. Swapping to it would bring the rental to £18 for the day. Let me know if you would like me to update your request.";
+  const naturalWithSource=discloseReplacementSource(natural,[evidence]);
+  expect(naturalWithSource).toContain("This would replace 1 × BMPCC 6K Full Frame");
+  expect(acceptsReplacement("Yes please, switch it to the A7 III for £18.",quote,{...omitted,body_text:naturalWithSource})).toBe(true);
+  for(const changed of ["Yes please, switch it to the A7 II for £18.","Yes please, switch it to the A7 III for £19.","Yes please, switch it to two A7 III for £18.","Maybe switch it to the A7 III for £18."])
+   expect(acceptsReplacement(changed,quote,offered),changed).toBe(false);
+  expect(acceptsReplacement("Yes please, switch it to the A7 III for £18.",quote)).toBe(false);
+ });
  it("accepts an unchanged transmitted offer without asking twice",()=>{for(const text of ["Yes","Yes please","Please go ahead","Go ahead and make the swap","Please swap TTArtisan 11mm f2.8 for Sony GM 16-35mm f2.8"])expect(acceptsReplacement(text,q,owner),text).toBe(true);});
  it("recognizes the captured prime shorthand against a complete physical lens identity",()=>{
   const full={...q,removed:[{...old,name:"TTArtisan 11mm f2.8 Fisheye (Sony E)"}]};

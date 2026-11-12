@@ -5,6 +5,16 @@ import { guardDraft } from "./draft_guard";
 const request: StockRequest = { start_date: "2026-10-02", end_date: "2026-10-04", items: [{ name: "Sony FX3", quantity: 1 }] };
 const stock: StockReceipt = { item: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04", quantity: 1, available: false, free_units: 0, checked_at: 1790850651000, call_id: "fx3-stock" };
 const check = (text: string, receipts = [stock], scope = request) => unsupportedStockClaims(text, receipts, scope);
+describe("descriptive pronouns in an alternative recommendation",()=>{
+ const scope:StockRequest={start_date:"2026-11-26",end_date:"2026-11-26",items:[{name:"BMPCC 6K Full Frame",quantity:1}]};
+ const camera:StockReceipt={...stock,item:"Sony A7 III",kind:"camera",start_date:"2026-11-26",end_date:"2026-11-26",available:true,free_units:1};
+ const text="I'd recommend the Sony A7 III instead. It's a full-frame E-mount body and is available for your date.";
+ it("binds the descriptive pronoun to the previously named, independently checked camera",()=>expect(check(text,[camera],scope)).toEqual([]));
+ it("still requires the exact subject, date and positive stock",()=>{
+  for(const evidence of [[],[{...camera,available:false}],[{...camera,start_date:"2026-11-27",end_date:"2026-11-27"}],[{...camera,item:"Sony A7 II"}]])expect(check(text,evidence,scope)).not.toEqual([]);
+  expect(check(text.replace("full-frame E-mount body","Sony FX3 camera"),[camera],scope)).not.toEqual([]);
+ });
+});
 describe("named Native stock in an empty inquiry",()=>{
  it('retains independent dated stock scope even when no financial quote is selected',()=>{
   const check={new_inquiry:true,start_date:'2026-10-22',end_date:'2026-10-24',basket:{available:true,items:[{name:'Sony FX3',quantity:1}]}};

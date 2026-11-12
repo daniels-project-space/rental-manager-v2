@@ -11,7 +11,7 @@ import { unsupportedSensorIdentityClaims } from "./camera_sensor_comparisons";
 import { forbiddenFulfillmentClaims } from "./fulfillment_claims";
 import { unsupportedPriceClaims, incompleteSetupQuotes, type PriceEvidence } from "./price_claims";
 import { supportsRentalEligibilityDecline, rentalRefusalSubject, unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
-import { unsupportedKitClaims, type KitEvidence } from "./kit_claims";
+import { requestedIncludedKitEntries, unsupportedKitClaims, type KitEvidence } from "./kit_claims";
 import { unsupportedCameraModeClaims, unsupportedBuiltInNDClaims, type CameraEvidence } from "./camera_mode_claims";
 import { unsupportedLensFocusClaims, type LensFocusEvidence } from "./lens_focus_claims";
 import { renterItemNames } from "./renter_item_names";
@@ -252,7 +252,8 @@ const sev = (type: string): FlagSeverity =>
 function hhmmToMin(s: string): number | null {
   const m = s.trim().match(/^(\d{1,2}):(\d{2})$/);
   if (!m) return null;
-  return parseInt(m[1]) * 60 + parseInt(m[2]);
+  const hours = Number(m[1]), minutes = Number(m[2]);
+  return hours < 24 && minutes < 60 ? hours * 60 + minutes : null;
 }
 
 /** Build [startMin,endMin] ranges from owner pickup windows. */
@@ -279,6 +280,7 @@ function parseTimeToMinutes(timeStr: string): number | null {
   let hours = parseInt(match[1]);
   const minutes = match[2] ? parseInt(match[2]) : 0;
   const meridiem = match[3];
+  if (minutes > 59 || (meridiem ? hours < 1 || hours > 12 : hours > 23)) return null;
   if (meridiem === "pm" && hours < 12) hours += 12;
   if (meridiem === "am" && hours === 12) hours = 0;
   return hours * 60 + minutes;
@@ -891,12 +893,61 @@ const ASSERTS_AVAIL_RE =
   });
   const asksPickupLocation = isPickupLocationIntent(opts.lastRenterMessage);
   const asksTravel = isTravelConcern(opts.lastRenterMessage);
+  const independentKitEntries = asksPickupLocation
+    ? requestedIncludedKitEntries(message, factPack?.kitEvidence ?? []) : [];
+  const independentKitAnswer = independentKitEntries.length
+    ? `The kit includes ${independentKitEntries.join(", ")}.` : null;
+  // A single renter message can ask about collection AND delivery. A pickup
+  // correction must not erase a separate, verified delivery quote (or silently
+  // drop the delivery question when a quote cannot be established).
+  const asksDelivery = /\b(?:deliver(?:y|ed)?|courier|shipping|ship)\b/i.test(message);
+  const deliveryFee = factPack?.pricing?.deliveryFeeGbp;
+  const renterProvidedPostcode = [...opts.history.filter(turn => turn.role === "renter").map(turn => turn.content), message]
+    .some(content => /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i.test(content));
+  const independentDeliveryAnswer = asksPickupLocation && asksDelivery
+    ? typeof deliveryFee === "number" && Number.isFinite(deliveryFee) && deliveryFee > 0
+      ? `Delivery and collection would cost £${deliveryFee.toFixed(2).replace(/\.00$/, "")} in total.`
+      : renterProvidedPostcode
+        ? "I can check delivery and the charge for you."
+        : "I can check delivery and the charge for you. What is the full delivery postcode?"
+    : null;
+  const asksCurrentRentalPrice = !asksDelivery &&
+    /\b(?:how much|price|cost|quote|total)\b/i.test(message) &&
+    /\b(?:rental|hire|booking|current (?:item|basket)|this (?:camera|item|kit)|the camera)\b/i.test(message) &&
+    !/\b(?:another|different|alternative|extra|additional|instead|add(?:ing)?)\b/i.test(message);
+  const verifiedCurrentRentalTotal = verifiedRentalChargeGbp({
+    priceEvidence: opts.priceEvidence?.filter(e => e.kind === "basket" && !e.proposal && !e.date_proposal &&
+      e.quote_role !== "inquiry" && e.quote_role !== "addition" && e.quote_role !== "proposed_line"),
+    priceRequest: opts.priceRequest,
+  });
+  const independentRentalAnswer = asksPickupLocation && asksCurrentRentalPrice && verifiedCurrentRentalTotal != null
+    ? `Your rental total is £${verifiedCurrentRentalTotal.toFixed(2).replace(/\.00$/, "")}.` : null;
+  const requestedTime = /\b(?:collect|pick[ -]?up|pickup|return|drop[ -]?off)(?:\s+(?:it|the (?:camera|equipment|kit)))?\s+(?:at|around|by)\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)|\d{1,2}:\d{2})\b/i.exec(message);
+  const proposedMinutes = requestedTime ? parseTimeToMinutes(requestedTime[1]) : null;
+  const asksHours = (proposedMinutes !== null || /\b(?:hours|opening times|time windows?|time slots?|what times?|when can (?:i|we)|(?:pickup|pick[ -]?up|collection|return|drop[ -]?off)(?:\s+and\s+(?:pickup|pick[ -]?up|collection|return|drop[ -]?off))?\s+times?)\b/i.test(message)) &&
+    /\b(?:pickup|pick[ -]?up|collection|collect|return|drop[ -]?off|opening)\b/i.test(message);
+  const timeLabel = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+  const windowText = ranges.map(([start, end]) => `${timeLabel(start)} to ${timeLabel(end)}`).join(" or ");
+  const independentHoursAnswer = asksPickupLocation && asksHours
+    ? ranges.length
+      ? proposedMinutes === null
+        ? `Pickup and return windows are ${windowText}. What exact times work within your rental dates?`
+        : inAnyWindow(proposedMinutes, ranges)
+          ? `${timeLabel(proposedMinutes)} is within our usual windows (${windowText}); I'll check that exact time.`
+          : `${timeLabel(proposedMinutes)} is outside our pickup and return windows: ${windowText}. What exact times work within your rental dates?`
+      : proposedMinutes === null ? "I'll check the pickup and return hours for your rental."
+        : `I'll check whether ${timeLabel(proposedMinutes)} works and confirm the pickup and return hours.`
+    : null;
+  const withIndependentAnswer = (location: string) =>
+    [independentKitAnswer, location, independentDeliveryAnswer, independentRentalAnswer, independentHoursAnswer].filter(Boolean).join(" ");
   const pickupAreaDisclosure = (area: string) => {
     if (travelCompensation.pickupAreaDisclosed) {
       const exactDetailsRequested = /\b(?:address|postcode|exact|map|meeting point)\b/i.test(opts.lastRenterMessage);
-      return `For this rental, the equipment is handled through our pickup point in the ${area}, so collection is only available there. Would that location work for you?${exactDetailsRequested ? " I'll share the exact meeting point once the booking is confirmed." : ""}`;
+      const acknowledgesNegativeQuestion = /\b(?:so|then)\s+not\b/i.test(opts.lastRenterMessage);
+      return `${acknowledgesNegativeQuestion ? "That's right. " : ""}For this rental, collection is only available from the ${area}, where we handle the requested equipment. Would that work for you?${exactDetailsRequested ? " I'll share the exact meeting point once the booking is confirmed." : ""}`;
     }
-    return `The equipment you've requested is handled through our pickup point in the ${area}, so collection is only available there. Would that work for you? I'll share the exact meeting point once the booking is confirmed.`;
+    const exactDetailsRequested = /\b(?:address|postcode|exact|map|meeting point)\b/i.test(opts.lastRenterMessage);
+    return `For this rental, the equipment is at our pickup point in the ${area}, so collection is only available there. Does that work?${exactDetailsRequested ? " I'll share the exact meeting point once the booking is confirmed." : ""}`;
   };
   const travelCompensationContext = asksPickupLocation || asksTravel || isTravelCompensationOffer(text);
   const verificationFailed = opts.stage === "VERIFICATION_FAILED";
@@ -906,7 +957,7 @@ const ASSERTS_AVAIL_RE =
       /\b(?:can't|cannot|won't|unable to|not able to|fixed (?:rate|price)|rates? (?:are|is) fixed|not possible|not an option)\b/i.test(text));
   let travelCompensationAuthorized = false;
   if (firstLocationAndDiscountRequest && opts.pickupArea) {
-    text = pickupAreaDisclosure(opts.pickupArea);
+    text = withIndependentAnswer(pickupAreaDisclosure(opts.pickupArea));
     push("TRAVEL_COMPENSATION_GATE", "Deferred discount discussion until the renter responds to the confirmed pickup area", "rewritten");
   } else if ((verificationFailed || travelCompensationContext) && isDiscountConcessionOffer(text)) {
     if (verificationFailed || !travelCompensation.eligible || travelCompensation.maximumGbp == null) {
@@ -914,7 +965,7 @@ const ASSERTS_AVAIL_RE =
       if (verificationFailed) {
         if (!text) text = "Your rental request was cancelled because verification failed, so I can't share a pickup point for this booking.";
       } else if ((asksPickupLocation || asksTravel) && !travelCompensation.pickupAreaDisclosed && opts.pickupArea) {
-        text = pickupAreaDisclosure(opts.pickupArea);
+        text = withIndependentAnswer(pickupAreaDisclosure(opts.pickupArea));
         push(
           "PICKUP_LOCATION_CORRECTED",
           "Replaced an unverified pickup explanation with this account's confirmed pickup area before discussing travel compensation",
@@ -946,7 +997,7 @@ const ASSERTS_AVAIL_RE =
   // three accounts into a generic central pickup. Exact details are gated.
   const asksAboutTravelBeforeDisclosure = asksTravel && !travelCompensation.pickupAreaDisclosed;
   if (!verificationFailed && (asksPickupLocation || asksAboutTravelBeforeDisclosure) && !opts.pickupArea) {
-    text = "I'll confirm the pickup area for this account before you decide, then share the exact meeting point once the booking is confirmed.";
+    text = withIndependentAnswer("I'll confirm the pickup area for this account before you decide, then share the exact meeting point once the booking is confirmed.");
     push(
       "PICKUP_LOCATION_CORRECTED",
       "Replaced an unverified pickup-location answer because this account has no owner-confirmed pickup area in context",
@@ -962,12 +1013,18 @@ const ASSERTS_AVAIL_RE =
     const missingRequiredExact = opts.pickupConfirmed && !!opts.pickupAddress && !text.toLowerCase().includes(opts.pickupAddress.toLowerCase());
     const missingHandoffExplanation = !opts.pickupConfirmed && !hasPickupHandoffExplanation(text);
     if (!areaMentioned || unsafeLocationClaim || leakedExactAddress || missingRequiredExact || missingHandoffExplanation) {
-      text = opts.pickupConfirmed && opts.pickupAddress
+      text = withIndependentAnswer(opts.pickupConfirmed && opts.pickupAddress
         ? `For this confirmed booking, pickup is ${opts.pickupAddress}`
-        : pickupAreaDisclosure(opts.pickupArea);
+        : pickupAreaDisclosure(opts.pickupArea));
       push(
         "PICKUP_LOCATION_CORRECTED",
-        "Replaced a generic, false, missing, or premature pickup-location answer with this account's confirmed area and item-specific availability reason",
+        `Replaced pickup answer: ${[
+          !areaMentioned && "confirmed area missing",
+          unsafeLocationClaim && "unsupported location claim",
+          leakedExactAddress && "exact location disclosed too early",
+          missingRequiredExact && "confirmed meeting point missing",
+          missingHandoffExplanation && "equipment-specific collection explanation missing",
+        ].filter(Boolean).join(", ")}`,
         "rewritten",
       );
     }
@@ -1149,7 +1206,7 @@ const ASSERTS_AVAIL_RE =
 
   if(opts.bookingRecord&&!hasSingleBookingRecord(text,opts.bookingRecord))push("BOOKING_RECORD_UNVERIFIED","The historical financial record was edited, omitted or duplicated.","flagged");
   const priceValidationText=withoutAuthorizedTravelCompensationClaim(text,travelCompensation.maximumGbp,travelCompensationAuthorized);
-  if (opts.priceEvidence !== undefined) for (const detail of unsupportedPriceClaims(nativeInformationForText({replacement_value_comparisons:opts.replacementValueComparisons,budget_price_checks:opts.budgetPriceChecks},priceValidationText,priceValidationText).claim_text, opts.priceEvidence, opts.priceRequest ?? opts.stockRequest ?? {items:[]}, opts.lastRenterMessage,opts.bookingRecord)) {
+  if (opts.priceEvidence !== undefined) for (const detail of unsupportedPriceClaims(nativeInformationForText({replacement_value_comparisons:opts.replacementValueComparisons,budget_price_checks:opts.budgetPriceChecks},priceValidationText,priceValidationText).claim_text, opts.priceEvidence, opts.priceRequest ?? opts.stockRequest ?? {items:[]}, opts.lastRenterMessage,opts.bookingRecord,opts.factPack?.pricing?.deliveryFeeGbp)) {
     push("PRICE_HALLUCINATION", detail, "flagged");
   }
   if (opts.priceEvidence !== undefined) for (const detail of incompleteSetupQuotes(nativeInformationForText({replacement_value_comparisons:opts.replacementValueComparisons,budget_price_checks:opts.budgetPriceChecks},text,text).claim_text, opts.priceEvidence)) {
@@ -1617,6 +1674,20 @@ const ASSERTS_AVAIL_RE =
   confidence = Math.max(0.1, Math.min(1, Number(confidence.toFixed(2))));
 
   return { text, flags: deduped, confidence, modified: text !== draft };
+}
+
+/** A rewrite can remove the sentence that caused a critical flag. Recheck
+ * the entire resulting reply before deciding whether that flag still applies.
+ * If another rewrite occurs, retain the conservative first-pass result. */
+export function guardFinalDraft(draft: string, opts: GuardOpts): GuardResult {
+  const first = guardDraft(draft, opts);
+  if (!first.modified || !first.flags.some(f => f.action === "flagged" && f.severity === "critical")) return first;
+  const checked = guardDraft(first.text, opts);
+  if (checked.text !== first.text) return first;
+  const flags = [...first.flags.filter(f => f.action !== "flagged"), ...checked.flags];
+  const unique = flags.filter((flag, index) => flags.findIndex(other =>
+    other.type === flag.type && other.detail === flag.detail && other.action === flag.action) === index);
+  return { ...checked, flags: unique, modified: first.modified };
 }
 
 // ── Intent classifier (compact port of classify.ts INTENT_PATTERNS) ─

@@ -85,6 +85,11 @@ export function renterToolReceipts(steps: unknown): ToolReceipt[] {
         }
       }
       if (!result.error && result.ok !== false && result.found !== false && payload.toolName === "find_owned_alternatives") {
+        const target = result.target_stock_receipt as Record<string, unknown> | null;
+        if (result.target_identity_resolved === true && result.target_rentable === false && target &&
+            target.source === "shared_inventory_confirmed_rentals" && target.available === false && target.owned === false &&
+            String(target.item_id) === String(result.target_item_id) && target.item_name === result.target)
+          receipts.push({tool:"check_availability",call_id:`${String(payload.toolCallId ?? "unknown")}:target-stock`,result:target});
         const options = [...(Array.isArray(result.alternatives) ? result.alternatives : []), ...(Array.isArray(result.rejected_stock_options) ? result.rejected_stock_options : [])];
         for (const alternative of options) {
           const a = alternative as Record<string,unknown>;

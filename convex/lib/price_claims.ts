@@ -80,7 +80,7 @@ function priceClauseAfterAmount(segment:string) {
 }
 
 /** Checks recognised currency claims against their subject, purpose and scope. */
-export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], request: StockRequest, latestRenterMessage="",record?:BookingRecord|null) {
+export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], request: StockRequest, latestRenterMessage="",record?:BookingRecord|null, verifiedDeliveryFeeGbp?:number|null) {
   text=withoutBookingRecord(text,record);
   const failures: string[] = [];
   const moneyRoles = new Map(amendmentMoneyClaims(text).map(claim => [claim.index, claim.role]));
@@ -190,7 +190,15 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
       const genericNamed = withoutDurationReference(named, segmentDates.matched_text ? norm(segmentDates.matched_text) : undefined)
         .replace(/^(?:new|updated|revised)\s+(?=(?:total|price|rate|daily rate)\b)/i, "")
         .replace(/^adding\s+(?=(?:it|this|that|them|these|those)\b)/i, "");
-      const generic = /^(?:it|that|this|they|these|those|(?:the\s+)?(?:total|price|rate|daily rate|rental|hire|booking|order|kit|camera|body|set)(?:\s+for\s+(?:(?:the\s+)?\d+\s+days?(?:\s+(?:hire|rental|booking))?|(?:these|those|the requested)\s+dates|this\s+(?:hire|rental|booking)))?)$/i.test(genericNamed);
+      // A dated preface such as "for your requested date on 26 November
+      // (1 day), the camera rental total" is a scope, not another item.
+      // Restrict this grammar to generic labels: a named alternative still
+      // needs its own receipt and the date/duration are validated below.
+      const dateFreeNamed = segmentDates.matched_text
+        ? named.replace(norm(segmentDates.matched_text), " ").replace(/\s+/g, " ").trim() : "";
+      const genericDatedTotal = request.items.length === 1 && !!segmentDates.matched_text &&
+        /^for\s+(?:(?:your|the)\s+)?(?:requested|selected|booked)\s+dates?\s+(?:on|of)?\s*(?:\d+\s+days?\s+)?(?:the\s+)?(?:(?:camera|body|kit)\s+)?(?:rental|hire|booking)(?:\s+(?:total|price|cost))?$/i.test(dateFreeNamed);
+      const generic = genericDatedTotal || /^(?:it|that|this|they|these|those|(?:the\s+)?(?:total|price|rate|daily rate|rental|hire|booking|order|kit|camera|body|set)(?:\s+for\s+(?:(?:the\s+)?\d+\s+days?(?:\s+(?:hire|rental|booking))?|(?:these|those|the requested)\s+dates|this\s+(?:hire|rental|booking)))?)$/i.test(genericNamed);
       const unsupportedQualifiedLens = !exactOffering && declaredLensReferences(genericNamed).find(reference=>!focalSubjects.has(reference));
       const referenceLabel=withoutDurationReference(explicitSubject[1],segmentDates.matched_text)
         .replace(/^(?:(?:one|two|three|four|\d+)\s+)?(?:extra|additional)\s+/i,"");
@@ -237,7 +245,10 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     }
     const local = text.slice(Math.max(consumed, text.lastIndexOf("\n", pos)+1), pos) + m[0] + after;
     const daily = /^\s*(?:\/\s*day|per\s+day|a\s+day|daily)\b/i.test(following) || /\b(?:daily\s+(?:rate|price)|per\s+day)\s*(?:is|of|:)\s*$/i.test(text.slice(consumed,pos));
-    const base = /\b(?:one[ -]day|1[ -]day|base|usual|normally|standard)\b/i.test(local);
+    // A one-day rental total is still tied to its actual date. Only treat a
+    // one-day reference as an undated base rate when it is explicitly a rate.
+    const base = /\b(?:base|usual|normally|standard)\b/i.test(local) ||
+      daily && /\b(?:one[ -]day|1[ -]day)\b/i.test(local);
     const purpose = /\b(?:discount|refund)\b/i.test(local) ? "adjustment"
       : /\b(?:deposit|security\s+hold)\b/i.test(local) ? "deposit"
       : /\b(?:replacement\s+(?:cost|value)|insured\s+value)\b/i.test(local) ? "replacement"
@@ -311,7 +322,10 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     const dateAdjustment = /\b(?:extend|extending|extension|date change|shorten|shortening)\b/i.test(segment) && /\b(?:extra|additional|less|reduction)\b/i.test(segment+text.slice(pos+m[0].length,pos+m[0].length+24));
     const candidates = evidence.filter(e => (!additionPrice || basket ||
       e.source !== "lab_order_quote" && e.quote_role !== "base" && e.quote_role !== "proposed_line") && !unresolvedPair && e.call_id && e.source && (dateAdjustment ? e.kind === "basket" && !!e.date_proposal : basket ? e.kind === "basket" && (!proposalTotal || !!e.proposal || !!e.date_proposal) && (groupAddition ? e.quote_role==="addition" : e.quote_role!=="addition") : e.kind !== "basket" && same(subject,e.names)));
-    const proven = candidates.some(e => {
+    const deliveryProven = purpose === "delivery" && !daily && !explicitBookingTotal && !/\b(?:one[ -]way|each way|per trip)\b/i.test(local) &&
+      typeof verifiedDeliveryFeeGbp === "number" && Number.isFinite(verifiedDeliveryFeeGbp) &&
+      Math.round(verifiedDeliveryFeeGbp * 100) === Math.round(amount * 100);
+    const proven = deliveryProven || candidates.some(e => {
       if(dateAdjustment){
         const p=e.date_proposal;
         if(purpose!=="rental")return false;
@@ -377,8 +391,12 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
       // never a date from an unrelated earlier sentence or quote.
       const effectiveScope=e.date_proposal && continuedConditionalTotal ? claimDateScope(sentenceBeforeAmount,request.start_date) : dateScope;
       if(!effectiveScope.valid)return false;
-      const start = effectiveScope.start_date ?? (explicitDays !== null ? undefined : request.start_date);
-      const end = effectiveScope.end_date ?? (explicitDays !== null ? undefined : request.end_date);
+      // A duration equal to the current booking's duration still describes
+      // that booking's dates unless the reply explicitly supplies other dates.
+      // A different duration can describe a separate, undated comparison.
+      const useRequestDates = explicitDays === null || explicitDays === duration;
+      const start = effectiveScope.start_date ?? (useRequestDates ? request.start_date : undefined);
+      const end = effectiveScope.end_date ?? (useRequestDates ? request.end_date : undefined);
       if (!base && ((start && e.start_date && e.start_date !== start) || (end && e.end_date && e.end_date !== end))) return false;
       if (daily && base) return e.base_rate_gbp != null && cents(e.base_rate_gbp) === cents(amount);
       const effectiveDays=effectiveScope.explicit ? inclusiveRentalDays(effectiveScope.start_date,effectiveScope.end_date) : days;
