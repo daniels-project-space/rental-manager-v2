@@ -722,7 +722,7 @@ export const generateDraft = action({
           replacement_value_comparisons?:DraftEvidence["replacement_value_comparisons"];
           budget_price_checks?:DraftEvidence["budget_price_checks"];
           rental_request?:DraftEvidence["rental_request"];
-          availabilityReceipts?: Array<{ item_name: string; start_date: string; end_date: string; requested_units: number; available: boolean | null; free_units: number | null; checked_at: number; call_id: string; kind?: string; owned?: boolean; new_inquiry?:true; identity_names?:string[]; basket?: StockReceipt["basket"] }>;
+          availabilityReceipts?: Array<{ item_name: string; start_date: string; end_date: string; requested_units: number; available: boolean | null; free_units: number | null; checked_at: number; call_id: string; kind?: string; owned?: boolean; new_inquiry?:true; identity_names?:string[]; basket?: StockReceipt["basket"]; quantity_basis?: {basis?:string} }>;
           stockRequest?: StockRequest;
           deliveryQuote?: {
             fee_gbp: number;
@@ -802,6 +802,7 @@ export const generateDraft = action({
           const native=j.availabilityReceipts?.find(r=>r.call_id===receipt.call_id&&r.item_name===receipt.item);
           if(typeof native?.kind === "string")receipt.kind=native.kind;
           if(typeof native?.owned === "boolean")receipt.owned=native.owned;
+          if(native?.quantity_basis?.basis === "owner_lower_bound" || native?.quantity_basis?.basis === "owner_exact")receipt.quantity_basis=native.quantity_basis.basis;
           if(native?.new_inquiry===true)receipt.new_inquiry=true;
           if(Array.isArray(native?.identity_names) && native.identity_names.every(n=>typeof n==="string" && !!n.trim()))receipt.identity_names=native.identity_names;
           if(native?.basket && (typeof native.basket.available==="boolean" || native.basket.available===null)

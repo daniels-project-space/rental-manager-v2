@@ -24,6 +24,7 @@ export default defineConfig({
     globals: false,
     include: [
       "convex/lib/checkout_delivery_quote.test.ts",
+      "convex/lib/renter_stock_prompt.test.ts",
       "convex/lib/renter_bot_lab_alternative_snapshot.test.ts",
       "src/lib/render/asset-cache.test.ts",
       "convex/deployment_identity.test.ts",

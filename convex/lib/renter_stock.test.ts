@@ -166,6 +166,22 @@ describe("shared kit stock across separate reservations", () => {
   });
 });
 
+describe("owner-confirmed minimum stock",()=>{
+ const minimum={_id:"b",name_canonical:"Sony NP-FZ100 batteries",kind:"accessory",unit_kind:"unit",track_independent_stock:true,status:"active",qty:12,
+  quantity_basis:{basis:"owner_lower_bound",source:"owner",note:"at least 12",recorded_at:1}};
+ const sources={items:[minimum],reservations:[],productIndex:new Map(),overrides:new Map(),claims:[],blackouts:[],vacations:[]};
+ const check=(item:any,quantity:number,extra={})=>stockForItem({...sources,...extra} as any,item,{item_name:item.name_canonical,start_date:"2026-10-20",end_date:"2026-10-21",quantity});
+ it("confirms stock within the minimum and treats a greater need as unknown",()=>{
+  expect(check(minimum,12).available).toBe(true);
+  expect(check(minimum,15)).toMatchObject({available:null,reason:"stock_above_confirmed_minimum",free_units:12});
+  expect(check({...minimum,quantity_basis:{...minimum.quantity_basis,basis:"owner_exact"}},15).available).toBe(false);
+ });
+ it("retains definite closures and inactive equipment",()=>{
+  expect(check({...minimum,status:"inactive"},15)).toMatchObject({available:false,reason:"not_rentable"});
+  expect(check(minimum,15,{vacations:[{start_date:"2026-10-20",end_date:"2026-10-21"}]})).toMatchObject({available:false,reason:"owner_away"});
+ });
+});
+
 describe("website physical allocation dates in real quoting",()=>{
  it("quotes the gap as free and each separate extension as three bodies",()=>{
   const item={_id:"camera",name_canonical:"FX3",status:"active",qty:3};

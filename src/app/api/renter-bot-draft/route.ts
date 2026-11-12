@@ -12,6 +12,7 @@ import { generationFailure } from "../../../../convex/lib/canonical_generation_e
 import { renterPriceEvidence, type PriceListingIdentity } from "@/lib/renter-price-evidence";
 import type { PriceEvidence } from "../../../../convex/lib/price_claims";
 import { sensorComparisonInstruction } from "../../../../convex/lib/camera_sensor_comparisons";
+import { componentStockContext } from "../../../../convex/lib/renter_stock_prompt";
 import { renterItemNames } from "../../../../convex/lib/renter_item_names";
 import { stockRequestForSeparateCheck, stockRequestForInquiryQuote, type StockRequest } from "../../../../convex/lib/stock_claims";
 import { inclusiveRentalDays, formatGbp } from "../../../../convex/lib/hygglo_pricing";
@@ -903,7 +904,7 @@ const renterBotDraftHandler = async function POST(req: Request, rawConvex: Conve
             if ("components" in av && Array.isArray(av.components)) {
               for (const component of av.components) {
                 if (!proposalRequested) toolReceipts.push({ tool: "check_availability", call_id: `prefetch-component:${toolReceipts.length}`, result: component });
-                groundTruth += `  COMPONENT AVAILABILITY (${component.item_name}): ${component.available === true ? "AVAILABLE" : component.available === false ? "NOT AVAILABLE" : "UNKNOWN"}; requested ${component.requested_units}, free ${component.free_units} for ${lc.start_date} to ${lc.end_date}.\n`;
+                groundTruth += componentStockContext(component,lc.start_date,lc.end_date);
               }
             }
             if (av.available === false) availabilityOutKnown = true;

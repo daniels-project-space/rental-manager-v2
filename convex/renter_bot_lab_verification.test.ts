@@ -243,6 +243,12 @@ describe("lower-value recommendations use recorded replacement value",()=>{
 
 
 describe("friend recognition requires an explicit opaque referral",()=>{
+ it("recognizes a direct request to add the quoted gear while rejecting conditions",async()=>{
+  const {requestsFriendBasketRestore}=await import("./lib/verification_failure");
+  expect(requestsFriendBasketRestore("Yes, that location works and please add the quoted gear to my request.")).toBe(true);
+  for(const text of ["If I ask you to add the quoted gear, what happens?","Please do not add the quoted gear.","Wait, add the quoted gear after I confirm."])
+   expect(requestsFriendBasketRestore(text),text).toBe(false);
+ });
  it("accepts a friend's referral in chat without identifying anyone by name",async()=>{
   const {friendReferralFromMessage}=await import("./lib/verification_failure");
   expect(friendReferralFromMessage(`Alex sent me; referral ${code}. Please restore the same basket.`)).toBe(code);

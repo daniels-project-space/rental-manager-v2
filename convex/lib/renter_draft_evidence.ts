@@ -70,6 +70,7 @@ export const draftEvidenceValidator = v.object({
     free_units: v.union(v.number(), v.null()),
     checked_at: v.number(), call_id: v.string(),
     kind: v.optional(v.string()),
+    quantity_basis: v.optional(v.union(v.literal("owner_lower_bound"),v.literal("owner_exact"))),
     new_inquiry:v.optional(v.literal(true)),
     identity_names:v.optional(v.array(v.string())),
     owned:v.optional(v.boolean()),

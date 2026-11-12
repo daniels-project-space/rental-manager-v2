@@ -24,7 +24,7 @@ export function requestsFriendBasketRestore(text:string) {
   const message=text.replace(/[’‘]/g,"'").replace(/```[\s\S]*?```/g," ").replace(/["“][^"”]*["”]/g," ");
   return message.split(/[;\n]|(?<=[.!?])\s+/).some(clause=>{
     if(/\b(?:if|maybe|might|consider|thinking|suppose|example|said|says|told|don't|do not|never|wait|hold off|after I confirm|before I confirm)\b/i.test(clause))return false;
-    return /(?:^|\b(?:please|go ahead(?: and)?|(?:can|could|would) you|I(?:'d| would) like (?:you )?to)\s+)(?:restore|rebuild|add|use|copy)\s+(?:the\s+|my\s+|their\s+|that\s+|this\s+|same\s+|friend's\s+)*(?:basket|gear|equipment|items?|setup)\b/i.test(clause);
+    return /(?:^|\b(?:please|go ahead(?: and)?|(?:can|could|would) you|I(?:'d| would) like (?:you )?to)\s+)(?:restore|rebuild|add|use|copy)\s+(?:the\s+|my\s+|their\s+|that\s+|this\s+|same\s+|quoted\s+|friend's\s+)*(?:basket|gear|equipment|items?|setup)\b/i.test(clause);
   });
 }
 

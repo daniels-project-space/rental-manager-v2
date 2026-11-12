@@ -236,17 +236,40 @@ export const ensurePreparedScenarioItem = internalMutation({
     // The owner confirmed these shared physical pools. The Lab uses its own
     // stock rows and never copies or edits a real reservation.
     let suppliedStock = existing?.supplied_stock;
-    if (scenario.item.name_canonical === "BMPCC 6K Full Frame") {
+    if (["BMPCC 6K Full Frame", "Sony FX3"].includes(scenario.item.name_canonical)) {
       const ensurePool = async (name: string, slug: string, qty: number) => {
         const found = await ctx.db.query("items").withIndex("by_canonical_name", q => q.eq("name_canonical", name)).first();
-        if (found) return found._id;
+        const quantity_basis = {basis:"owner_lower_bound" as const,source:"owner-confirmed Lab minimum",
+          note:`At least ${qty} batteries confirmed; the total is not exact.`,recorded_at:now};
+        if (found) {
+          if (name.includes("batteries") && found.slug === slug && found.qty === qty && !found.quantity_basis)
+            await patchStockInput(ctx,found._id,{quantity_basis,updated_at:now});
+          return found._id;
+        }
         return insertStockInput(ctx, "items", { name_canonical: name, name_input: name, slug, kind: "accessory",
           qty, unit_kind: "unit", track_independent_stock: true, status: "active", is_marketing_only: false,
+          ...(name.includes("batteries") ? {quantity_basis} : {}),
           created_at: now, updated_at: now });
       };
-      const battery = await ensurePool("NP-F570 batteries", "lab-np-f570-batteries", 12);
-      await ensurePool("EF to L mount", "lab-ef-to-l-mount", 1);
-      if (!suppliedStock?.length) suppliedStock = [{item_id:battery, qty:5, source:"Owner-confirmed Lab kit allocation"}];
+      if (scenario.item.name_canonical === "BMPCC 6K Full Frame") {
+        const battery = await ensurePool("NP-F570 batteries", "lab-np-f570-batteries", 12);
+        await ensurePool("EF to L mount", "lab-ef-to-l-mount", 1);
+        if (!suppliedStock?.length) suppliedStock = [{item_id:battery, qty:5, source:"Owner-confirmed Lab kit allocation"}];
+      } else {
+        // An existing differently named FZ100 pool must be reconciled before
+        // creating a second one; otherwise stock could be counted twice.
+        for (const part of suppliedStock ?? []) {
+          const item = await ctx.db.get(part.item_id);
+          if (!item || /\bnp[\s-]*fz100\b/i.test(item.name_canonical) && item.name_canonical !== "Sony NP-FZ100 batteries")
+            throw new Error("FX3 shared battery pool requires review");
+        }
+        const battery = await ensurePool("Sony NP-FZ100 batteries", "lab-sony-np-fz100-batteries", 12);
+        const pool = await ctx.db.get(battery);
+        if (!pool || pool.status !== "active" || pool.is_marketing_only || !pool.track_independent_stock || pool.unit_kind !== "unit")
+          throw new Error("FX3 shared battery pool is unavailable for this test");
+        suppliedStock = [...(suppliedStock ?? []).filter(part => part.item_id !== battery),
+          {item_id:battery, qty:3, source:"Owner-confirmed Lab kit allocation"}];
+      }
     }
     const itemFacts = {
       ...scenario.item,
@@ -369,8 +392,13 @@ export const ensurePreparedAlternative = internalMutation({
     let battery=await ctx.db.query("items").withIndex("by_canonical_name",q=>q.eq("name_canonical","Sony NP-FZ100 batteries")).first();
     if(!battery){
       const id=await insertStockInput(ctx,"items",{name_canonical:"Sony NP-FZ100 batteries",name_input:"Sony NP-FZ100 batteries",slug:"lab-sony-np-fz100-batteries",
-        kind:"accessory",qty:12,unit_kind:"unit",track_independent_stock:true,status:"active",is_marketing_only:false,created_at:now,updated_at:now});
+        kind:"accessory",qty:12,unit_kind:"unit",track_independent_stock:true,status:"active",is_marketing_only:false,
+        quantity_basis:{basis:"owner_lower_bound",source:"owner-confirmed Lab minimum",note:"At least 12 batteries confirmed; the total is not exact.",recorded_at:now},created_at:now,updated_at:now});
       battery=await ctx.db.get(id);
+    }
+    if(battery && battery.slug==="lab-sony-np-fz100-batteries" && battery.qty===12 && !battery.quantity_basis){
+      await patchStockInput(ctx,battery._id,{quantity_basis:{basis:"owner_lower_bound",source:"owner-confirmed Lab minimum",note:"At least 12 batteries confirmed; the total is not exact.",recorded_at:now},updated_at:now});
+      battery=await ctx.db.get(battery._id);
     }
     if(!battery || battery.status!=="active" || battery.is_marketing_only || !battery.track_independent_stock || battery.unit_kind!=="unit")return withdraw();
     const preservedContents=(existing?.compatibility?.included_with_rental??[]).filter(content=>

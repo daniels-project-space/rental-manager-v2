@@ -83,7 +83,18 @@ export function nativeInquiryQuote(value:unknown,scope:NativeQuoteScope,readRevi
   if(!total?.items?.length || !total.start_date || !total.end_date || total.total_gbp==null || !total.days || !Array.isArray(q.lines))return null;
   const lines=q.lines.map(record);
   if(lines.some(l=>!l || typeof l.name!=="string" || /[\r\n]/.test(l.name) || !Number.isInteger(l.qty) || (l.qty as number)<1 || (l.qty as number)>20 ||
-    !physical.some(c=>c!.requested_units===l.qty&&itemIdentity(c!.item_name as string).some(n=>itemIdentity(l.name as string).includes(n))) ||
+    !physical.some(c=>{
+      if(c!.requested_units!==l.qty)return false;
+      const physicalNames=itemIdentity(c!.item_name as string);
+      const matches=(name:string)=>itemIdentity(name).some(n=>physicalNames.includes(n));
+      const display=l.name as string;
+      if(matches(display))return true;
+      // A generic "camera kit" suffix is presentation, but it cannot hide
+      // a different camera model behind a separately verified inventory name.
+      const shortened=display.replace(/\s+(?:(?:camera|body)\s+)?kit\s*$/i,"");
+      return shortened!==display && matches(shortened) && Array.isArray(l.verified_price_names) &&
+        l.verified_price_names.some(n=>typeof n==="string" && matches(n));
+    }) ||
     !prices.some(p=>p.kind==="rental"&&p.call_id===`native-render:line:${l.product_id}`&&p.quantity===l.qty&&p.total_gbp===l.line_total_gbp)))return null;
   const quote_key=`inquiry_${createHash("sha256").update(JSON.stringify([scope.threadId,scope.accountSlug,scope.requestMessageId??"",scope.rentalRequest??null,readRevision,requirementsKey,result.physical_identity_key,total.start_date,total.end_date,
     lines.map(l=>[l!.product_id,l!.name,l!.qty,l!.line_total_gbp]),total.total_gbp])).digest("hex").slice(0,32)}`;

@@ -32,6 +32,18 @@ describe("Native monetary prose classification",()=>{
 });
 const parts=(key=nativeInquiryQuote(fixtures.first,scope)!.quote_key):RenterBotOutput=>({...base,reply_parts:[{type:"text",text:"The R5 kit isn't available, but I can offer this Sony setup:"},{type:"quote",quote_key:key},{type:"text",text:"Would this work for your shoot?"}]});
 describe("Native inquiry quote rendering",()=>{
+ it("accepts a server-mapped kit label when its verified listing identity matches the checked camera",()=>{
+  const result=clone();
+  const line=result.quote!.lines.find(l=>l.name==="Sony FX3")!;
+  line.name="Sony FX3 Camera Kit";
+  line.verified_price_names=["Sony FX3"];
+  expect(nativeInquiryQuote(result,scope)).not.toBeNull();
+  line.verified_price_names=["Sony FX30"];
+  expect(nativeInquiryQuote(result,scope)).toBeNull();
+  line.name="Sony A7S III Camera Kit";
+  line.verified_price_names=["Sony FX3"];
+  expect(nativeInquiryQuote(result,scope)).toBeNull();
+ });
  it("classifies an unqualified financial selection as review while approving no candidate or financial proof",()=>{
   const candidate={...base,draft:"The kit is £124 for both days."};
   const receipts=[{tool:"check_basket_availability",call_id:"native-basket",result:{available:true,quote:null,renter_quote:null,owner_checks:[{kind:"lens_recommendation"}]}}];

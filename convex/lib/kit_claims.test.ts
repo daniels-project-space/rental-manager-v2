@@ -260,6 +260,13 @@ describe("replacement proposals retain the replacement kit as the subject", () =
  const fx3={names:["Sony FX3"],contents:["3 × Sony NP-FZ100 batteries"]};
  const text="I'd recommend our Sony A7 III instead. Replacing the BMPCC 6K Full Frame with the A7 III body kit would bring the total to £18. The kit comes with 3× NP-FZ100 batteries, a dual charger, and 2× 128GB SD cards.";
  it("checks the captured follow-up against the proposed kit",()=>expect(unsupportedKitClaims(text,[oldKit,sony],oldKit.names)).toEqual([]));
+ it("binds a kit to its uniquely identified camera body when listed first",()=>{
+  const camera={...sony,kind:"camera"};
+  const captured="The kit includes the Sony A7 III body, 3× Sony NP-FZ100 batteries, a dual battery charger, and 2× 128GB SD cards.";
+  expect(unsupportedKitClaims(captured,[{...oldKit,kind:"camera"},camera],["BMPCC 6K Full Frame"])).toEqual([]);
+  expect(unsupportedKitClaims(captured.replace("3× Sony NP-FZ100", "5× NP-F570"),[oldKit,camera],["BMPCC 6K Full Frame"])).not.toEqual([]);
+  expect(unsupportedKitClaims(captured,[oldKit,{...camera,kind:undefined}],["BMPCC 6K Full Frame"])).not.toEqual([]);
+ });
  it("resolves the abbreviated source only against the uniquely selected kit",()=>{
   const abbreviated=text.replace("BMPCC 6K Full Frame with", "BMPCC 6K with");
   expect(unsupportedKitClaims(abbreviated,[oldKit,sony],["BMPCC 6K Full Frame"])).toEqual([]);

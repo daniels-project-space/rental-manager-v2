@@ -286,6 +286,27 @@ function parseTimeToMinutes(timeStr: string): number | null {
   return hours * 60 + minutes;
 }
 
+/** A model may render continuous opening ranges as comma-separated times.
+ * Repair only a parenthesized pickup-hours list whose pairs exactly match the
+ * configured windows; individual appointments and unknown hours stay intact. */
+function clarifyPickupWindowPairs(text:string,ranges:[number,number][]) {
+ if (!ranges.length) return text;
+ return text.replace(/\(([^()\n]+)\)/g,(whole:string,inner:string,offset:number)=>{
+  const prefix=text.slice(Math.max(0,offset-180),offset).split(/(?<=[.!?])\s+/).at(-1)??"";
+  if(!/\b(?:pickup|pick[ -]?up|collect(?:ion)?|return|drop[ -]?off|opening|windows?|hours)\b/i.test(prefix))return whole;
+  const time="(?:\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)|\\d{1,2}:\\d{2})";
+  const pair=new RegExp(`(${time})\\s*,\\s*(${time})`,"gi");
+  let invalid=false,count=0;
+  const replaced=inner.replace(pair,(_pair:string,start:string,end:string)=>{
+   const a=parseTimeToMinutes(start),b=parseTimeToMinutes(end);
+   if(a===null||b===null||!ranges.some(([x,y])=>x===a&&y===b)){invalid=true;return _pair;}
+   count++;return `${start.trim()} to ${end.trim()}`;
+  });
+  const remainder=inner.replace(pair,"").replace(/\b(?:and|or)\b|[,;\s]/gi,"");
+  return count>0 && !invalid && !remainder ? `(${replaced})` : whole;
+ });
+}
+
 // ── Main entry ────────────────────────────────────────────────────
 
 export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
@@ -320,6 +341,8 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
   const stage = opts.stage?.toLowerCase();
   const message = deSmart(opts.lastRenterMessage ?? "");
   const ranges = windowRanges(opts.pickupWindows);
+  const clarifiedHours=clarifyPickupWindowPairs(text,ranges);
+  if(clarifiedHours!==text){text=clarifiedHours;push("PICKUP_WINDOWS_CLARIFIED","Clarified confirmed continuous pickup windows", "rewritten");}
   const factPack = opts.factPack;
   // V1 filter expects user/assistant roles.
   const history = opts.history.map((m) => ({
@@ -924,7 +947,7 @@ const ASSERTS_AVAIL_RE =
     ? `Your rental total is £${verifiedCurrentRentalTotal.toFixed(2).replace(/\.00$/, "")}.` : null;
   const requestedTime = /\b(?:collect|pick[ -]?up|pickup|return|drop[ -]?off)(?:\s+(?:it|the (?:camera|equipment|kit)))?\s+(?:at|around|by)\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)|\d{1,2}:\d{2})\b/i.exec(message);
   const proposedMinutes = requestedTime ? parseTimeToMinutes(requestedTime[1]) : null;
-  const asksHours = (proposedMinutes !== null || /\b(?:hours|opening times|time windows?|time slots?|what times?|when can (?:i|we)|(?:pickup|pick[ -]?up|collection|return|drop[ -]?off)(?:\s+and\s+(?:pickup|pick[ -]?up|collection|return|drop[ -]?off))?\s+times?)\b/i.test(message)) &&
+  const asksHours = (proposedMinutes !== null || /\b(?:hours|opening times|time windows?|time slots?|what times?|when can (?:i|we)|(?:pickup|pick[ -]?up|collection|return|drop[ -]?off)(?:\s+and\s+(?:pickup|pick[ -]?up|collection|return|drop[ -]?off))?\s+(?:times?|windows?|hours))\b/i.test(message)) &&
     /\b(?:pickup|pick[ -]?up|collection|collect|return|drop[ -]?off|opening)\b/i.test(message);
   const timeLabel = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
   const windowText = ranges.map(([start, end]) => `${timeLabel(start)} to ${timeLabel(end)}`).join(" or ");

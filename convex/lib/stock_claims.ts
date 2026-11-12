@@ -10,6 +10,7 @@ export type StockReceipt = {
   available: boolean | null; free_units: number | null;
   checked_at: number; call_id: string;
   kind?: string;
+  quantity_basis?: "owner_lower_bound" | "owner_exact";
   new_inquiry?:true;
   owned?: boolean;
   identity_names?: string[];
@@ -118,6 +119,30 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
   for (const receipt of receipts)
     if (!knownSubjects.some(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(n, receipt.item))))
       knownSubjects.push({name:receipt.item,quantity:requestedCounts.length===1?requestedCounts[0]:request.items.length?NaN:1});
+  // A fresh inquiry may have no selected item yet. When its independent
+  // receipts all describe one identical checked basket with a single camera,
+  // retain that physical kit for explicitly named stock claims. Repeated
+  // checks of the same basket are one scope; different baskets remain
+  // ambiguous. This does not authorize adding anything to the booking.
+  if (!request.items.length) {
+    const baskets=new Map<string,{items:Array<{name:string;quantity:number}>;start:string;end:string}>();
+    for (const r of receipts) {
+      const b=r.basket;
+      if (b?.available!==true || !b.items.length || !b.items.every(i=>i.name && Number.isInteger(i.quantity) && i.quantity>0)) continue;
+      const sorted=[...b.items].sort((a,b)=>a.name.localeCompare(b.name));
+      const key=JSON.stringify([r.start_date,r.end_date,sorted]);
+      baskets.set(key,{items:sorted,start:r.start_date,end:r.end_date});
+    }
+    if (baskets.size===1) {
+      const b=[...baskets.values()][0];
+      const cameras=b.items.filter(i=>receipts.some(r=>r.kind && /^camera(?:_body)?$/.test(r.kind) && sameItem(r.item,i.name)));
+      if(cameras.length===1 && b.items.every(i=>receipts.some(r=>sameItem(r.item,i.name) && r.start_date===b.start && r.end_date===b.end && r.available===true && r.quantity===i.quantity && r.basket?.available===true)
+        && !receipts.some(r=>sameItem(r.item,i.name) && r.start_date===b.start && r.end_date===b.end && r.quantity===i.quantity && (r.available!==true || r.basket?.available===false)))) {
+        const target=knownSubjects.find(i=>sameItem(i.name,cameras[0].name));
+        if(target && cameras[0].quantity===1)target.components=b.items.map(i=>({...i}));
+      }
+    }
+  }
   for(const receipt of receipts) {
     const item=knownSubjects.find(i=>sameItem(i.name,receipt.item));
     if(item && receipt.identity_names?.length)item.aliases=[...new Set([...(item.aliases??[]),...receipt.identity_names])];
@@ -272,6 +297,9 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     // inherit this stock check; technical claims are checked separately.
     const descriptiveIt = /^it(?:'s| is)\s+(?:an?\s+)?(?:(?:full[ -]frame|aps[ -]?c|mirrorless|cinema|4k|sony|e[ -]mount|rf[ -]mount|l[ -]mount|ef[ -]mount)\s+){0,8}(?:camera|body|lens)\s+and\s*$/i.test(prefix.trim());
     const subject = subjectOf(descriptiveIt ? "it" : extensionSubject?.[1] ?? prefix.replace(/\s+(?:is|are)\s*$/i, ""));
+    // Parenthetical kit components are still part of the exact claimed
+    // physical basket, not part of the camera's model name.
+    subject.name=subject.name.replace(/\s*\(including\s+([^()]+)\)/i," with $1");
     // "paired with" coordinates two offered items; it does not assert that
     // the lens is included inside each member's existing kit.
     const kitParts=/\bpaired\s+with\b/i.test(subject.name) ? [subject.name] : subject.name.split(/\s+with\s+/i);
@@ -319,7 +347,8 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     const pluralGroup=/^(?:both|both of them|these two|those two|all|all of them|they|these|those)$/i.test(prefix.replace(/\s+(?:is|are)\s*$/i,"").trim())
       || precedingBullets.length>0 && /^they\'re\s+/i.test(match[0]);
     const coordinatedPrefix=prefix.replace(/\s+(?:is|are)\s*$/i,"").trim();
-    const coordinated=requestedSet ? [coordinatedPrefix] : coordinatedPrefix.replace(/^both\s+(?=.+\s+(?:and|plus|paired with)\s+)/i,"").split(/\s+(?:and|plus|paired with)\s+/i);
+    const singleKitWithContents=/^[^()]+\(including\s+[^()]+\)$/i.test(coordinatedPrefix);
+    const coordinated=requestedSet || singleKitWithContents ? [coordinatedPrefix] : coordinatedPrefix.replace(/^both\s+(?=.+\s+(?:and|plus|paired with)\s+)/i,"").split(/\s+(?:and|plus|paired with)\s+/i);
     // A setup is a basket reference, not an inventory model or a camera kit.
     // Resolve an introductory offer against the following explicit quote rows;
     // descriptions remain subject to the separate technical-claim guard.
@@ -429,7 +458,7 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
           if (jointClaim && !negative && r.available===true && r.basket?.available===true && r.quantity>=quantity
             && requiredJoint.every(c=>r.basket!.items.some(i=>sameItem(i.name,c.name)&&i.quantity>=c.quantity))) return true;
           // Explicit smaller offers can use capacity from the same stock check.
-          return subject.quantity !== undefined && typeof r.free_units === "number" &&
+          return subject.quantity !== undefined && typeof r.free_units === "number" && !(negative && r.quantity_basis === "owner_lower_bound") &&
             (negative ? r.free_units < quantity : r.free_units >= quantity);
         });
       };

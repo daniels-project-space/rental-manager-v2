@@ -130,6 +130,15 @@ export function unsupportedKitClaims(text: string, evidence: KitEvidence[], init
     const ownerText=match&&match[0].toLowerCase()!=="included" ? sentence.slice(0,match.index) : sentence;
     const named = evidence.filter(e => e.names.some(name => name && namesItem(ownerText, name)));
     if (named.length) subject = named;
+    // A generic kit can identify itself by naming its camera body first:
+    // "The kit includes the Sony A7 III body, 3 batteries ...". Treat the
+    // body as the owner only when one typed camera matches; lenses and other
+    // included accessories must never supply their own parent-kit evidence.
+    const leadingBody = match && /^\s*(?:the|this)\s+(?:camera\s+)?kit\s*$/i.test(ownerText)
+      ? /^\s*(?:the\s+)?([^,;]+?\s+body)\s*[,;]/i.exec(sentence.slice(match.index + match[0].length))?.[1] : undefined;
+    const bodyOwners = leadingBody ? evidence.filter(e => /^camera(?:_body)?$/.test(e.kind ?? "") &&
+      e.names.some(n => n && namesItem(leadingBody, n))) : [];
+    if (bodyOwners.length === 1) subject = bodyOwners;
     // In a replacement proposal both cameras are mentioned, but a following
     // "the kit" refers to the replacement, not both kits together. Resolve
     // only a single explicitly named destination; ambiguous choices remain

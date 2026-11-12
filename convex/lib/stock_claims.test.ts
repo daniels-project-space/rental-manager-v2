@@ -16,6 +16,17 @@ describe("descriptive pronouns in an alternative recommendation",()=>{
  });
 });
 describe("named Native stock in an empty inquiry",()=>{
+ it("uses an independently checked physical basket for an explicitly named referred kit",()=>{
+  const items=[{name:"BMPCC 6K Full Frame",quantity:1},{name:"EF to L mount",quantity:1},{name:"NP-F570 batteries",quantity:5}];
+  const receipts:StockReceipt[]=items.flatMap((item,i)=>[1,2].map(call=>({...stock,item:item.name,kind:i===0?"camera":"accessory",quantity:item.quantity,
+   start_date:"2026-11-26",end_date:"2026-11-26",available:true,free_units:i===2?12:1,call_id:`call${call}-${i}`,basket:{available:true,items}})));
+  const text="The BMPCC 6K Full Frame kit (including the EF to L mount adapter and 5 NP-F570 batteries) is available for 26 November 2026.";
+  expect(unsupportedStockClaims(text,receipts,{items:[]})).toEqual([]);
+  expect(unsupportedStockClaims(text.replace("5 NP-F570","6 NP-F570"),receipts,{items:[]})).not.toEqual([]);
+  expect(unsupportedStockClaims(text,receipts.map(r=>({...r,basket:{...r.basket!,available:false}})),{items:[]})).not.toEqual([]);
+  expect(unsupportedStockClaims(text,[...receipts,{...receipts[0],available:false}],{items:[]})).not.toEqual([]);
+  expect(unsupportedStockClaims(text,[...receipts,{...receipts[0],basket:{available:true,items:[...items,{name:"Sony FX3",quantity:1}]}}],{items:[]})).not.toEqual([]);
+ });
  it('retains independent dated stock scope even when no financial quote is selected',()=>{
   const check={new_inquiry:true,start_date:'2026-10-22',end_date:'2026-10-24',basket:{available:true,items:[{name:'Sony FX3',quantity:1}]}};
   const future=stockRequestForSeparateCheck(request,[check,check]);
@@ -160,6 +171,10 @@ describe("references to an additional booked-kit lens",()=>{
   expect(unsupportedStockClaims("A second unit of that exact lens isn't available for those dates.",[lens],scope)).not.toEqual([]);
   expect(unsupportedStockClaims(`${scope.items[0].name} is your booked kit. A second unit of that exact lens isn't available for those dates.`,[{...lens,item:scope.items[0].name}],scope)).not.toEqual([]);
   expect(unsupportedStockClaims(reply.replace("a second unit","a third unit"),[{...lens,quantity:1,available:true,free_units:2}],scope)).toEqual([]);
+  // Two confirmed units may be only a minimum: a positive check for one
+  // cannot prove a third unit is absent.
+  expect(unsupportedStockClaims(reply.replace("a second unit","a third unit"),[{...lens,quantity:1,available:true,free_units:2,quantity_basis:"owner_lower_bound"}],scope)).not.toEqual([]);
+  expect(unsupportedStockClaims(reply.replace("a second unit","a third unit"),[{...lens,quantity:1,available:true,free_units:2,quantity_basis:"owner_exact"}],scope)).toEqual([]);
  });
  it("resolves counted copy/unit references while preserving capacity and antecedent",()=>{
   for(const reference of ["a second copy","a second unit","two copies"]) {

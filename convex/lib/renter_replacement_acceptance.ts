@@ -52,8 +52,11 @@ export function acceptsReplacement(text:string,q:ReplacementAcceptanceQuote,owne
  const ownerTotals=amendmentMoneyClaims(owner.body_text).filter(m=>m.role==="total"&&sameMoney(m.amount,q.total_gbp));
  const selected=/^(?:(?:yes|yep|yeah|okay|ok|sure)[,!\s]+)?(?:please[,!\s]+)?(?:switch|change)\s+(?:it|the\s+(?:booking|rental|request))\s+to\s+(.+)$/i.exec(message);
  const exactSelection=!!selected && !/\b(?:or|rather than|instead|except)\b/i.test(selected[1]) && directItemSelection(`add ${selected[1]}`,q.added).matches;
- if(candidate.length!==1||offers.length!==1||!ownerTotals.length||!matchesQuotedDates(owner.body_text,q)||!/\b(?:swap|replace|replacement|switch)\b/i.test(owner.body_text)||
-   /\b(?:or|alternatively|either|options?)\b/i.test(owner.body_text)&&!exactSelection||![...q.added,...q.removed].every(l=>named(owner.body_text,l,[...q.added,...q.removed])))return false;
+ const refusal=owner.body_text.split(/(?<=[.!?])\s+/).some(sentence=>
+  /\b(?:cannot|can't|can not|won't|will not|unable to|not able to)\s+(?:\w+\s+){0,3}(?:swap|replace|switch)\b/i.test(sentence) ||
+  /\b(?:swap|swapping|replace|replacing|replacement|switch|switching)\b[\s\S]*?\b(?:is|are|would be)\s+(?:not|never|impossible|unavailable)\b/i.test(sentence));
+ if(candidate.length!==1||offers.length!==1||!ownerTotals.length||!matchesQuotedDates(owner.body_text,q)||!/\b(?:swap|swapping|replace|replacing|replacement|switch|switching)\b/i.test(owner.body_text)||
+   refusal||/\b(?:or|alternatively|either|options?)\b/i.test(owner.body_text)&&!exactSelection||![...q.added,...q.removed].every(l=>named(owner.body_text,l,[...q.added,...q.removed])))return false;
  if(swap)return true;
  // A named confirmation can refer to the already-sent exact swap rather
  // than restating its removed item. All immutable quote checks above remain

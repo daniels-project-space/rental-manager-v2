@@ -372,7 +372,11 @@ export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources
   }else occupancy=stockOccupancyForItem(sources,item,request);
   const repair = sources.claims.filter(claimHoldsStock).reduce((n, c) => n + (c.repair_item_ids ?? []).filter((id) => id === item._id).length, 0);
   const result = evaluateStockWindow({ request, owned: item.status === "active" && !item.is_marketing_only && item.qty > 0, total: item.qty, repair, occupancy, blackouts: sources.blackouts.filter((b) => b.item_id === item._id), vacations: sources.vacations }, includeDetails);
-  return { ...result, ...(item.quantity_basis ? { quantity_basis: item.quantity_basis } : {}), item_name: item.name_canonical, item_id: item._id, kind: item.kind, owned: item.status === "active" && !item.is_marketing_only && item.qty > 0, is_marketing_only: item.is_marketing_only === true, buffer_minutes: TURNAROUND_BUFFER_MINUTES, source: "shared_inventory_confirmed_rentals", checked_at: Date.now() };
+  // A confirmed minimum supports positive availability within that bound,
+  // but a request above it does not prove the remaining units do not exist.
+  // Keep definite closures and unrentable items negative.
+  const beyondKnownMinimum = item.quantity_basis?.basis === "owner_lower_bound" && result.reason === "insufficient_units";
+  return { ...result, ...(beyondKnownMinimum ? {available:null,reason:"stock_above_confirmed_minimum"} : {}), ...(item.quantity_basis ? { quantity_basis: item.quantity_basis } : {}), item_name: item.name_canonical, item_id: item._id, kind: item.kind, owned: item.status === "active" && !item.is_marketing_only && item.qty > 0, is_marketing_only: item.is_marketing_only === true, buffer_minutes: TURNAROUND_BUFFER_MINUTES, source: "shared_inventory_confirmed_rentals", checked_at: Date.now() };
 }
 
 export async function checkRentalStock(ctx: QueryCtx, request: StockRequest) {
@@ -403,6 +407,6 @@ export function stockForRentalItem(sources:Awaited<ReturnType<typeof loadStockSo
     const date=c.per_day.find(d=>d.date===day.date);
     return date?Math.floor(date.free/c.units_per_item):0;
   }))}));
-  return {...primary,available,free_units:free,total_units:total,per_day,reason:negative?"supplied_component_unavailable":available===true?"available":"unresolved_default_adapter",
+  return {...primary,available,free_units:free,total_units:total,per_day,reason:negative?"supplied_component_unavailable":available===true?"available":defaults.unresolved.length?"unresolved_default_adapter":"supplied_component_stock_unknown",
     source:"item_with_supplied_adapters",components,unresolved_default_adapters:defaults.unresolved};
 }

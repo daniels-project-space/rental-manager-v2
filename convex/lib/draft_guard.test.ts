@@ -183,6 +183,19 @@ describe("pickup time acceptance", () => {
     const r = guardDraft("Sure, see you then.", opts);
     expect(r.flags.some((f) => f.type === "INVALID_TIME_ACCEPTED")).toBe(true);
   });
+  it("clarifies the captured comma-separated opening windows as continuous ranges",()=>{
+    const text="Collection and return are from the Northumberland Street area (10am, 12pm or 7pm, 9pm). Does that location work for you?";
+    const result=guardDraft(text,{...opts,lastRenterMessage:"Could I rent the same gear?"});
+    expect(result.text).toContain("(10am to 12pm or 7pm to 9pm)");
+    expect(result.flags).toContainEqual(expect.objectContaining({type:"PICKUP_WINDOWS_CLARIFIED",action:"rewritten"}));
+  });
+  it("does not change actual appointment options or unverified window endpoints",()=>{
+    for(const text of ["I can offer 10am, 12pm appointments.","The camera operates at (10am, 12pm).","Collection times are (10am, 1pm or 7pm, 9pm)."]){
+      expect(guardDraft(text,{...opts,lastRenterMessage:"What are the times?"}).text).toBe(text);
+    }
+    const text="Collection is available (10am, 12pm or 7pm, 9pm).";
+    expect(guardDraft(text,{...opts,pickupWindows:[]}).flags.some(f=>f.type==="PICKUP_WINDOWS_CLARIFIED")).toBe(false);
+  });
 });
 
 describe("guardDraft — VERIFICATION_CIRCUMVENTION", () => {
@@ -1337,6 +1350,8 @@ describe("account pickup and travel compensation policy", () => {
     expect(result.text).toMatch(/collection is only available/i);
     expect(result.text).toContain("10:00 to 12:00 or 19:00 to 21:00");
     expect(result.text).toContain("exact times work within your rental dates");
+    const captured=guardDraft("Pickup is in central London.",{...options,lastRenterMessage:"Where do I collect this kit, and what are the pickup and return windows?"});
+    expect(captured.text).toContain("10:00 to 12:00 or 19:00 to 21:00");
     const missing = guardDraft("Pickup is in central London.", { ...options, pickupWindows: [] });
     expect(missing.text).toContain("I'll check the pickup and return hours");
     expect(missing.text).not.toContain("10:00");

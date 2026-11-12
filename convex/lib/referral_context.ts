@@ -9,6 +9,7 @@ import { resolveOrderPhysicalItems, sameOrderPhysicalItems } from "./renter_orde
 import { rentalStage } from "./rental_stage";
 import { londonToday } from "./effectiveDates";
 import { shortItemName } from "./item_display_name";
+import { requestsFriendBasketRestore } from "./verification_failure";
 
 /** Share equipment references, never the source renter's profile, transcript,
  * approval or payment. The destination's own request remains authoritative. */
@@ -37,5 +38,6 @@ export async function referralContext(ctx:QueryCtx,thread:string,account:string,
  return {ok:true,code,already_linked:false,source_start_date:source.start_date??null,source_end_date:source.end_date??null,
   items:[...requested.values()],physical_items:[...physical.items],
   pending_offer,renter_accepts_sent_terms:renterAcceptsReferralOffer(pending_offer,messages),
-  guidance:"Shared equipment reference only. No basket has been applied, no booking created, and approval/payment/verification never transfer. renter_accepts_sent_terms=true means the CURRENT renter accepted the immediately preceding Native offer: call restore_referral_basket with pending_offer's exact terms rather than quote again or ask for the same consent. That tool rechecks current stock, prices and qualifications; only its successful action receipt proves restoration. Respect current dates, quantities and exclusions; source terms are defaults only. Info or quote-only requests are read-only. A direct restoration request also uses restore_referral_basket. All real Hygglo writes still require separate written rollout consent."};
+  renter_requests_restoration:messages.at(-1)?.sender==="renter" && requestsFriendBasketRestore(messages.at(-1)?.body_text??""),
+  guidance:"Shared equipment reference only. No basket has been applied, no booking created, and approval/payment/verification never transfer. If renter_requests_restoration=true, call restore_referral_basket for the current request instead of repeating the quote. If renter_accepts_sent_terms=true, call it with pending_offer's exact terms. That tool rechecks current stock, prices and qualifications; only its successful action receipt proves restoration. Respect current dates, quantities and exclusions; source terms are defaults only. For an availability question about the referred gear, check the exact basket once, state the verified current total from that check, and ask whether they want it added to their own request; a question or quote alone is read-only. All real Hygglo writes still require separate written rollout consent."};
 }
