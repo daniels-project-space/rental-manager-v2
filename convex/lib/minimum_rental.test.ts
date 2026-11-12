@@ -87,6 +87,10 @@ describe("prospective minimum-value context",()=>{
   expect(pickup.text).toContain("collection is only available");
   expect(pickup.flags.some(f=>f.type==="LOW_VALUE_BLOCK")).toBe(false);
 
+  const corrected=guardDraft("We're based in the Northumberland Street area.",{history:[],lastRenterMessage:"Are you based in Shoreditch?",pickupArea:"Northumberland Street area",commercialContext:below});
+  expect(corrected.text).toContain("equipment you've requested is handled through our pickup point");
+  expect(corrected.flags.some(f=>f.type==="LOW_VALUE_BLOCK")).toBe(false);
+
   const mixed=guardDraft("The item is available for those dates, though collection is only available from the Northumberland Street area.",{history:[],lastRenterMessage:"Is it available?",pickupArea:"Northumberland Street area",commercialContext:below});
   expect(mixed.flags.some(f=>f.type==="LOW_VALUE_BLOCK")).toBe(true);
   expect(guardDraft("Your booking is confirmed.",{history:[],lastRenterMessage:"Can I book it?",commercialContext:below}).flags.some(f=>f.type==="LOW_VALUE_BLOCK")).toBe(true);

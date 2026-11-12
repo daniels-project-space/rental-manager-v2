@@ -38,8 +38,13 @@ export function hasPickupDisclosure(text:string,sources:string[]=[],allowedArea?
  const fragments=sources.flatMap(source=>[source,...source.split(/[\n,]/),...(source.match(/\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/gi)??[])]).map(normal)
   .filter(part=>part.length>=4&&!/^(?:central london|london|uk|united kingdom|england)$/.test(part)&&!(area&&` ${area} `.includes(` ${part} `)));
  if(fragments.some(part=>value.includes(` ${part} `)))return true;
- return text.split(/(?<=[.!?])\s+|\n+/).some(sentence=>/\b(?:pick\s*up|pickup|collect(?:ion)?|meet|return|drop[ -]?off)\b/i.test(sentence) &&
-  (/\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i.test(sentence)||/\b\d+[a-z]?\s+(?:[a-z]+\s+){0,4}(?:street|road|avenue|lane|square|mall|place|drive|close|way)\b/i.test(sentence)));
+ return text.split(/(?<=[.!?])\s+|\n+/).some(sentence=>{
+  // Remove only the explicitly stated courier destination postcode. Any
+  // separate pickup address in the same sentence must still be detected.
+  const pickupText=sentence.replace(/(\b(?:delivery|deliver(?:ed|ing)?|courier)\b[^.!?\n]{0,80}?\bto\s+(?:your\s+)?(?:postcode\s+)?)[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i,'$1');
+  return /\b(?:pick\s*up|pickup|collect(?:ion)?|meet|return|drop[ -]?off)\b/i.test(sentence) &&
+   (/\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i.test(pickupText)||/\b\d+[a-z]?\s+(?:[a-z]+\s+){0,4}(?:street|road|avenue|lane|square|mall|place|drive|close|way)\b/i.test(pickupText));
+ });
 }
 export function pickupPrivacySources(profile:{pickup_address?:string|null;hub_postcode?:string|null;hub_label?:string|null}|null|undefined) {
  return [profile?.pickup_address,profile?.hub_postcode,profile?.hub_label].filter((value):value is string=>!!value?.trim());

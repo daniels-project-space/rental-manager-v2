@@ -891,8 +891,13 @@ const ASSERTS_AVAIL_RE =
   });
   const asksPickupLocation = isPickupLocationIntent(opts.lastRenterMessage);
   const asksTravel = isTravelConcern(opts.lastRenterMessage);
-  const pickupAreaDisclosure = (area: string) =>
-    `For this item, collection is only available from the ${area}. Would that work for you? I'll share the exact meeting point once the booking is confirmed.`;
+  const pickupAreaDisclosure = (area: string) => {
+    if (travelCompensation.pickupAreaDisclosed) {
+      const exactDetailsRequested = /\b(?:address|postcode|exact|map|meeting point)\b/i.test(opts.lastRenterMessage);
+      return `For this rental, the equipment is handled through our pickup point in the ${area}, so collection is only available there. Would that location work for you?${exactDetailsRequested ? " I'll share the exact meeting point once the booking is confirmed." : ""}`;
+    }
+    return `The equipment you've requested is handled through our pickup point in the ${area}, so collection is only available there. Would that work for you? I'll share the exact meeting point once the booking is confirmed.`;
+  };
   const travelCompensationContext = asksPickupLocation || asksTravel || isTravelCompensationOffer(text);
   const verificationFailed = opts.stage === "VERIFICATION_FAILED";
   const firstLocationAndDiscountRequest = asksPickupLocation && !travelCompensation.pickupAreaDisclosed &&

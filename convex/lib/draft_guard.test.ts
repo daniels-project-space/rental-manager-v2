@@ -1060,6 +1060,44 @@ describe("account pickup and travel compensation policy", () => {
     expect(isPickupLocationIntent("Yes, the Northumberland Street area works." )).toBe(false);
   });
 
+  it("handles business-location questions without relying on specific London area names", () => {
+    const questions = ["Hi, are you based in Dalston?", "Where are you based?", "Is your Canary Wharf branch real?"];
+    for (const question of questions) {
+      const raw = "We are based in Trafalgar Square. Yes, that is our only location.";
+      const options = { history: [], lastRenterMessage: question, pickupArea: "Northumberland Street area", pickupConfirmed: false };
+      expect(isPickupLocationIntent(question)).toBe(true);
+      const uncorrected = scoreDraft({ accountSlug: "dbcinema", draftText: raw, productionFlags: [], conversationHistory: [], ...options });
+      expect(uncorrected.results.find(r => r.category === "location_handling")?.status).toBe("fail");
+      const guarded = guardDraft(raw, options);
+      expect(guarded.text).toContain("pickup point in the Northumberland Street area, so collection is only available there");
+      expect(guarded.text).not.toMatch(/only location|Trafalgar Square/i);
+      expect(guarded.flags).toContainEqual(expect.objectContaining({ type: "PICKUP_LOCATION_CORRECTED", action: "rewritten" }));
+    }
+    const liveCandidate = "Hi! Pickups and returns are based around the Northumberland Street area (I'll share the exact address once the booking is confirmed). Does that area work for you?";
+    const liveResult = guardDraft(liveCandidate, { history: [], lastRenterMessage: questions[0], pickupArea: "Northumberland Street area", pickupConfirmed: false });
+    expect(liveResult.text).toContain("pickup point in the Northumberland Street area, so collection is only available there");
+    expect(liveResult.flags).toContainEqual(expect.objectContaining({ type: "PICKUP_LOCATION_CORRECTED", action: "rewritten" }));
+    expect(isPickupLocationIntent("Is your price based on the rental duration?")).toBe(false);
+    expect(isPickupLocationIntent("Where are you with the delivery quote?")).toBe(false);
+  });
+
+  it("keeps a courier round-trip question separate from a request for the pickup point", () => {
+    expect(isPickupLocationIntent("How much is delivery and collection to SW1A 1AA?")).toBe(false);
+    expect(isPickupLocationIntent("How much is delivery, and where is the pickup point?")).toBe(true);
+    const candidate = "Round-trip delivery and collection to SW1A 1AA is £35.";
+    const result = guardDraft(candidate, { history: [], lastRenterMessage: "How much is delivery and collection to SW1A 1AA?", pickupArea: "Northumberland Street area", pickupConfirmed: false });
+    expect(result.text).toBe(candidate);
+    expect(result.flags.some(f => f.type === "PICKUP_LOCATION_CORRECTED")).toBe(false);
+    const unverified = guardDraft(candidate, {
+      history: [], lastRenterMessage: "How much is delivery and collection to SW1A 1AA?",
+      pickupArea: "Northumberland Street area", pickupConfirmed: false, newInquiry: true,
+      pickupPrivacySources: ["10 Northumberland Street, London WC2N 5DB"],
+      priceEvidence: [], priceRequest: { items: [{ name: "BMPCC 6K Full Frame", quantity: 1 }] },
+    });
+    expect(unverified.flags.some(f => f.type === "PRICE_HALLUCINATION" && f.action === "flagged")).toBe(true);
+    expect(unverified.flags.some(f => f.type === "PICKUP_DETAILS_EARLY")).toBe(false);
+  });
+
   it("does not misread discount refusals as positive offers",()=>{
     expect(isDiscountConcessionOffer("I'm unable to take 10% off for a one-day rental.")).toBe(false);
     expect(isDiscountConcessionOffer("I can't take £10 off the rental.")).toBe(false);
@@ -1075,7 +1113,7 @@ describe("account pickup and travel compensation policy", () => {
       pickupPrivacySources:["10 Northumberland Street, London WC2N 5DB, England","outside the Sherlock Holmes pub"],pickupConfirmed:false,
     });
     expect(result.text).toContain("Northumberland Street area");
-    expect(result.text).toContain("collection is only available");
+    expect(result.text).toMatch(/(?:collection is only available|only available for collection)/i);
     expect(result.text).not.toMatch(/discount|10%|postcode|WC2N|Shoreditch/i);
     expect(result.flags.map(flag=>flag.type)).toContain("TRAVEL_COMPENSATION_GATE");
   });
@@ -1105,7 +1143,7 @@ describe("account pickup and travel compensation policy", () => {
       rentalChargeGbp: 40,
     });
     expect(result.text).toContain("Northumberland Street area");
-    expect(result.text).toContain("collection is only available");
+    expect(result.text).toMatch(/(?:collection is only available|only available for collection)/i);
     expect(result.text).not.toMatch(/Shoreditch|consolidat|£10|WC2N 5DB/i);
     expect(result.flags.map((flag) => flag.type)).toContain("PICKUP_LOCATION_CORRECTED");
     expect(result.flags.map((flag) => flag.type)).toContain("TRAVEL_COMPENSATION_GATE");
@@ -1151,6 +1189,16 @@ describe("account pickup and travel compensation policy", () => {
     expect(travelCompensationMaximum(250)).toBe(10);
   });
 
+  it("counts an earlier travel offer even when it followed silence rather than a renter message", () => {
+    const history = [
+      { role: "owner" as const, content: "Collection is arranged in the Trafalgar Square area. Would that work?" },
+      { role: "owner" as const, content: "I can offer a one-time £3.50 travel adjustment if that helps." },
+    ];
+    const state = assessTravelCompensation({ history, lastRenterMessage: "That is too far for me.", pickupArea, rentalChargeGbp: 35 });
+    expect(state.alreadyOffered).toBe(true);
+    expect(state.eligible).toBe(false);
+  });
+
   it("replaces a fake-location answer and blocks its first-contact discount", () => {
     const renterMessage = "The listing says pickup is in Shoreditch. Is that real?";
     const result = guardDraft(
@@ -1165,7 +1213,7 @@ describe("account pickup and travel compensation policy", () => {
       },
     );
     expect(result.text).toContain("Northumberland Street area");
-    expect(result.text).toContain("collection is only available");
+    expect(result.text).toMatch(/(?:collection is only available|only available for collection)/i);
     expect(result.text).not.toMatch(/10%|consolidat|Shoreditch|WC2N 5DB/i);
     expect(result.flags.map((flag) => flag.type)).toContain("TRAVEL_COMPENSATION_GATE");
   });
@@ -1182,10 +1230,26 @@ describe("account pickup and travel compensation policy", () => {
       },
     );
 
-    expect(result.text).toContain("collection is only available");
+    expect(result.text).toMatch(/(?:collection is only available|only available for collection)/i);
     expect(result.text).toContain("Northumberland Street area");
     expect(result.text).not.toMatch(/Shoreditch|WC2N 5DB|Sherlock Holmes/i);
     expect(result.flags.map((flag) => flag.type)).toContain("PICKUP_LOCATION_CORRECTED");
+  });
+
+  it("answers a location follow-up without repeating the full first reply", () => {
+    const first = guardDraft("We're based near Northumberland Street.", {
+      history: [], lastRenterMessage: "Is the Shoreditch location correct?",
+      pickupArea: "Northumberland Street area", pickupConfirmed: false,
+    });
+    const second = guardDraft("That's right, rather than Shoreditch.", {
+      history: [{ role: "owner", content: first.text }], lastRenterMessage: "So not Shoreditch?",
+      pickupArea: "Northumberland Street area", pickupConfirmed: false,
+    });
+    expect(first.text).toContain("equipment you've requested is handled through our pickup point");
+    expect(second.text).toContain("equipment is handled through our pickup point");
+    expect(second.text).not.toBe(first.text);
+    expect(second.text).not.toMatch(/rather than Shoreditch|postcode|WC2N|discount/i);
+    expect(second.text).not.toContain("exact meeting point");
   });
 
   it("adds the missing account-specific reason when a renter follows up with 'so not Shoreditch?'", () => {
@@ -1203,7 +1267,7 @@ describe("account pickup and travel compensation policy", () => {
       },
     );
 
-    expect(result.text).toContain("collection is only available");
+    expect(result.text).toMatch(/(?:collection is only available|only available for collection)/i);
     expect(result.text).toContain("Northumberland Street area");
     expect(result.text).not.toMatch(/Shoreditch|WC2N 5DB|Sherlock Holmes/i);
     expect(result.flags.map((flag) => flag.type)).toContain("PICKUP_LOCATION_CORRECTED");
@@ -1221,7 +1285,7 @@ describe("account pickup and travel compensation policy", () => {
       },
     );
 
-    expect(result.text).toContain("collection is only available");
+    expect(result.text).toMatch(/(?:collection is only available|only available for collection)/i);
     expect(result.flags.map((flag) => flag.type)).not.toContain("PICKUP_LOCATION_CORRECTED");
   });
 

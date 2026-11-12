@@ -52,6 +52,9 @@ describe('current rental reply permissions',()=>{
   for(const text of [`Collect from ${address}.`,'The address is 12 Example Road.','It is not at W1A 1AA.'])expect(hasPickupDisclosure(text,[address])).toBe(true);
   expect(hasPickupDisclosure('Collect at 17 Another Street, SW1A 1AA.')).toBe(true);
   expect(hasPickupDisclosure('Delivery to your W1A 2AB postcode needs a location check.')).toBe(false);
+  expect(hasPickupDisclosure('Round-trip delivery and collection to SW1A 1AA is £35.')).toBe(false);
+  expect(hasPickupDisclosure('Delivery to SW1A 1AA is available; collect from 17 Another Street, SW1A 1AA.')).toBe(true);
+  expect(hasPickupDisclosure('Delivery to SW1A 1AA is available; pickup will be 17 Another Street.')).toBe(true);
   expect(hasPickupDisclosure('Pickup is in central London. I can send the exact address once confirmed.',[address,'central London'])).toBe(false);
  });
  it('allows the owner-approved vague area while still protecting the exact pickup details',()=>{

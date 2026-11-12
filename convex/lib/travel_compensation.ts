@@ -87,6 +87,23 @@ export function isTravelCompensationOffer(text: string): boolean {
 }
 
 export function isPickupLocationIntent(message: string): boolean {
+  // A renter can ask about the business location without naming a pickup or
+  // one of the handful of areas in a listing. Recognise the question's shape,
+  // while leaving unrelated phrases such as "price based on duration" alone.
+  const businessLocationQuestion = /\bwhere\s+(?:are|is)\s+(?:you|your\s+(?:business|company|shop|studio))\s+(?:based|located|situated)\b/i.test(message) ||
+    /\b(?:are|is)\s+(?:you|your\s+(?:business|company|shop|studio))\s+(?:based|located|situated)\s+(?:in|at|near|around)\b/i.test(message) ||
+    (/\b(?:your|the)\s+(?:[\w'-]+\s+){0,4}(?:branch|shop|studio|store|office)\b/i.test(message) &&
+      /\b(?:where|real|really|exists?|correct|right|genuine|true|listed|listing|address|location)\b/i.test(message));
+  if (businessLocationQuestion) return true;
+  // "Delivery and collection" commonly means the courier's round trip, not
+  // a request for the renter's own pickup point. Keep that price answer unless
+  // the renter also asks explicitly about collecting in person or pickup details.
+  const courierRoundTrip = /\b(?:deliver(?:y|ed)?|courier)\b/i.test(message) && /\b(?:collection|collect|pick[ -]?up)\b/i.test(message);
+  const asksOwnPickup = /\b(?:can|could|would|where|when)\s+(?:i|we)\s+(?:collect|pick[ -]?up)\b/i.test(message) ||
+    /\b(?:collect|pick[ -]?up)\s+(?:it\s+)?(?:myself|ourselves|in person)\b/i.test(message) ||
+    /\b(?:where|which|what|your)\b.{0,35}\b(?:pickup|pick[ -]?up|collection)\s+(?:address|postcode|point|location|area)\b/i.test(message) ||
+    /\bwhere\b.{0,25}\b(?:pickup|pick[ -]?up|collection|collect)\b/i.test(message);
+  if (courierRoundTrip && !asksOwnPickup) return false;
   const hasLocationTarget = /\b(?:pickup|pick[ -]?up|collection|collect|address|postcode|street|location|meeting point|meetup|shoreditch|camden|trafalgar(?: square)?|northumberland(?: street)?|charing cross)\b/i.test(message);
   if (!hasLocationTarget) return false;
   // Short follow-ups such as "so not Shoreditch?" inherit their meaning from
@@ -145,9 +162,9 @@ export function assessTravelCompensation(input: {
   const renterObjected = explicitTravelObjection(input.lastRenterMessage);
   const alreadyOffered = input.history.some((turn, index) =>
     turn.role === "owner" && isDiscountConcessionOffer(turn.content) &&
-    input.history.slice(0, index).some((prior) =>
+    (isTravelCompensationOffer(turn.content) || input.history.slice(0, index).some((prior) =>
       prior.role === "renter" && (isTravelConcern(prior.content) || isPickupLocationIntent(prior.content)),
-    ),
+    )),
   );
   const maximumGbp = travelCompensationMaximum(input.rentalChargeGbp);
   return {

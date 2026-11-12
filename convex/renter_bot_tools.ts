@@ -2145,7 +2145,10 @@ export const check_location = action({
           "That doesn't look like a full UK postcode — please re-send it.",
       };
 
-    const km = Math.round(haversineKm(hubGeo, renterGeo) * 10) / 10;
+    // Keep full precision for range and price-band decisions. Rounding first
+    // can put a postcode just outside a boundary into the cheaper zone.
+    const km = haversineKm(hubGeo, renterGeo);
+    const displayKm = Math.round(km * 10) / 10;
     const settings = (await ctx.runQuery(
       internal.settings.__service_get,
       {},
@@ -2155,14 +2158,14 @@ export const check_location = action({
     const deliverable = km <= maxKm;
     if (!deliverable) return {
       ok: true,
-      distance_km: km,
+      distance_km: displayKm,
       hub_label: hub.hub_label ?? hub.hub_postcode,
       renter_area: renterGeo.label,
       max_km: maxKm,
       heavy_max_km: heavyMaxKm,
       within_delivery_range: deliverable,
       within_heavy_range: km <= heavyMaxKm,
-      note: `~${km}km — beyond our ${maxKm}km delivery range; offer pickup only.`,
+      note: `~${displayKm}km — beyond our ${maxKm}km delivery range; offer pickup only.`,
     };
     const heavyRange = tooHeavyForLocation(
       classifyOrderWeight(deliverySpecs.items),
@@ -2173,14 +2176,14 @@ export const check_location = action({
     if (heavyRange.tooHeavy) {
       return {
         ok: true,
-        distance_km: km,
+        distance_km: displayKm,
         hub_label: hub.hub_label ?? hub.hub_postcode,
         renter_area: renterGeo.label,
         max_km: maxKm,
         heavy_max_km: heavyMaxKm,
         within_delivery_range: false,
         within_heavy_range: false,
-        note: `~${km}km — this basket is beyond our heavy-item delivery range; offer pickup only.`,
+        note: `~${displayKm}km — this basket is beyond our heavy-item delivery range; offer pickup only.`,
       };
     }
     const quote = quoteDeliveryPrice(deliverySpecs.items, km, maxKm, 10);
@@ -2194,15 +2197,16 @@ export const check_location = action({
       heavy_max_km: heavyMaxKm,
       within_delivery_range: true,
       within_heavy_range: km <= heavyMaxKm,
-      delivery_fee_gbp: quote.fee,
       delivery_round_trip: true,
       delivery_vehicle: quote.vehicleLabel,
-      quote_source: "db_cinema_weighted_checkout_v1",
+      // The website uses its own listing specs, configured margin/origin and
+      // date groups. A similar local calculation is not a checkout receipt.
+      delivery_pricing_status: "needs_checkout_verification",
       account_slug,
       thread_id,
       basket_updated_at: deliverySpecs.basket_updated_at,
       inventory_updated_at: deliverySpecs.inventory_updated_at,
-      note: `~${quote.km}km from our ${hub.hub_label ?? "hub"} — the exact round-trip delivery charge for this basket is £${quote.fee}.`,
+      note: `~${quote.km}km from our ${hub.hub_label ?? "hub"}; this is within the configured range. The checkout delivery charge for this basket must be checked before quoting.`,
     };
   },
 });

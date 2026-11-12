@@ -156,7 +156,7 @@ export function LiveChatSim({
             )}
             {turn.role === "bot" && turn.status === "flag" && (
               <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide">
-                {turn.contextAdded ? "Review flag · final draft included in test chat; see run results" : "Review flag · candidate only, not added to chat history"}
+                {turn.contextAdded ? "Review notice · included in this test chat" : "Review notice · not added to this test chat"}
               </span>
             )}
             {turn.text}
