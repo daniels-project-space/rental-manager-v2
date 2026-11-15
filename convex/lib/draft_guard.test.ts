@@ -1410,7 +1410,7 @@ describe("account pickup and travel compensation policy", () => {
     expect(result.flags.map((flag) => flag.type)).toContain("PICKUP_LOCATION_CORRECTED");
   });
 
-  it("keeps a truthful item-availability explanation without rewriting it", () => {
+  it("adds the equipment handoff when an item-only location statement gives no reason", () => {
     const result = guardDraft(
       "For this item, collection is only available from the Northumberland Street area. Would that work for you?",
       {
@@ -1423,7 +1423,8 @@ describe("account pickup and travel compensation policy", () => {
     );
 
     expect(result.text).toMatch(/(?:collection is only available|only available for collection)/i);
-    expect(result.flags.map((flag) => flag.type)).not.toContain("PICKUP_LOCATION_CORRECTED");
+    expect(result.flags.map((flag) => flag.type)).toContain("PICKUP_LOCATION_CORRECTED");
+    expect(result.text).toMatch(/equipment is at our pickup point/i);
   });
 
   it("removes a bare money offer when the renter only asks whether the listed pickup is real", () => {
@@ -1552,4 +1553,39 @@ describe("travel-compensation availability phrasing", () => {
     expect(result.text).not.toMatch(/£\s?\d|\d+\s?%/);
     expect(result.flags.some((flag) => flag.type === "UNGROUNDED_AVAILABILITY")).toBe(false);
   });
+});
+
+describe("collection area before the booking next step",()=>{
+ const draft="I've added the kit to your request. Collection is from the Northumberland Street area. When you're ready, you can go ahead and complete your booking. Please submit it from your account.";
+ const base={history:[] as {role:"owner"|"renter";content:string}[],lastRenterMessage:"Yes please add the quoted gear",pickupArea:"Northumberland Street area",pickupConfirmed:false,stage:"INQUIRY"};
+ it("asks the renter whether the disclosed area works before inviting booking",()=>{
+  const result=guardDraft(draft,base);expect(result.text).toContain("Does that collection area work for you?");expect(result.text).not.toContain("complete your booking");expect(result.text).not.toContain("submit it");
+ });
+ it("allows the next step after the renter explicitly accepts that area",()=>{
+  const result=guardDraft(draft,{...base,history:[{role:"owner",content:"Collection is from the Northumberland Street area. Does that work?"}],lastRenterMessage:"Yes, that location works."});
+  expect(result.text).toContain("complete your booking");
+ });
+ it("does not treat agreement to an item as agreement to an unmentioned location",()=>{
+  const result=guardDraft(draft,{...base,history:[{role:"owner",content:"Would you like me to add the gear?"}],lastRenterMessage:"Yes please."});
+  expect(result.text).not.toContain("complete your booking");
+ });
+ it("does not repeat an existing area question while removing a premature booking invitation",()=>{
+  const text="Collection is from the Northumberland Street area. Does that location work for you? Go ahead and complete the booking.";
+  const result=guardDraft(text,base);expect(result.text).toContain("Does that location work for you?");expect(result.text).not.toContain("Does that collection area work for you?");expect(result.text).not.toContain("complete the booking");
+ });
+});
+
+it("distinguishes agreeing exact pickup times from asking where collection is",()=>{
+ expect(isPickupLocationIntent("Yes, that location works. Can I pick up at 11am and return at 7pm on 29 November?")).toBe(false);
+ expect(isPickupLocationIntent("Can I pick up in Dalston? ")).toBe(true);
+ expect(isPickupLocationIntent("Hi, it says you are based in Shoreditch. Is that correct?")).toBe(true);
+});
+
+it("explains the equipment handoff on a follow-up instead of merely repeating the area",()=>{
+ const result=guardDraft("That's right, not Shoreditch. For this rental, collection is only available from the Northumberland Street area. Once the booking is confirmed, I will send the exact address.",{history:[{role:"owner",content:"For this rental, the equipment is at our pickup point in the Northumberland Street area, so collection is only available there. Does that work?"}],lastRenterMessage:"So not Shoreditch?",pickupArea:"Northumberland Street area",pickupConfirmed:false});
+ expect(result.text).toMatch(/equipment/i);expect(result.text).toMatch(/work/i);expect(result.text).not.toMatch(/£|discount/i);
+});
+it("does not treat 'collection for this equipment is only available' as an explanation",()=>{
+ const result=guardDraft("That's correct, not Shoreditch. Collection for this equipment is only available from our Northumberland Street area location. I'll send the exact address when confirmed.",{history:[{role:"owner",content:"For this rental, the equipment is at our pickup point in the Northumberland Street area, so collection is only available there. Does that work?"}],lastRenterMessage:"So not Shoreditch?",pickupArea:"Northumberland Street area",pickupConfirmed:false});
+ expect(result.text).toMatch(/where we handle the requested equipment/i);expect(result.text).toMatch(/work/i);
 });

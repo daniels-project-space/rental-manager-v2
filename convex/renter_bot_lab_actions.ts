@@ -9,6 +9,7 @@ import { labBooking } from "./lib/lab_lifecycle";
 import { insertStockInput, patchStockInput } from "./lib/stock_input_writes";
 import { insertProduct, patchProduct } from "./lib/product_context";
 import { renterBotLabScenario, renterBotLabPickupPoint, renterBotLabRentalDates } from "./lib/renter_bot_lab_scenarios";
+import { mentionsPickupArea } from "./lib/travel_compensation";
 import { preparedListingPrice, type PreparedListingPrice } from "./lib/renter_bot_lab_listing_snapshot";
 import { preparedAlternativeSnapshot } from "./lib/renter_bot_lab_alternative_snapshot";
 /**
@@ -25,6 +26,7 @@ import { internal } from "./_generated/api";
 import { scoreDraft } from "./lib/renter_bot_rubric";
 import type { DraftEvidence } from "./lib/renter_draft_evidence";
 import { PREFIX } from "./renter_bot_probe";
+import type {MutationCtx} from "./_generated/server";
 
 export const listFixtures = query({
   args: {},
@@ -185,6 +187,8 @@ export const appendAssistantMessage = internalMutation({
     const quoted_inquiries=proposals.inquiries,quoted_additions=proposals.additions,quoted_dates=proposals.dates,quoted_replacements=proposals.replacements;
     const now = Date.now();
     await ctx.db.insert("hygglo_messages", { account_slug: args.account_slug, thread_id: args.thread_id, message_id: messageId, sender: "owner", sender_name: "Lab owner", body_text: args.text, ...(rental_request?{rental_request}:{}), hygglo_sent_at: now, fetched_at: now, ...(quoted_inquiries.length ? {quoted_inquiries} : {}), ...(quoted_additions.length ? {quoted_additions} : {}), ...(quoted_dates.length ? {quoted_dates} : {}), ...(quoted_replacements.length ? {quoted_replacements} : {}) });
+    if(process.env.RENTER_BOT_LAB_SCENARIO_SEEDING==="enabled" && mentionsPickupArea(args.text,renterBotLabPickupPoint(args.account_slug)?.area))
+      await ctx.scheduler.runAfter(24*60*60*1000,internal.renter_bot_lab_followups.createDraft,{thread_id:args.thread_id,kind:"location",anchor:now,source_message_id:messageId});
   },
 });
 
@@ -198,6 +202,23 @@ export const getSelectedListing = internalQuery({
 function assertPreparedScenarioLab() {
   if (process.env.RENTER_BOT_LAB_SCENARIO_SEEDING !== "enabled") {
     throw new Error("Prepared scenarios are available only on the isolated Renter Bot Lab backend");
+  }
+}
+
+/** Owner-confirmed unavailable identities belong in the same catalogue as
+ * owned gear, so stock tools can return evidence instead of guessing. These
+ * are isolated Lab records and never change live listings or inventory. */
+async function ensureLabUnavailableIdentities(ctx:MutationCtx){
+  assertPreparedScenarioLab();
+  const known=[
+   {name:"Blackmagic Pyxis",slug:"lab-unavailable-blackmagic-pyxis",aliases:["Pyxis","Blackmagic Pyxis 6K"]},
+   {name:"Sony A7S III",slug:"lab-unavailable-sony-a7s-iii",aliases:["A7S III","Sony A7S3"]},
+   {name:"Sony A7R III",slug:"lab-unavailable-sony-a7r-iii",aliases:["A7R III","Sony A7R3"]},
+  ];
+  for(const item of known){
+   const existing=await ctx.db.query("items").withIndex("by_canonical_name",q=>q.eq("name_canonical",item.name)).first();
+   if(!existing)await insertStockInput(ctx,"items",{name_canonical:item.name,name_input:item.name,slug:item.slug,aliases:item.aliases,
+     kind:"camera",qty:0,unit_kind:"kit",status:"active",is_marketing_only:true,description_source:"owner-confirmed Lab unavailable identity",created_at:Date.now(),updated_at:Date.now()});
   }
 }
 
@@ -228,6 +249,7 @@ export const ensurePreparedScenarioItem = internalMutation({
     assertPreparedScenarioLab();
     const scenario = renterBotLabScenario(scenarioId);
     if (!scenario) throw new Error("Unknown prepared Lab example");
+    await ensureLabUnavailableIdentities(ctx);
     const now = Date.now();
     const existing = await ctx.db
       .query("items")
@@ -405,6 +427,7 @@ export const ensurePreparedAlternative = internalMutation({
       !/\bnp[\s-]*fz100\b|\b(?:sd(?:hc|xc)?|cf\s*express|cfast|memory\s+card|cards?)\b|\bchargers?\b/i.test(content));
     const facts={...(fixture?{qty:snapshot.qty,status:"active" as const,description_source:marker}:{}),
       replacement_cost_gbp:snapshot.replacement_value_gbp,battery_type:"Sony NP-FZ100",
+      owner_verified_kit:{source:"Owner-confirmed Lab camera kit",contents:["3x Sony NP-FZ100 batteries","2x 128GB SD cards","1x Sony dual battery charger"]},
       compatibility:{...existing?.compatibility,batteries:["Sony NP-FZ100"],cards:["SD"],
         included_with_rental:[...preservedContents,"3× Sony NP-FZ100 batteries","2× 128GB SD cards","Sony dual battery charger"]},
       supplied_stock:[...existingSupplied.filter(part=>String(part.item_id)!==String(battery!._id)),
@@ -442,6 +465,7 @@ export const startPreparedScenario = action({
       v.literal("bmpcc-6k-full-frame-kit"),
       v.literal("sony-fx3-batteries"),
       v.literal("verification-failed"),
+      v.literal("confirmed-booking"),
     ),
   },
   handler: async (ctx, { scenarioId }): Promise<{
@@ -467,7 +491,7 @@ export const startPreparedScenario = action({
       account_slug: scenario.accountSlug,
       items: [{ name: itemName }],
       messages: [],
-      booking: scenario.startStage === "verification_failed" ? labBooking("awaiting_verification", startDate, endDate) : undefined,
+      booking: scenario.startStage === "verification_failed" ? labBooking("awaiting_verification", startDate, endDate) : scenario.startStage === "confirmed" ? labBooking("confirmed",startDate,endDate) : undefined,
     });
     await ctx.runMutation(internal.renter_bot_lab_order.seed, {
       thread_id: threadId,
@@ -503,6 +527,7 @@ export const startLiveSession = action({
       v.literal("bmpcc-6k-full-frame-kit"),
       v.literal("sony-fx3-batteries"),
       v.literal("verification-failed"),
+      v.literal("confirmed-booking"),
     )),
     fixtureId: v.optional(v.id("renter_bot_fixtures")),
     items: v.optional(v.array(v.string())),
@@ -642,6 +667,7 @@ export const sendTestMessage = action({
     draft: string;
     overall_status: "pass" | "fail" | "flag";
     assistantContextAdded: boolean;
+    needs_review: boolean;
     runId: string;
     productionGuardFlags: unknown;
     generation_error?:CanonicalGenerationError;
@@ -764,6 +790,10 @@ export const sendTestMessage = action({
       draft: draftText,
       overall_status: rubric.overall_status,
       assistantContextAdded,
+      // Corrections remain in the run diagnostics, but a fully corrected
+      // reply is not a pending review in the conversation itself.
+      needs_review: rubric.results.some(r=>r.status==="flag" && !r.category.startsWith("production_guard:")) ||
+        (draftResult.flags??draftResult.review?.flags??[]).some(f=>f.action==="flagged"),
       runId,
       productionGuardFlags: draftResult.flags ?? draftResult.review?.flags ?? [],
       generation_error:draftResult.generation_error,

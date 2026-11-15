@@ -19,6 +19,9 @@ export function parenthesizedPriceBreakdowns(text:string):Map<number,PriceBreakd
     if(end===undefined)continue;
     const body=text.slice(start+1,end),amounts=[...body.matchAll(currency)];
     if(amounts.length<2)continue; // contents, dates and a single daily rate are not a breakdown
+    // A difference and its baseline describe a comparison, not two priced
+    // components of the total preceding this parenthesis.
+    if(/^\s*(?:a\s+)?£\s*\d+(?:\.\d{1,2})?\s+(?:reduction|saving|decrease)\s+from\s+£\s*\d+(?:\.\d{1,2})?\s*$/i.test(body))continue;
     const parts:PriceBreakdownPart[]=[];
     let valid=amounts.length>=2 && !body.slice(0,amounts[0].index).trim();
     for(let index=0;index<amounts.length;index++) {

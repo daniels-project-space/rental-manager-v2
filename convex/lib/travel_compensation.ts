@@ -113,16 +113,18 @@ export function isPickupLocationIntent(message: string): boolean {
   return /\b(?:where|which area|what area|exact|postcode|real|really|actually|correct|right|genuine|true|confirm|whether|listed|listing says|tell me|share|send me)\b/i.test(message) ||
     /\b(?:which|what)\s+(?:pickup\s+)?(?:street|address)\b|\bstreet\s+address\b/i.test(message) ||
     /\b(?:i thought|i understood|i was told|i expected|i was expecting|the listing (?:says|shows|states)|the ad (?:says|shows)|it (?:says|shows))\b.{0,80}\b(?:pickup|pick[ -]?up|collection|at|in|near)\b/i.test(message) ||
-    /\b(?:can|could|would|should)\s+(?:i|we|you)\s+(?:(?:still|then|there)\s+)?(?:collect|pick[ -]?up|meet|get|come)\b/i.test(message) ||
+    /\b(?:collect|pick[ -]?up|meet)\b.{0,35}\b(?:in|from|near)\s+(?!the\s+(?:morning|afternoon|evening)\b|morning\b|afternoon\b|evening\b)[a-z][a-z'-]+/i.test(message) ||
     /\b(?:is|are|was|does)\b.{0,40}\b(?:pickup|pick[ -]?up|collection|location|shoreditch|camden|trafalgar|northumberland|charing cross)\b/i.test(message) ||
-    /\b(?:pickup|pick[ -]?up|collection|location)\b.{0,35}\b(?:in|at|near|from)\b/i.test(message);
+    /\b(?:pickup|pick[ -]?up|collection|location)\b.{0,35}\b(?:in|at|near|from)\s+(?!(?:the\s+)?(?:morning|afternoon|evening|noon|midday|night)\b)[a-z][a-z'-]+/i.test(message);
 }
 
 /** A grounded explanation that an item's collection is tied to its account pickup point. */
 export function hasPickupHandoffExplanation(text: string): boolean {
   return sentences(text).some((sentence) =>
     /\b(?:only available|available only|can only be (?:collected|picked up)|collection is only available|pickup is only available)\b/i.test(sentence) &&
-    /\b(?:collection|pickup|collect|collected|pick[ -]?up|picked up)\b/i.test(sentence),
+    /\b(?:collection|pickup|collect|collected|pick[ -]?up|picked up)\b/i.test(sentence) &&
+    (/\b(?:equipment|gear|items?|kit|cameras?|lenses?)\b.{0,50}\b(?:is|are)\s+(?:(?:currently|already)\s+)?(?:at|held|kept|stored|located|based)\b/i.test(sentence) ||
+      /\b(?:where|we)\b.{0,35}\b(?:handle|hold|keep|store)\b.{0,45}\b(?:equipment|gear|items?|kit|cameras?|lenses?)\b/i.test(sentence)),
   );
 }
 

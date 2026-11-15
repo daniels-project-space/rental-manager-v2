@@ -12,6 +12,14 @@ import { unsupportedStockClaims,type StockReceipt } from "../../convex/lib/stock
 import currentInquiry from "./fixtures/renter-current-inquiry-basket-stock.json";
 import mismatch from "./fixtures/renter-product-name-mismatch.json";
 
+it("carries only verified per-listing kit contents from a successful Native swap quote",()=>{
+ const result={ok:true,source:"native_lab_proposal",added_kit_evidence:[{name:"Sony A7 III",source:"physical_mapping_and_inventory",contents:["3x Sony NP-FZ100 batteries"]}]};
+ const receipt=renterToolReceipts([{toolName:"quote_booking_replacement",toolCallId:"swap",result}]);
+ expect(recommendationKitEvidence(receipt)).toEqual([expect.objectContaining({contents:["3x Sony NP-FZ100 batteries"]})]);
+ expect(recommendationKitEvidence(renterToolReceipts([{toolName:"quote_booking_replacement",toolCallId:"swap",result:{...result,ok:false}}]))).toEqual([]);
+ expect(recommendationKitEvidence(renterToolReceipts([{toolName:"quote_booking_replacement",toolCallId:"swap",result:{...result,added_kit_evidence:[{...result.added_kit_evidence[0],source:"listing_text"}]}}]))).toEqual([]);
+});
+
 describe("untrusted claimed-fact diagnostics", () => {
   it("accepts missing call attribution without manufacturing proof or crashing Lab persistence", () => {
     expect(normalizeClaimedFacts([{ kind: "item_included", value: "Battery charger, cables", sourceTool: "preloaded_facts" }]))

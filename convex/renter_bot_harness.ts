@@ -1,6 +1,7 @@
 import {ownerCheckBlocksRequest} from "./lib/owner_checks";
 import {canonicalGenerationErrorValidator} from "./lib/canonical_generation_error";
 import {ownerCheckRequestMessageId} from "./lib/owner_check_request";
+import {unrelatedToRenderedReplacement} from "./lib/owner_check_scope";
 /**
  * renter_bot_harness — runs renter_bot_fixtures through the REAL
  * generateDraft pipeline (same code path production uses) and scores each
@@ -47,7 +48,7 @@ export const pendingOwnerChecksForDraft=internalQuery({
     if(!conv?.ai_draft_for_message_id||!conv.ai_draft_context_key||conv.ai_draft_text!==a.draft_text)return null;
     const tasks=await ctx.db.query("renter_bot_owner_checks").withIndex("by_status_thread",q=>q.eq("status","pending").eq("thread_id",a.thread_id)).collect();
     return tasks.filter(task=>ownerCheckBlocksRequest(task.check)&&task.account_slug===conv.account_slug&&task.source_context_key===conv.ai_draft_context_key&&
-      ownerCheckRequestMessageId(task)===conv.ai_draft_for_message_id).map(task=>task.check);
+      ownerCheckRequestMessageId(task)===conv.ai_draft_for_message_id && !unrelatedToRenderedReplacement({kind:task.check.kind,candidateNames:task.candidate_names,flags:conv.ai_draft_flags??[],prices:conv.ai_draft_evidence?.prices??[]})).map(task=>task.check);
   }
 });
 

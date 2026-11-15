@@ -166,6 +166,10 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     // preceding paragraph discussed another item or the trailing text lists
     // supplied components. It still needs the current order's exact receipt.
     let bookingSubject = /^\s*(?:(?:your|our|my|the|this|current|confirmed)\s+)*(?:booking|order|rental|hire)(?:\s+(?:total|price|cost))?\s+(?:remains|stays|is\s+still)(?:\s+(?:unchanged|the\s+same|set|confirmed|agreed))?(?:\s+(?:at|priced\s+at))?\s*$/i.test(segment);
+    // "£32 reduction from £50" refers to the current basket in an explicit
+    // replacement comparison. The previous reduction still needs its own
+    // Native before/after receipt, and this amount needs the current price.
+    if(/^\s*(?:reduction|saving|decrease)\s+from\s*$/i.test(segment) && /\b(?:swap|swapping|replace|replacing|switch|switching)\b/i.test(text.slice(0,pos).split(/;|\n|(?<=[.!?])\s+/).at(-1)??""))bookingSubject=true;
     const currentBookingReference = /\b(?:current|existing|confirmed)\s+([^£.!?()]{0,70}?)\s+(?:booking|order)\s*\(\s*$/i.exec(segment);
     if (currentBookingReference && request.items.length === 1 && aliases([request.items[0].name, ...(request.items[0].aliases ?? [])]).some(name => ` ${name} `.includes(` ${norm(currentBookingReference[1])} `))) bookingSubject = true;
     // In “the lens pairs with the adapter, which is £10/day”, only the
@@ -377,7 +381,15 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
             if(!added)return false;
             const directlyNamed=same(subject,[added.name]) && (declaredQuantity??subjectQuantity??1)===added.quantity;
             const previouslyQuoted=pricedComponents.some(c=>same(c.names,[added.name]) && c.quantity===added.quantity);
-            if(e.proposal.removed_items?.length && (proposalTotal || replacementAdjustment) ? !directlyNamed && !previouslyQuoted : !directlyNamed)return false;
+            // A savings amount can follow the proposed total in the same
+            // sentence. Its local money clause ("which is £32 less") has no
+            // item name, so bind it to the explicitly named swap and its
+            // verified before/after basket instead of inheriting a random noun.
+            const sentence=` ${norm(sentenceBeforeAmount)} `;
+            const namesItem=(name:string)=>aliases([name]).some(alias=>alias && sentence.includes(` ${alias} `));
+            const explicitSingleSwap=replacementAdjustment && added.quantity===1 && e.proposal.removed_items?.length===1 &&
+              e.proposal.removed_items[0].quantity===1 && namesItem(added.name) && namesItem(e.proposal.removed_items[0].name);
+            if(e.proposal.removed_items?.length && (proposalTotal || replacementAdjustment) ? !directlyNamed && !previouslyQuoted && !explicitSingleSwap : !directlyNamed)return false;
           }
         }
         // A new inquiry quote proves its explicitly named alternative basket,

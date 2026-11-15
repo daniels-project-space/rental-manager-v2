@@ -177,7 +177,7 @@ describe("owner-confirmed pickup and travel rules", () => {
     });
     const explained = scoreDraft({
       ...common,
-      draftText: "For this item, collection is only available from the Northumberland Street area. Would that work for you?",
+      draftText: "For this rental, the equipment is at our pickup point in the Northumberland Street area, so collection is only available there. Does that work?",
     });
 
     expect(areaOnly.results.find((row) => row.category === "location_handling")?.status).toBe("fail");

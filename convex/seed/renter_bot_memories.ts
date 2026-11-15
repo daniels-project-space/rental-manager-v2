@@ -120,7 +120,7 @@ export const RENTER_BOT_MEMORIES_V1: SeedMemory[] = [
     scope: "operational",
     title: "DANIEL RULE 13 — Sets and Minimum Packages",
     content:
-      "Sony cameras: 2x NP-FZ100 battery sets + card (256GB SD on A7 II/A7 III, CF Express Type A on FX3/A7 V — check the specific body). Blackmagic: 5x LP-E6NH + SSD (not a card). Block included items from singular availability. Do not discourage extra battery purchases using included batteries as reason.",
+      "Use the exact listing's verified physical kit mapping for included gear and quantities. The owner confirms three NP-FZ100 batteries per FX3, A7 V and A7 III camera, and a dual charger for each Sony camera. Each A7 II and A7 III has two 128GB SD cards; the A7 V has 256GB V90 SD storage and the FX3s use 320GB CFexpress cards. The BMPCC 6K Pro and 6K Full Frame each use five NP-F570 batteries; the confirmed Pro kit has a 2TB SSD and the Full Frame kit a 1TB CFexpress Type B card. Listing-specific contents and shared stock still need their own verification. Do not discourage extra battery purchases using included batteries as reason.",
     tags: ["daniel-rule", "kit", "batteries", "cards"],
     priority: 10,
   },

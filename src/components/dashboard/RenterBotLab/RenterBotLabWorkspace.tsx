@@ -77,7 +77,7 @@ export function RenterBotLabWorkspace() {
         accountSlug: scenario.accountSlug,
         scenarioId,
         items: [scenario.item.name_canonical],
-        lifecycle: "awaiting_owner_approval",
+        lifecycle: scenario.startStage === "confirmed" ? "confirmed" : "awaiting_owner_approval",
         startDate,
         endDate,
         dates: startDate + " to " + endDate,

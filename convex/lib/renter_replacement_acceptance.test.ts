@@ -15,6 +15,8 @@ describe("Native replacement consent",()=>{
    base_items:[{name:previous.name,quantity:1}],removed_items:[{name:previous.name,quantity:1}],added_items:[{name:chosen.name,quantity:1}]};
   const offered={quoted_replacements:[sent],body_text:"If you'd like to switch from the BMPCC 6K Full Frame to the Sony A7 III, that would bring the total for the day to £18. Let me know if you'd like me to update your request to the A7 III."};
   expect(acceptsReplacement("Yes please, switch it to the A7 III for £18.",quote,offered)).toBe(true);
+  expect(acceptsReplacement("Yes please swap it to the Sony A7 III for £18.",quote,offered)).toBe(true);
+  expect(acceptsReplacement("Yes please swap it to the Sony A7 III for £19.",quote,offered)).toBe(false);
   const hosted={quoted_replacements:[sent],body_text:"The Sony A7S III isn't available for 26 November. As an alternative, I'd recommend our Sony A7 III. It's a full-frame Sony body and the kit comes with 3 Sony NP-FZ100 batteries, 2x 128GB SD cards, and a dual charger (body only, no lens included). Swapping the BMPCC 6K Full Frame for the Sony A7 III would bring the total to £18 for the day. Let me know if you'd like me to update the request to the A7 III."};
   expect(acceptsReplacement("Yes please, switch it to the A7 III for £18.",quote,hosted)).toBe(true);
   const omitted={...offered,body_text:"The Sony A7S III isn't available for 26 November. I'd recommend our Sony A7 III instead. Swapping to the Sony A7 III would bring your total to £18 for the day. Let me know if you'd like me to update your request to that."};

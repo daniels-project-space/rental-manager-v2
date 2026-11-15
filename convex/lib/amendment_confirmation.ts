@@ -10,7 +10,7 @@ type Snapshot = { account_slug: string; stage: string; start_date: string; end_d
 function snapshot(value: unknown): Snapshot | null {
   if (!value || typeof value !== "object") return null;
   const s = value as Snapshot;
-  if (typeof s.account_slug !== "string" || !["CONFIRMED_UPCOMING", "ACTIVE"].includes(s.stage)
+  if (typeof s.account_slug !== "string" || !["AWAITING_OWNER_APPROVAL", "CONFIRMED_UPCOMING", "ACTIVE"].includes(s.stage)
     || typeof s.start_date !== "string" || typeof s.end_date !== "string"
     || !Number.isFinite(s.total_gbp) || s.total_gbp <= 0 || !Array.isArray(s.lines)
     || !s.lines.length || !Array.isArray(s.changes)
@@ -32,7 +32,7 @@ export function committedAdditionConfirmation(input: {
   if (!messageId || !threadId.startsWith("__probe__") || transitions.length !== 1
     || amendedDraftContext(beforeKey,threadId,transitions) !== afterKey) return null;
   const before = snapshot(input.before), after = snapshot(input.after);
-  if (!before || !after || before.account_slug !== account || after.account_slug !== account
+  if (!before || !after || before.account_slug !== account || after.account_slug !== account || before.stage !== after.stage
     || before.start_date !== after.start_date || before.end_date !== after.end_date
     || after.changes.length !== before.changes.length+1
     || transitions[0].before_revision !== before.changes.length
@@ -64,19 +64,20 @@ export function committedAdditionConfirmation(input: {
   const period = after.start_date === after.end_date ? format(dates[0]) : `${format(dates[0])} to ${format(dates[1])}`;
   const names = added.map(l => `${l.qty}x ${l.name}`).join(" and ");
   const total = Number(after.total_gbp.toFixed(2)).toString();
-  return `I've added ${names} to your booking for ${period}. The updated booking total is £${total}.`;
+  const noun = after.stage === "AWAITING_OWNER_APPROVAL" ? "request" : "booking";
+  return `I've added ${names} to your ${noun} for ${period}. The updated ${noun === "request" ? "" : "booking "}total is £${total}.`;
 }
 
 /** Recover only one verifiable Native edit on the same inbound message.
  * The returned prices come from the stored order, not the failed model reply. */
 export function committedAmendmentConfirmation(input: Parameters<typeof committedAdditionConfirmation>[0]): {
-  text:string; action:"add_items"|"set_dates"|"remove_item"; prices:PriceEvidence[]; request:StockRequest;
+  text:string; action:"add_items"|"set_dates"|"remove_item"|"replace_items"; prices:PriceEvidence[]; request:StockRequest;
 } | null {
   const {threadId,account,messageId,beforeKey,afterKey,transitions}=input;
   if(!messageId || !threadId.startsWith("__probe__") || transitions.length!==1
     || amendedDraftContext(beforeKey,threadId,transitions)!==afterKey)return null;
   const before=snapshot(input.before),after=snapshot(input.after);
-  if(!before || !after || before.account_slug!==account || after.account_slug!==account
+  if(!before || !after || before.account_slug!==account || after.account_slug!==account || before.stage!==after.stage
     || after.changes.length!==before.changes.length+1
     || transitions[0].before_revision!==before.changes.length || transitions[0].after_revision!==after.changes.length
     || JSON.stringify(after.changes.slice(0,-1))!==JSON.stringify(before.changes))return null;
@@ -99,7 +100,8 @@ export function committedAmendmentConfirmation(input: Parameters<typeof committe
   const format=(value:string)=>new Date(value+"T00:00:00Z").toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric",timeZone:"UTC"});
   const period=after.start_date===after.end_date?format(after.start_date):`${format(after.start_date)} to ${format(after.end_date)}`;
   const total=Number(after.total_gbp.toFixed(2)).toString();
-  let text:string,action:"add_items"|"set_dates"|"remove_item";
+  const noun=after.stage==="AWAITING_OWNER_APPROVAL"?"request":"booking";
+  let text:string,action:"add_items"|"set_dates"|"remove_item"|"replace_items";
   if(key[1]==="add_items"){
     const addition=committedAdditionConfirmation(input);if(!addition)return null;
     if(!before.lines.every(old=>{const next=after.lines.find(l=>l.product_id===old.product_id);return next&&sameTerms(old,next);}))return null;
@@ -108,7 +110,7 @@ export function committedAmendmentConfirmation(input: Parameters<typeof committe
     if(key.length!==4||key[2]!==after.start_date||key[3]!==after.end_date
       ||before.start_date===after.start_date&&before.end_date===after.end_date||before.lines.length!==after.lines.length
       ||!before.lines.every(old=>{const next=after.lines.find(l=>l.product_id===old.product_id);return next&&next.qty===old.qty&&sameTerms(old,next);}))return null;
-    text=`I've updated your booking dates to ${period}. The updated booking total is £${total}.`;action="set_dates";
+    text=`I've updated your ${noun} dates to ${period}. The updated ${noun === "request" ? "" : "booking "}total is £${total}.`;action="set_dates";
   }else if(key[1]==="remove_item"){
     if(key.length!==4||typeof key[2]!=="string"||!Number.isInteger(key[3])||key[3]<=0
       ||before.start_date!==after.start_date||before.end_date!==after.end_date)return null;
@@ -118,7 +120,23 @@ export function committedAmendmentConfirmation(input: Parameters<typeof committe
       ||!after.lines.every(next=>{const old=before.lines.find(l=>l.product_id===next.product_id);return old&&sameTerms(old,next)&&next.qty===old.qty-(old===removed[0]?key[3]:0);}))return null;
     const receipt=(after.changes.at(-1) as {removed_item?:{product_id:number;qty:number}}).removed_item;
     if(!receipt||receipt.product_id!==removed[0].product_id||receipt.qty!==key[3])return null;
-    text=`I've removed ${key[3]}x ${removed[0].name} from your booking for ${period}. The updated booking total is £${total}.`;action="remove_item";
+    text=`I've removed ${key[3]}x ${removed[0].name} from your ${noun} for ${period}. The updated ${noun === "request" ? "" : "booking "}total is £${total}.`;action="remove_item";
+  }else if(key[1]==="replace_items"){
+    if(key.length!==5 || !Number.isInteger(key[2]) || !Number.isInteger(key[3]) || key[3]<=0
+      || !Array.isArray(key[4]) || !key[4].length || before.start_date!==after.start_date || before.end_date!==after.end_date)return null;
+    const removed=before.lines.find(l=>l.product_id===key[2]);
+    if(!removed || removed.qty<key[3])return null;
+    const additions=key[4] as Array<{product_id:number;qty:number}>;
+    if(additions.some((i,index)=>!i || !Number.isInteger(i.product_id) || i.product_id<=0 || !Number.isInteger(i.qty) || i.qty<=0
+      || i.product_id===key[2] || index>0 && additions[index-1].product_id>=i.product_id))return null;
+    const ids=new Set([...before.lines.map(l=>l.product_id),...after.lines.map(l=>l.product_id)]);
+    for(const id of ids){
+      const old=before.lines.find(l=>l.product_id===id),next=after.lines.find(l=>l.product_id===id);
+      const expected=(old?.qty??0)-(id===key[2]?key[3]:0)+(additions.find(i=>i.product_id===id)?.qty??0);
+      if(expected<0 || (next?.qty??0)!==expected || old && next && !sameTerms(old,next))return null;
+    }
+    const names=additions.map(i=>`${i.qty}x ${after.lines.find(l=>l.product_id===i.product_id)!.name}`).join(" and ");
+    text=`I've replaced ${key[3]}x ${removed.name} with ${names} in your ${noun} for ${period}. The updated total is £${total}.`;action="replace_items";
   }else return null;
   const request:StockRequest={start_date:after.start_date,end_date:after.end_date,items:after.lines.map(l=>({name:l.name,quantity:l.qty}))};
   const prices:PriceEvidence[]=[{kind:"basket",names:[],items:request.items.map(i=>({name:i.name,quantity:i.quantity})),total_gbp:after.total_gbp,days,start_date:after.start_date,end_date:after.end_date,source:"lab_order_quote",call_id:`${threadId}:committed:${after.changes.length}`},

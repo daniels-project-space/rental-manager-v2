@@ -59,6 +59,7 @@ export function LiveChatSim({
     accountSlug: session.accountSlug,
   });
   const order = useQuery(api.renter_bot_lab_order.get, { thread_id: session.threadId });
+  const followups = useQuery(api.renter_bot_lab_followups.list, { thread_id: session.threadId });
   const [turns, setTurns] = useState<ChatTurn[]>(() => session.context.initialBotMessage
     ? [{ role: "bot", text: session.context.initialBotMessage, automatic: true }]
     : []);
@@ -87,18 +88,18 @@ export function LiveChatSim({
         setTurns((current) => [...current, {
           role: "bot",
           text: result.draft,
-          status: result.overall_status,
+          status: result.overall_status === "flag" && !result.needs_review ? "pass" : result.overall_status,
           contextAdded: result.assistantContextAdded,
         }]);
       } else if (result.generation_error || result.reason?.startsWith("canonical_generation_")) {
-        setError("The isolated reply connection failed. Refresh the Lab and try again.");
+        setError("The isolated reply connection failed. Check the current request above before continuing; a change may already have been saved.");
       } else if (result.status === "skipped") {
-        setError("The bot held this reply for review" + (result.reason ? ": " + result.reason : "."));
+        setError("The reply needs review. Check the current request above before continuing; a change may already have been saved.");
       } else {
         setError("The bot did not return a reply. You can continue the test or try again.");
       }
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The test reply could not be generated.");
+    } catch {
+      setError("The test reply could not be generated. Check the current request above before continuing; a change may already have been saved.");
     } finally {
       setSending(false);
     }
@@ -116,7 +117,7 @@ export function LiveChatSim({
           <div>
             <p className="text-[#8b8fa3]">Rental item</p>
             <p className="mt-1 font-medium text-[#e4e6eb]">
-              {order === undefined ? "Loading items…" : order?.lines.length ? order.lines.map(line => line.display_name || line.name).join(", ") : "No items yet"}
+              {order === undefined ? "Loading items…" : order?.lines.length ? order.lines.map(line => `${line.qty} × ${line.display_name || line.name}`).join(", ") : "No items yet"}
             </p>
           </div>
           <div>
@@ -133,7 +134,11 @@ export function LiveChatSim({
           </div>
           <div>
             <p className="text-[#8b8fa3]">Pickup and return times</p>
-            <p className="mt-1 font-medium text-[#e4e6eb]">To confirm in the chat</p>
+            <p className="mt-1 font-medium text-[#e4e6eb]">Pickup: {order?.pickup_time ? `${order.pickup_time}${order.pickup_date && order.pickup_date !== order.start_date ? ` on ${rentalDateLabel(order.pickup_date)}` : ""}` : "Not confirmed"} · Return: {order?.return_time ? `${order.return_time}${order.return_date && order.return_date !== order.end_date ? ` on ${rentalDateLabel(order.return_date)}` : ""}` : "Not confirmed"}</p>
+          </div>
+          <div>
+            <p className="text-[#8b8fa3]">Request status</p>
+            <p className="mt-1 font-medium text-[#e4e6eb]">{order?.stage ? order.stage.replaceAll("_", " ").toLowerCase() : "Loading…"}</p>
           </div>
         </div>
         {item?.found === false && (
@@ -141,6 +146,12 @@ export function LiveChatSim({
         )}
         {session.context.friendReference && !order?.lines.length && (
           <p className="mt-3 text-xs text-[#b6bac7]">The friend starts a separate inquiry. Include this reference in your message: <span className="select-all font-mono">{session.context.friendReference}</span></p>
+        )}
+        {followups && followups.length > 0 && (
+          <div className="mt-3 rounded-md border border-amber-400/30 bg-amber-400/5 p-3 text-xs text-amber-100">
+            <p className="font-semibold">Unsent follow-up drafts</p>
+            {followups.map(draft=><p key={draft.kind} className="mt-2">{draft.text}</p>)}
+          </div>
         )}
         {order?.stage === "VERIFICATION_FAILED" && order.referral_code && (
           <button type="button" onClick={() => onStartFriend(order.referral_code!)} disabled={sending || startingFriend}

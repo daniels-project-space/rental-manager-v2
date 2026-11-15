@@ -31,6 +31,9 @@ export function ScenarioPicker({
           {scenario.startStage === "verification_failed" && (
             <p className="mt-1 text-xs text-[#8b8fa3]">A failed verification cancels the test booking and shows the automatic reply.</p>
           )}
+          {scenario.startStage === "confirmed" && (
+            <p className="mt-1 text-xs text-[#8b8fa3]">A confirmed test booking for checking collection, return times and unsent follow-ups.</p>
+          )}
           <button
             type="button"
             onClick={() => startScenario(scenario.id)}

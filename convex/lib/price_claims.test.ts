@@ -1,4 +1,6 @@
 import calendarRateFixture from "../../src/lib/fixtures/renter-calendar-rate-price-claim.json";
+import swapPriceFixture from "../../src/lib/fixtures/renter-swap-price-evidence.json";
+import swapComparison from "../../src/lib/fixtures/renter-swap-comparison.json";
 import {describe,it,expect} from "vitest";
 import {unsupportedPriceClaims,type PriceEvidence} from "./price_claims";
 import {guardDraft} from "./draft_guard";
@@ -25,6 +27,21 @@ describe("a verified replacement proposal", () => {
   expect(check(text,[{...replacement,days:2,end_date:longer.end_date}, {...line,days:2,end_date:longer.end_date}],longer)).not.toEqual([]);
   expect(check(text.replace("for the day","for the day and for 3 days"),[replacement,line],scope)).not.toEqual([]);
  });
+});
+describe("a replacement saving from the actual Lab quote",()=>{
+ const evidence=swapPriceFixture.evidence as PriceEvidence[];
+ const scope=swapPriceFixture.request as StockRequest;
+ const sentence="Switching from the BMPCC 6K Full Frame to the Sony A7 III would bring your total to £18 for the day, which is £32 less.";
+ it("accepts the calculated saving when both named items and the exact before/after basket are verified",()=>expect(check(sentence,evidence,scope)).toEqual([]));
+ it("does not accept an unproven saving or a different removed or added item",()=>{
+  for(const changed of [sentence.replace("£32", "£33"),sentence.replace("BMPCC 6K Full Frame", "BMPCC 6K Pro"),sentence.replace("Sony A7 III", "Sony FX3")])expect(check(changed,evidence,scope)).not.toEqual([]);
+ });
+});
+it("checks all three amounts in a captured replacement comparison against the right saved basket",()=>{
+ const sentence="Swapping the Blackmagic 6K FF for the Sony A7 III on 29 November would bring the total to £18 (a £32 reduction from £50).";
+ const evidence=swapComparison.evidence as PriceEvidence[],scope=swapComparison.request as StockRequest;
+ expect(check(sentence,evidence,scope)).toEqual([]);
+ for(const altered of [sentence.replace("£18","£19"),sentence.replace("£32","£31"),sentence.replace("£50","£51")])expect(check(altered,evidence,scope)).not.toEqual([]);
 });
 describe("a dated single-item rental total", () => {
  const scope:StockRequest={start_date:"2026-11-26",end_date:"2026-11-26",items:[{name:"BMPCC 6K Full Frame",quantity:1}]};

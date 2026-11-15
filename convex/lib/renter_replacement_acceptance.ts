@@ -37,7 +37,7 @@ export function acceptsReplacement(text:string,q:ReplacementAcceptanceQuote,owne
    :m.role==="reduction"?q.base_total_gbp-q.total_gbp:total.includes(m)?q.total_gbp:NaN;
   return !Number.isFinite(expected)||expected<0||!sameMoney(m.amount,expected);
  }))return false;
- const swap=/^(?:(?:yes|yep|okay|ok|sure|please)[,\s]+|(?:go ahead(?: and)?|(?:can|could|would) you|(?:I|we)(?:'d| would) like (?:you )?to|(?:I|we) want (?:you )?to)\s+)*(?:swap|replace)\s+(.+?)\s+(?:with|for)\s+(.+)$/i.exec(message);
+ const swap=/^(?:(?:yes|yep|okay|ok|sure|please)[,\s]+|(?:go ahead(?: and)?|(?:can|could|would) you|(?:I|we)(?:'d| would) like (?:you )?to|(?:I|we) want (?:you )?to)\s+)*(?:swap|replace)\s+(?!it\s+to\b)(.+?)\s+(?:with|for)\s+(.+)$/i.exec(message);
  if(swap){
   const old=directItemSelection(`remove ${swap[1]}`,q.removed,"removal");
   const firstAmount=amendmentMoneyClaims(swap[2])[0];
@@ -50,8 +50,10 @@ export function acceptsReplacement(text:string,q:ReplacementAcceptanceQuote,owne
  const offers=owner.quoted_replacements??[];
  const candidate=offers.filter(p=>p.context_key===q.context_key&&p.epoch===q.epoch&&p.physical_identity_key===q.physical_identity_key&&p.base_physical_identity_key===q.base_physical_identity_key&&p.start_date===q.start_date&&p.end_date===q.end_date&&keys(p.items)===keys(q.added)&&keys(p.removed_listings)===keys(q.removed)&&sameMoney(p.total_gbp,q.total_gbp)&&sameMoney(p.base_total_gbp,q.base_total_gbp));
  const ownerTotals=amendmentMoneyClaims(owner.body_text).filter(m=>m.role==="total"&&sameMoney(m.amount,q.total_gbp));
- const selected=/^(?:(?:yes|yep|yeah|okay|ok|sure)[,!\s]+)?(?:please[,!\s]+)?(?:switch|change)\s+(?:it|the\s+(?:booking|rental|request))\s+to\s+(.+)$/i.exec(message);
- const exactSelection=!!selected && !/\b(?:or|rather than|instead|except)\b/i.test(selected[1]) && directItemSelection(`add ${selected[1]}`,q.added).matches;
+ const selected=/^(?:(?:yes|yep|yeah|okay|ok|sure)[,!\s]+)?(?:please[,!\s]+)?(?:switch|change|swap)\s+(?:it|the\s+(?:booking|rental|request))\s+to\s+(.+)$/i.exec(message);
+ const selectedMoney=selected ? amendmentMoneyClaims(selected[1])[0] : undefined;
+ const selectedItem=selected ? (selectedMoney ? selected[1].slice(0,selectedMoney.index) : selected[1]).replace(/\b(?:for|at)\s*$/i,"").trim() : "";
+ const exactSelection=!!selected && !/\b(?:or|rather than|instead|except)\b/i.test(selected[1]) && directItemSelection(`add ${selectedItem}`,q.added).matches;
  const refusal=owner.body_text.split(/(?<=[.!?])\s+/).some(sentence=>
   /\b(?:cannot|can't|can not|won't|will not|unable to|not able to)\s+(?:\w+\s+){0,3}(?:swap|replace|switch)\b/i.test(sentence) ||
   /\b(?:swap|swapping|replace|replacing|replacement|switch|switching)\b[\s\S]*?\b(?:is|are|would be)\s+(?:not|never|impossible|unavailable)\b/i.test(sentence));

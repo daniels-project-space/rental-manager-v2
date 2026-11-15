@@ -722,6 +722,19 @@ const renterBotDraftHandler = async function POST(req: Request, rawConvex: Conve
             .map(c => ({ name: c.name!, quantity: c.requested_units })),
         })) };
       priceRequest = stockRequest;
+      // The selected booking and the item named in this message can differ.
+      // Hydrate an exact, unambiguous unavailable catalogue identity once so
+      // the model and guard see the same Native stock evidence.
+      if(thread_id.startsWith("__probe__") && lc.start_date && lc.end_date){
+        try{
+          const unavailable=await convex.query(api.renter_bot_tools.mentioned_unavailable_lab_items,{thread_id,message:lastRenter,start_date:lc.start_date,end_date:lc.end_date});
+          for(const item of unavailable){
+            toolReceipts.push({tool:"check_availability",call_id:`prefetch:mentioned:${item.item_id}`,result:item});
+            marketingItems.push(item.item_name);availabilityOutKnown=true;
+            groundTruth+=`REQUESTED ITEM (${item.item_name}): not available for the requested dates. Do not disclose internal inventory labels or invent a cause. Find a verified suitable alternative before offering one.\n`;
+          }
+        }catch{/* Unknown stays unknown; no negative stock claim is allowed. */}
+      }
       // The listing is context, not a commitment to the renter's next basket.
       // Let the scoped Mastra tool check the actual proposed inquiry once its
       // items are selected, instead of creating reviews for unused old gear.

@@ -12,7 +12,7 @@ import { friendBasketReply, verificationFailureReply, requestsFriendBasketRestor
 import { loadThreadReferralReference,referralReferenceSelection } from "./lib/thread_referral_reference";
 import { listingDisplayCatalog } from "./lib/listing_display_catalog";
 import { shortItemName } from "./lib/item_display_name";
-import { internalMutation, mutation, query, internalMutationOf, internalQueryOf } from "./owner_functions";
+import { internalMutation, internalQuery, mutation, query, internalMutationOf, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
 import { baseListingProductIds } from "./lib/base_listing_identity";
 import { bestMatch, isGenericItemQuery } from "./lib/item_name_match";
@@ -30,6 +30,7 @@ import { recentThreadMessages } from "./lib/thread_messages";
 import { londonToday } from "./lib/effectiveDates";
 import { performJointStockCheck } from "./renter_bot_tools";
 import { recommendationRequirementValidator, recommendationRequirementsKey } from "./lib/recommendation_qualification";
+import { confirmedLabTimes } from "./lib/lab_schedule";
 
 async function prohibitsSelectedItems(ctx: QueryCtx, accountSlug:string, text:string, action:"add_item"|"remove_item", lines:Array<{product_id?:number;item_id?:string;name?:string;qty:number}>) {
   const inventory=await ctx.db.query("items").collect();
@@ -240,6 +241,10 @@ export const get = query({
     if (!row) return null;
     const display = await listingDisplayCatalog(ctx, row.account_slug);
     const booking = await getBotBooking(ctx, thread_id);
+    // Derive confirmed times from the isolated transcript; proposals and
+    // approximate times must not appear as confirmed schedule facts.
+    const chat = (await recentThreadMessages(ctx, thread_id, 32)).map(m => ({sender:m.sender,body_text:m.body_text,hygglo_sent_at:m.hygglo_sent_at ?? m.fetched_at}));
+    const times = row.start_date && row.end_date ? await confirmedLabTimes(ctx,{account:row.account_slug,startDate:row.start_date,endDate:row.end_date,booking,messages:chat}) : null;
     const referral = await ctx.db.query("renter_bot_lab_referrals").withIndex("by_source", q => q.eq("source_thread_id", thread_id)).unique();
     return {
       ...summarise(
@@ -249,6 +254,10 @@ export const get = query({
       ),
       changes: row.changes,
       stage: rentalStage(booking, londonToday()).stage,
+      pickup_time: times?.pickup?.time ?? null,
+      pickup_date: times?.pickup?.date ?? null,
+      return_time: times?.returned?.time ?? null,
+      return_date: times?.returned?.date ?? null,
       referral_code: referral?.code,
       account_slug: row.account_slug,
     };
@@ -405,6 +414,7 @@ async function prepareEquipmentProposal(ctx: QueryCtx, a: {thread_id:string;item
     if(a.replacement && !basePhysical?.items.length)return {ok:false,error:"The current basket physical identity is unverified. No booking changes were made."};
     const catalog=await listingDisplayCatalog(ctx,row.account_slug);
     const added:OrderLine[]=[];
+    const added_kit_evidence:Array<{name:string;contents:string[];source:"physical_mapping_and_inventory"}>=[];
     for(const input of a.items) {
       const listing=await ctx.db.query("online_listings").withIndex("by_account_product",q=>q.eq("account_slug",row.account_slug).eq("product_id",input.product_id)).first();
       const inventory=await loadListingInventory(ctx,row.account_slug,input.product_id,input.qty,sources);
@@ -413,6 +423,12 @@ async function prepareEquipmentProposal(ctx: QueryCtx, a: {thread_id:string;item
       const line:OrderLine={name:catalog.name(row.account_slug,input.product_id,listing.name??inventory.listing_name??""),
         product_id:input.product_id,qty:input.qty,daily_price_gbp:listing.daily_price,pricing_basis:"listing",
         price_tiers:await tiersForProduct(ctx,row.account_slug,input.product_id),origin:"added"};
+      if(inventory.components.every(c=>c.name && Number.isInteger(c.units_per_listing) && c.units_per_listing>0)) {
+        const cameras=inventory.components.filter(c=>/^camera(?:_body)?$/.test(c.kind??""));
+        const primary=cameras.length===1 && cameras[0].units_per_listing===1 ? sources.items.find(item=>String(item._id)===cameras[0].item_id) : undefined;
+        const ownerKit=primary?.owner_verified_kit?.source.trim() ? primary.owner_verified_kit.contents : [];
+        added_kit_evidence.push({name:line.name,source:"physical_mapping_and_inventory",contents:[...new Set([...inventory.components.map(c=>`${c.units_per_listing}x ${c.rental_name ?? c.name}`),...ownerKit])]});
+      }
       const duplicate=added.find(l=>l.product_id===line.product_id);
       if(duplicate)duplicate.qty+=line.qty;
       else added.push(line);
@@ -435,7 +451,7 @@ async function prepareEquipmentProposal(ctx: QueryCtx, a: {thread_id:string;item
       physical_identity_key:stock.physical_identity_key,
       base_items:row.items.map(l=>({name:l.name,quantity:l.qty})),added_items:added.map(l=>({name:l.name,quantity:l.qty})),
       ...(a.replacement?{removed_items:removed.map(l=>({name:l.name,quantity:l.qty})),change_kind:"replacement" as const,price_delta_gbp:quote.total_gbp-base_quote.total_gbp,base_physical_identity_key:orderPhysicalIdentityKey(basePhysical!.items),removed_listings:removed.map(l=>({product_id:l.product_id!,quantity:l.qty}))}:{}),
-      quote,base_quote,addition_quote,additional_cost_gbp:quote.total_gbp-base_quote.total_gbp,stock_receipts,proposed_lines:lines};
+      quote,base_quote,addition_quote,additional_cost_gbp:quote.total_gbp-base_quote.total_gbp,stock_receipts,added_kit_evidence,proposed_lines:lines};
 }
 
 export const quoteAdditionBasket = query({
@@ -456,6 +472,7 @@ export const quoteReplacementBasket=query({
     return result;
   },
 });
+export const __service_quoteReplacementBasket=internalQueryOf(quoteReplacementBasket);
 
 export const applyAdditionBasket = mutation({
   args:{thread_id:v.string(),request_message_id:v.string(),items:v.array(v.object({product_id:v.number(),qty:v.number()}))},
@@ -538,6 +555,23 @@ export const applyReplacementBasket=mutation({
   return {ok:true,action_performed:true,source:"native_lab_amendment" as const,thread_id:a.thread_id,account_slug:row.account_slug,applied:summary,order:prepared.quote,verified_quote,stock_receipts:prepared.stock_receipts,context_transition:{source:"native_lab_amendment" as const,thread_id:a.thread_id,before_context_key:beforeContext,after_context_key:await amendmentContext(ctx,a.thread_id),before_revision:beforeRevision,after_revision:beforeRevision+1}};
  },
 });
+
+/** Only the immediately preceding simulated offer can be considered. The
+ * existing atomic mutation independently rechecks consent, identity, price,
+ * stock and message freshness before making any change. */
+export const __service_acceptedReplacementCandidate=internalQuery({
+ args:{thread_id:v.string()},
+ handler:async(ctx,{thread_id})=>{
+  assertLabThread(thread_id);
+  const messages=await recentThreadMessages(ctx,thread_id,2),owner=messages[0],renter=messages[1];
+  if(owner?.sender!=="owner" || renter?.sender!=="renter" || !renter.message_id || owner.quoted_replacements?.length!==1
+    || renterRequestsReadOnly(renter.body_text,"add_item") || renterRequestsReadOnly(renter.body_text,"remove_item"))return null;
+  const offer=owner.quoted_replacements[0];
+  if(offer.removed_listings.length!==1 || !offer.items.length)return null;
+  return {thread_id,request_message_id:renter.message_id,items:offer.items,replace_product_id:offer.removed_listings[0].product_id,replace_quantity:offer.removed_listings[0].qty};
+ }
+});
+export const __service_applyReplacementBasket=internalMutationOf(applyReplacementBasket);
 
 export const applyChange = mutation({
   args: {

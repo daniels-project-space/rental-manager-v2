@@ -31,6 +31,7 @@ import {
 } from "./lib/item_technical_context";
 import { renterCameraIdentities } from "./lib/renter_camera_identity";
 import { bookingRecord } from "./lib/booking_record";
+import { labUnavailableMention } from "./lib/lab_unavailable_mentions";
 import {
   verifiedLensCapabilities,
   assessLensRequirements,
@@ -1518,6 +1519,21 @@ export async function performJointStockCheck(
       "Read-only joint stock check. available:true proves dated capacity only. technical_qualification separately verifies the submitted requirements and camera/lens setup; a false or unknown setup verdict does not prove the items work together. Select a compatible verified set, or explain the missing proof. For a new inquiry, quote.total_gbp and its exact lines supply the combined price; use these instead of another pricing call or mental arithmetic. quote:null means the combined price is unverified; confirmed amendments use quote_booking_addition/replacement. Explain shared component failures; a failed proposal does not mean every item is independently unavailable. No booking or price changes were made.",
   };
 }
+
+/** Bind explicitly named, owner-confirmed unavailable Lab identities to
+ * Native stock receipts. Missing or ambiguous names remain unknown. */
+export const mentioned_unavailable_lab_items=query({
+ args:{thread_id:v.string(),message:v.string(),start_date:v.string(),end_date:v.string()},
+ handler:async(ctx,a)=>{
+  if(!a.thread_id.startsWith("__probe__") || process.env.RENTER_BOT_LAB_SCENARIO_SEEDING!=="enabled")return [];
+  // The isolated Lab catalogue is bounded; a miss is never treated as proof.
+  const items=await ctx.db.query("items").take(2000);
+  const match=labUnavailableMention(a.message,items);
+  if(!match)return [];
+  const stock=await checkRentalStock(ctx,{item_name:match.name_canonical,start_date:a.start_date,end_date:a.end_date,quantity:1});
+  return stock.available===false && stock.reason==="not_rentable" ? [{...stock,start_date:a.start_date,end_date:a.end_date}] : [];
+ }
+});
 
 export const check_availability = query({
   args: {

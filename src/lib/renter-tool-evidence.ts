@@ -18,6 +18,16 @@ export function availabilityComponentReceipts(receipt:ToolReceipt):ToolReceipt[]
 export function recommendationKitEvidence(receipts: ToolReceipt[]) {
   const evidence: Array<{ names: string[]; contents: string[]; kind?: string }> = [];
   for (const r of receipts) {
+    if (["quote_booking_addition", "quote_booking_replacement"].includes(r.tool) && r.result.ok === true &&
+      r.result.source === "native_lab_proposal" && Array.isArray(r.result.added_kit_evidence)) {
+      for (const raw of r.result.added_kit_evidence) {
+        if (!raw || typeof raw !== "object") continue;
+        const kit = raw as Record<string, unknown>;
+        if (kit.source !== "physical_mapping_and_inventory" || typeof kit.name !== "string" || !kit.name.trim() ||
+          !Array.isArray(kit.contents) || !kit.contents.length || !kit.contents.every(c => typeof c === "string" && c.trim())) continue;
+        evidence.push({names:renterItemNames(kit.name),contents:kit.contents as string[]});
+      }
+    }
     if (r.tool !== "find_owned_alternatives" || !Array.isArray(r.result.alternatives)) continue;
     for (const raw of r.result.alternatives) {
       if (!raw || typeof raw !== "object") continue;

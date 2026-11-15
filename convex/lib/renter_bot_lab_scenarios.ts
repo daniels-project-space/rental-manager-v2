@@ -3,6 +3,7 @@ export const RENTER_BOT_LAB_SCENARIO_IDS = [
   "bmpcc-6k-full-frame-kit",
   "sony-fx3-batteries",
   "verification-failed",
+  "confirmed-booking",
 ] as const;
 
 export type RenterBotLabScenarioId = (typeof RENTER_BOT_LAB_SCENARIO_IDS)[number];
@@ -55,7 +56,7 @@ export interface RenterBotLabScenario {
   accountSlug: "leo" | "dbcinema";
   displayName: string;
   /** A final platform failure event, simulated entirely within the Lab. */
-  startStage?: "verification_failed";
+  startStage?: "verification_failed" | "confirmed";
   /** Seed a normal, pending rental request with a current future date range. */
   rentalSetup: { startInDays: number; durationDays: number };
   item: ScenarioItem;
@@ -127,6 +128,8 @@ export const RENTER_BOT_LAB_SCENARIOS: RenterBotLabScenario[] = [
   ...BASE_SCENARIOS,
   { ...BASE_SCENARIOS[0], id: "verification-failed", title: "Verification failed",
     startStage: "verification_failed" },
+  { ...BASE_SCENARIOS[0], id: "confirmed-booking", title: "Confirmed booking and times",
+    startStage: "confirmed" },
 ];
 
 export function renterBotLabScenario(id: string): RenterBotLabScenario | undefined {

@@ -5,6 +5,7 @@ const MAX_SYNC_AGE_MS = 48 * 60 * 60 * 1000;
 const SOURCES: Record<string, { account: string; productId: number; masterItemId: string }> = {
   "bmpcc-6k-full-frame-kit": { account: "dbcinema", productId: 1103089, masterItemId: "kn740n15w16172sn1qj8h89gx586b2xf" },
   "verification-failed": { account: "dbcinema", productId: 1103089, masterItemId: "kn740n15w16172sn1qj8h89gx586b2xf" },
+  "confirmed-booking": { account: "dbcinema", productId: 1103089, masterItemId: "kn740n15w16172sn1qj8h89gx586b2xf" },
   "sony-fx3-batteries": { account: "leo", productId: 1097510, masterItemId: "kn7bw2cr1ye5hqj3x770b332ks86atzw" },
 };
 

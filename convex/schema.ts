@@ -178,6 +178,7 @@ const operationalSchema = defineSchema({
       source: v.string(), note: v.string(), recorded_at: v.number(),
     })),
     rental_facts: v.optional(v.object({ name: v.string(), source: v.string() })),
+    owner_verified_kit: v.optional(v.object({ source: v.string(), contents: v.array(v.string()) })),
     listing_stock_rules: v.optional(v.array(v.object({ title_pattern:v.string(), components:v.array(v.object({item_id:v.id("items"),qty:v.number()})), excludes:v.array(v.id("items")), source:v.string(), apply_to_declared_component:v.optional(v.boolean()), supplied_parts:v.optional(v.array(v.object({name:v.string(),qty:v.number()}))), optional_parts:v.optional(v.array(v.string())), description_override:v.optional(v.string()), packing_review_required:v.optional(v.boolean()), stock_review_required:v.optional(v.boolean()) }))),
     supplied_stock: v.optional(v.array(v.object({
       item_id: v.id("items"), qty: v.number(), source: v.string(),
@@ -2988,6 +2989,11 @@ const operationalSchema = defineSchema({
      * require owner review rather than silently adopting current mappings. */
     physical_items: v.optional(v.array(v.object({item_id:v.string(),name:v.string(),quantity:v.number()}))),
   }).index("by_code", ["code"]).index("by_source", ["source_thread_id"]),
+
+  renter_bot_lab_followup_drafts: defineTable({
+    thread_id:v.string(), kind:v.union(v.literal("missing_times"),v.literal("location")),
+    anchor:v.number(), source_message_id:v.optional(v.string()), text:v.string(), created_at:v.number(),
+  }).index("by_thread_kind",["thread_id","kind"]).index("by_thread",["thread_id"]),
 
   renter_bot_lab_orders: defineTable({
     thread_id: v.string(),

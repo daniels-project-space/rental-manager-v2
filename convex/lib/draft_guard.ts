@@ -1053,6 +1053,35 @@ const ASSERTS_AVAIL_RE =
     }
   }
 
+  // Before inviting a renter to submit or complete a booking, establish that
+  // they accepted this account's collection area. Keep the quote and other
+  // independently checked answers; replace only the premature next step.
+  if(!verificationFailed && !opts.pickupConfirmed && opts.pickupArea){
+    const turns=[...opts.history];
+    if(turns.at(-1)?.role!=="renter" || turns.at(-1)?.content!==opts.lastRenterMessage)
+      turns.push({role:"renter",content:opts.lastRenterMessage});
+    let disclosure=-1;
+    for(let i=0;i<turns.length;i++)if(turns[i].role==="owner" && mentionsPickupArea(turns[i].content,opts.pickupArea))disclosure=i;
+    const subsequent=disclosure<0?[]:turns.slice(disclosure+1).filter(t=>t.role==="renter");
+    const locationAccepted=subsequent.some(t=>/\b(?:location|area|collection|pickup|pick up|there|that)\b.{0,35}\b(?:works|fine|okay|ok|suits|good|agree)\b|\b(?:works|fine|okay|ok|good)\b.{0,25}\b(?:location|area|collection|pickup|there|that)\b/i.test(t.content)) ||
+      subsequent.length===1 && /^\s*(?:yes|yep|yeah|okay|ok|sure)[.!\s]*$/i.test(subsequent[0].content) && /\b(?:work|okay|ok|fine|suit)\b/i.test(turns[disclosure].content);
+    const locationRejected=subsequent.some(t=>/\b(?:too far|doesn['’]?t work|not (?:okay|ok|fine)|cannot collect|can['’]?t collect)\b/i.test(t.content));
+    const steps=text.split(/(?<=[.!?])\s+/);
+    const isPremature=(s:string)=>/\b(?:go ahead|complete|submit|place|finali[sz]e)\b/i.test(s) && /\b(?:booking|request|reservation)\b/i.test(s) || /^\s*(?:please\s+)?submit\s+it\b/i.test(s);
+    if((!locationAccepted || locationRejected) && steps.some(isPremature)){
+      const removedChecks=steps.filter(isPremature).some(s=>/\b(?:verification|payment|approval)\b/i.test(s));
+      text=steps.filter(s=>!isPremature(s)).join(" ").trim();
+      const alreadyAsks=/\b(?:does|would|will|is)\b[^?!.]{0,55}\b(?:location|area|collection|pickup|that)\b[^?!.]{0,35}\b(?:work|okay|ok|fine|suit)\b[^?!.]*\?/i.test(text);
+      if(!mentionsPickupArea(text,opts.pickupArea))text+=` ${pickupAreaDisclosure(opts.pickupArea)}`;
+      else if(!alreadyAsks)text+=" Does that collection area work for you?";
+      if(removedChecks)text+=" Your request will still need its own platform approval, payment and verification checks.";
+      push("PICKUP_AREA_CONFIRMATION_REQUIRED","Asked the renter to confirm the collection area before inviting them to complete the booking.","rewritten");
+    }
+  } else if(!verificationFailed && !opts.pickupConfirmed && !opts.pickupArea && /\b(?:go ahead|complete|submit|place|finali[sz]e)\b[^.!?]*\b(?:booking|request|reservation)\b/i.test(text)){
+    text=text.split(/(?<=[.!?])\s+/).filter(s=>!/\b(?:go ahead|complete|submit|place|finali[sz]e)\b[^.!?]*\b(?:booking|request|reservation)\b/i.test(s)).join(" ").trim()+" I'll confirm the collection area before you decide.";
+    push("PICKUP_AREA_CONFIRMATION_REQUIRED","The collection area must be established before inviting booking.","rewritten");
+  }
+
   // A below-value prospective quote explicitly permits a shoot question when
   // no relevant extra is established. Preserve that fallback across both checks.
   const commercialShootQuestion = opts.commercialContext?.status === "below" &&

@@ -2,6 +2,7 @@ import type { BookingRecord } from "./lib/booking_record";
 import type { RecommendationQuoteEvidence } from "./lib/renter_draft_evidence";
 import { equipmentClaimsNeedProfiles } from "./lib/equipment_claim_profiles";
 import { committedAmendmentConfirmation } from "./lib/amendment_confirmation";
+import { replacementQuoteFallback } from "./lib/replacement_quote_fallback";
 import { verifiedSensorComparisons } from "./lib/camera_sensor_comparisons";
 import { minimumRentalContext, type MinimumRentalContext } from "./lib/minimum_rental";
 import type { PriceEvidence } from "./lib/price_claims";
@@ -675,11 +676,23 @@ export const generateDraft = action({
         routePriceEvidence=confirmation.prices;routePriceRequest=confirmation.request;
         generationMeta.draft_stage=fresh.rental_stage.stage;
         generationMeta.evidence={...(generationMeta.evidence??{model_id:generationMeta.model_id??"native-amendment-recovery",stage:fresh.rental_stage.stage,stock:[]}),
-          stage:fresh.rental_stage.stage,prices:confirmation.prices};
+          stage:fresh.rental_stage.stage,prices:confirmation.prices,stock_request:confirmation.request};
         return true;
       }catch{return false;}
     };
-    { // One canonical generation path for Lab and human-reviewed drafts.
+    // A single accepted, previously sent replacement is a transaction, not
+    // another recommendation. Dispatch it through the same guarded Native
+    // mutation the agent uses; the mutation still rejects any unproven consent.
+    // This path is strictly Lab-only and never targets a real conversation.
+    if(initialOrder && initialMessageId){
+      const candidate=await ctx.runQuery(internal.renter_bot_lab_order.__service_acceptedReplacementCandidate,{thread_id});
+      if(candidate?.request_message_id===initialMessageId){
+        const applied=await ctx.runMutation(internal.renter_bot_lab_order.__service_applyReplacementBasket,candidate);
+        if(applied.ok && applied.action_performed && !await recoverCommittedFailure("accepted_native_replacement"))
+          return {status:"skipped",reason:"needs_human:committed_change_reconciliation"};
+      }
+    }
+    if(!nativeRecoveryReason) { // One canonical generation path for Lab and human-reviewed drafts.
       try {
         const base = process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
         const apiSecret = process.env.RENTER_BOT_API_SECRET;
@@ -1109,9 +1122,33 @@ export const generateDraft = action({
         if (recovered.text.trim() && !recovered.flags.some(f => f.action === "flagged" && f.severity === "critical")) {
           recovered.flags.push({ type: "AMENDMENT_CONFIRMATION_RECOVERED", severity: "medium", action: "rewritten",
             detail: `Confirmed the stored Native ${confirmation.action} after rejecting ${unresolvedCriticalFlags.map(f => f.type).join(", ")}. Original candidate: ${checkedDraft}` });
-          if(generationMeta.evidence)generationMeta.evidence.prices=confirmation.prices;
+          if(generationMeta.evidence){generationMeta.evidence.prices=confirmation.prices;generationMeta.evidence.stock_request=confirmation.request;}
           guard = recovered;
           unresolvedCriticalFlags = [];
+        }
+      }
+    }
+    // When a free-form comparison is rejected, a single narrow swap/price
+    // request can still be answered from the exact Native quote. Recheck the
+    // basket and physical identities immediately before rendering it. Never
+    // discard other questions or use this for real chats.
+    if(unresolvedCriticalFlags.length && thread_id.startsWith("__probe__") && initialOrder && !amendmentTransitions.length && routePriceEvidence && c.last_message_id &&
+      unresolvedCriticalFlags.every(f=>["PRICE_HALLUCINATION","KIT_HALLUCINATION","UNGROUNDED_AVAILABILITY"].includes(f.type))){
+      const fallback=replacementQuoteFallback({message:lastRenter,prices:routePriceEvidence,contextKey:initialContextKey,epoch:c.draft_epoch,messageId:c.last_message_id});
+      if(fallback){
+        const p=fallback.proposal;
+        const fresh=await ctx.runQuery(internal.replyInbox.getThreadContext,{thread_id});
+        if(fresh.last_message_id===c.last_message_id && fresh.draft_epoch===c.draft_epoch && fresh.draft_context_key===initialContextKey){
+          const quote=await ctx.runQuery(internal.renter_bot_lab_order.__service_quoteReplacementBasket,{thread_id,items:p.items,
+            replace_product_id:p.removed_listings[0].product_id,replace_quantity:p.removed_listings[0].qty});
+          if(quote.ok && "quote" in quote && quote.quote.total_gbp===p.total_gbp && quote.base_quote.total_gbp===p.base_total_gbp &&
+            quote.quote.start_date===p.start_date && quote.quote.end_date===p.end_date && quote.physical_identity_key===p.physical_identity_key && quote.base_physical_identity_key===p.base_physical_identity_key){
+            const recovered=guardDraft(fallback.text,guardOptions);
+            if(recovered.text.trim() && !recovered.flags.some(f=>f.severity==="critical"&&f.action==="flagged")){
+              recovered.flags.push({type:"NATIVE_REPLACEMENT_QUOTE_RENDERED",severity:"medium",action:"rewritten",detail:"Rendered the freshly checked replacement quote after rejecting an unsupported comparison."});
+              guard=recovered;unresolvedCriticalFlags=[];
+            }
+          }
         }
       }
     }

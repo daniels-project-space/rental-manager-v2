@@ -87,3 +87,32 @@ describe("Native date and removal failure recovery",()=>{
   ["whole booking removed",(i:any)=>{i.after.lines=[];i.after.total_gbp=0;}],
  ] as const){it(`retains removal review for ${label}`,()=>{const i=removalInput();mutate(i);expect(committedAmendmentConfirmation(i)).toBeNull();});}
 });
+
+describe("pending request replacement recovery",()=>{
+ const replacement=()=>{
+  const i:any=dateInput();
+  i.before.stage=i.after.stage="AWAITING_OWNER_APPROVAL";
+  i.after.start_date=i.before.start_date;i.after.end_date=i.before.end_date;
+  i.after.lines=[{product_id:42,name:"Sony A7 III",qty:1,daily_price_gbp:9,effective_rate_gbp:9,line_total_gbp:18,price_tiers:[]}];
+  i.after.total_gbp=18;
+  i.after.changes=[{request_key:JSON.stringify([i.messageId,"replace_items",i.before.lines[0].product_id,1,[{product_id:42,qty:1}]])}];
+  return i;
+ };
+ it("confirms only the persisted replacement and total without claiming approval",()=>{
+  const result=committedAmendmentConfirmation(replacement());
+  expect(result).toMatchObject({action:"replace_items",text:expect.stringContaining("Sony A7 III")});
+  expect(result?.text).toContain("updated total is £18");
+  expect(result?.prices[0].total_gbp).toBe(18);
+  const checked=guardDraft(result!.text,{history:[],lastRenterMessage:"Yes, please swap them.",account:"leo",stage:"AWAITING_OWNER_APPROVAL",ownerApproved:false,bookingModified:true,hasItemGrounding:true,priceEvidence:result!.prices,priceRequest:result!.request,stockRequest:result!.request});
+  expect(checked.flags.filter(f=>f.severity==="critical"&&f.action==="flagged")).toEqual([]);
+ });
+ it.each([
+  ["changed stage",(i:any)=>i.after.stage="CONFIRMED_UPCOMING"],
+  ["wrong inbound",(i:any)=>i.messageId+="-later"],
+  ["wrong quantity",(i:any)=>i.after.lines[0].qty=2],
+  ["wrong total",(i:any)=>i.after.total_gbp=19],
+  ["changed dates",(i:any)=>i.after.end_date="2026-10-22"],
+  ["multiple edits",(i:any)=>i.transitions.push(i.transitions[0])],
+  ["wrong replaced item",(i:any)=>i.after.changes[0].request_key=JSON.stringify([i.messageId,"replace_items",99,1,[{product_id:42,qty:1}]])],
+ ])("retains review for %s",(_,mutate)=>{const i=replacement();mutate(i);expect(committedAmendmentConfirmation(i)).toBeNull();});
+});

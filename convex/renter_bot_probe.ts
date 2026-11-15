@@ -13,6 +13,8 @@ import type { Id } from "./_generated/dataModel";
 import type { DraftEvidence } from "./lib/renter_draft_evidence";
 import { LAB_THREAD_PREFIX } from "./lib/renter_booking";
 import { bestMatch } from "./lib/item_name_match";
+import { rentalStage } from "./lib/rental_stage";
+import { londonToday } from "./lib/effectiveDates";
 
 // Exported so other modules (e.g. replyInbox.ts's getReplyQueue) can exclude
 // probe/fixture threads from real UI surfaces without duplicating the string.
@@ -190,6 +192,10 @@ export const seed = internalMutation({
         expanded_items: expanded,
         created_at: now,
       });
+      // The synthetic booking was created already confirmed at this exact
+      // instant. The scheduled work can only save an unsent Lab draft.
+      if(process.env.RENTER_BOT_LAB_SCENARIO_SEEDING==="enabled" && rentalStage(bk,londonToday()).booking_confirmed)
+        await ctx.scheduler.runAfter(24*60*60*1000,internal.renter_bot_lab_followups.createDraft,{thread_id,kind:"missing_times",anchor:now});
     }
     return { thread_id };
   },
@@ -297,6 +303,8 @@ export const cleanup = mutation({
       if (r.hygglo_order_id && matches(r.hygglo_order_id)) await ctx.db.delete(r._id);
     for (const order of await ctx.db.query("renter_bot_lab_orders").withIndex("by_thread", (q) => thread_id ? q.eq("thread_id", thread_id) : q.gte("thread_id", PREFIX).lt("thread_id", `${PREFIX}\uffff`)).collect())
       if (matches(order.thread_id)) await ctx.db.delete(order._id);
+    for (const draft of await ctx.db.query("renter_bot_lab_followup_drafts").withIndex("by_thread", q => thread_id ? q.eq("thread_id",thread_id) : q.gte("thread_id",PREFIX).lt("thread_id",`${PREFIX}\uffff`)).collect())
+      if(matches(draft.thread_id))await ctx.db.delete(draft._id);
     for (const check of await ctx.db.query("renter_bot_owner_checks").withIndex("by_thread", q => thread_id ? q.eq("thread_id", thread_id) : q.gte("thread_id", PREFIX).lt("thread_id", `${PREFIX}\uffff`)).collect())
       if (matches(check.thread_id)) await ctx.db.delete(check._id);
     for (const referral of await ctx.db.query("renter_bot_lab_referrals").withIndex("by_source", q => thread_id ? q.eq("source_thread_id", thread_id) : q.gte("source_thread_id", PREFIX).lt("source_thread_id", `${PREFIX}\uffff`)).collect())
