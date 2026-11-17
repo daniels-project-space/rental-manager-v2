@@ -52,6 +52,7 @@ type SiteBooking = {
   revision?: number;
   verification?: WebsiteVerification;
   status: string;
+  checkoutPaidAt?: number | null;
   customerName: string | null;
   customerEmail: string | null;
   fulfilment: string;
@@ -127,7 +128,8 @@ export const syncDbcinemaWeb = internalAction({
  * bulk feed pre-filtered to paid statuses, which the webhook deliberately does
  * not (2026-08-18).
  */
-const SITE_STATUS_MAP: Record<string, "confirmed" | "completed" | "cancelled"> = {
+const SITE_STATUS_MAP: Record<string, "confirmed" | "completed" | "cancelled" | "pending_review"> = {
+  pending_verification: "pending_review", // paid checkout awaiting website verification/confirmation
   confirmed: "confirmed", // paid, not yet collected → upcoming
   active: "confirmed", // out with the customer (order_step DELIVERED)
   returned: "completed", // back → historical revenue
@@ -221,6 +223,12 @@ export const upsertSiteBookingsBatch = internalMutation({
         continue;
       }
       const verification = parseWebsiteVerification(b.verification);
+      // A pending-verification marker alone is not evidence of payment or
+      // stock. Require the website's paid receipt and its exact stock ledger;
+      // never invent an allocation from the current catalogue for this state.
+      if (b.status === "pending_verification" && (!Number.isSafeInteger(b.checkoutPaidAt) || b.checkoutPaidAt! <= 0 || verification?.provider !== "didit" || !Array.isArray(b.physicalReservations) || (verification.status !== "rejected" && b.physicalReservations.length === 0))) {
+        throw Error("Paid website verification hold requires a receipt and physical allocation ledger");
+      }
       // Payment and document approval are separate. A scheduled pickup hold is
       // a collection requirement, not a reason to invent failed verification.
       const documentsApproved = verification?.documentsApproved ?? verification?.approved ?? false;
@@ -231,6 +239,7 @@ export const upsertSiteBookingsBatch = internalMutation({
       const order_step =
         b.status === "active" ? "DELIVERED"
         : b.status === "returned" ? "REVIEWED"
+        : b.status === "pending_verification" ? "VERIFIED"
         : b.status === "confirmed" ? documentsApproved ? "BOOKED_AFTER_VERIFIED" : "VERIFIED"
         : undefined;
 
