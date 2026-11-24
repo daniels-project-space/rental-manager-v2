@@ -9,6 +9,9 @@ export type ConvexServiceClient = ConvexHttpClient & {
   query<Query extends FunctionReference<"query", "internal">>(
     reference: Query, args: FunctionArgs<Query>,
   ): Promise<FunctionReturnType<Query>>;
+  mutation<Mutation extends FunctionReference<"mutation", "internal">>(
+    reference: Mutation, args: FunctionArgs<Mutation>,
+  ): Promise<FunctionReturnType<Mutation>>;
 };
 
 /** Private worker transport. Never import this into a browser component. */

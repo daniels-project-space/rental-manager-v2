@@ -493,6 +493,7 @@ import type * as seed_vmount_stock_repair from "../seed/vmount_stock_repair.js";
 import type * as settings from "../settings.js";
 import type * as stock_input_cache_admin from "../stock_input_cache_admin.js";
 import type * as storefront_checkout_stock from "../storefront_checkout_stock.js";
+import type * as stockAuthority from "../stockAuthority.js";
 import type * as sync_account_profiles from "../sync_account_profiles.js";
 import type * as sync_dbcinema_web from "../sync_dbcinema_web.js";
 import type * as sync_state from "../sync_state.js";
@@ -999,6 +1000,7 @@ declare const fullApi: ApiFromModules<{
   settings: typeof settings;
   stock_input_cache_admin: typeof stock_input_cache_admin;
   storefront_checkout_stock: typeof storefront_checkout_stock;
+  stockAuthority: typeof stockAuthority;
   sync_account_profiles: typeof sync_account_profiles;
   sync_dbcinema_web: typeof sync_dbcinema_web;
   sync_state: typeof sync_state;

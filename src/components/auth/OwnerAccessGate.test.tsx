@@ -17,7 +17,7 @@ function render(enforce = true) { return renderToStaticMarkup(<Providers enforce
 beforeEach(() => { state.pathname = "/"; state.auth = { isLoading: false, isAuthenticated: false }; state.owner = undefined; state.queries = []; });
 describe("real owner provider boundary", () => {
   it("login never mounts private operational providers, regardless of rollout", () => {
-    for (const enforce of [true]) {
+    for (const enforce of [true, false]) {
       state.pathname = "/login"; expect(render(enforce)).toContain("PRIVATE_OR_ROUTE_CONTENT"); expect(state.queries).toEqual([]);
     }
   });
@@ -42,4 +42,4 @@ describe("real owner provider boundary", () => {
   });
 });
 
-it("replaces old login URLs with direct dashboard navigation without a signup form",()=>{state.pathname="/login";const html=render(false);expect(html).toContain("Opening Rental Manager");expect(html).not.toContain("PRIVATE_OR_ROUTE_CONTENT");expect(state.queries).toEqual([]);});
+it("keeps the owner sign-in route available when the dashboard is open",()=>{state.pathname="/login";const html=render(false);expect(html).toContain("PRIVATE_OR_ROUTE_CONTENT");expect(state.queries).toEqual([]);});

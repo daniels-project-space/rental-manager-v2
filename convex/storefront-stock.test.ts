@@ -13,14 +13,28 @@ import {londonStockInstant} from "./lib/confirmed_schedule";
 const ms=(date:string)=>londonStockInstant(date,"end");
 function fixture(){
  const items:any[]=[{_id:"body",name_canonical:"Sony FX3",kind:"camera_body",status:"active",is_marketing_only:false,qty:3}];
- const tables:any={items,reservations:[],hygglo_product_index:[],listing_resolution_override:[],insurance_claims:[],owner_unavailability:[],vacation_periods:[],stock_input_cache_state:[],stock_shared_snapshot_cache:[],storefront_checkout_stock:[]};
- const reads:string[]=[];const db:any={query:(table:string)=>{reads.push(table);let rows=tables[table]??[];const q:any={withIndex:(_:string,fn:any)=>{const s:any={eq:(k:string,v:any)=>{rows=rows.filter((r:any)=>r[k]===v);return s}};fn(s);return q},collect:async()=>rows,first:async()=>rows[0]??null,unique:async()=>{if(rows.length>1)throw Error("Duplicate fixture key");return rows[0]??null;}};return q}};
+ const tables:any={items,reservations:[],hygglo_product_index:[],listing_resolution_override:[],insurance_claims:[],owner_unavailability:[],vacation_periods:[],stock_input_cache_state:[],stock_shared_snapshot_cache:[],storefront_checkout_stock:[],stock_approval_claims:[],dbcinema_shared_stock_claims:[]};
+ const reads:string[]=[];const db:any={query:(table:string)=>{reads.push(table);let rows=tables[table]??[];const q:any={withIndex:(_:string,fn:any)=>{const s:any={eq:(k:string,v:any)=>{rows=rows.filter((r:any)=>r[k]===v);return s}};fn(s);return q},collect:async()=>rows,take:async(count:number)=>rows.slice(0,count),first:async()=>rows[0]??null,unique:async()=>{if(rows.length>1)throw Error("Duplicate fixture key");return rows[0]??null;}};return q}};
  const rental=(extra:any={})=>({_id:"booking",_creationTime:1,account_slug:"other-owned-account",status:"confirmed",start_date:"2027-01-01",end_date:"2027-01-02",resolved_items:[{item_id:"body",qty:1}],...extra});
  const run=async()=>((snapshot as any)._handler({db},{})).then((rows:any)=>rows[0]);return {tables,db,reads,rental,run};
 }
 afterEach(()=>{vi.unstubAllEnvs();vi.useRealTimers()});
 describe("actual private shared-stock snapshot",()=>{
- it("serves the revision-matched materialized stock view without loading source tables",async()=>{
+ it("uses the verified cache only when there are no claims or outstanding custody",async()=>{
+  vi.stubEnv("REQUIRE_WEBSITE_STOCK_HOLDS_SYNC","false");
+  const f=fixture(),inputs={items:f.tables.items,reservations:[],hygglo_product_index:[],listing_resolution_override:[],insurance_claims:[],owner_unavailability:[],vacation_periods:[]};
+  const inputData=packCacheValue(inputs),value={version:2,turnaroundBufferMinutes:60,checkedAt:1,units:[{masterItemId:"body",active:true,quantityOwned:3,windows:[]}]},data=packCacheValue(value);
+  f.tables.stock_input_cache_state.push({_id:"state",_creationTime:1,key:"inputs:v1",implementation:await sharedStockImplementation(),revision:7,ready_revision:7,enabled:true,queued:false,job_token:4,attempts:0,updated_at:1});
+  f.tables.stock_input_cache_blobs=[{_id:"blob",key:"inputs:v1",version:1,revision:7,data:inputData,packed_sha256:await cacheByteDigest(inputData)}];
+  f.tables.stock_shared_snapshot_cache.push({_id:"shared",key:"shared-stock:v2",version:2,implementation:await sharedStockImplementation(),enabled:true,revision:7,data,packed_sha256:await cacheByteDigest(data)});
+  expect((await f.run()).units).toEqual(value.units);expect(f.reads).toContain("stock_shared_snapshot_cache");expect(f.reads).not.toContain("items");
+ });
+ it.each(["stock_approval_claims","dbcinema_shared_stock_claims"])("fails closed rather than ignoring excess %s",async table=>{
+  vi.stubEnv("REQUIRE_WEBSITE_STOCK_HOLDS_SYNC","false");
+  const f=fixture();f.tables[table]=Array.from({length:501},(_,index)=>({_id:`claim-${index}`,holds_stock:true,prepared_at:index}));
+  await expect(f.run()).rejects.toThrow("Stock claims need reconciliation");
+ });
+ it("does not trust a materialized view when fresh claim occupancy may have changed",async()=>{
   vi.stubEnv("REQUIRE_WEBSITE_STOCK_HOLDS_SYNC","false");
   const f=fixture();const checkedAt=1;
   const value={version:2,turnaroundBufferMinutes:60,checkedAt,units:[{masterItemId:"body",active:true,quantityOwned:3,windows:[]}]};
@@ -29,7 +43,29 @@ describe("actual private shared-stock snapshot",()=>{
   f.tables.stock_shared_snapshot_cache.push({_id:"shared",_creationTime:1,key:"shared-stock:v2",version:2,implementation:await sharedStockImplementation(),enabled:true,revision:7,data,sha256:"unused-by-reader",packed_sha256:await cacheByteDigest(data),generated_at:1});
   const result=await f.run();
   expect(result.units).toEqual(value.units);expect(result.checkedAt).toBeGreaterThan(checkedAt);
-  expect(f.reads).toEqual(["stock_input_cache_state","stock_shared_snapshot_cache"]);
+  expect(f.reads).toContain("dbcinema_shared_stock_claims");
+ });
+ it("includes a newly created paid claim even when a cached view predates it",async()=>{
+  vi.stubEnv("REQUIRE_WEBSITE_STOCK_HOLDS_SYNC","false");
+  const f=fixture(),start=ms("2027-01-01T00:00"),end=ms("2027-01-02T00:00");
+  const data=packCacheValue({version:2,turnaroundBufferMinutes:60,checkedAt:1,units:[{masterItemId:"body",active:true,quantityOwned:3,windows:[]}]});
+  f.tables.stock_input_cache_state.push({_id:"state",_creationTime:1,key:"inputs:v1",implementation:await sharedStockImplementation(),revision:7,ready_revision:7,enabled:true,queued:false,job_token:4,attempts:0,updated_at:1});
+  f.tables.stock_shared_snapshot_cache.push({_id:"shared",_creationTime:1,key:"shared-stock:v2",version:2,implementation:await sharedStockImplementation(),enabled:true,revision:7,data,sha256:"unused",packed_sha256:await cacheByteDigest(data),generated_at:1});
+  f.tables.dbcinema_shared_stock_claims.push({_id:"claim",request_id:"booking_new",booking_id:"new",holds_stock:true,status:"execution_started",items:[{item_id:"body",start,end,qty:1}]});
+  const result=await f.run();expect(result.units[0].windows).toEqual([{start,end,qty:1}]);
+ });
+ it("counts an exact paid-pending claim and mirrored booking once, and retains mismatches",async()=>{
+  vi.stubEnv("REQUIRE_WEBSITE_STOCK_HOLDS_SYNC","false");
+  const f=fixture(),start=ms("2027-01-01T00:00"),returnAt=ms("2027-01-02T00:00"),end=returnAt+3600000;
+  f.tables.reservations=[f.rental({_id:"site",account_slug:"dbcinema_web",hygglo_order_id:"paid",status:"pending_review",order_step:"VERIFIED",site_revision:3,site_item_windows:[{item_id:"body",start,end:returnAt,qty:1}]})];
+  const claim={_id:"claim",request_id:"booking_paid",booking_id:"paid",execution_key:"booking_execution_paid",holds_stock:true,status:"execution_started",request_payload:{operation:"acquirePaidBooking",args:{requestId:"booking_paid",bookingId:"paid",bookingRevision:3,verificationState:"pending",paymentEvidence:{status:"succeeded",paymentIntentId:"pi_fixture",paidAt:start},items:[{itemId:"body",start,returnAt,quantity:1}]}},items:[{item_id:"body",start,end,qty:1}]};
+  f.tables.dbcinema_shared_stock_claims=[claim];
+  let sources=await loadStockSources({db:f.db} as any);
+  expect(stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:"2027-01-01",end_date:"2027-01-01"}).free_units).toBe(2);
+  expect((await f.run()).units[0].windows).toEqual([]);
+  claim.items[0].qty=2;sources=await loadStockSources({db:f.db} as any);
+  expect(stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:"2027-01-01",end_date:"2027-01-01"}).free_units).toBe(0);
+  expect((await f.run()).units[0].windows).toEqual([{start,end,qty:2}]);
  });
  it("falls back to live inputs when the materialized revision is stale",async()=>{
   vi.stubEnv("REQUIRE_WEBSITE_STOCK_HOLDS_SYNC","false");
@@ -51,21 +87,48 @@ describe("actual private shared-stock snapshot",()=>{
  it.each(["2026-08-22","2026-07-13"])("projects booked days when historical pickup contradicts return (%s)",async date=>{
   const f=fixture();const pickup=new Date(Date.parse(date+"T00:00Z")+86400000).toISOString().slice(0,10);
   const row=f.rental({order_step:"RETURNED",start_date:date,end_date:date,pickup_date:pickup,return_date:date});f.tables.reservations=[row];
-  const result=await f.run();expect(result.units[0].windows).toEqual([{start:ms(date+"T00:00"),end:ms(pickup+"T00:00")+3600000,qty:1}]);
+  const result=await f.run();expect(result.units[0].windows).toEqual([{start:ms(date+"T00:00"),end:ms("9999-12-31T00:00")+3600000,qty:1}]);
   const sources=await loadStockSources({db:f.db} as any);expect(stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:date,end_date:date,quantity:3}).available).toBe(false);
-  expect(stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:"2026-10-08",end_date:"2026-10-08",quantity:3}).available).toBe(true);
+  expect(stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:"2026-10-08",end_date:"2026-10-08",quantity:3}).available).toBe(false);
   expect(row.order_step).toBe("RETURNED");expect(row.pickup_date).toBe(pickup);
  });
  it("reads all shared accounts, omits local website mirrors and exposes only physical occupancy",async()=>{
   const f=fixture();f.tables.reservations=[f.rental({renter_name:"PRIVATE CUSTOMER",notes:"PRIVATE NOTE"}),f.rental({_id:"web",hygglo_order_id:"web",account_slug:"dbcinema_web"}),f.rental({_id:"returned",hygglo_order_id:"returned",order_step:"REVIEWED"}),f.rental({_id:"cancelled",hygglo_order_id:"cancelled",status:"cancelled"}),f.rental({_id:"obsolete",hygglo_order_id:"obsolete",is_obsolete:true})];
-  const result=await f.run();expect(f.reads).toEqual(["stock_input_cache_state","items","reservations","hygglo_product_index","listing_resolution_override","insurance_claims","owner_unavailability","vacation_periods","storefront_checkout_stock","reservations","reservations"]);expect(result.units[0].windows).toEqual([{start:ms("2027-01-01T00:00"),end:ms("2027-01-03T00:00")+3600000,qty:1}]);expect(JSON.stringify(result)).not.toMatch(/PRIVATE|other-owned-account|booking|web|returned/);
+  const result=await f.run();expect(f.reads).toContain("stock_approval_claims");expect(f.reads).toContain("dbcinema_shared_stock_claims");expect(result.units[0].windows).toEqual([{start:ms("2027-01-01T00:00"),end:ms("2027-01-03T00:00")+3600000,qty:1}]);expect(JSON.stringify(result)).not.toMatch(/PRIVATE|other-owned-account|booking|web|returned/);
  });
  it("matches real quoting for kit extensions and independently booked shared equipment",async()=>{
   const f=fixture();f.tables.reservations=[f.rental({hygglo_order_id:"first",renter_id:"renter"}),f.rental({_id:"extension",hygglo_order_id:"second",renter_id:"renter",start_date:"2027-01-02",end_date:"2027-01-03"}),f.rental({_id:"independent",hygglo_order_id:"third",renter_id:"different",start_date:"2027-01-02",end_date:"2027-01-02"})];
   const result=await f.run();expect(result.units[0].windows.map((w:any)=>w.qty)).toEqual([1,2,1]);const sources=await loadStockSources({db:f.db} as any),quote=stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:"2027-01-02",end_date:"2027-01-02"});expect(quote.free_units).toBe(1);expect(result.units[0].quantityOwned-Math.max(...result.units[0].windows.map((w:any)=>w.qty))).toBe(quote.free_units);
  });
- it("ends forecast occupancy at the booked return without clearing custody",async()=>{
-  vi.useFakeTimers();vi.setSystemTime(new Date("2026-10-08"));const f=fixture();f.tables.reservations=[f.rental({status:"ongoing",order_step:"DELIVERED",start_date:"2026-08-01",end_date:"2026-08-02"})];let result=await f.run();expect(result.units[0].windows[0].end).toBe(ms("2026-08-03T00:00")+3600000);expect(f.tables.reservations[0].status).toBe("ongoing");f.tables.reservations[0].order_step="REVIEWED";result=await f.run();expect(result.units[0].windows).toEqual([]);
+ it("omits only exact projected website swap claims from the export while retaining them for manager availability",async()=>{
+  const f=fixture(),start=ms("2027-01-01T00:00"),returnAt=ms("2027-01-02T00:00"),end=returnAt+3600000;
+  f.tables.items[0].qty=10;
+  f.tables.reservations=[f.rental({_id:"site-booking",hygglo_order_id:"site-booking",account_slug:"dbcinema_web"})];
+  const claim=(requestId:string,bookingId:string,operation="acquire",requestQty=1,storedQty=requestQty)=>({
+   _id:`claim-${requestId}`,request_id:requestId,booking_id:bookingId,status:"execution_started",holds_stock:true,
+   request_payload:{operation,args:{requestId,bookingId,items:[{itemId:"body",start,returnAt,quantity:requestQty}]}},
+   items:[{item_id:"body",start,end,qty:storedQty}],
+  });
+  f.tables.dbcinema_shared_stock_claims=[
+   claim("swap_exact","site-booking"),
+   claim("swap_mismatched","site-booking","acquire",1,2),
+   claim("swap_orphan","missing-site-booking"),
+   claim("ordinary_claim","site-booking"),
+   claim("booking_pending","site-booking","acquirePaidBooking"),
+  ];
+
+  const exported=await f.run();
+  expect(exported.units[0].windows).toEqual([{start,end,qty:5}]);
+
+  // The exact swap claim is still present in loadStockSources and continues
+  // to reserve one unit in Rental Manager's own quote, alongside the original
+  // site booking and all other unresolved claims.
+  const sources=await loadStockSources({db:f.db} as any);
+  const quote=stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:"2027-01-01",end_date:"2027-01-01"});
+  expect(quote.free_units).toBe(3);
+ });
+ it("keeps ongoing overdue custody occupied until an actual return",async()=>{
+  vi.useFakeTimers();vi.setSystemTime(new Date("2026-10-08"));const f=fixture();f.tables.reservations=[f.rental({status:"ongoing",order_step:"DELIVERED",start_date:"2026-08-01",end_date:"2026-08-02"})];let result=await f.run();expect(result.units[0].windows[0].end).toBe(ms("9999-12-31T00:00")+3600000);f.tables.reservations[0].order_step="RETURNED";result=await f.run();expect(result.units[0].windows[0].end).toBe(ms("9999-12-31T00:00")+3600000);f.tables.reservations[0].order_step="REVIEWED";result=await f.run();expect(result.units[0].windows).toEqual([]);
  });
  it("includes repair-held units, master-specific owner blocks and active vacations without private reasons",async()=>{
   const f=fixture();f.tables.insurance_claims=[{stage:"in_for_repair",status:"open",repair_item_ids:["body","body"],description:"PRIVATE CASE"},{stage:"added_to_revenue",status:"settled",repair_item_ids:["body"]}];f.tables.owner_unavailability=[{item_id:"body",start_date:"2027-01-01",end_date:"2027-01-02",reason:"PRIVATE REASON"},{item_id:"unrelated",start_date:"2027-02-01",end_date:"2027-02-02"}];f.tables.vacation_periods=[{is_active:true,start_date:"2027-03-01",end_date:"2027-03-02"},{is_active:false,start_date:"2027-04-01",end_date:"2027-04-02"}];

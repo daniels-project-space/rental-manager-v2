@@ -204,8 +204,8 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     );
     if (width === 1505)
       assert(
-        headerLayout.railHeight <= 112,
-        "wide queue handoff row stays compact",
+        headerLayout.railHeight <= 190,
+        "handoff panel stays compact within the narrower conversation-list column",
       );
     await ev(`{window.__savedQueuePreview=window.__fixture.rows[4].preview;window.__fixture.rows[4].preview='A long rental enquiry with extra details '.repeat(35);window.__fixture.changed();}`);
     await pause(100);

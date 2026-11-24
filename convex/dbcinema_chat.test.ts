@@ -1,6 +1,24 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./auth", () => ({ authComponent: { safeGetAuthUser: vi.fn() } }));
+import { authComponent } from "./auth";
 import { inbox, emailInbox, replacementBasketOptions, thread, sendOwnerReply, draftReply } from "./dbcinema_chat";
+beforeAll(async () => {
+  const module = await import("./dbcinema_chat");
+  for (const candidate of Object.values(module)) {
+    const registered = candidate as { _handler?: (ctx: any, args: any) => Promise<any> };
+    if (typeof registered?._handler !== "function") continue;
+    const handler = registered._handler;
+    registered._handler = (ctx, args) => handler(ctx.auth ? ctx : {
+      ...ctx,
+      auth: { getUserIdentity: async () => ({ issuer: "https://fixture.convex.site", subject: "fixture-owner" }) },
+      db: { query: () => ({ first: async () => ({ auth_user_id: "fixture-owner" }) }) },
+    }, args);
+  }
+});
+beforeEach(() => {
+  vi.stubEnv("CONVEX_SITE_URL", "https://fixture.convex.site");
+  vi.mocked(authComponent.safeGetAuthUser).mockResolvedValue({ _id: "fixture-owner" } as any);
+});
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -12,6 +30,14 @@ const stock = {
   ownedUnits: 2,
   requestedQty: 1,
 };
+it.each(["inbox", "emailInbox", "thread", "sendOwnerReply", "draftReply", "rentalControls", "refundRental"])("requires an owner session for %s even when the dashboard is open", async (name) => {
+  vi.stubEnv("RENTAL_MANAGER_ACCESS", "open");
+  const module = await import("./dbcinema_chat");
+  const fetchMock = vi.fn();
+  vi.stubGlobal("fetch", fetchMock);
+  await expect((module as any)[name]._handler({ auth: { getUserIdentity: async () => null } }, {})).rejects.toThrow("OWNER_AUTH_REQUIRED");
+  expect(fetchMock).not.toHaveBeenCalled();
+});
 async function read(items: unknown[], proof = {}) {
   vi.stubEnv("OWNER_AUTH_REQUIRED", "false");
   vi.stubEnv("DBCINEMA_CONVEX_URL", "https://fixture.invalid");

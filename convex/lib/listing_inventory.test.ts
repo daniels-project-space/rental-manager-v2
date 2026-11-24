@@ -14,7 +14,7 @@ const kit = [{ item_id: "camera", qty: 2 }, { item_id: "lens", qty: 2 }];
 const request = { item_name: "Two camera kit", start_date: "2026-10-02", end_date: "2026-10-04", quantity: 1 };
 const resolution = (override: typeof kit | undefined = kit, quantity = 1) => ({ ...resolveListingComponents(inventory, override, "lens", quantity), product_id: 1172559, listing_name: "Two camera kit" });
 const sources = (extra: Partial<Awaited<ReturnType<typeof loadStockSources>>> = {}) => ({
-  items: inventory, reservations: [], productIndex: new Map(), overrides: new Map(), claims: [], blackouts: [], vacations: [], ...extra,
+  items: inventory, reservations: [], productIndex: new Map(), overrides: new Map(), claims: [], blackouts: [], vacations: [], approvalClaims: [], ...extra,
 });
 
 describe("declared independently tracked accessory pools", () => {

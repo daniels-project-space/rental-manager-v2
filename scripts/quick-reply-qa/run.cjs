@@ -141,7 +141,9 @@ let browser, server;
   console.log(
     "Testing Quick Reply with fixture-only transport and external DNS disabled.",
   );
-  if(process.env.RM_QA_NOTIFICATIONS_ONLY) {
+  if(process.env.RM_QA_OWNER_ONLY) {
+    await child(process.execPath,[__dirname+"/owner-session.cjs"],{env});
+  } else if(process.env.RM_QA_NOTIFICATIONS_ONLY) {
     await child(process.execPath,[__dirname+"/notifications.cjs"],{env});
   } else if(process.env.RM_QA_AVAILABILITY_ONLY) {
     await child(process.execPath,[__dirname+"/availability.cjs"],{env});

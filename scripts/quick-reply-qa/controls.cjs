@@ -32,6 +32,15 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     await c.cmd("Emulation.setTouchEmulationEnabled", {
       enabled: width === 390,
     });
+    await c.cmd("Page.enable");
+    await c.cmd("Page.addScriptToEvaluateOnNewDocument", { source: `{
+      const NativeDate = Date, fixtureNow = Date.UTC(2026, 9, 1, 12);
+      class FixtureDate extends NativeDate {
+        constructor(...args) { super(...(args.length ? args : [fixtureNow])); }
+        static now() { return fixtureNow; }
+      }
+      globalThis.Date = FixtureDate;
+    }` });
     await c.cmd("Page.navigate", { url: process.env.RM_QA_ORIGIN });
     await pause(400);
     const checks = [];

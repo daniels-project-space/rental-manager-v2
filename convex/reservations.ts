@@ -66,6 +66,7 @@ export const getRecentActivity = query({
 import { renterForReservation, renterMaps, renterMapsForReservations, trustOf } from "./lib/renters";
 import { renderDiscountMessage, reviewOnlyMessageFor } from "./lib/return_messages";
 import { resolveReturnDiscount } from "./lib/return_discounts";
+import { returnListingImages } from "./lib/returnListingImages";
 import { reservationItemUnits, buildProductIndexMap, isStandardAccessory, type ResolvableRes } from "./lib/reservations/itemUnits";
 import { groupLogicalRentals, displayReturnDate, displayPickupDate, renterPeriodGroupIds, type ReservationRow } from "./lib/reservations/predicates";
 import {
@@ -256,8 +257,8 @@ export const getDueReturns = query({
         ((base as { photos_urls?: string[] }).photos_urls?.[0] ?? null);
       // Full listing gallery — every photo from the listing_images table for the
       // products in this rental, so the card shows all images, not just one.
-      const images: string[] = [];
-      const seenImg = new Set<string>();
+      const images = returnListingImages(members);
+      const seenImg = new Set(images);
       const pushImg = (u?: string | null) => {
         if (u && !seenImg.has(u)) { seenImg.add(u); images.push(u); }
       };

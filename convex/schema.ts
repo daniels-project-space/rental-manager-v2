@@ -19,6 +19,29 @@ import { invoiceStatsValidator } from "./lib/invoice_stats_fields";
 // (renters, reservations, conversations, rules, denial_records).
 // MASTER SAFETY RAIL: settings.ALLOW_HYGGLO_SEND must remain false.
 const operationalSchema = defineSchema({
+  stock_approval_claims: defineTable({
+    reservation_id: v.id("reservations"), account_slug: v.string(), order_id: v.string(),
+    physical_fingerprint: v.string(),
+    start: v.string(), end: v.string(),
+    components: v.array(v.object({item_id: v.id("items"), qty: v.number()})),
+    prepared_at: v.number(),
+  }).index("by_order", ["account_slug", "order_id"]),
+  // Direct website item changes reserve only their net-new physical units.
+  // Rows are retained as idempotency/audit receipts; only holds_stock rows
+  // participate in common availability calculations.
+  dbcinema_shared_stock_claims: defineTable({
+    request_id: v.string(), request_payload: v.any(), request_hash: v.string(), fingerprint: v.string(),
+    status: v.union(v.literal("prepared"), v.literal("execution_started"), v.literal("converted"), v.literal("released"), v.literal("compensated_released")),
+    holds_stock: v.boolean(),
+    items: v.array(v.object({item_id: v.id("items"), start: v.number(), end: v.number(), qty: v.number()})),
+    booking_id: v.optional(v.string()), reservation_id: v.optional(v.id("reservations")),
+    execution_key: v.optional(v.string()), evidence_hash: v.optional(v.string()),
+    release_event_id: v.optional(v.string()), release_revision: v.optional(v.number()), release_reason: v.optional(v.string()),
+    created_at: v.number(), updated_at: v.number(),
+  })
+    .index("by_request_id", ["request_id"])
+    .index("by_holds_stock", ["holds_stock"])
+    .index("by_booking", ["booking_id"]),
   storefront_marketing_requests: defineTable({
     requestId: v.string(), requestBody: v.string(), createdAt: v.number(),
     results: v.array(v.object({ productId: v.number(), marketingOnly: v.boolean(), mode: v.union(v.literal("automatic"), v.literal("manual")), updatedAt: v.number() })),
@@ -2220,6 +2243,11 @@ const operationalSchema = defineSchema({
     account_slug: v.string(),
     product_id: v.number(),
     components: v.array(v.object({ item_id: v.id("items"), qty: v.number() })),
+    component_replacements: v.optional(v.array(v.object({
+      original_item_id: v.optional(v.id("items")), missing_original: v.optional(v.object({descriptor_id:v.string(),label:v.string(),quantity:v.number(),source_url:v.string(),source_excerpt:v.string()})), replacement_item_id: v.id("items"), qty: v.number(),
+      price_adjustment_pence: v.number(), extension_adjustment_pence: v.optional(v.array(v.number())), replacement_size_score: v.number(), weights: v.array(v.object({item_id:v.id("items"),weight_grams:v.number()})),
+      review_note: v.string(), reviewed_at: v.number(), inventory_fingerprint: v.string(),
+    }))),
     // Exact externally created listing identity. This row is also the
     // stock/calendar mapping source of truth, so registration is not duplicated.
     stock_item_id: v.optional(v.id("items")),

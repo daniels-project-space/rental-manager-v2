@@ -1,9 +1,51 @@
 import { stockOccupancyForItem, type Occupancy, type loadStockSources } from "./renter_stock";
 import { repairHeldUnits } from "./availability";
+import { isExactPaidClaimMirror } from "./websiteClaimMirror";
 
 import { londonStockInstant,TURNAROUND_BUFFER_MINUTES } from "./confirmed_schedule";
 const coordinate = (value:string) => Date.parse(value+"Z");
 const from = "0001-01-01", through = "9999-12-30";
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * Website swap acquisition claims are created only after the website has
+ * projected the same positive stock delta into its local `swap:<id>` hold.
+ * The manager must keep that claim for its own availability checks, but must
+ * not export it back to the website as a second copy of the local hold.
+ *
+ * Be deliberately strict: ordinary acquisitions, paid pending-verification
+ * booking claims, and stale/mismatched swap claims continue to travel through
+ * the shared snapshot and remain protective there.
+ */
+function isProjectedWebsiteSwapClaim(claim:any, reservations:any[]):boolean {
+  const payload=claim?.request_payload,args=payload?.args;
+  const requestId=claim?.request_id,bookingId=args?.bookingId;
+  if(payload?.operation!=="acquire"||typeof requestId!=="string"||!/^swap_[A-Za-z0-9_-]{1,250}$/.test(requestId)||
+      args?.requestId!==requestId||typeof bookingId!=="string"||claim.booking_id!==bookingId||claim.holds_stock!==true||
+      !["prepared","execution_started","converted"].includes(claim.status)||!Array.isArray(args.items)||!Array.isArray(claim.items))return false;
+
+  // A claim is website-origin only when its booking resolves uniquely to a
+  // current website rental. Ambiguous, closed, or unrelated records stay in
+  // the exported occupancy so they cannot be accidentally freed.
+  const siteBookings=reservations.filter(row=>row.account_slug==="dbcinema_web"&&row.hygglo_order_id===bookingId&&!row.is_obsolete);
+  if(siteBookings.length!==1||!["confirmed","ongoing"].includes(siteBookings[0].status)||siteBookings[0].order_step==="REVIEWED")return false;
+
+  const totals=(rows:any[],isRequest:boolean):string|null=>{
+    const byWindow=new Map<string,number>();
+    for(const row of rows){
+      const itemId=isRequest?row?.itemId:row?.item_id;
+      const start=row?.start;
+      const end=isRequest?row?.returnAt+HOUR_MS:row?.end;
+      const qty=isRequest?row?.quantity:row?.qty;
+      if(typeof itemId!=="string"||!itemId||!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||end<=start||!Number.isSafeInteger(qty)||qty<1)return null;
+      const key=JSON.stringify([itemId,start,end]);
+      byWindow.set(key,(byWindow.get(key)??0)+qty);
+    }
+    return JSON.stringify([...byWindow].map(([key,qty])=>[...JSON.parse(key),qty]).sort((a,b)=>a[0].localeCompare(b[0])||a[1]-b[1]||a[2]-b[2]));
+  };
+  const requested=totals(args.items,true),stored=totals(claim.items,false);
+  return requested!==null&&stored!==null&&requested===stored;
+}
 
 /** Sparse, disjoint occupancy windows. Same-kit extensions use their maximum
  * units, matching stockWindowPeak; independent rentals still add together. */
@@ -37,7 +79,15 @@ export function stockWindows(occupancy:Occupancy[]) {
 export function sharedStockSnapshot(sources:Awaited<ReturnType<typeof loadStockSources>>,checkedAt:number) {
   // Website bookings already occupy the website ledger. Importing their
   // manager copies would count the same physical allocation twice.
-  const upstream={...sources,checkoutHolds:[],reservations:sources.reservations.filter(r=>r.account_slug!=="dbcinema_web")};
+  // Accepted website swaps also have a local positive-delta hold. Exclude only
+  // the exact mirrored claim from this export; the unmodified `sources` still
+  // feeds Rental Manager availability, where the claim remains authoritative.
+  const upstream={
+    ...sources,
+    checkoutHolds:[],
+    reservations:sources.reservations.filter(r=>r.account_slug!=="dbcinema_web"),
+    websiteSwapClaims:(sources.websiteSwapClaims??[]).filter((claim:any)=>!isProjectedWebsiteSwapClaim(claim,sources.reservations)&&!isExactPaidClaimMirror(claim,sources.reservations)),
+  };
   return {version:2,turnaroundBufferMinutes:TURNAROUND_BUFFER_MINUTES,checkedAt,units:sources.items.map(item=> {
     const active=item.status==="active"&&item.is_marketing_only===false;
     const quantityOwned=active&&Number.isSafeInteger(item.qty)&&item.qty>=0?item.qty:0;

@@ -1,7 +1,7 @@
 import type { QueryCtx } from "../_generated/server";
 import { sharedStockSnapshot } from "./storefront_stock";
 import { loadStockSources } from "./renter_stock";
-import { loadStockInputCacheState, withSourceStockInputs } from "./stock_input_cache";
+import { loadStockInputCache, loadStockInputCacheState, withSourceStockInputs } from "./stock_input_cache";
 import { cacheByteDigest, unpackCacheValue } from "./lossless_cache_codec";
 import { sharedStockImplementation } from "./shared_stock_version";
 
@@ -20,8 +20,16 @@ export async function readSharedStock(ctx: QueryCtx): Promise<SharedStock> {
   const mode = modes.get(ctx);
   if (mode === "raw") return withSourceStockInputs(ctx, () => computeSharedStock(ctx));
   if (mode === "source") return computeSharedStock(ctx);
-  let value: SharedStock | undefined;
+  let value: SharedStock;
   try {
+    if (mode !== "prepared") {
+      const [inputs, approvals, websiteClaims] = await Promise.all([
+        loadStockInputCache(ctx),
+        ctx.db.query("stock_approval_claims").take(1),
+        ctx.db.query("dbcinema_shared_stock_claims").take(1),
+      ]);
+      if (!inputs || approvals.length || websiteClaims.length || inputs.reservations.some(row => ["DELIVERED", "RETURNED"].includes(row.order_step ?? "") && row.status !== "completed" && !row.is_obsolete)) return computeSharedStock(ctx);
+    }
     const implementation = await sharedStockImplementation();
     const state = await loadStockInputCacheState(ctx);
     if (!state?.enabled || state.ready_revision !== state.revision || state.implementation !== implementation) throw Error("Shared stock inputs are not current");
@@ -32,8 +40,6 @@ export async function readSharedStock(ctx: QueryCtx): Promise<SharedStock> {
     if (mode === "prepared") throw error;
     return computeSharedStock(ctx);
   }
-  // Keep freshness failures outside the artifact fallback catch. Holds are
-  // deliberately excluded from this projection, but freshness remains live.
   if (process.env.REQUIRE_WEBSITE_STOCK_HOLDS_SYNC === "true") {
     const checkout = await ctx.db.query("storefront_checkout_stock").withIndex("by_key", q => q.eq("key", "website")).first();
     if (!checkout || Date.now() - checkout.receivedAt > 180_000) throw Error("Website checkout stock snapshot needs refresh; availability cannot be confirmed.");

@@ -1,4 +1,4 @@
-/* Compare actual component measurements against the supplied reference, at its desktop canvas size. */
+/* Check the later spacious-chat layout at the original reference canvas size. */
 const {connect}=require('./browser.cjs');
 const fs=require('node:fs'),assert=require('node:assert/strict');
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -14,11 +14,9 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
  const rowRect=row.getBoundingClientRect(),avatar=row.querySelector('img').getBoundingClientRect(),paneRect=pane.getBoundingClientRect(),listRect=list.getBoundingClientRect();
  const toolbar=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='To reply').getBoundingClientRect();
  return {titleFont:parseFloat(getComputedStyle(title).fontSize),toolbarHeight:toolbar.height,rowHeight:rowRect.height,portraitWidth:avatar.width,portraitHeight:avatar.height,queueShare:listRect.width/(listRect.width+paneRect.width),paneWidth:paneRect.width,queueWidth:listRect.width};})()`);
- const reference={titleFont:32,toolbarHeight:39,rowHeight:94,portraitWidth:52,portraitHeight:52,queueShare:707/(707+386)};
- const tolerances={titleFont:0,toolbarHeight:2,rowHeight:3,portraitWidth:2,portraitHeight:2,queueShare:.02};
- const differences=Object.fromEntries(Object.keys(reference).map(key=>[key,actual[key]-reference[key]]));
- for(const key of Object.keys(reference))assert(Math.abs(differences[key])<=tolerances[key],`${key}: actual ${actual[key]}, reference ${reference[key]}`);
+ const bounds={titleFont:[21,23],toolbarHeight:[36,41],rowHeight:[112,145],portraitWidth:[48,52],portraitHeight:[48,52],queueShare:[.22,.29]};
+ for(const [key,[minimum,maximum]] of Object.entries(bounds))assert(actual[key]>=minimum&&actual[key]<=maximum,`${key}: actual ${actual[key]}, expected ${minimum}–${maximum}`);
  fs.writeFileSync(`${process.env.RM_QA_OUTPUT}/reference-desktop.png`,Buffer.from((await c.cmd('Page.captureScreenshot',{captureBeyondViewport:false})).data,'base64'));
- fs.writeFileSync(`${process.env.RM_QA_OUTPUT}/reference-measurements.json`,JSON.stringify({reference,actual,differences,tolerances,note:'Measures reference density, rather than claiming an identical pixel bitmap: source stages, account colors, real data and the requested pill composer intentionally differ.',realSends:0,realRentalChanges:0},null,2));
+ fs.writeFileSync(`${process.env.RM_QA_OUTPUT}/reference-measurements.json`,JSON.stringify({bounds,actual,note:'PR #133 replaced the earlier 65% list / 35% chat reference with a spacious chat and a narrower list. These bounds check that later layout; they do not claim pixel equality with the original render.',realSends:0,realRentalChanges:0},null,2));
  await c.closePage();
 })().catch(error=>{console.error(error);process.exitCode=1});

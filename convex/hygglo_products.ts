@@ -29,6 +29,7 @@ import type { MutationCtx } from "./_generated/server";
 import { action, mutation, query, internalAction, internalMutation, internalQuery, internalQueryOf, requireOwner } from "./owner_functions";
 import { insertProduct, patchProduct, refreshProductContext } from "./lib/product_context";
 import { v } from "convex/values";
+import { componentReplacementInventoryFingerprint, missingComponentMatchesSellerCopy } from "./lib/componentReplacementEvidence";
 import { resolveListingComponents } from "./lib/listing_inventory";
 
 // ── Shared arg validators (mirror the schema field shapes) ────────────────
@@ -273,6 +274,8 @@ export async function catalogueForStorefrontRows(ctx: QueryCtx, allowPrepared = 
       return [productId, first?.description] as const;
     })));
     for (const row of overrides) if (!mapping.has(row.product_id)) mapping.set(row.product_id, row);
+    const evidenceIds = [...new Set(overrides.filter(row => row.component_replacements?.some(rule => rule.missing_original)).map(row => row.product_id))];
+    const evidence = new Map(await Promise.all(evidenceIds.map(async productId => [productId, await ctx.db.query("online_listings").withIndex("by_account_product", q => q.eq("account_slug", accountSlug).eq("product_id", productId)).first()] as const)));
     const byId = new Map(inventory.map(i => [String(i._id), i]));
     const context=createBundleMappingContext(inventory);
     return await Promise.all(products.map(async product => {
@@ -290,6 +293,24 @@ export async function catalogueForStorefrontRows(ctx: QueryCtx, allowPrepared = 
       });
       const classifiedMarketing=resolvedMarketingOnly(product,resolved,inventory);
       const complete = resolved.complete && components.length > 0 && components.every(c => Number.isSafeInteger(c.qty) && c.qty > 0);
+      const reviewedSubstitutions = (mapping.get(product.productId)?.component_replacements ?? []).filter(rule => {
+        if (rule.extension_adjustment_pence !== undefined && (rule.extension_adjustment_pence.length !== 30 || rule.extension_adjustment_pence.some(amount => !Number.isSafeInteger(amount) || Math.abs(amount) > 100000000))) return false;
+        if (rule.missing_original && !missingComponentMatchesSellerCopy(rule.missing_original, evidence.get(product.productId))) return false;
+        const ids = [...new Set(rule.weights.map(weight => String(weight.item_id)))];
+        const expected = new Set([...(mapping.get(product.productId)?.components ?? []).map(component => String(component.item_id)), String(rule.replacement_item_id)]);
+        if (ids.length !== expected.size || ids.some(id => !expected.has(id))) return false;
+        const current = ids.map(id => byId.get(id));
+        return current.every(Boolean) && componentReplacementInventoryFingerprint(current) === rule.inventory_fingerprint;
+      }).map(rule => ({
+        originalMasterItemId: rule.original_item_id ? String(rule.original_item_id) : rule.missing_original!.descriptor_id, replacementMasterItemId: String(rule.replacement_item_id),
+        ...(rule.missing_original ? { declaredMissingOriginal: { descriptorId: rule.missing_original.descriptor_id, label: rule.missing_original.label, quantityPerKit: rule.missing_original.quantity, sourceUrl: rule.missing_original.source_url, sourceExcerpt: rule.missing_original.source_excerpt } } : {}),
+        quantityPerKit: rule.qty, priceAdjustmentPence: rule.price_adjustment_pence,
+        ...(rule.extension_adjustment_pence ? { extensionAdjustmentPence: rule.extension_adjustment_pence } : {}),
+        replacementSizeScore: rule.replacement_size_score,
+        weights: rule.weights.map(weight => ({ masterItemId: String(weight.item_id), weightGrams: weight.weight_grams })),
+        reviewedAt: rule.reviewed_at,
+        replacementInventory: (() => { const item = byId.get(String(rule.replacement_item_id))!; return { masterItemId: String(item._id), active: item.status === "active" && item.is_marketing_only === false, quantityOwned: item.qty, replacementCost: item.replacement_cost_gbp }; })(),
+      }));
       const primary = listingKitItem(resolved, inventory);
       const kit = canonicalKitContents(
         resolved.components,
@@ -313,7 +334,8 @@ export async function catalogueForStorefrontRows(ctx: QueryCtx, allowPrepared = 
         marketingOnlyMode:product.isMarketingOnlyOverride === undefined ? "automatic" as const : "manual" as const,
         marketingOnlyUpdatedAt:product.marketingOnlyUpdatedAt ?? 0,
         valuation,minimumRentalDays,prices,images,unavailableDates,listings,masterItemId,
-        stockMapping:{version:1,complete,owned:classifiedMarketing?false:resolved.owned,components,inventoryFacts} };
+        stockMapping:{version:1,complete,owned:classifiedMarketing?false:resolved.owned,components,inventoryFacts},
+        componentReplacementEvidence: { version: 1, checkoutAvailable: false, reviewedSubstitutions } };
     }));
   }
 

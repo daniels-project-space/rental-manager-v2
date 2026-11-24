@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
+import { ReviewedReplacementRates } from "./ReviewedReplacementRates";
 
 // Manage live Hygglo listings (price, published, category, opening times) for a
 // porting account, via the VPS listings API (proxied by /api/listings/*).
@@ -120,6 +121,7 @@ function ListingRow({ account, it, cats, onSaved }: {
               </button>
             </div>
           </div>
+          {account === "dbcinema" && <ReviewedReplacementRates account={account} productId={it.id} />}
         </div>
       )}
     </div>

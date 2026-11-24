@@ -94,7 +94,7 @@ function conversationScope(id: string) {
 export const inbox = action({
   args: {},
   handler: async (ctx): Promise<Array<Record<string, unknown>>> => {
-    await requireOwner(ctx);
+    await requireOwner(ctx, true);
     const feed = await callDbCinema<{
       authorized?: boolean;
       items?: Array<{
@@ -392,7 +392,7 @@ export const inbox = action({
 export const emailInbox = action({
   args: {},
   handler: async (ctx): Promise<Array<Record<string, unknown>>> => {
-    await requireOwner(ctx);
+    await requireOwner(ctx, true);
     const feed = await callDbCinema<{
       authorized?: boolean;
       items?: Array<{
@@ -493,7 +493,7 @@ export const emailInbox = action({
 export const renterReviews = action({
   args: { booking_id: v.string() },
   handler: async (ctx, { booking_id }): Promise<LinkedRenterReviews> => {
-    await requireOwner(ctx);
+    await requireOwner(ctx, true);
     const identity = await callDbCinema<{
       authorized?: boolean;
       email?: string | null;
@@ -534,7 +534,7 @@ export const renterReviews = action({
 export const thread = action({
   args: { booking_id: v.string(), cursor: v.optional(v.union(v.string(),v.null())) },
   handler: async (ctx, { booking_id, cursor }) => {
-    await requireOwner(ctx);
+    await requireOwner(ctx, true);
     if (booking_id.startsWith("email:")) {
       const threadId = booking_id.slice("email:".length);
       const page = await callDbCinema<{
@@ -592,7 +592,7 @@ export const thread = action({
 export const sendOwnerReply = action({
   args: { booking_id: v.string(), text: v.string() },
   handler: async (ctx, { booking_id, text }) => {
-    await requireOwner(ctx);
+    await requireOwner(ctx, true);
     const body = text.trim();
     if (!body || body.length > 2000)
       throw new Error("Write a message of up to 2,000 characters.");
@@ -622,7 +622,7 @@ export const sendOwnerReply = action({
 export const draftReply = action({
   args: { booking_id: v.string() },
   handler: async (ctx, { booking_id }) => {
-    await requireOwner(ctx);
+    await requireOwner(ctx, true);
     if (booking_id.startsWith("email:")) {
       const threadId = booking_id.slice("email:".length);
       const page = await callDbCinema<{
@@ -723,7 +723,7 @@ export const draftReply = action({
 export const replacementOptions = action({
   args: { booking_id: v.string(), item_index: v.number() },
   handler: async (ctx, a) => {
-    await requireOwner(ctx);
+    await requireOwner(ctx, true);
     return await callDbCinema<any>("query", "rentalReplacements:options", {
       bookingId: a.booking_id,
       lineIndex: a.item_index,
@@ -739,7 +739,7 @@ export const acceptReplacement = action({
     dryRun: v.optional(v.boolean()),
   },
   handler: async (ctx, a) => {
-    await requireOwner(ctx);
+    await requireOwner(ctx, true);
     if (a.dryRun) {
       const fresh = await callDbCinema<any>(
         "query",
@@ -775,7 +775,7 @@ export const acceptReplacement = action({
 export const replacementBasketOptions = action({
   args: { booking_id: v.string() },
   handler: async (ctx, a): Promise<any> => {
-    await requireOwner(ctx);
+    await requireOwner(ctx, true);
     const result = await callDbCinema<any>("query", "rentalReplacements:basketOptions", {
       bookingId: a.booking_id,
     });
@@ -802,7 +802,7 @@ export const acceptReplacementBasket = action({
     dryRun: v.optional(v.boolean()),
   },
   handler: async (ctx, a): Promise<any> => {
-    await requireOwner(ctx);
+    await requireOwner(ctx, true);
     if (a.dryRun) {
       const fresh = await callDbCinema<any>(
         "query",
@@ -851,7 +851,7 @@ function equipmentImages(values: unknown[]): string[] {
 export const rentalControls = action({
   args: { booking_id: v.string() },
   handler: async (ctx, { booking_id }) => {
-    await requireOwner(ctx);
+    await requireOwner(ctx, true);
     const b = await callDbCinema<any>("query", "rentalOperations:details", {
       bookingId: booking_id,
     });
@@ -917,7 +917,7 @@ export const previewRentalDates = action({
     ctx,
     { booking_id, start, end, reason, keep_agreed_price },
   ) => {
-    await requireOwner(ctx);
+    await requireOwner(ctx, true);
     return await callDbCinema<{
       ok: boolean;
       reason?: string;
@@ -955,7 +955,7 @@ export const applyRentalDates = action({
       operator_confirmed,
     },
   ) => {
-    await requireOwner(ctx);
+    await requireOwner(ctx, true);
     if (!operator_confirmed || !expected_snapshot)
       throw Error("Review and confirm the date change first.");
     await callDbCinema("mutation", "rentalOperations:reschedule", {
@@ -981,7 +981,7 @@ export const refundRental = action({
     ctx,
     { booking_id, request_id, amount_pence, reason, operator_confirmed },
   ) => {
-    await requireOwner(ctx);
+    await requireOwner(ctx, true);
     if (
       !operator_confirmed ||
       !Number.isSafeInteger(amount_pence) ||
@@ -1002,19 +1002,19 @@ export const refundRental = action({
   },
 });
 
-export const rentalPriceProposals=action({args:{booking_id:v.string()},handler:async(ctx,{booking_id})=>{await requireOwner(ctx);return callDbCinema<any[]>("query","rentalPriceState:list",{bookingId:booking_id,admin:true});}});
-export const previewRentalPrice=action({args:{booking_id:v.string(),new_total:v.number()},handler:async(ctx,{booking_id,new_total})=>{await requireOwner(ctx);return callDbCinema<any>("query","rentalPriceState:preview",{bookingId:booking_id,newTotal:new_total});}});
+export const rentalPriceProposals=action({args:{booking_id:v.string()},handler:async(ctx,{booking_id})=>{await requireOwner(ctx, true);return callDbCinema<any[]>("query","rentalPriceState:list",{bookingId:booking_id,admin:true});}});
+export const previewRentalPrice=action({args:{booking_id:v.string(),new_total:v.number()},handler:async(ctx,{booking_id,new_total})=>{await requireOwner(ctx, true);return callDbCinema<any>("query","rentalPriceState:preview",{bookingId:booking_id,newTotal:new_total});}});
 export const applyRentalPrice=action({args:{booking_id:v.string(),request_id:v.string(),new_total:v.number(),reviewed_snapshot:v.string(),direction:v.union(v.literal("increase"),v.literal("decrease")),confirmed:v.boolean()},handler:async(ctx,a)=>{
- await requireOwner(ctx);if(!a.confirmed||!a.reviewed_snapshot)throw Error("Review and confirm the price first.");
+ await requireOwner(ctx, true);if(!a.confirmed||!a.reviewed_snapshot)throw Error("Review and confirm the price first.");
  return callDbCinema<any>(a.direction==="increase"?"mutation":"action",a.direction==="increase"?"rentalPriceState:propose":"rentalPricePayments:decrease",{bookingId:a.booking_id,requestId:a.request_id,newTotal:a.new_total,expectedSnapshot:a.reviewed_snapshot,confirmed:true});
 }});
-export const withdrawRentalPrice=action({args:{proposal_id:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx);if(!a.confirmed)throw Error("Confirm proposal withdrawal first.");return callDbCinema<any>("action","rentalPricePayments:withdraw",{id:a.proposal_id});}});
+export const withdrawRentalPrice=action({args:{proposal_id:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx, true);if(!a.confirmed)throw Error("Confirm proposal withdrawal first.");return callDbCinema<any>("action","rentalPricePayments:withdraw",{id:a.proposal_id});}});
 
 /** These bridges only execute a change after the operator confirms the exact review. */
 export const equipmentCatalog = action({
   args: { search: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    await requireOwner(ctx);
+    await requireOwner(ctx, true);
     const rows = await callDbCinema<
       Array<{
         listingId: string;
@@ -1038,7 +1038,7 @@ export const previewEquipmentAddition = action({
     complimentary: v.boolean(),
   },
   handler: async (ctx, { booking_id, listing_id, ...args }) => {
-    await requireOwner(ctx);
+    await requireOwner(ctx, true);
     const result = await callDbCinema<any>(
       "query",
       "rentalAdditionState:preview",
@@ -1078,7 +1078,7 @@ export const addEquipment = action({
       ...args
     },
   ) => {
-    await requireOwner(ctx);
+    await requireOwner(ctx, true);
     if (!operator_confirmed || !expected_snapshot || !expected_quote)
       throw Error("Review and confirm the equipment addition first.");
     try {
@@ -1135,7 +1135,7 @@ export const removeEquipment = action({
       operator_confirmed,
     },
   ) => {
-    await requireOwner(ctx);
+    await requireOwner(ctx, true);
     if (!operator_confirmed || !expected_snapshot)
       throw Error("Review and confirm the equipment removal first.");
     try {
@@ -1163,15 +1163,15 @@ const returnSelectionArgs={booking_id:v.string(),actual_returned_at:v.number(),d
 function returnSelection(a:{booking_id:string;actual_returned_at:number;damage_assessed:number;deposit_kept?:number;reason?:string;charge_late:boolean;late_waiver_reason?:string;inspection:unknown[]}){
  return {bookingId:a.booking_id,actualReturnedAt:a.actual_returned_at,damageKept:a.damage_assessed,...(a.deposit_kept!==undefined?{depositKept:a.deposit_kept}:{}),damageNote:a.reason?.trim()||undefined,chargeLate:a.charge_late,lateWaiverReason:a.late_waiver_reason?.trim()||undefined,inspection:a.inspection};
 }
-export const returnInspectionContext=action({args:{booking_id:v.string()},handler:async(ctx,a)=>{await requireOwner(ctx);return callDbCinema<any>("query","returnInspections:context",{bookingId:a.booking_id});}});
-export const previewReturn=action({args:returnSelectionArgs,handler:async(ctx,a)=>{await requireOwner(ctx);return callDbCinema<any>("action","checkout:previewReturned",returnSelection(a));}});
+export const returnInspectionContext=action({args:{booking_id:v.string()},handler:async(ctx,a)=>{await requireOwner(ctx, true);return callDbCinema<any>("query","returnInspections:context",{bookingId:a.booking_id});}});
+export const previewReturn=action({args:returnSelectionArgs,handler:async(ctx,a)=>{await requireOwner(ctx, true);return callDbCinema<any>("action","checkout:previewReturned",returnSelection(a));}});
 export const completeReturn=action({args:{...returnSelectionArgs,reviewed_snapshot:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{
- await requireOwner(ctx);if(!a.confirmed||!a.reviewed_snapshot)throw Error("Review and confirm the return decision before completion.");
+ await requireOwner(ctx, true);if(!a.confirmed||!a.reviewed_snapshot)throw Error("Review and confirm the return decision before completion.");
  return callDbCinema<any>("action","checkout:markReturned",{...returnSelection(a),expectedSnapshot:a.reviewed_snapshot});
 }});
 
-export const resumeDepositRefund=action({args:{booking_id:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx);if(!a.confirmed)throw Error("Confirm resuming the saved decision first.");return callDbCinema<any>("action","checkout:resumeDepositRefund",{bookingId:a.booking_id,confirmed:true});}});
-export const retryDepositRefund=action({args:{booking_id:v.string(),refund_id:v.string(),request_id:v.string(),reviewed_snapshot:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx);if(!a.confirmed||!a.reviewed_snapshot)throw Error("Review and confirm the failed refund first.");return callDbCinema<any>("action","checkout:retryDepositRefund",{bookingId:a.booking_id,refundId:a.refund_id,requestId:a.request_id,expectedSnapshot:a.reviewed_snapshot,confirmed:true});}});
+export const resumeDepositRefund=action({args:{booking_id:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx, true);if(!a.confirmed)throw Error("Confirm resuming the saved decision first.");return callDbCinema<any>("action","checkout:resumeDepositRefund",{bookingId:a.booking_id,confirmed:true});}});
+export const retryDepositRefund=action({args:{booking_id:v.string(),refund_id:v.string(),request_id:v.string(),reviewed_snapshot:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx, true);if(!a.confirmed||!a.reviewed_snapshot)throw Error("Review and confirm the failed refund first.");return callDbCinema<any>("action","checkout:retryDepositRefund",{bookingId:a.booking_id,refundId:a.refund_id,requestId:a.request_id,expectedSnapshot:a.reviewed_snapshot,confirmed:true});}});
 
-export const resumeRentalRefund=action({args:{refund_id:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx);if(!a.confirmed)throw Error("Confirm resuming the original refund first.");return callDbCinema<any>("action","checkout:resumeRentalRefund",{refundId:a.refund_id,confirmed:true});}});
-export const resumeRentalPriceReview=action({args:{proposal_id:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx);if(!a.confirmed)throw Error("Confirm resuming the original price request first.");return callDbCinema<any>("action","rentalPricePayments:resumeReview",{id:a.proposal_id,confirmed:true});}});
+export const resumeRentalRefund=action({args:{refund_id:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx, true);if(!a.confirmed)throw Error("Confirm resuming the original refund first.");return callDbCinema<any>("action","checkout:resumeRentalRefund",{refundId:a.refund_id,confirmed:true});}});
+export const resumeRentalPriceReview=action({args:{proposal_id:v.string(),confirmed:v.boolean()},handler:async(ctx,a)=>{await requireOwner(ctx, true);if(!a.confirmed)throw Error("Confirm resuming the original price request first.");return callDbCinema<any>("action","rentalPricePayments:resumeReview",{id:a.proposal_id,confirmed:true});}});

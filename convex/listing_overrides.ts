@@ -3,6 +3,7 @@ import { mutation, query, requireOwner } from "./owner_functions";
 import { v } from "convex/values";
 import type {MutationCtx,QueryCtx} from "./_generated/server";
 import type {Doc,Id} from "./_generated/dataModel";
+import { componentReplacementInventoryFingerprint, missingComponentMatchesSellerCopy } from "./lib/componentReplacementEvidence";
 
 async function currentOverride(ctx:QueryCtx,account:string,product:number) {
   const rows=await ctx.db.query("listing_resolution_override").withIndex("by_account_product",q=>q.eq("account_slug",account).eq("product_id",product)).collect();
@@ -85,13 +86,75 @@ export const setOverride = mutation({
     };
     if(args.dry_run)return {preview:true,product_id:args.product_id,components,updated:existing?1:0,inserted:existing?0:1};
     if (existing) {
-      await patchStockInput(ctx, existing._id, doc);
-      await recordMappingChange(ctx,existing,doc,"update");
+      const sameComponents = JSON.stringify(existing.components) === JSON.stringify(components);
+      const patch = { ...doc, ...(sameComponents ? {} : { component_replacements: undefined }) };
+      await patchStockInput(ctx, existing._id, patch);
+      await recordMappingChange(ctx,existing,{ ...existing, ...patch },"update");
       return { updated: 1, product_id: args.product_id };
     }
     await insertStockInput(ctx, "listing_resolution_override", doc);
     await recordMappingChange(ctx,null,doc,"insert");
     return { inserted: 1, product_id: args.product_id };
+  },
+});
+
+export const getComponentReplacements = query({
+  args: { account_slug: v.string(), product_id: v.number() },
+  handler: async (ctx, args) => {
+    await requireOwner(ctx, true);
+    const existing = await currentOverride(ctx, args.account_slug, args.product_id);
+    const replacements = existing?.component_replacements ?? [];
+    const ids = [...new Set(replacements.flatMap(rule => [rule.original_item_id, rule.replacement_item_id]).filter((id): id is typeof replacements[number]["replacement_item_id"] => !!id))];
+    const items = await Promise.all(ids.map(id => ctx.db.get(id)));
+    const componentNames = Object.fromEntries(items.filter(item => !!item).map(item => [String(item!._id), item!.display_name ?? item!.name_canonical]));
+    return { revision: JSON.stringify(existing), replacements, componentNames, checkoutAvailable: false as const };
+  },
+});
+
+export const setComponentReplacements = mutation({
+  args: {
+    account_slug: v.string(), product_id: v.number(), expected_revision: v.string(),
+    replacements: v.array(v.object({ original_item_id: v.optional(v.id("items")), missing_original: v.optional(v.object({descriptor_id:v.string(),label:v.string(),quantity:v.number(),source_url:v.string(),source_excerpt:v.string()})), replacement_item_id: v.id("items"), qty: v.number(), price_adjustment_pence: v.number(), extension_adjustment_pence: v.optional(v.array(v.number())), replacement_size_score: v.number(), weights: v.array(v.object({item_id:v.id("items"),weight_grams:v.number()})), review_note: v.string() })),
+  },
+  handler: async (ctx, args) => {
+    await requireOwner(ctx, true);
+    const existing = await currentOverride(ctx, args.account_slug, args.product_id);
+    checkRevision(existing, args.expected_revision);
+    if (!existing || args.account_slug !== "dbcinema" || !existing.components.length || args.replacements.length > 25)
+      throw Error("Select a mapped DB Cinema listing.");
+    const listing = await ctx.db.query("online_listings").withIndex("by_account_product", q => q.eq("account_slug", args.account_slug).eq("product_id", args.product_id)).first();
+    const pairs = new Set<string>();
+    const replacements = await Promise.all(args.replacements.map(async replacement => {
+      const original = existing.components.find(component => component.item_id === replacement.original_item_id);
+      const missing = replacement.missing_original;
+      const missingValid = !!missing && /^declared:[a-z0-9][a-z0-9_-]{0,100}$/.test(missing.descriptor_id) && missing.label.trim().length > 1 && missing.label.length <= 200 &&
+        Number.isSafeInteger(missing.quantity) && missing.quantity > 0 && missing.source_excerpt.trim().length >= 10 && missing.source_excerpt.length <= 1000 &&
+        /^https:\/\/[^\s]+$/i.test(missing.source_url) && missing.source_url.length <= 1000;
+      const pair = JSON.stringify([replacement.original_item_id ?? missing?.descriptor_id, replacement.replacement_item_id]);
+      const note = replacement.review_note.trim();
+      if ((!!replacement.original_item_id === !!missing) || (!original && !missingValid) || (missing && !missingComponentMatchesSellerCopy(missing, listing)) || replacement.original_item_id === replacement.replacement_item_id || pairs.has(pair) ||
+          !Number.isSafeInteger(replacement.qty) || replacement.qty < 1 || replacement.qty > (original?.qty ?? missing?.quantity ?? 0) || (missing && replacement.qty !== missing.quantity) ||
+          !Number.isSafeInteger(replacement.price_adjustment_pence) || (replacement.extension_adjustment_pence !== undefined && (replacement.extension_adjustment_pence.length !== 30 || replacement.extension_adjustment_pence.some(amount => !Number.isSafeInteger(amount) || Math.abs(amount) > 100000000))) || !Number.isSafeInteger(replacement.replacement_size_score) || replacement.replacement_size_score < 1 || replacement.replacement_size_score > 5 || note.length < 10 || note.length > 500)
+        throw Error("Check the substitution, quantity, price and review note.");
+      pairs.add(pair);
+      const required = new Set([...existing.components.map(component => String(component.item_id)), String(replacement.replacement_item_id)]);
+      if (replacement.weights.length !== required.size || new Set(replacement.weights.map(weight => String(weight.item_id))).size !== required.size ||
+          replacement.weights.some(weight => !required.has(String(weight.item_id)) || !Number.isSafeInteger(weight.weight_grams) || weight.weight_grams < 1))
+        throw Error("Enter a positive weight for every physical component.");
+      const item = await ctx.db.get(replacement.replacement_item_id);
+      if (!item || item.status !== "active" || item.is_marketing_only || !Number.isSafeInteger(item.qty) || item.qty < replacement.qty ||
+          !Number.isFinite(item.replacement_cost_gbp) || (item.replacement_cost_gbp ?? 0) <= 0)
+        throw Error("The replacement needs active owned stock and a verified value.");
+      const inventory = await Promise.all([...required].map(id => ctx.db.get(id as Id<"items">)));
+      if (inventory.some(unit => !unit || unit.status !== "active" || unit.is_marketing_only || !Number.isSafeInteger(unit.qty) || unit.qty < 1 ||
+          !Number.isFinite(unit.replacement_cost_gbp) || (unit.replacement_cost_gbp ?? 0) <= 0))
+        throw Error("Every component needs active owned stock and a verified value.");
+      return { ...replacement, review_note: note, reviewed_at: Date.now(), inventory_fingerprint: componentReplacementInventoryFingerprint(inventory) };
+    }));
+    const patch = { component_replacements: replacements, updated_at: Date.now() };
+    await ctx.db.patch(existing._id, patch);
+    await recordMappingChange(ctx, existing, { ...existing, ...patch }, "update");
+    return { reviewed: replacements.length, checkoutAvailable: false as const };
   },
 });
 

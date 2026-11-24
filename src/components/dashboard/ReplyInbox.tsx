@@ -36,7 +36,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { mergeConversationHistory, type ConversationMessage } from "../../lib/quick-reply-history";
-import { useAction, useMutation, useQuery, usePaginatedQuery } from "convex/react";
+import { useAction, useMutation, useQuery, usePaginatedQuery, useConvexAuth } from "convex/react";
+import { ownerLoginHref } from "@/lib/owner-navigation";
 import { api } from "../../../convex/_generated/api";
 import { makeFunctionReference } from "convex/server";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -4433,6 +4434,9 @@ export function ReplyModal({
 
 export function ReplyInbox() {
   const { activeAccountSlug } = useAccount();
+  const { isAuthenticated, isLoading: authLoading } = useConvexAuth();
+  const owner = useQuery(api.auth.state, isAuthenticated ? {} : "skip");
+  const canReadDbCinema = isAuthenticated && owner?.authenticated === true && owner.isOwner === true;
   const loadDbCinemaInbox = useAction(dbCinemaInboxRef);
   const loadDbCinemaEmailInbox = useAction(dbCinemaEmailInboxRef);
   // Persisted "count pending bookings in the double-booking check" toggle.
@@ -4490,9 +4494,11 @@ export function ReplyInbox() {
     row.renter_image_url
       ? row
       : { ...row, renter_image_url: portraits[row.thread_id] ?? null };
-  const [dbCinemaRows, setDbCinemaRows] = useState<ReplyTileData[]>([]);
+  const [cachedDbCinemaRows, setDbCinemaRows] = useState<ReplyTileData[]>([]);
+  const dbCinemaRows = canReadDbCinema ? cachedDbCinemaRows : [];
   const [dbCinemaLoadFailed, setDbCinemaLoadFailed] = useState(false);
   useEffect(() => {
+    if (!canReadDbCinema) { setDbCinemaRows([]); setDbCinemaLoadFailed(false); return; }
     let alive = true;
     const refresh = async () => {
       if (document.visibilityState !== "visible") return;
@@ -4514,10 +4520,12 @@ export function ReplyInbox() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [loadDbCinemaInbox]);
-  const [emailRows, setEmailRows] = useState<ReplyTileData[]>([]);
+  }, [loadDbCinemaInbox, canReadDbCinema]);
+  const [cachedEmailRows, setEmailRows] = useState<ReplyTileData[]>([]);
+  const emailRows = canReadDbCinema ? cachedEmailRows : [];
   const [emailLoadFailed, setEmailLoadFailed] = useState(false);
   useEffect(() => {
+    if (!canReadDbCinema) { setEmailRows([]); setEmailLoadFailed(false); return; }
     let alive = true;
     const refresh = async () => {
       if (document.visibilityState !== "visible") return;
@@ -4539,7 +4547,7 @@ export function ReplyInbox() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [loadDbCinemaEmailInbox]);
+  }, [loadDbCinemaEmailInbox, canReadDbCinema]);
 
   const [accountFilter, setAccountFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -4790,13 +4798,14 @@ export function ReplyInbox() {
       : "skip",
   ) as ReplyTileData | null | undefined;
   if (openFromQueue) openCacheRef.current = openFromQueue;
-  const open = openId
+  const openCandidate = openId
     ? (openFromQueue ??
       openFromCheck ??
       (openCacheRef.current?.thread_id === openId
         ? openCacheRef.current
         : null))
     : null;
+  const open = openCandidate && isDbCinemaSource(openCandidate.source) && !canReadDbCinema ? null : openCandidate;
 
   return (
     <Card className={styles.widget}>
@@ -4839,6 +4848,8 @@ export function ReplyInbox() {
                 onChange={(event) => setSearch(event.target.value)}
               />
             </label>
+            {!authLoading && !isAuthenticated && <a href="/login" onClick={event => { event.preventDefault(); window.location.assign(ownerLoginHref(window.location.pathname + window.location.search + window.location.hash)); }} className="rounded-full border border-amber-300/30 px-3 py-1.5 text-xs text-amber-200">Sign in for DB Cinema</a>}
+            {isAuthenticated && owner && !owner.isOwner && <span className="text-xs text-amber-200">DB Cinema requires the owner account</span>}
             {dbCinemaLoadFailed && (
               <span className="text-amber-300">DB Cinema offline</span>
             )}

@@ -36,6 +36,7 @@ import { computePollHash } from "./hygglo";
 import { queueNotificationEvents } from "./notifications";
 import { websiteWindowUnits } from "./lib/reservations/itemUnits";
 import { buildConfirmedBookingNotificationCopy } from "./lib/notification_events";
+import { reconcileMirroredBookingClaim, releaseTerminalWebsiteBookingClaim } from "./dbcinema_shared_stock";
 import { rentalTimeChangedEvent, syncRentalReminders } from "./lib/rental_timing_notifications";
 
 const upsertBatchRef = internal.sync_dbcinema_web.upsertSiteBookingsBatch;
@@ -46,12 +47,24 @@ const WEB_SLUG = "dbcinema_web";
 const STOCK_ACCOUNT = "dbcinema";
 
 type SiteUnit = { hyggloProductId: number; qty: number };
-type SiteLine = { title: string; qty: number; start: number; end: number; units: SiteUnit[] };
+type SiteLine = { title: string; qty: number; start: number; end: number; units: SiteUnit[]; imageUrl?: string | null };
+type SiteStockReceipt = {
+  kind?: "booking_confirmation";
+  swapId?: string;
+  bookingId: string;
+  bookingRevision: number;
+  managerRequestId: string;
+  fingerprint: string;
+  executionKey: string;
+  appliedAt: number;
+  windows: Array<{ managerItemId: string; start: number; end: number; quantity: number }>;
+};
 type SiteBooking = {
   id: string;
   revision?: number;
   verification?: WebsiteVerification;
   status: string;
+  checkoutPaidAt?: number | null;
   customerName: string | null;
   customerEmail: string | null;
   fulfilment: string;
@@ -67,6 +80,7 @@ type SiteBooking = {
   currency: string;
   createdAt: number;
   lineItems: SiteLine[];
+  stockApplicationReceipt?: SiteStockReceipt;
   damageCases?: import("./lib/websiteCases").WebsiteCase[];
   physicalReservations?: Array<{rmv2ItemId: string | null; hyggloProductId?: number | null; qty: number; start: number; end: number; pickupTime?: string | null; returnTime?: string | null; endExclusive?: boolean; stockWindowVersion?: number; turnaroundBufferMinutes?:number; pickupDate?:string; returnDate?:string}>;
 };
@@ -118,20 +132,16 @@ export const syncDbcinemaWeb = internalAction({
 /**
  * db-cinema-v2 booking.status → RMv2 reservation status.
  *
- * Explicit and total over the storefront's status union (see its schema:
- * pending_payment | confirmed | active | returned | cancelled). Anything NOT in
- * this map is skipped rather than defaulted — `pending_payment` is an unpaid
- * cart, and silently defaulting it to "confirmed" would invent a rental that
- * blocks real availability. Previously only `returned` was special-cased and
- * EVERYTHING else fell through to "confirmed"; that was safe only because the
- * bulk feed pre-filtered to paid statuses, which the webhook deliberately does
- * not (2026-08-18).
+ * Explicit over actionable storefront states. Unpaid checkouts are ignored;
+ * verification holds are mirrored as pending_review, never as confirmed.
+ * Unknown statuses are skipped rather than defaulted.
  */
-const SITE_STATUS_MAP: Record<string, "confirmed" | "completed" | "cancelled"> = {
+const SITE_STATUS_MAP: Record<string, "confirmed" | "completed" | "cancelled" | "pending_review"> = {
   confirmed: "confirmed", // paid, not yet collected → upcoming
   active: "confirmed", // out with the customer (order_step DELIVERED)
   returned: "completed", // back → historical revenue
   cancelled: "cancelled", // retired — must not show as a phantom upcoming
+  pending_verification: "pending_review", // payment may exist, but verification has not passed
 };
 
 export const upsertSiteBookingsBatch = internalMutation({
@@ -196,7 +206,7 @@ export const upsertSiteBookingsBatch = internalMutation({
       );
     }
 
-    const receipts: Array<{bookingId: string; receivedRevision: number; appliedRevision: number | null; outcome: "applied" | "unchanged" | "stale" | "ignored"; reason?: string}> = [];
+    const receipts: Array<{bookingId: string; receivedRevision: number; appliedRevision: number | null; outcome: "applied" | "unchanged" | "stale" | "ignored"; reason?: string; stockAcknowledgement?: Record<string, any>}> = [];
     let upserted = 0;
     let skipped = 0;
     let mappedUnits = 0;
@@ -221,6 +231,12 @@ export const upsertSiteBookingsBatch = internalMutation({
         continue;
       }
       const verification = parseWebsiteVerification(b.verification);
+      // A pending-verification marker alone is not evidence of payment or
+      // stock. Require the website's paid receipt and its exact stock ledger;
+      // never invent an allocation from the current catalogue for this state.
+      if (b.status === "pending_verification" && (!Number.isSafeInteger(b.checkoutPaidAt) || b.checkoutPaidAt! <= 0 || verification?.provider !== "didit" || !Array.isArray(b.physicalReservations) || (verification.status !== "rejected" && b.physicalReservations.length === 0))) {
+        throw Error("Paid website verification hold requires a receipt and physical allocation ledger");
+      }
       // Payment and document approval are separate. A scheduled pickup hold is
       // a collection requirement, not a reason to invent failed verification.
       const documentsApproved = verification?.documentsApproved ?? verification?.approved ?? false;
@@ -231,6 +247,7 @@ export const upsertSiteBookingsBatch = internalMutation({
       const order_step =
         b.status === "active" ? "DELIVERED"
         : b.status === "returned" ? "REVIEWED"
+        : b.status === "pending_verification" ? "VERIFIED"
         : b.status === "confirmed" ? documentsApproved ? "BOOKED_AFTER_VERIFIED" : "VERIFIED"
         : undefined;
 
@@ -288,13 +305,18 @@ export const upsertSiteBookingsBatch = internalMutation({
           if (typeof pid === "number") byProduct.set(pid,{name:canonical.name,qty,image_url:canonical.image_url});
         }
       }
-      const hygglo_items = [...byProduct.entries()].map(([product_id, p]) => ({
+      const stockProductItems = [...byProduct.entries()].map(([product_id, p]) => ({
         product_id,
         name: p.name,
         qty: p.qty,
         image_url: p.image_url,
         type: "item",
       }));
+      const hasListingDisplay = b.physicalReservations !== undefined && (b.lineItems ?? []).length > 0 &&
+        b.lineItems.every((line) => Object.prototype.hasOwnProperty.call(line, "imageUrl"));
+      const hygglo_items = hasListingDisplay
+        ? b.lineItems.map((line) => ({ name: line.title, qty: line.qty, image_url: line.imageUrl ?? null, type: "listing" }))
+        : stockProductItems;
       const expanded_items = [...byItem.values()].map((e) => ({
         item_id: e.item_id,
         item_name_canonical: e.name,
@@ -326,7 +348,9 @@ export const upsertSiteBookingsBatch = internalMutation({
       // Display the resolved canonical items (clean names + image matches);
       // fall back to the raw booking titles when nothing mapped.
       const itemsDisplay =
-        expanded_items.length > 0
+        hasListingDisplay
+          ? b.lineItems.map((line) => ({ item_name: line.title, qty: line.qty }))
+          : expanded_items.length > 0
           ? expanded_items.map((e) => ({ item_name: e.item_name_canonical, qty: e.qty }))
           : (b.lineItems ?? []).map((li) => ({ item_name: li.title, qty: li.qty }));
 
@@ -375,6 +399,14 @@ export const upsertSiteBookingsBatch = internalMutation({
       fields.pickup_time = b.pickupTime || undefined;
       fields.return_time = b.returnTime || undefined;
 
+      const reconcileBookingClaim = (reservation: Record<string, unknown>) => {
+        const imported = { ...fields, ...reservation };
+        if ((status === "cancelled" || status === "completed") && b.stockApplicationReceipt === undefined) {
+          return releaseTerminalWebsiteBookingClaim(ctx, imported);
+        }
+        return reconcileMirroredBookingClaim(ctx, imported, b.stockApplicationReceipt as any);
+      };
+
       // ── Conditional write — same diff gate as hygglo.ts upsertOrderImpl ─────
       // This cron re-upserts every booking every 30 min; a ctx.db.patch creates
       // a NEW document version even when the values are identical, re-firing
@@ -398,7 +430,8 @@ export const upsertSiteBookingsBatch = internalMutation({
           skipped++; continue;
         }
         if ((mine as { poll_hash?: string }).poll_hash === newPollHash) {
-          receipts.push({ bookingId: b.id, receivedRevision: b.revision ?? 0, appliedRevision: mine.site_revision ?? 0, outcome: "unchanged" });
+          const reconciliation = await reconcileBookingClaim({ _id: mine._id });
+          receipts.push({ bookingId: b.id, receivedRevision: b.revision ?? 0, appliedRevision: mine.site_revision ?? 0, outcome: "unchanged", ...(b.stockApplicationReceipt !== undefined ? { stockAcknowledgement: reconciliation as Record<string, any> } : {}) });
           skipped++;
           continue;
         }
@@ -441,6 +474,9 @@ export const upsertSiteBookingsBatch = internalMutation({
           created_at: Date.now(),
         } as never);
       }
+      const reconciliation = reservationId
+        ? await reconcileBookingClaim({ _id: reservationId })
+        : undefined;
       await syncWebsiteCases(ctx, b, reservationId, itemById);
       await syncRentalReminders(ctx, { ...mine, ...fields, _id: reservationId! });
       if (mine) {
@@ -455,7 +491,7 @@ export const upsertSiteBookingsBatch = internalMutation({
         const thread_id = `dbcinema:${b.id}`;
         await queueNotificationEvents(ctx, [{ type: "booking_confirmed", event_key: `dbcinema:paid:${b.id}`, thread_id, account_slug: WEB_SLUG, title: copy.title, body: `Website · ${copy.body}`, copy_data, url: `/?thread=${encodeURIComponent(thread_id)}&account=dbcinema_web` }]);
       }
-      receipts.push({ bookingId: b.id, receivedRevision: b.revision ?? 0, appliedRevision: b.revision ?? 0, outcome: "applied" });
+      receipts.push({ bookingId: b.id, receivedRevision: b.revision ?? 0, appliedRevision: b.revision ?? 0, outcome: "applied", ...(b.stockApplicationReceipt !== undefined ? { stockAcknowledgement: reconciliation as Record<string, any> } : {}) });
       upserted++;
     }
 

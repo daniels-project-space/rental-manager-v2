@@ -166,6 +166,7 @@ export function useQuery(ref, args) {
   useSyncExternalStore(subscribe, snapshot, snapshot);
   if (args === "skip") return undefined;
   const name = getFunctionName(ref);
+  if (name === "auth:state") return { authenticated: true, isOwner: true, setupAvailable: false };
   if (name === "replyInbox:getReplyQueue")
     return rows.filter((r) => r.source === "hygglo");
   if (name === "replyInbox:getThreadById")
@@ -562,5 +563,5 @@ export function usePaginatedQuery(ref,args,options) {
   return {results:ordered.slice(0,count),status:count<ordered.length?"CanLoadMore":"Exhausted",loadMore(n){setCount(v=>v+n)}};
 }
 export function useConvexAuth() {
-  return { isAuthenticated: true, isLoading: false };
+  return { isAuthenticated: !new URLSearchParams(window.location.search).has("no-owner"), isLoading: false };
 }

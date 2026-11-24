@@ -232,13 +232,13 @@ describe("booked-period availability and separate custody",()=>{
  const item={_id:"camera",name_canonical:"FX3",status:"active",qty:3};
  const hire={account_slug:"leo",hygglo_order_id:"out",status:"confirmed",order_step:"DELIVERED",start_date:"2026-08-01",end_date:"2026-08-02",return_time:"12:00",resolved_items:[{item_id:"camera",qty:2}]};
  const quote=(reservation:any,extra={})=>stockForItem({items:[item],reservations:[reservation],productIndex:new Map(),overrides:new Map(),claims:[],blackouts:[],vacations:[]} as any,item as any,{item_name:"FX3",start_date:"2027-01-01",end_date:"2027-01-02",quantity:2,...extra});
- it("restores forecast availability after the agreed period without recording a return",()=>{
+ it("keeps overdue equipment unavailable until its return is recorded",()=>{
   const saved=JSON.stringify(hire);
   const result=quote(hire);
-  expect(result.available).toBe(true);expect(result.free_units).toBe(3);
-  expect(result.per_day.map(d=>d.booked)).toEqual([0,0]);
+  expect(result.available).toBe(false);expect(result.free_units).toBe(1);
+  expect(result.per_day.map(d=>d.booked)).toEqual([2,2]);
   expect(JSON.stringify(hire)).toBe(saved);
-  expect(quote({...hire,status:"ongoing"}).free_units).toBe(3);
+  expect(quote({...hire,status:"ongoing"}).free_units).toBe(1);
   expect(quote(hire,{start_date:"2026-08-01",end_date:"2026-08-02"}).free_units).toBe(1);
   expect(quote({...hire,order_step:"RETURNED"},{start_date:"2026-08-01",end_date:"2026-08-02"}).free_units).toBe(1);
  });
@@ -251,13 +251,13 @@ describe("booked-period availability and separate custody",()=>{
   expect(quote(hire,{thread_id:"out"}).free_units).toBe(3);
   expect(quote(hire,{end_date:"tomorrow"}).available).toBeNull();
  });
- it("keeps independent website allocation dates without forecast extensions",()=>{
+ it("keeps overdue website allocation unavailable until its return is recorded",()=>{
   const reservation={...hire,account_slug:"dbcinema_web",site_item_windows:[
    {item_id:"camera",qty:2,start:Date.UTC(2026,7,1),end:Date.UTC(2026,7,2),returnTime:"12:00"},
    {item_id:"camera",qty:2,start:Date.UTC(2026,7,3),end:Date.UTC(2026,7,4),returnTime:"12:00"},
   ]};
   const saved=JSON.stringify(reservation);const result=quote(reservation);
-  expect(result.free_units).toBe(3);expect(result.per_day.map(d=>d.booked)).toEqual([0,0]);
+  expect(result.free_units).toBe(1);expect(result.per_day.map(d=>d.booked)).toEqual([2,2]);
   expect(JSON.stringify(reservation)).toBe(saved);
  });
 });

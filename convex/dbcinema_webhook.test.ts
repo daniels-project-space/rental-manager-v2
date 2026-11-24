@@ -34,6 +34,15 @@ describe('actual booking-sync HTTP receipts',()=>{
   expect(await(await invoke(ctx,request(booking({status:'pending_payment'})))).json()).toEqual({ok:true,version:1,bookingId:'web-receipt',receivedRevision:4,appliedRevision:null,outcome:'ignored',reason:'unpaid'});
   expect([...rows.values()].some(r=>r.table==='reservations')).toBe(false);expect((await invoke(ctx,request(booking({status:'unknown'})))).status).toBe(422);
  });
+ it('routes paid pending verification into the RM review queue, not confirmed rentals',async()=>{
+  vi.stubEnv('DBCINEMA_WEBHOOK_SECRET','receipt-fixture');const{ctx,rows}=fixture();
+  const itemId=await ctx.db.insert('items',{name_canonical:'Camera',qty:1,status:'active',is_marketing_only:false});
+  const verification={version:1,provider:'didit',status:'processing',checks:{identity:'approved',selfie:'approved',address:'review'},accountId:'account-bound',sessionId:'source-session',updatedAt:1000,securityReady:true,archiveReady:false,requiresDroneLicence:false,droneLicenceStatus:'not_required',approved:false};
+  const response=await invoke(ctx,request(booking({status:'pending_verification',revision:5,checkoutPaidAt:1000,verification,physicalReservations:[{rmv2ItemId:itemId,start:Date.UTC(2035,0,1),end:Date.UTC(2035,0,2),qty:1}]})));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({outcome:'applied',bookingId:'web-receipt',receivedRevision:5,appliedRevision:5});
+  expect([...rows.values()].find(r=>r.table==='reservations')).toMatchObject({status:'pending_review',booking_status:'pending_verification',order_step:'VERIFIED',site_revision:5});
+ });
  it('rejects auth, config and malformed requests before mutation',async()=>{
   const{ctx}=fixture();vi.stubEnv('DBCINEMA_WEBHOOK_SECRET','receipt-fixture');expect((await invoke(ctx,request(booking(),'foreign'))).status).toBe(401);
   vi.stubEnv('DBCINEMA_WEBHOOK_SECRET','');expect((await invoke(ctx,request(booking()))).status).toBe(503);
