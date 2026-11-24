@@ -32,7 +32,7 @@ import { computePollHash } from "./hygglo";
 import { queueNotificationEvents } from "./notifications";
 import { websiteWindowUnits } from "./lib/reservations/itemUnits";
 import { buildConfirmedBookingNotificationCopy } from "./lib/notification_events";
-import { reconcileMirroredBookingClaim } from "./dbcinema_shared_stock";
+import { reconcileMirroredBookingClaim, releaseTerminalWebsiteBookingClaim } from "./dbcinema_shared_stock";
 
 const upsertBatchRef = internal.sync_dbcinema_web.upsertSiteBookingsBatch;
 // This scheduled refresh is an action, as declared by its native registration.
@@ -44,7 +44,7 @@ const WEB_SLUG = "dbcinema_web";
 const STOCK_ACCOUNT = "dbcinema";
 
 type SiteUnit = { hyggloProductId: number; qty: number };
-type SiteLine = { title: string; qty: number; start: number; end: number; units: SiteUnit[] };
+type SiteLine = { title: string; qty: number; start: number; end: number; units: SiteUnit[]; imageUrl?: string | null };
 type SiteStockReceipt = {
   kind?: "booking_confirmation";
   swapId?: string;
@@ -231,6 +231,7 @@ export const upsertSiteBookingsBatch = internalMutation({
       const order_step =
         b.status === "active" ? "DELIVERED"
         : b.status === "returned" ? "REVIEWED"
+        : b.status === "pending_verification" ? "VERIFIED"
         : undefined;
 
       // Decompose to physical RMv2 items so availability/conflict count these.
@@ -283,13 +284,18 @@ export const upsertSiteBookingsBatch = internalMutation({
           if (typeof pid === "number") byProduct.set(pid,{name:canonical.name,qty,image_url:canonical.image_url});
         }
       }
-      const hygglo_items = [...byProduct.entries()].map(([product_id, p]) => ({
+      const stockProductItems = [...byProduct.entries()].map(([product_id, p]) => ({
         product_id,
         name: p.name,
         qty: p.qty,
         image_url: p.image_url,
         type: "item",
       }));
+      const hasListingDisplay = b.physicalReservations !== undefined && (b.lineItems ?? []).length > 0 &&
+        b.lineItems.every((line) => Object.prototype.hasOwnProperty.call(line, "imageUrl"));
+      const hygglo_items = hasListingDisplay
+        ? b.lineItems.map((line) => ({ name: line.title, qty: line.qty, image_url: line.imageUrl ?? null, type: "listing" }))
+        : stockProductItems;
       const expanded_items = [...byItem.values()].map((e) => ({
         item_id: e.item_id,
         item_name_canonical: e.name,
@@ -321,7 +327,9 @@ export const upsertSiteBookingsBatch = internalMutation({
       // Display the resolved canonical items (clean names + image matches);
       // fall back to the raw booking titles when nothing mapped.
       const itemsDisplay =
-        expanded_items.length > 0
+        hasListingDisplay
+          ? b.lineItems.map((line) => ({ item_name: line.title, qty: line.qty }))
+          : expanded_items.length > 0
           ? expanded_items.map((e) => ({ item_name: e.item_name_canonical, qty: e.qty }))
           : (b.lineItems ?? []).map((li) => ({ item_name: li.title, qty: li.qty }));
 
@@ -368,6 +376,14 @@ export const upsertSiteBookingsBatch = internalMutation({
       fields.pickup_time = b.pickupTime || undefined;
       fields.return_time = b.returnTime || undefined;
 
+      const reconcileBookingClaim = (reservation: Record<string, unknown>) => {
+        const imported = { ...fields, ...reservation };
+        if ((status === "cancelled" || status === "completed") && b.stockApplicationReceipt === undefined) {
+          return releaseTerminalWebsiteBookingClaim(ctx, imported);
+        }
+        return reconcileMirroredBookingClaim(ctx, imported, b.stockApplicationReceipt as any);
+      };
+
       // ── Conditional write — same diff gate as hygglo.ts upsertOrderImpl ─────
       // This cron re-upserts every booking every 30 min; a ctx.db.patch creates
       // a NEW document version even when the values are identical, re-firing
@@ -391,7 +407,7 @@ export const upsertSiteBookingsBatch = internalMutation({
           skipped++; continue;
         }
         if ((mine as { poll_hash?: string }).poll_hash === newPollHash) {
-          const reconciliation = await reconcileMirroredBookingClaim(ctx, { ...fields, _id: mine._id }, b.stockApplicationReceipt as any);
+          const reconciliation = await reconcileBookingClaim({ _id: mine._id });
           receipts.push({ bookingId: b.id, receivedRevision: b.revision ?? 0, appliedRevision: mine.site_revision ?? 0, outcome: "unchanged", ...(b.stockApplicationReceipt !== undefined ? { stockAcknowledgement: reconciliation as Record<string, any> } : {}) });
           skipped++;
           continue;
@@ -412,7 +428,7 @@ export const upsertSiteBookingsBatch = internalMutation({
         } as never);
       }
       const reconciliation = reservationId
-        ? await reconcileMirroredBookingClaim(ctx, { ...fields, _id: reservationId }, b.stockApplicationReceipt as any)
+        ? await reconcileBookingClaim({ _id: reservationId })
         : undefined;
       await syncWebsiteCases(ctx, b, reservationId, itemById);
       // Notify new/upcoming confirmations, never a historical import or a repeat poll.

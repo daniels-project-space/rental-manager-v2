@@ -7,7 +7,7 @@ import {getFunctionName} from "convex/server";
 const ms=(date:string)=>Date.parse(date+"Z");
 function fixture(){
  const items:any[]=[{_id:"body",name_canonical:"Sony FX3",kind:"camera_body",status:"active",is_marketing_only:false,qty:3}];
- const tables:any={items,reservations:[],hygglo_product_index:[],listing_resolution_override:[],insurance_claims:[],owner_unavailability:[],vacation_periods:[]};
+ const tables:any={items,reservations:[],hygglo_product_index:[],listing_resolution_override:[],insurance_claims:[],owner_unavailability:[],vacation_periods:[],stock_approval_claims:[],dbcinema_shared_stock_claims:[]};
  const reads:string[]=[];const db:any={query:(table:string)=>{reads.push(table);let rows=tables[table]??[];const q:any={withIndex:(_:string,fn:any)=>{const s:any={eq:(k:string,v:any)=>{rows=rows.filter((r:any)=>r[k]===v);return s}};fn(s);return q},collect:async()=>rows,take:async(count:number)=>rows.slice(0,count)};return q}};
  const rental=(extra:any={})=>({_id:"booking",_creationTime:1,account_slug:"other-owned-account",status:"confirmed",start_date:"2027-01-01",end_date:"2027-01-02",resolved_items:[{item_id:"body",qty:1}],...extra});
  const run=async()=>((snapshot as any)._handler({db},{})).then((rows:any)=>rows[0]);return {tables,db,reads,rental,run};
@@ -21,6 +21,33 @@ describe("actual private shared-stock snapshot",()=>{
  it("matches real quoting for kit extensions and independently booked shared equipment",async()=>{
   const f=fixture();f.tables.reservations=[f.rental({hygglo_order_id:"first",renter_id:"renter"}),f.rental({_id:"extension",hygglo_order_id:"second",renter_id:"renter",start_date:"2027-01-02",end_date:"2027-01-03"}),f.rental({_id:"independent",hygglo_order_id:"third",renter_id:"different",start_date:"2027-01-02",end_date:"2027-01-02"})];
   const result=await f.run();expect(result.units[0].windows.map((w:any)=>w.qty)).toEqual([1,2,1]);const sources=await loadStockSources({db:f.db} as any),quote=stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:"2027-01-02",end_date:"2027-01-02"});expect(quote.free_units).toBe(1);expect(result.units[0].quantityOwned-Math.max(...result.units[0].windows.map((w:any)=>w.qty))).toBe(quote.free_units);
+ });
+ it("omits only exact projected website swap claims from the export while retaining them for manager availability",async()=>{
+  const f=fixture(),start=ms("2027-01-01T00:00"),returnAt=ms("2027-01-02T00:00"),end=returnAt+3600000;
+  f.tables.items[0].qty=10;
+  f.tables.reservations=[f.rental({_id:"site-booking",hygglo_order_id:"site-booking",account_slug:"dbcinema_web"})];
+  const claim=(requestId:string,bookingId:string,operation="acquire",requestQty=1,storedQty=requestQty)=>({
+   _id:`claim-${requestId}`,request_id:requestId,booking_id:bookingId,status:"execution_started",holds_stock:true,
+   request_payload:{operation,args:{requestId,bookingId,items:[{itemId:"body",start,returnAt,quantity:requestQty}]}},
+   items:[{item_id:"body",start,end,qty:storedQty}],
+  });
+  f.tables.dbcinema_shared_stock_claims=[
+   claim("swap_exact","site-booking"),
+   claim("swap_mismatched","site-booking","acquire",1,2),
+   claim("swap_orphan","missing-site-booking"),
+   claim("ordinary_claim","site-booking"),
+   claim("booking_pending","site-booking","acquirePaidBooking"),
+  ];
+
+  const exported=await f.run();
+  expect(exported.units[0].windows).toEqual([{start,end,qty:5}]);
+
+  // The exact swap claim is still present in loadStockSources and continues
+  // to reserve one unit in Rental Manager's own quote, alongside the original
+  // site booking and all other unresolved claims.
+  const sources=await loadStockSources({db:f.db} as any);
+  const quote=stockForItem(sources,sources.items[0],{item_name:"Sony FX3",start_date:"2027-01-01",end_date:"2027-01-01"});
+  expect(quote.free_units).toBe(3);
  });
  it("keeps ongoing overdue custody occupied until an actual return",async()=>{
   vi.useFakeTimers();vi.setSystemTime(new Date("2026-10-08"));const f=fixture();f.tables.reservations=[f.rental({status:"ongoing",order_step:"DELIVERED",start_date:"2026-08-01",end_date:"2026-08-02"})];let result=await f.run();expect(result.units[0].windows[0].end).toBe(ms("9999-12-31T00:00"));f.tables.reservations[0].order_step="RETURNED";result=await f.run();expect(result.units[0].windows).toEqual([]);

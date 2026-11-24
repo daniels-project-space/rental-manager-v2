@@ -35,6 +35,7 @@ const operationalSchema = defineSchema({
     items: v.array(v.object({item_id: v.id("items"), start: v.number(), end: v.number(), qty: v.number()})),
     booking_id: v.optional(v.string()), reservation_id: v.optional(v.id("reservations")),
     execution_key: v.optional(v.string()), evidence_hash: v.optional(v.string()),
+    release_event_id: v.optional(v.string()), release_revision: v.optional(v.number()), release_reason: v.optional(v.string()),
     created_at: v.number(), updated_at: v.number(),
   })
     .index("by_request_id", ["request_id"])
@@ -1954,6 +1955,11 @@ const operationalSchema = defineSchema({
     account_slug: v.string(),
     product_id: v.number(),
     components: v.array(v.object({ item_id: v.id("items"), qty: v.number() })),
+    component_replacements: v.optional(v.array(v.object({
+      original_item_id: v.optional(v.id("items")), missing_original: v.optional(v.object({descriptor_id:v.string(),label:v.string(),quantity:v.number(),source_url:v.string(),source_excerpt:v.string()})), replacement_item_id: v.id("items"), qty: v.number(),
+      price_adjustment_pence: v.number(), extension_adjustment_pence: v.optional(v.array(v.number())), replacement_size_score: v.number(), weights: v.array(v.object({item_id:v.id("items"),weight_grams:v.number()})),
+      review_note: v.string(), reviewed_at: v.number(), inventory_fingerprint: v.string(),
+    }))),
     note: v.optional(v.string()),
     source: v.optional(v.string()),
     updated_at: v.number(),

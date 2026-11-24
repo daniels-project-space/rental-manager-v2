@@ -179,7 +179,7 @@ export const dbcinemaSharedStockWrite = httpAction(async (ctx, request) => {
       if ((result as any)?.sharedStockError === "capacity_conflict") {
         const operation = input && typeof input === "object" && !Array.isArray(input) &&
           (input as any).version === 1 &&
-          ["acquire", "beginExecution", "checkExecution"].includes((input as any).operation)
+          ["acquire", "acquirePaidBooking", "beginExecution", "checkExecution"].includes((input as any).operation)
           ? (input as any).operation as string
           : undefined;
         if (operation) return reply(409, { version: 1, operation, error: "capacity_conflict" });
@@ -190,7 +190,7 @@ export const dbcinemaSharedStockWrite = httpAction(async (ctx, request) => {
       console.warn("[dbcinema shared stock] request rejected", error instanceof Error ? error.message : String(error));
       const operation = input && typeof input === "object" && !Array.isArray(input) &&
         (input as any).version === 1 &&
-        ["acquire", "beginExecution", "checkExecution"].includes((input as any).operation)
+        ["acquire", "acquirePaidBooking", "beginExecution", "checkExecution"].includes((input as any).operation)
         ? (input as any).operation as string
         : undefined;
       if ((error as any)?.code === "DBCINEMA_SHARED_STOCK_CAPACITY_CONFLICT" && operation) {

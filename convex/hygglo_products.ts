@@ -17,6 +17,7 @@
 
 import { mutation, query, internalQuery, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
+import { componentReplacementInventoryFingerprint, missingComponentMatchesSellerCopy } from "./lib/componentReplacementEvidence";
 import { resolveListingComponents } from "./lib/listing_inventory";
 
 // ── Shared arg validators (mirror the schema field shapes) ────────────────
@@ -188,7 +189,26 @@ export const __service_catalogueForStorefront = internalQuery({
           quantityOwned, active, replacementCost:typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0 };
       });
       const complete = resolved.complete && components.length > 0 && components.every(c => Number.isSafeInteger(c.qty) && c.qty > 0);
-      return { ...product, stockMapping:{version:1,complete,owned:resolved.owned,components} };
+      const reviewedSubstitutions = (mapping.get(product.productId)?.component_replacements ?? []).filter(rule => {
+        if (rule.extension_adjustment_pence !== undefined && (rule.extension_adjustment_pence.length !== 30 || rule.extension_adjustment_pence.some(amount => !Number.isSafeInteger(amount) || Math.abs(amount) > 100000000))) return false;
+        if (rule.missing_original && !missingComponentMatchesSellerCopy(rule.missing_original, descriptions.get(product.productId))) return false;
+        const ids = [...new Set(rule.weights.map(weight => String(weight.item_id)))];
+        const expected = new Set([...(mapping.get(product.productId)?.components ?? []).map(component => String(component.item_id)), String(rule.replacement_item_id)]);
+        if (ids.length !== expected.size || ids.some(id => !expected.has(id))) return false;
+        const current = ids.map(id => byId.get(id));
+        return current.every(Boolean) && componentReplacementInventoryFingerprint(current) === rule.inventory_fingerprint;
+      }).map(rule => ({
+        originalMasterItemId: rule.original_item_id ? String(rule.original_item_id) : rule.missing_original!.descriptor_id, replacementMasterItemId: String(rule.replacement_item_id),
+        ...(rule.missing_original ? { declaredMissingOriginal: { descriptorId: rule.missing_original.descriptor_id, label: rule.missing_original.label, quantityPerKit: rule.missing_original.quantity, sourceUrl: rule.missing_original.source_url, sourceExcerpt: rule.missing_original.source_excerpt } } : {}),
+        quantityPerKit: rule.qty, priceAdjustmentPence: rule.price_adjustment_pence,
+        ...(rule.extension_adjustment_pence ? { extensionAdjustmentPence: rule.extension_adjustment_pence } : {}),
+        replacementSizeScore: rule.replacement_size_score,
+        weights: rule.weights.map(weight => ({ masterItemId: String(weight.item_id), weightGrams: weight.weight_grams })),
+        reviewedAt: rule.reviewed_at,
+        replacementInventory: (() => { const item = byId.get(String(rule.replacement_item_id))!; return { masterItemId: String(item._id), active: item.status === "active" && item.is_marketing_only === false, quantityOwned: item.qty, replacementCost: item.replacement_cost_gbp }; })(),
+      }));
+      return { ...product, stockMapping:{version:1,complete,owned:resolved.owned,components},
+        componentReplacementEvidence: { version: 1, checkoutAvailable: false, reviewedSubstitutions } };
     });
   },
 });

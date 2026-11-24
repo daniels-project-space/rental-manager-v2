@@ -72,6 +72,30 @@ function parseWireRequest(value: unknown): WireRequest {
       if (!exactKeys(args, ["requestId", "bookingId", "oldItems", "newItems"])) fail("Invalid zero-delta request.");
       identifier(args.requestId, "stock request id"); identifier(args.bookingId, "booking id");
       parseLines(args.oldItems, "old stock items"); parseLines(args.newItems, "new stock items"); break;
+    case "acquirePaidBooking": {
+      if (!exactKeys(args, ["requestId", "bookingId", "bookingRevision", "verificationState", "paymentEvidence", "items"])) fail("Invalid paid booking claim.");
+      identifier(args.requestId, "stock request id"); identifier(args.bookingId, "booking id");
+      if (args.requestId !== `booking_${args.bookingId}` || args.verificationState !== "pending") fail("Invalid paid booking identity.");
+      epoch(args.bookingRevision, "booking revision");
+      if (!record(args.paymentEvidence)) fail("Invalid paid booking evidence.");
+      if (args.paymentEvidence.status === "succeeded") {
+        if (!exactKeys(args.paymentEvidence, ["status", "paymentIntentId", "paidAt"])) fail("Invalid successful payment evidence.");
+        identifier(args.paymentEvidence.paymentIntentId, "payment intent");
+        epoch(args.paymentEvidence.paidAt, "payment time");
+      } else if (args.paymentEvidence.status === "no_payment_required") {
+        if (!exactKeys(args.paymentEvidence, ["status", "checkoutSessionId", "paidAt"])) fail("Invalid completed checkout evidence.");
+        identifier(args.paymentEvidence.checkoutSessionId, "checkout session"); epoch(args.paymentEvidence.paidAt, "checkout time");
+      } else fail("Paid booking evidence is incomplete.");
+      parseLines(args.items, "paid booking stock items");
+      break;
+    }
+    case "releaseBooking":
+      if (!exactKeys(args, ["bookingId", "bookingRevision", "eventId", "reason"]) ||
+          !["booking_cancelled", "verification_declined", "verification_expired", "booking_returned"].includes(args.reason)) fail("Invalid terminal booking release.");
+      identifier(args.bookingId, "booking id"); epoch(args.bookingRevision, "booking revision");
+      identifier(args.eventId, "booking release event");
+      if (args.eventId !== `booking_${args.bookingId}_${args.bookingRevision}_${args.reason}`) fail("Booking release identity does not match.");
+      break;
     case "beginExecution": case "checkExecution":
       if (!exactKeys(args, ["id", "fingerprint", "executionKey"])) fail("Invalid stock execution request.");
       identifier(args.id, "stock request id"); identifier(args.fingerprint, "stock fingerprint"); identifier(args.executionKey, "execution key"); break;
@@ -79,7 +103,7 @@ function parseWireRequest(value: unknown): WireRequest {
       if (!exactKeys(args, ["id", "fingerprint", "executionKey", "receipt"])) fail("Invalid conversion check.");
       identifier(args.id, "stock request id"); identifier(args.fingerprint, "stock fingerprint"); identifier(args.executionKey, "execution key"); parseEvidence(args.receipt); break;
     case "releasePrepared":
-      if (!exactKeys(args, ["id", "fingerprint", "reason"]) || !["withdrawn_before_execution", "abandoned_before_execution"].includes(args.reason)) fail("Invalid prepared-stock release.");
+      if (!exactKeys(args, ["id", "fingerprint", "reason"]) || !["withdrawn_before_execution", "renter_declined_before_execution", "abandoned_before_execution"].includes(args.reason)) fail("Invalid prepared-stock release.");
       identifier(args.id, "stock request id"); identifier(args.fingerprint, "stock fingerprint"); break;
     case "releaseCompensated": case "checkCompensatedRelease":
       if (!exactKeys(args, ["id", "fingerprint", "executionKey", "evidence"])) fail("Invalid compensation release.");
@@ -162,6 +186,33 @@ function rowsFromRequest(lines: StockLine[]): string {
   }
   return JSON.stringify([...totals].map(([key, qty]) => [JSON.parse(key)[0], JSON.parse(key)[1], JSON.parse(key)[2], qty]).sort((a, b) => a[0].localeCompare(b[0]) || a[1] - b[1] || a[2] - b[2]));
 }
+function paidBookingClaimMatches(claim: any, booking: any): boolean {
+  const payload = claim?.request_payload, args = payload?.args, evidence = args?.paymentEvidence;
+  if (payload?.operation !== "acquirePaidBooking" || !record(args) || !record(evidence) ||
+      args.bookingId !== booking?.hygglo_order_id || args.requestId !== `booking_${booking?.hygglo_order_id}` ||
+      args.verificationState !== "pending" || !Number.isSafeInteger(args.bookingRevision) ||
+      !Number.isSafeInteger(booking?.site_revision) || booking.site_revision < args.bookingRevision ||
+      claim.execution_key !== `booking_execution_${booking?.hygglo_order_id}` ||
+      claim.request_hash !== stable(payload)) return false;
+  const validPaymentEvidence = evidence.status === "succeeded"
+    ? exactKeys(evidence, ["status", "paymentIntentId", "paidAt"]) && typeof evidence.paymentIntentId === "string" && evidence.paymentIntentId.length > 0 && Number.isSafeInteger(evidence.paidAt)
+    : evidence.status === "no_payment_required" && exactKeys(evidence, ["status", "checkoutSessionId", "paidAt"]) && typeof evidence.checkoutSessionId === "string" && evidence.checkoutSessionId.length > 0 && Number.isSafeInteger(evidence.paidAt);
+  if (!validPaymentEvidence) return false;
+  try {
+    const requested = parseLines(args.items, "paid booking stock items");
+    const claimed = (claim.items ?? []).map((line: any) => ({ itemId: String(line.item_id), start: line.start, returnAt: line.end - HOUR_MS, quantity: line.qty }));
+    return claim.status === "execution_started" && claim.holds_stock === true &&
+      claim.booking_id === booking.hygglo_order_id && claim.fingerprint === acquireFingerprint(requested) &&
+      rowsFromRequest(requested) === rowsFromRequest(parseLines(claimed, "stored paid booking stock items"));
+  } catch {
+    return false;
+  }
+}
+function rowsFromZeroRequest(lines: StockLine[]): string | null {
+  const physical = lines.map(line => ({ ...line, returnAt: line.returnAt + HOUR_MS }));
+  if (physical.some(line => !Number.isSafeInteger(line.returnAt))) return null;
+  return rowsFromRequest(physical);
+}
 function rowsFromConversionEvidence(windows: any[]): string | null {
   if (!Array.isArray(windows) || windows.length > MAX_LINES) return null;
   const totals = new Map<string, number>();
@@ -205,7 +256,14 @@ function siteRowsMatchReservation(row: any, expected: string | null) {
 }
 async function ensureNoDuplicateOrSame(ctx: any, requestId: string, payload: any) {
   const prior = await claimForRequest(ctx, requestId);
-  if (prior && prior.request_hash !== stable(payload)) fail("Stock request identity changed; reconcile it before retrying.");
+  if (prior && prior.request_hash !== stable(payload)) {
+    const original = prior.request_payload;
+    const priorPaidBooking = payload?.operation === "acquire" && original?.operation === "acquirePaidBooking" &&
+      original?.args?.requestId === requestId &&
+      original?.args?.bookingId === (payload.args.bookingId ?? requestId.slice("booking_".length)) &&
+      rowsFromRequest(original.args.items) === rowsFromRequest(payload.args.items);
+    if (!priorPaidBooking) fail("Stock request identity changed; reconcile it before retrying.");
+  }
   return prior;
 }
 async function ensureAvailable(ctx: any, rawLines: StockLine[], excludeRequestId?: string, excludeBookingId?: string) {
@@ -233,6 +291,71 @@ async function processRequest(ctx: any, untrusted: unknown) {
   const payload = { operation: request.operation, args };
   const reply = (result: Record<string, any>) => ({ operation: request.operation, request: { ...args, source: "website" }, result });
 
+  if (request.operation === "acquirePaidBooking") {
+    const requestId = String(args.requestId), prior = await claimForRequest(ctx, requestId);
+    if (prior) {
+      const original = prior.request_payload;
+      if (prior.status === "released" || original?.operation === "releaseBooking") fail("This booking's stock claim was already released.");
+      if (original?.operation !== "acquirePaidBooking" || original.args?.bookingId !== args.bookingId ||
+          stable(original.args.paymentEvidence) !== stable(args.paymentEvidence) ||
+          rowsFromRequest(original.args.items) !== rowsFromRequest(args.items))
+        fail("Paid booking stock changed; reconcile it before retrying.");
+      const priorRevision = Number.isSafeInteger(original.args.bookingRevision) ? original.args.bookingRevision : -1;
+      if (args.bookingRevision > priorRevision) {
+        await ctx.db.patch(prior._id, { request_payload: payload, request_hash: stable(payload), updated_at: Date.now() });
+      }
+      if (!["execution_started", "converted"].includes(prior.status)) fail("The paid booking stock claim needs reconciliation.");
+      return {
+        ok: true, operation: request.operation, bookingId: String(args.bookingId), requestId,
+        fingerprint: prior.fingerprint, outcome: prior.status, holdsStock: prior.holds_stock,
+        ...(prior.execution_key ? { executionKey: prior.execution_key } : {}), replayed: true,
+      };
+    }
+    const reservation = await siteBooking(ctx, String(args.bookingId));
+    if (reservation) fail("A paid pending-verification claim arrived after the booking was already mirrored; reconcile stock before retrying.");
+    const items = parseLines(args.items, "paid booking stock items");
+    await ensureAvailable(ctx, items);
+    const fingerprint = acquireFingerprint(items), executionKey = `booking_execution_${args.bookingId}`;
+    await ctx.db.insert("dbcinema_shared_stock_claims", {
+      request_id: requestId, request_payload: payload, request_hash: stable(payload), fingerprint,
+      status: "execution_started", execution_key: executionKey, holds_stock: true,
+      items: mergeLines(items).map(line => ({ item_id: line.itemId as any, start: line.start, end: line.returnAt + HOUR_MS, qty: line.quantity })),
+      booking_id: String(args.bookingId), created_at: Date.now(), updated_at: Date.now(),
+    });
+    return { ok: true, operation: request.operation, bookingId: String(args.bookingId), requestId, fingerprint, outcome: "execution_started", holdsStock: true, executionKey, replayed: false };
+  }
+
+  if (request.operation === "releaseBooking") {
+    const requestId = `booking_${args.bookingId}`;
+    const row = await claimForRequest(ctx, requestId);
+    if (!row) {
+      // A terminal verification/cancellation event can race a slow acquire
+      // request. Keep a small tombstone so that the late retry cannot restore
+      // a reservation after the booking has already closed.
+      const releasePayload = { operation: request.operation, args };
+      await ctx.db.insert("dbcinema_shared_stock_claims", {
+        request_id: requestId, request_payload: releasePayload, request_hash: stable(releasePayload),
+        fingerprint: stable(["booking-release-v1", args.bookingId]), status: "released", holds_stock: false, items: [],
+        booking_id: String(args.bookingId), release_event_id: args.eventId, release_revision: args.bookingRevision,
+        release_reason: args.reason, created_at: Date.now(), updated_at: Date.now(),
+      });
+      return { ok: true, operation: request.operation, bookingId: String(args.bookingId), outcome: "released", releasedClaims: 0, idempotent: true };
+    }
+    if (row.booking_id && row.booking_id !== String(args.bookingId)) fail("The booking release does not match the stored claim.");
+    const storedRevision = row.request_payload?.operation === "acquirePaidBooking" && Number.isSafeInteger(row.request_payload.args?.bookingRevision)
+      ? row.request_payload.args.bookingRevision : 0;
+    if (args.bookingRevision < storedRevision || args.bookingRevision < (row.release_revision ?? -1)) fail("A stale booking release cannot change stock.");
+    if (row.release_event_id === args.eventId) return { ok: true, operation: request.operation, bookingId: String(args.bookingId), outcome: "released", releasedClaims: 0, idempotent: true };
+    if (row.status === "compensated_released") return { ok: true, operation: request.operation, bookingId: String(args.bookingId), outcome: "released", releasedClaims: 0, idempotent: true };
+    if (row.status === "released" && !row.holds_stock) return { ok: true, operation: request.operation, bookingId: String(args.bookingId), outcome: "released", releasedClaims: 0, idempotent: true };
+    const releasedClaims = row.holds_stock ? 1 : 0;
+    await ctx.db.patch(row._id, {
+      status: "released", holds_stock: false, release_event_id: args.eventId,
+      release_revision: args.bookingRevision, release_reason: args.reason, updated_at: Date.now(),
+    });
+    return { ok: true, operation: request.operation, bookingId: String(args.bookingId), outcome: "released", releasedClaims, idempotent: false };
+  }
+
   if (request.operation === "acquire" || request.operation === "acquireZero") {
     const requestId = String(args.requestId);
     const prior = await ensureNoDuplicateOrSame(ctx, requestId, payload);
@@ -243,7 +366,8 @@ async function processRequest(ctx: any, untrusted: unknown) {
     const fingerprint = request.operation === "acquire" ? acquireFingerprint(items) : zeroFingerprint(String(args.bookingId), oldItems, newItems);
     if (prior) {
       if (["released", "compensated_released"].includes(prior.status)) fail("This stock claim has already been released.");
-      return reply({ state: "prepared", replayed: true, requestId, fingerprint });
+      const state = prior.status === "execution_started" || prior.status === "converted" ? prior.status : "prepared";
+      return reply({ state, ...(state === "converted" ? { stockRisk: Boolean(prior.holds_stock) } : {}), replayed: true, requestId, fingerprint: prior.fingerprint ?? fingerprint });
     }
     let reservation: any = null;
     let holdsStock = request.operation === "acquire";
@@ -252,7 +376,7 @@ async function processRequest(ctx: any, untrusted: unknown) {
       await ensureAvailable(ctx, items);
     } else {
       reservation = await siteBooking(ctx, String(args.bookingId));
-      if (!reservation || !siteRowsMatchReservation(reservation, rowsFromRequest(oldItems))) fail("The original booking stock does not match the requested equipment change.");
+      if (!reservation || !siteRowsMatchReservation(reservation, rowsFromZeroRequest(oldItems))) fail("The original booking stock does not match the requested equipment change.");
       holdsStock = false;
     }
     const claimItems = mergeLines(items).map(line => ({
@@ -286,7 +410,7 @@ async function processRequest(ctx: any, untrusted: unknown) {
       const newItems = parseLines(stored.args.newItems, "new stock items");
       assertZeroDelta(oldItems, newItems);
       const reservation = await siteBooking(ctx, String(stored.args.bookingId));
-      if (!reservation || String(reservation._id) !== String(row.reservation_id) || !siteRowsMatchReservation(reservation, rowsFromRequest(oldItems))) fail("The original booking stock changed before equipment execution.");
+      if (!reservation || String(reservation._id) !== String(row.reservation_id) || !siteRowsMatchReservation(reservation, rowsFromZeroRequest(oldItems))) fail("The original booking stock changed before equipment execution.");
     } else fail("The stock claim needs reconciliation.");
     await ctx.db.patch(row._id, { status: "execution_started", execution_key: args.executionKey, updated_at: Date.now() });
     return reply({ state: "execution_started", replayed: false });
@@ -324,7 +448,12 @@ async function processRequest(ctx: any, untrusted: unknown) {
       if (!evidenceMatches(row.evidence_hash, evidence)) fail("The compensated release evidence changed.");
       return reply({ state: "compensated_released", replayed: true });
     }
-    if (!["execution_started", "converted"].includes(row.status) || row.execution_key !== args.executionKey ||
+    const originalRequest = row.request_payload;
+    const claimBookingId = originalRequest?.operation === "acquire" ? originalRequest.args?.bookingId : undefined;
+    const neverExecutedPreparedClaim = row.status === "prepared" && row.execution_key === undefined && row.holds_stock === true;
+    const executionWasStarted = ["execution_started", "converted"].includes(row.status) && row.execution_key === args.executionKey;
+    if (claimBookingId !== evidence.bookingId) fail("The compensated stock claim is bound to another booking.");
+    if ((!neverExecutedPreparedClaim && !executionWasStarted) ||
         evidence.refundStatus !== "succeeded" || !identifier(evidence.swapId, "swap id") ||
         !identifier(evidence.bookingId, "booking id") || !identifier(evidence.paymentIntentId, "payment intent") ||
         !identifier(evidence.refundId, "refund id") || !Number.isSafeInteger(evidence.amountPence) || evidence.amountPence < 1 ||
@@ -382,6 +511,24 @@ export const process = internalMutation({
   },
 });
 
+/** Release any shared stock claim when the imported website booking is terminal. */
+export async function releaseTerminalWebsiteBookingClaim(ctx: any, booking: any): Promise<Record<string, any> | null> {
+  if (booking?.account_slug !== "dbcinema_web" || typeof booking.hygglo_order_id !== "string" ||
+      !["cancelled", "completed"].includes(booking.status) ||
+      !Number.isSafeInteger(booking.site_revision) || booking.site_revision < 0) return null;
+  const reason = booking.status === "completed" ? "booking_returned" : "booking_cancelled";
+  return await processRequest(ctx, {
+    version: 1,
+    operation: "releaseBooking",
+    args: {
+      bookingId: booking.hygglo_order_id,
+      bookingRevision: booking.site_revision,
+      eventId: `booking_${booking.hygglo_order_id}_${booking.site_revision}_${reason}`,
+      reason,
+    },
+  });
+}
+
 /** Called in the same mutation that imports a paid website booking. */
 export function reconcileMirroredBookingClaim(ctx: any, booking: any): Promise<number>;
 export function reconcileMirroredBookingClaim(ctx: any, booking: any, stockReceipt: any): Promise<Record<string, any>>;
@@ -412,11 +559,29 @@ export async function reconcileMirroredBookingClaim(ctx: any, booking: any, stoc
     }
     const claim = claims.find((row: any) => row.request_id === stockReceipt.managerRequestId);
     const expected = rowsFromConversionEvidence(stockReceipt.windows);
-    if (!claim || !claim.holds_stock && claim.status !== "converted" ||
-        claim.booking_id !== booking.hygglo_order_id || claim.request_payload?.operation !== "acquire" ||
+    const operation = claim?.request_payload?.operation;
+    const zeroSwap = operation === "acquireZero";
+    let zeroFinalRows: string | null = null;
+    if (zeroSwap) {
+      const requestArgs = claim.request_payload?.args;
+      if (!record(requestArgs) || requestArgs.bookingId !== booking.hygglo_order_id || requestArgs.requestId !== stockReceipt.managerRequestId)
+        fail("The zero-stock change request does not match the receipt.");
+      const oldItems = parseLines(requestArgs.oldItems, "old stock items");
+      const newItems = parseLines(requestArgs.newItems, "new stock items");
+      assertZeroDelta(oldItems, newItems);
+      if (zeroFingerprint(booking.hygglo_order_id, oldItems, newItems) !== claim.fingerprint || claim.holds_stock ||
+          !Array.isArray(claim.items) || claim.items.length !== 0 || String(claim.reservation_id) !== String(booking._id))
+        fail("The zero-stock change claim is invalid.");
+      zeroFinalRows = rowsFromZeroRequest(newItems);
+    }
+    const claimMatches = zeroSwap
+      ? !!claim && zeroFinalRows !== null && zeroFinalRows === expected && zeroFinalRows === actual
+      : !!claim && (claim.holds_stock || claim.status === "converted") &&
+        ["acquire", "acquirePaidBooking"].includes(operation) && siteCoversClaim(booking.site_item_windows, claim.items ?? []);
+    if (!claim || !claimMatches || claim.booking_id !== booking.hygglo_order_id ||
         claim.fingerprint !== stockReceipt.fingerprint || claim.execution_key !== stockReceipt.executionKey ||
-        !["execution_started", "converted"].includes(claim.status) || expected === null || actual !== expected ||
-        !siteCoversClaim(booking.site_item_windows, claim.items ?? [])) fail("The stock receipt does not match the claimed and imported physical equipment.");
+        !["execution_started", "converted"].includes(claim.status) || expected === null || actual !== expected)
+      fail("The stock receipt does not match the claimed and imported physical equipment.");
     if (claim.status === "converted" && !evidenceMatches(claim.evidence_hash, stockReceipt) && !evidenceMatches(claim.evidence_hash, {
       bookingId: stockReceipt.bookingId, siteRevision: stockReceipt.bookingRevision, windows: booking.site_item_windows,
     })) fail("The previously converted stock receipt changed.");
@@ -436,7 +601,11 @@ export async function reconcileMirroredBookingClaim(ctx: any, booking: any, stoc
   }
   let released = 0;
   for (const claim of claims) {
-    if (!claim.holds_stock || claim.status !== "execution_started" || claim.booking_id !== booking.hygglo_order_id || claim.request_payload?.operation !== "acquire" || !Array.isArray(claim.items)) continue;
+    const claimOperation = claim.request_payload?.operation;
+    const standardBookingClaim = claimOperation === "acquire";
+    const paidPendingBookingClaim = claimOperation === "acquirePaidBooking" && paidBookingClaimMatches(claim, booking);
+    if (!claim.holds_stock || claim.status !== "execution_started" || claim.booking_id !== booking.hygglo_order_id ||
+        !(standardBookingClaim || paidPendingBookingClaim) || !Array.isArray(claim.items)) continue;
     if (!siteCoversClaim(booking.site_item_windows, claim.items)) continue;
     const lines = claim.items.map((line: any) => parseLine({ itemId: String(line.item_id), start: line.start, returnAt: line.end - HOUR_MS, quantity: line.qty }));
     await ensureAvailable(ctx, lines, claim.request_id, booking.hygglo_order_id);

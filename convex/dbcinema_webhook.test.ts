@@ -8,7 +8,7 @@ const route=http.lookup('/dbcinema/booking-sync','POST')![0] as any;
 function fixture(){
  const rows=new Map<string,any>();let serial=0;
  const db={insert:async(table:string,value:any)=>{const id=`${table}:${++serial}`;rows.set(id,{...value,_id:id,table});return id},patch:async(id:string,value:any)=>rows.set(id,{...rows.get(id),...value}),query:(table:string)=>{
-  const equalities:Array<[string,any]>=[];const q:any={withIndex:(_:string,select:any)=>{const selector:any={eq:(k:string,v:any)=>{equalities.push([k,v]);return selector}};select(selector);return q},collect:async()=>[...rows.values()].filter(r=>r.table===table&&equalities.every(([k,v])=>r[k]===v)),first:async()=>(await q.collect())[0]??null};return q;
+  const equalities:Array<[string,any]>=[];const q:any={withIndex:(_:string,select:any)=>{const selector:any={eq:(k:string,v:any)=>{equalities.push([k,v]);return selector}};select(selector);return q},collect:async()=>[...rows.values()].filter(r=>r.table===table&&equalities.every(([k,v])=>r[k]===v)),take:async(count:number)=>(await q.collect()).slice(0,count),first:async()=>(await q.collect())[0]??null};return q;
  }};
  const ctx:any={db,scheduler:{runAfter:vi.fn()}};ctx.runMutation=vi.fn(async(_ref,args)=>{expect(args.reconcile).toBe(false);return(upsertSiteBookingsBatch as any)._handler(ctx,args)});return{ctx,rows};
 }
@@ -30,6 +30,13 @@ describe('actual booking-sync HTTP receipts',()=>{
   vi.stubEnv('DBCINEMA_WEBHOOK_SECRET','receipt-fixture');const{ctx,rows}=fixture();
   expect(await(await invoke(ctx,request(booking({status:'pending_payment'})))).json()).toEqual({ok:true,version:1,bookingId:'web-receipt',receivedRevision:4,appliedRevision:null,outcome:'ignored',reason:'unpaid'});
   expect([...rows.values()].some(r=>r.table==='reservations')).toBe(false);expect((await invoke(ctx,request(booking({status:'unknown'})))).status).toBe(422);
+ });
+ it('routes paid pending verification into the RM review queue, not confirmed rentals',async()=>{
+  vi.stubEnv('DBCINEMA_WEBHOOK_SECRET','receipt-fixture');const{ctx,rows}=fixture();
+  const response=await invoke(ctx,request(booking({status:'pending_verification',revision:5})));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({outcome:'applied',bookingId:'web-receipt',receivedRevision:5,appliedRevision:5});
+  expect([...rows.values()].find(r=>r.table==='reservations')).toMatchObject({status:'pending_review',booking_status:'pending_verification',order_step:'VERIFIED',site_revision:5});
  });
  it('rejects auth, config and malformed requests before mutation',async()=>{
   const{ctx}=fixture();vi.stubEnv('DBCINEMA_WEBHOOK_SECRET','receipt-fixture');expect((await invoke(ctx,request(booking(),'foreign'))).status).toBe(401);

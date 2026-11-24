@@ -3,6 +3,7 @@ vi.mock("./hygglo", () => ({ computePollHash: (s: string) => s }));
 vi.mock("./notifications", () => ({ queueNotificationEvents: vi.fn(async () => 1) }));
 import { bookedUnitsOnDate, repairHeldUnits } from "./lib/availability";
 import { reservationItemUnits } from "./lib/reservations/itemUnits";
+import { buildHyggloListingTiles } from "./lib/reservations/hyggloTiles";
 import { queueNotificationEvents } from "./notifications";
 import { syncDbcinemaWeb, upsertSiteBookingsBatch } from "./sync_dbcinema_web";
 const invoke = (f: any, ctx: any, args: any) => f._handler(ctx, args);
@@ -39,6 +40,29 @@ describe('real website reservation sync handlers',()=>{
   await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({revision:2,status:'cancelled'})],reconcile:false});
   expect([...rows.values()].find(r=>r.hygglo_order_id==='web-rental-1')).toMatchObject({status:'cancelled',is_obsolete:true,order_step:undefined});expect([...rows.values()].find(r=>r.hygglo_order_id==='other').status).toBe('confirmed');
  });
+ it('shows paid pending-verification rentals in the RM verification queue without confirming them',async()=>{
+  const {ctx,rows}=database();
+  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({status:'pending_verification',revision:3})],reconcile:false});
+  const row=[...rows.values()].find(r=>r.table==='reservations');
+  expect(row).toMatchObject({status:'pending_review',booking_status:'pending_verification',order_step:'VERIFIED',is_obsolete:false,site_revision:3});
+  expect(queueNotificationEvents).not.toHaveBeenCalled();
+ });
+ it('releases a paid pending stock claim only after an accepted terminal booking revision',async()=>{
+  const {ctx,rows}=database();
+  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({status:'pending_verification',revision:3})],reconcile:false});
+  const claimId=await ctx.db.insert('dbcinema_shared_stock_claims',{
+   request_id:'booking_web-rental-1',booking_id:'web-rental-1',request_payload:{operation:'acquirePaidBooking',args:{bookingRevision:3}},request_hash:'request-hash',fingerprint:'fingerprint',
+   status:'execution_started',holds_stock:true,items:[],created_at:1,updated_at:1,
+  });
+
+  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({status:'cancelled',revision:2})],reconcile:false});
+  expect(rows.get(claimId)).toMatchObject({status:'execution_started',holds_stock:true});
+
+  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({status:'cancelled',revision:4})],reconcile:false});
+  expect(rows.get(claimId)).toMatchObject({status:'released',holds_stock:false,release_reason:'booking_cancelled',release_revision:4});
+  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({status:'cancelled',revision:4})],reconcile:false});
+  expect(rows.get(claimId)).toMatchObject({status:'released',holds_stock:false,release_reason:'booking_cancelled',release_revision:4});
+ });
  it('clears obsolete image hints instead of retaining unrelated equipment photos',async()=>{
   const {ctx,rows}=database();await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking()],reconcile:false});const row=[...rows.values()].find(r=>r.table==='reservations');await ctx.db.patch(row._id,{image_hints:[{url:'wrong'}],photos_urls:['wrong'],order_step:'DELIVERED'});
   await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({revision:2})],reconcile:false});expect(rows.get(row._id)).toMatchObject({image_hints:[],photos_urls:[],order_step:undefined});
@@ -55,6 +79,16 @@ describe('real website reservation sync handlers',()=>{
   expect(bookedUnitsOnDate([row] as any,id as any,'2035-01-03',{productIndex:new Map(),overrides:new Map(),inventory:[]})).toBe(0);
   await expect(invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({revision:2,physicalReservations:[{...physicalReservations[0],rmv2ItemId:'missing'}]})],reconcile:false})).rejects.toThrow('canonical master inventory mapping');
   await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({revision:3,physicalReservations:[]})],reconcile:false});expect(reservationItemUnits([...rows.values()].find(r=>r.table==='reservations'),new Map()).size).toBe(0);
+ });
+ it('shows every rented website listing while using the physical ledger for stock',async()=>{
+  const {ctx,rows}=database();const camera=await ctx.db.insert('items',{name_canonical:'Camera body'});const lens=await ctx.db.insert('items',{name_canonical:'Lens'});
+  const start=Date.UTC(2035,0,1),end=Date.UTC(2035,0,2);
+  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({lineItems:[{title:'Camera kit',qty:1,imageUrl:'https://dbcinemarentals.com/camera.jpg',units:[]},{title:'Lens kit',qty:2,imageUrl:'https://dbcinemarentals.com/lens.jpg',units:[]}],physicalReservations:[{rmv2ItemId:camera,hyggloProductId:42,qty:1,start,end},{rmv2ItemId:lens,hyggloProductId:42,qty:2,start,end}]})],reconcile:false});
+  const row=[...rows.values()].find(r=>r.table==='reservations');
+  expect(row.hygglo_items).toEqual([{name:'Camera kit',qty:1,image_url:'https://dbcinemarentals.com/camera.jpg',type:'listing'},{name:'Lens kit',qty:2,image_url:'https://dbcinemarentals.com/lens.jpg',type:'listing'}]);
+  expect(row.items).toEqual([{item_name:'Camera kit',qty:1},{item_name:'Lens kit',qty:2}]);
+  expect(buildHyggloListingTiles(row,new Map()).map(tile=>[tile.name,tile.imageUrl])).toEqual([['Camera kit','https://dbcinemarentals.com/camera.jpg'],['Lens kit','https://dbcinemarentals.com/lens.jpg']]);
+  expect(reservationItemUnits(row,new Map()).get(camera)).toBe(1);expect(reservationItemUnits(row,new Map()).get(lens)).toBe(2);
  });
  it('fetches beyond 1000 rentals without reconciling partial pages',async()=>{
   vi.stubEnv('DBCINEMA_CONVEX_URL','https://store.example.invalid');vi.stubEnv('DBCINEMA_ADMIN_TOKEN','fixture');let page=0;
