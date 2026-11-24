@@ -17,3 +17,13 @@ export function providerReturnCompleted(order: unknown): boolean {
     (returned[0].failure === false || returned[0].failure === undefined)
   );
 }
+
+export function providerActiveStep(order: unknown): string | undefined {
+  if (!order || typeof order !== "object") return undefined;
+  const record = order as { steps?: unknown; detail?: { steps?: unknown }; _detail?: { steps?: unknown } };
+  const steps = record.steps ?? record.detail?.steps ?? record._detail?.steps;
+  if (!Array.isArray(steps)) return undefined;
+  if (providerReturnCompleted(order)) return "REVIEWED";
+  const active = steps.find((step) => step && typeof step === "object" && step.active === true);
+  return typeof active?.key === "string" && active.key !== "REVIEWED" ? active.key : undefined;
+}

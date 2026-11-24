@@ -2,7 +2,7 @@ import { quickReplyProof } from "./lib/quick_reply_proof";
 
 import { insertRevenueReservation, patchRevenueReservation } from "./lib/reservation_revenue";
 import { readLatestReservationActivity } from "./lib/reservation_activity_queries";
-import { providerReturnCompleted } from "../src/lib/provider-return-evidence";
+import { providerActiveStep, providerReturnCompleted } from "../src/lib/provider-return-evidence";
 import {internalQueryOf} from "./owner_functions";
 import { mutation, query } from "./owner_functions";
 import type { MutationCtx } from "./_generated/server";
@@ -78,17 +78,8 @@ function extractActiveOrderStep(order: unknown): string | null | undefined {
     : {};
   const steps = record.steps ?? record.detail?.steps ?? record._detail?.steps;
   if (!Array.isArray(steps)) return null;
-  if (providerReturnCompleted(order)) return "REVIEWED";
-  const active = steps.find((step) =>
-    typeof step === "object" &&
-    step !== null &&
-    (step as Record<string, unknown>).active === true,
-  ) as Record<string, unknown> | undefined;
-  if (!active) return steps.some((step) => typeof step === "object" && step !== null &&
-    (step as Record<string, unknown>).key === "RETURNED" &&
-    (step as Record<string, unknown>).completed === true &&
-    (step as Record<string, unknown>).failure !== true) ? "REVIEWED" : null;
-  const key = typeof active.key === "string" ? active.key : "";
+  const key = providerActiveStep(order);
+  if (!key) return null;
   if (!VALID_ORDER_STEPS.has(key)) {
     console.warn(`[hygglo] Unrecognised order_step key: "${key}" — storing undefined`);
     return undefined;
@@ -952,7 +943,8 @@ async function upsertOrderImpl(
   // null = no active step found (treat as undefined); undefined = unrecognised key
   const incomingStep: "REQUEST" | "APPROVED" | "FUNDS_RESERVED" | "VERIFIED" | "BOOKED_AFTER_VERIFIED"
     | "DELIVERED" | "RETURNED" | "REVIEWED" | "CANCELED" | "VERIFICATION_FAILED" | undefined =
-    args.order_step_extracted ?? (() => {
+    (args.order_step_extracted === "REVIEWED" && !providerReturnCompleted(args.order)
+      ? undefined : args.order_step_extracted) ?? (() => {
       const raw = extractActiveOrderStep(args.order);
       return raw === null ? undefined : (raw as
         | "REQUEST" | "APPROVED" | "FUNDS_RESERVED" | "VERIFIED" | "BOOKED_AFTER_VERIFIED"

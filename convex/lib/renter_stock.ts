@@ -269,7 +269,7 @@ export async function loadStockSources(ctx: QueryCtx, window?: StockDateWindow):
   const snapshot = await loadStockInputCache(ctx);
   const cachedWebsite = snapshot?.reservations.filter((row) => row.account_slug === "dbcinema_web" && row.status === "pending_review").sort((a, b) => a._creationTime - b._creationTime);
   const websiteHasTies = cachedWebsite?.some((row, i) => !Number.isFinite(row._creationTime) || i > 0 && row._creationTime === cachedWebsite[i - 1]._creationTime);
-  const [items, confirmed, ongoing, websitePending, index, overrides, claims, blackouts, vacations, checkoutStock, approvalClaims, websiteSwapClaims] = await Promise.all([
+  const [items, confirmed, ongoing, websitePending, index, overrides, claims, blackouts, vacations, checkoutStock, activeApprovalClaims, legacyApprovalClaims, inactiveApprovalClaims, websiteSwapClaims] = await Promise.all([
     snapshot ? cloneCacheValue(snapshot.items) : ctx.db.query("items").collect(),
     loadReservationsForStockWindow(ctx, "confirmed"),
     loadReservationsForStockWindow(ctx, "ongoing"),
@@ -280,9 +280,12 @@ export async function loadStockSources(ctx: QueryCtx, window?: StockDateWindow):
     snapshot ? cloneCacheValue(snapshot.owner_unavailability) : ctx.db.query("owner_unavailability").collect(),
     snapshot ? cloneCacheValue(snapshot.vacation_periods) : ctx.db.query("vacation_periods").withIndex("by_active_start", (q) => q.eq("is_active", true)).collect(),
     ctx.db.query("storefront_checkout_stock").withIndex("by_key",q=>q.eq("key","website")).first(),
-    ctx.db.query("stock_approval_claims").take(501),
+    ctx.db.query("stock_approval_claims").withIndex("by_holds_stock",q=>q.eq("holds_stock",true)).take(501),
+    ctx.db.query("stock_approval_claims").withIndex("by_holds_stock",q=>q.eq("holds_stock",undefined)).take(501),
+    ctx.db.query("stock_approval_claims").withIndex("by_holds_stock",q=>q.eq("holds_stock",false)).take(501),
     ctx.db.query("dbcinema_shared_stock_claims").withIndex("by_holds_stock",q=>q.eq("holds_stock",true)).take(501),
   ]);
+  const approvalClaims=[...activeApprovalClaims,...legacyApprovalClaims,...inactiveApprovalClaims];
   if (websiteSwapClaims.length > 500 || approvalClaims.length > 500) throw Error("Stock claims need reconciliation before availability can be confirmed.");
   if(process.env.REQUIRE_WEBSITE_STOCK_HOLDS_SYNC==="true" && (!checkoutStock || Date.now()-checkoutStock.receivedAt>180000))throw Error("Website checkout stock snapshot needs refresh; availability cannot be confirmed.");
   const reservations=dedupByLogicalRental([...confirmed,...ongoing,...websitePending.filter(r=>r.order_step==="VERIFIED")].filter(r=>!r.is_obsolete&&!r.hygglo_order_id?.startsWith("__probe__")));
@@ -390,7 +393,8 @@ export function stockOccupancyForItem(sources: Awaited<ReturnType<typeof loadSto
       return approvalPhysicalIdentity(window.start,window.end,units)===claim.physical_fingerprint;
     });
     if(mirrored)continue;
-    for(const component of claim.components)if(String(component.item_id)===String(item._id))occupancy.push({start:claim.start,end:claim.end,qty:component.qty,order_id:claim.order_id});
+    const end=londonStockInstant(claim.end,"end")<=Date.now()?"9999-12-31T00:00":claim.end;
+    for(const component of claim.components)if(String(component.item_id)===String(item._id))occupancy.push({start:claim.start,end,qty:component.qty,order_id:claim.order_id});
   }
   for (const claim of sources.websiteSwapClaims ?? []) {
     if (isExactPaidClaimMirror(claim, sources.reservations)) continue;

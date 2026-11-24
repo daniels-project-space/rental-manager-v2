@@ -1,5 +1,6 @@
 import {internalMutation} from "./_generated/server";
 import {v} from "convex/values";
+import {internal} from "./_generated/api";
 import {resolveOrderPhysicalItems} from "./lib/renter_order_stock";
 import {approvalPhysicalIdentity,approvalReservationWindow,loadStockSources,stockOccupancyForItem,stockWindowPeak} from "./lib/renter_stock";
 import {repairHeldUnits} from "./lib/availability";
@@ -35,7 +36,14 @@ export const prepareHyggloApproval=internalMutation({
       return {item_id:item._id,qty:quantity};
     });
     const physical_fingerprint=approvalPhysicalIdentity(window.start,window.end,new Map(components.map(c=>[String(c.item_id),c.qty])));
-    const claimId=await ctx.db.insert("stock_approval_claims",{reservation_id:rental._id,account_slug:accountSlug,order_id:hyggloOrderId,physical_fingerprint,...window,components,prepared_at:Date.now()});
+    const claimId=await ctx.db.insert("stock_approval_claims",{reservation_id:rental._id,account_slug:accountSlug,order_id:hyggloOrderId,physical_fingerprint,...window,components,prepared_at:Date.now(),holds_stock:true});
     return {claimId,physicalFingerprint:physical_fingerprint};
   },
 });
+
+export const backfillLegacyApprovalClaims=internalMutation({args:{},handler:async ctx=>{
+  const claims=await ctx.db.query("stock_approval_claims").withIndex("by_holds_stock",q=>q.eq("holds_stock",undefined)).take(50);
+  for(const claim of claims)await ctx.db.patch(claim._id,{holds_stock:true});
+  if(claims.length===50)await ctx.scheduler.runAfter(0,internal.stockAuthority.backfillLegacyApprovalClaims,{});
+  return {updated:claims.length,continued:claims.length===50};
+}});

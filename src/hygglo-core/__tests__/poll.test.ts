@@ -194,7 +194,7 @@ describe("corePoll — B3: order_step_extracted always defined on active-step ro
     expect(row.order_step_extracted).toBe("DELIVERED");
   });
 
-  it("covers all 10 recognised step keys (each yields a defined step)", async () => {
+  it("requires completed return evidence before recognising REVIEWED", async () => {
     const keys = [
       "REQUEST",
       "APPROVED",
@@ -213,7 +213,7 @@ describe("corePoll — B3: order_step_extracted always defined on active-step ro
         details: { 1: makeOrderDetail(1, key) },
       });
       const result = await corePoll("test-account", { core, fetchedAt: 1 });
-      expect(result.reservations[0].order_step_extracted).toBe(key);
+      expect(result.reservations[0].order_step_extracted).toBe(key === "REVIEWED" ? undefined : key);
     }
   });
 });

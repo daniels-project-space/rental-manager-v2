@@ -37,7 +37,7 @@ import { createHyggloCore, type HyggloCore } from "./index";
 import type { HyggloAccount } from "./auth-account";
 import { ALL_FILTERS } from "./orders";
 import { prefetchInOrder } from "./ordered-prefetch";
-import { providerReturnCompleted } from "../lib/provider-return-evidence";
+import { providerActiveStep } from "../lib/provider-return-evidence";
 import {
   orderToReservation,
   orderToRenter,
@@ -91,18 +91,7 @@ const VALID_STEP_KEYS = new Set<string>([
  * active step is present, unless explicit completed return proves a finished funnel.
  */
 function extractStep(order: unknown): string | undefined {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const o = order as any;
-  const steps = o?.steps ?? o?.detail?.steps ?? o?._detail?.steps;
-  if (!Array.isArray(steps)) return undefined;
-  if (providerReturnCompleted(order)) return "REVIEWED";
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const active = steps.find((s: any) => s?.active === true);
-  if (active) return active.key;
-  // A finished funnel has no next-to-do step. Explicit completed return is
-  // terminal evidence, whereas elapsed dates alone never change rental state.
-  return steps.some((s: any) => s?.key === "RETURNED" && s.completed === true && s.failure !== true)
-    ? "REVIEWED" : undefined;
+  return providerActiveStep(order);
 }
 
 /**

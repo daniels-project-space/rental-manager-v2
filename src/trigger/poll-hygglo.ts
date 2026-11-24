@@ -1,4 +1,4 @@
-import { providerReturnCompleted } from "../lib/provider-return-evidence";
+import { providerActiveStep } from "../lib/provider-return-evidence";
 /**
  * poll-hygglo-inbox — Phase 6.1
  *
@@ -784,14 +784,7 @@ export const pollHyggloInbox = schedules.task({
               "verification_failed",
             ]);
             const extractStep = (order: unknown): string | undefined => {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const o = order as any;
-              const steps = o?.steps ?? o?.detail?.steps ?? o?._detail?.steps;
-              if (!Array.isArray(steps)) return undefined;
-              if (providerReturnCompleted(order)) return "REVIEWED";
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const active = steps.find((s: any) => s?.active === true);
-              return active?.key;
+              return providerActiveStep(order);
             };
             const VALID_STEP_KEYS = new Set([
               "REQUEST", "APPROVED", "FUNDS_RESERVED", "VERIFIED",
@@ -823,7 +816,7 @@ export const pollHyggloInbox = schedules.task({
                 currency: payload.currency,
                 items: payload.items,
                 duration_days: payload.duration_days,
-                ...(needsRawOrder && { order: payload.order }),
+                ...((needsRawOrder || orderStepExtracted === "REVIEWED") && { order: needsRawOrder ? payload.order : payload.detail_payload ?? payload.order }),
                 ...(orderStepExtracted && { order_step_extracted: orderStepExtracted }),
                 ...(payload.awaiting_owner_action !== undefined && { awaiting_owner_action: payload.awaiting_owner_action }),
                 ...(payload.can_accept !== undefined && { can_accept: payload.can_accept }),

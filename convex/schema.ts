@@ -25,7 +25,8 @@ const operationalSchema = defineSchema({
     start: v.string(), end: v.string(),
     components: v.array(v.object({item_id: v.id("items"), qty: v.number()})),
     prepared_at: v.number(),
-  }).index("by_order", ["account_slug", "order_id"]),
+    holds_stock: v.optional(v.boolean()),
+  }).index("by_order", ["account_slug", "order_id"]).index("by_holds_stock", ["holds_stock"]),
   // Direct website item changes reserve only their net-new physical units.
   // Rows are retained as idempotency/audit receipts; only holds_stock rows
   // participate in common availability calculations.
