@@ -7,15 +7,13 @@ export function providerReturnCompleted(order: unknown): boolean {
     _detail?: { steps?: unknown };
   };
   const steps = o.steps ?? o.detail?.steps ?? o._detail?.steps;
+  if (!Array.isArray(steps)) return false;
+  const returned = steps.filter(
+    (step) => step && typeof step === "object" && step.key === "RETURNED",
+  );
   return (
-    Array.isArray(steps) &&
-    steps.some(
-      (step) =>
-        step &&
-        typeof step === "object" &&
-        step.key === "RETURNED" &&
-        step.completed === true &&
-        step.failure !== true,
-    )
+    returned.length === 1 &&
+    returned[0].completed === true &&
+    (returned[0].failure === false || returned[0].failure === undefined)
   );
 }
