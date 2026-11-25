@@ -41,7 +41,7 @@ const SERIES = [
   { key: "diogoOrganic",        label: "Diogo Valdivieso",        color: "#f97316", fill: "url(#grad-diogo)",       roundTop: false },
   { key: "damageClaims",        label: "Claims",                  color: "#ffffff", fill: "url(#grad-damage)",      roundTop: true  },
   { key: "bookedNext",          label: "Confirmed ahead",        color: "#94a3b8", fill: "url(#grad-booked)",      roundTop: true  },
-  { key: "predictedRemainder",  label: "Expected additional bookings",               color: "#94a3b8", fill: "url(#grad-predicted)",   roundTop: true  },
+  { key: "predictedRemainder",  label: "Forecast total",                             color: "#94a3b8", fill: "url(#grad-predicted)",   roundTop: true  },
 ] as const;
 
 
@@ -587,7 +587,7 @@ export function LifetimeRevenue() {
                   // Filter zero/null entries; sort biggest first; collapse the predicted &
                   // cumulative-area duplicates the same series renders to keep tooltip tight.
                   const barData = payload[0]?.payload as Record<string, unknown> | undefined;
-                  const barTotal = SERIES.reduce((sum, series) => sum + (typeof barData?.[series.key] === "number" ? Number(barData[series.key]) : 0), 0);
+                  const barTotal = ACTUAL_KEYS.reduce((sum, key) => sum + (typeof barData?.[key] === "number" ? Number(barData[key]) : 0), 0);
                   const seen = new Set<string>();
                   const numValue = (p: { value?: ValueType }): number => {
                     const x = p.value;
@@ -622,13 +622,13 @@ export function LifetimeRevenue() {
                       }}
                     >
                       <div style={{ color: "#e4e6eb", marginBottom: 6, fontWeight: 600 }}>{label}</div>
-                      {chartMode === "bars" && <div data-revenue-bar-total style={{ display: "flex", justifyContent: "space-between", gap: 16, paddingBottom: 6, marginBottom: 6, borderBottom: "1px solid rgba(255,255,255,0.12)", color: "#fff", fontWeight: 700 }}><span>Bar total</span><span>{fmtGbp(barTotal)}</span></div>}
+                      {chartMode === "bars" && <div data-revenue-bar-total style={{ display: "flex", justifyContent: "space-between", gap: 16, paddingBottom: 6, marginBottom: 6, borderBottom: "1px solid rgba(255,255,255,0.12)", color: "#fff", fontWeight: 700 }}><span>Actual revenue</span><span>{fmtGbp(barTotal)}</span></div>}
                       {rows.map((p, i) => {
                         const series = SERIES.find((s) => s.key === p.name);
                         const niceLabel =
                           p.name === "cumulative" ? "Cumulative" :
                           p.name === "cumulative-area" ? null :
-                          p.name === "forecastLine" ? "Forecast" :
+                          p.name === "forecastLine" ? "Forecast total" :
                           p.name === "predictedRemainder" ? "Expected additional bookings" :
                           series?.label ?? String(p.name);
                         if (niceLabel === null) return null;
@@ -664,31 +664,41 @@ export function LifetimeRevenue() {
                   }}
                 />
               )}
-              {/* Stacked bars — bottom to top per SERIES order. Only segments that can
-                  cap the stack (aiBoost / damage / booked / pending / predictedRemainder)
+              {/* Stacked bars — actual revenue only. Forecast is a separate dashed line
+                  so the current-month bar stays comparable to Month Confirmed. Only segments that can
+                  cap the stack (aiBoost / damage / booked / pending)
                   get a rounded top, matching V1's borderRadius:3 selection.
                   Animated toggle: legend click → Recharts fades opacity over 350ms. */}
-              {chartMode === "bars" && SERIES.map((s) => {
-                const isPredicted = s.key === "predictedRemainder";
-                return (
-                  <Bar
-                    key={s.key}
-                    yAxisId="right"
-                    dataKey={s.key}
-                    name={s.key}
-                    stackId="monthly"
-                    fill={s.fill}
-                    stroke={isPredicted ? s.color : "none"}
-                    strokeWidth={isPredicted ? 1 : 0}
-                    strokeDasharray={isPredicted ? "4 3" : undefined}
-                    radius={s.roundTop ? [4, 4, 0, 0] : 0}
-                    maxBarSize={28}
-                    isAnimationActive
-                    animationDuration={650}
-                    animationEasing="ease-in-out"
-                  />
-                );
-              })}
+              {chartMode === "bars" && SERIES.filter((s) => s.key !== "predictedRemainder").map((s) => (
+                <Bar
+                  key={s.key}
+                  yAxisId="right"
+                  dataKey={s.key}
+                  name={s.key}
+                  stackId="monthly"
+                  fill={s.fill}
+                  radius={s.roundTop ? [4, 4, 0, 0] : 0}
+                  maxBarSize={28}
+                  isAnimationActive
+                  animationDuration={650}
+                  animationEasing="ease-in-out"
+                />
+              ))}
+              {chartMode === "bars" && !hidden.predictedRemainder && (
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="forecastLine"
+                  name="forecastLine"
+                  stroke="#94a3b8"
+                  strokeWidth={2}
+                  strokeDasharray="5 5"
+                  dot={{ r: 3, fill: "#94a3b8" }}
+                  activeDot={{ r: 4, stroke: "#94a3b8", fill: "#0f1115", strokeWidth: 2 }}
+                  isAnimationActive
+                  animationDuration={650}
+                />
+              )}
               {chartMode === "lines" && SERIES.filter((s) => s.key !== "predictedRemainder").map((s) => (
                 <Area
                   key={s.key}
