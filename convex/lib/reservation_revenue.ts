@@ -2,7 +2,7 @@ import { disableReservationReadModel, syncReservationReadRecord } from "./reserv
 import type { WithoutSystemFields } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import { effectiveDate } from "./reservations/predicates";
+import { effectiveDate, revenueDate } from "./reservations/predicates";
 import { beforeReservationStockPatch, beforeReservationStockDelete, invalidateStockWhen, stockReservationStatuses } from "./stock_input_cache";
 
 export type RevenueFactData = WithoutSystemFields<Doc<"reservation_revenue_facts">>;
@@ -10,7 +10,7 @@ type CompleteMapping = RevenueFactData & Record<keyof RevenueFactData, unknown>;
 
 /** Only the completed-history fields consumed by canonical month revenue. */
 export function projectReservationRevenue(row: Doc<"reservations">): CompleteMapping | null {
-  const date = effectiveDate(row);
+  const date = revenueDate(row);
   if (row.status !== "completed" || row.is_obsolete || !row.start_date || !row.end_date || !date) return null;
   return {
     source_id: row._id,
@@ -38,7 +38,7 @@ export function revenueFactMatches(actual: Doc<"reservation_revenue_facts"> | nu
 }
 
 const revenueFields = new Set([
-  "status", "start_date", "end_date", "pickup_date", "account_slug", "renter_id", "renter_name",
+  "status", "start_date", "end_date", "pickup_date", "revenue_date", "booking_status", "account_slug", "renter_id", "renter_name",
   "hygglo_order_id", "v1_rental_id", "is_obsolete", "order_step", "net_to_owner_gbp",
 ]);
 // Some real callers expose isolated Lab bookings through a reservation-shaped
