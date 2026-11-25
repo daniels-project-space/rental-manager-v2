@@ -38,9 +38,11 @@ export type ReservationRow = {
   end_date?: string;
   pickup_date?: string;
   return_date?: string;
+  revenue_date?: string;
   hygglo_order_id?: string;
   v1_rental_id?: string;
   account_slug?: string;
+  booking_status?: string;
   renter_id?: string;
   renter_name?: string;
   is_obsolete?: boolean;
@@ -66,6 +68,18 @@ export type ReservationRow = {
  */
 export function effectiveDate(r: { pickup_date?: string; start_date?: string }): string | undefined {
   return r.pickup_date ?? r.start_date;
+}
+
+/** Direct-site revenue is attributed to payment month; rental dates remain operational dates. */
+export function revenueDate(r: ReservationRow): string | undefined {
+  if (isPaidWebsiteRevenue(r) && r.revenue_date) return r.revenue_date;
+  return effectiveDate(r);
+}
+
+/** Website bookings count as revenue once paid, even while document verification is pending. */
+export function isPaidWebsiteRevenue(r: ReservationRow): boolean {
+  return r.account_slug === "dbcinema_web" &&
+    ["confirmed", "active", "returned"].includes(r.booking_status ?? "");
 }
 
 /**

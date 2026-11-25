@@ -165,16 +165,16 @@ it('retains the v2 buffered endpoint marker through the real website receiver',a
 it('retains signed civil dates without changing exact stock epochs and rejects impossible dates',async()=>{const {ctx,rows}=database();const id=await ctx.db.insert('items',{name_canonical:'Sony FX3'});const w={rmv2ItemId:id,qty:1,start:Date.UTC(2026,9,8,23),end:Date.UTC(2026,9,11,0),endExclusive:true,stockWindowVersion:2,turnaroundBufferMinutes:60,pickupDate:'2026-10-09',returnDate:'2026-10-10',returnTime:'18:00'};await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({physicalReservations:[w]})],reconcile:false});const saved=[...rows.values()].find(r=>r.table==='reservations');expect(saved.site_item_windows[0]).toMatchObject({start:w.start,end:w.end,pickupDate:w.pickupDate,returnDate:w.returnDate,item_id:id});for(const returnDate of ['2026-02-30','2026-10-08','10/10/2026'])await expect(invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({revision:2,physicalReservations:[{...w,returnDate}]})],reconcile:false})).rejects.toThrow('Invalid website equipment date');});
 
 
-it('keeps paid unverified website rentals pending, occupies stock and excludes confirmed revenue until documents approve', async () => {
+it('keeps verification pending and stock held while counting payment-confirmed website revenue', async () => {
  const {ctx,rows}=database();
  const itemId=await ctx.db.insert('items',{name_canonical:'Sony FX3',qty:2,status:'active',is_marketing_only:false});
  const physicalReservations=[{rmv2ItemId:itemId,qty:1,start:Date.UTC(2035,0,1,10),end:Date.UTC(2035,0,2,18),endExclusive:true,stockWindowVersion:2,turnaroundBufferMinutes:60,pickupTime:'10:00',returnTime:'17:00'}];
- const pending=booking({physicalReservations,verification:verification()});
+ const pending=booking({createdAt:Date.UTC(2035,0,1),physicalReservations,verification:verification()});
  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[pending],reconcile:false});
  const row=()=>[...rows.values()].find(r=>r.table==='reservations');
- expect(row()).toMatchObject({status:'pending_review',order_step:'VERIFIED',site_projection_version:2});
+ expect(row()).toMatchObject({status:'pending_review',order_step:'VERIFIED',site_projection_version:4});
  expect(isPendingVerification(row())).toBe(true);expect(isUpcoming(row(),'2034-12-31')).toBe(false);
- expect(realisedMonthRevenue([row()],'2035-01','dbcinema_web').netGbp).toBe(0);
+ expect(realisedMonthRevenue([row()],'2035-01','dbcinema_web').netGbp).toBe(90);
  expect(queueNotificationEvents).not.toHaveBeenCalled();
  const sources=await loadStockSources(ctx as any);
  expect(stockForItem(sources,rows.get(itemId),{item_name:'Sony FX3',start_date:'2035-01-01',end_date:'2035-01-01',pickup_time:'10:00',return_time:'11:00'} as any).free_units).toBe(1);
@@ -185,7 +185,7 @@ it('keeps paid unverified website rentals pending, occupies stock and excludes c
  expect(queueNotificationEvents).toHaveBeenCalledTimes(1);expect(row().site_item_windows).toHaveLength(1);
  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[{...pending,revision:3,verification:verification({status:'requires_input'})}],reconcile:false});
  expect(row()).toMatchObject({status:'pending_review',order_step:'VERIFIED'});
- expect(realisedMonthRevenue([row()],'2035-01','dbcinema_web').netGbp).toBe(0);
+ expect(realisedMonthRevenue([row()],'2035-01','dbcinema_web').netGbp).toBe(90);
  expect(row().gross_paid_gbp).toBe(90);expect(row().site_item_windows).toHaveLength(1);
  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[{...pending,revision:2,verification:docs}],reconcile:false});expect(row().status).toBe('pending_review');
  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[{...pending,revision:4,status:'cancelled'}],reconcile:false});
@@ -202,22 +202,32 @@ it('fails closed on a missing verification snapshot and rejects inconsistent doc
 it('upgrades only an exact unchanged legacy projection at the same source revision',async()=>{
  const {ctx,rows}=database();const b=booking({verification:verification()});await invoke(upsertSiteBookingsBatch,ctx,{bookings:[b],reconcile:false});
  const saved=[...rows.values()].find(r=>r.table==='reservations');
- const oldFields=JSON.parse(saved.poll_hash);delete oldFields.site_projection_version;oldFields.status='confirmed';delete oldFields.order_step;
+ const oldFields=JSON.parse(saved.poll_hash);delete oldFields.site_projection_version;delete oldFields.revenue_date;oldFields.status='confirmed';delete oldFields.order_step;
  await ctx.db.patch(saved._id,{site_projection_version:undefined,status:'confirmed',order_step:undefined,poll_hash:computePollHash(JSON.stringify(oldFields))});
  await expect(invoke(upsertSiteBookingsBatch,ctx,{bookings:[{...b,total:999}],reconcile:false})).rejects.toThrow('Conflicting website rental revision');
  await invoke(upsertSiteBookingsBatch,ctx,{bookings:[b],reconcile:false});
- expect(rows.get(saved._id)).toMatchObject({status:'pending_review',site_projection_version:2,site_revision:1});
+ expect(rows.get(saved._id)).toMatchObject({status:'pending_review',site_projection_version:4,site_revision:1});
  await expect(invoke(upsertSiteBookingsBatch,ctx,{bookings:[{...b,verification:verification({status:'verified',archiveReady:true,approved:true})}],reconcile:false})).rejects.toThrow('Conflicting website rental revision');
 });
 
 
 it('upgrades the documents-only approval projection without changing source revision or bypassing the conflict fence',async()=>{
  const {ctx,rows}=database();const old=verification({status:'verified',archiveReady:true,securityReady:false,approved:false});const b=booking({verification:old});
- await invoke(upsertSiteBookingsBatch,ctx,{bookings:[b],reconcile:false});const row=()=>[...rows.values()].find(r=>r.table==='reservations');expect(row()).toMatchObject({status:'pending_review',site_projection_version:2});
+ await invoke(upsertSiteBookingsBatch,ctx,{bookings:[b],reconcile:false});const row=()=>[...rows.values()].find(r=>r.table==='reservations');expect(row()).toMatchObject({status:'pending_review',site_projection_version:4});
  const current={...b,verification:{...old,documentsApproved:true}};
  await expect(invoke(upsertSiteBookingsBatch,ctx,{bookings:[{...current,total:999}],reconcile:false})).rejects.toThrow('Conflicting website rental revision');
- await invoke(upsertSiteBookingsBatch,ctx,{bookings:[current],reconcile:false});expect(row()).toMatchObject({status:'confirmed',site_projection_version:3,site_revision:1});
+ await invoke(upsertSiteBookingsBatch,ctx,{bookings:[current],reconcile:false});expect(row()).toMatchObject({status:'confirmed',site_projection_version:5,site_revision:1});
  await expect(invoke(upsertSiteBookingsBatch,ctx,{bookings:[{...current,verification:{...current.verification,documentsApproved:false}}],reconcile:false})).rejects.toThrow('Conflicting website rental revision');
+});
+
+it('stores a paid website booking month separately from its future hire month and refreshes Lifetime Revenue', async()=>{
+ const {ctx,rows}=database();
+ const paymentAt=Date.UTC(2026,10,19,12);
+ await invoke(upsertSiteBookingsBatch,ctx,{bookings:[booking({start:Date.UTC(2026,11,12),end:Date.UTC(2026,11,13),checkoutPaidAt:paymentAt})],reconcile:false});
+ const row=[...rows.values()].find(r=>r.table==='reservations');
+ expect(row).toMatchObject({start_date:'2026-12-12',revenue_date:'2026-11-19',booking_status:'confirmed'});
+ expect(ctx.scheduler.runAfter).toHaveBeenCalledTimes(2);
+ expect(ctx.scheduler.runAfter).toHaveBeenCalledWith(0,expect.anything(),{});
 });
 
 

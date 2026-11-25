@@ -50,7 +50,9 @@ import {
   type ReservationRow,
   dedupByLogicalRental,
   effectiveDate,
+  isPaidWebsiteRevenue,
   netOf,
+  revenueDate,
 } from "./predicates";
 
 export type AccountScope = string | null | undefined;
@@ -58,6 +60,7 @@ export type AccountScope = string | null | undefined;
 /** True if row counts toward the Month Confirmed revenue tile. */
 export function isRealisedMonthRow(r: ReservationRow): boolean {
   if (r.is_obsolete) return false;
+  if (isPaidWebsiteRevenue(r) && r.revenue_date) return !!r.start_date && !!r.end_date;
   if (r.status !== "confirmed" && r.status !== "completed") return false;
   if (!r.start_date || !r.end_date) return false;
   return true;
@@ -80,7 +83,7 @@ export function realisedMonthRevenue<T extends ReservationRow>(
 ): RealisedMonthRevenue<T> {
   const filtered = allReservations.filter((r) => {
     if (accountSlug && r.account_slug !== accountSlug) return false;
-    const d = effectiveDate(r);
+    const d = revenueDate(r);
     if (d === undefined) return false;
     if (d.slice(0, 7) !== month) return false;
     return isRealisedMonthRow(r);
@@ -98,7 +101,7 @@ export function rentalMonthProjectionInputs<T extends ReservationRow>(
   const [year, monthNumber, day] = today.split("-").map(Number);
   const current = realisedMonthRevenue(rows, month, accountSlug);
   const realisedToDate = current.rentals
-    .filter((r) => (effectiveDate(r) ?? today) < today)
+    .filter((r) => (revenueDate(r) ?? today) < today)
     .reduce((sum, r) => sum + netOf(r), 0);
   const recent = previousMonthKeys(month).map((key) =>
     realisedMonthRevenue(rows, key, accountSlug).netGbp);

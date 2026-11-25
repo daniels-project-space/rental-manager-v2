@@ -256,6 +256,23 @@ describe("missed-revenue capacity reservation reads", () => {
 
 
 describe("actual headline handler reuses confirmed pickup rows", () => {
+  it("includes paid website bookings in the month they were paid, even when hire dates are later", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-25T12:00:00Z"));
+    try {
+      const context = makeEmptyContext([
+        { _id: "web-paid", _creationTime: 1, status: "pending_review", booking_status: "confirmed", account_slug: "dbcinema_web", start_date: "2026-12-12", end_date: "2026-12-13", pickup_date: "2026-12-12", revenue_date: "2026-11-19", net_to_owner_gbp: 925.96, items: [] },
+      ]);
+      const result = await (getRentalHeadlineStats as any)._handler(context.ctx, { accountSlug: null });
+      expect(result.monthly.confirmed_revenue).toBe(925.96);
+      expect(context.reservationReads.some(({ index, filters }) => index === "by_account_revenue_date" &&
+        filters.account_slug?.some(({ value }) => value === "dbcinema_web") &&
+        filters.revenue_date?.some(({ op, value }) => op === "gte" && value === "2026-11-01"))).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("retains the source pickup query for tied creation times", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-16T12:00:00Z"));
