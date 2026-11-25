@@ -553,6 +553,7 @@ const operationalSchema = defineSchema({
     start_date: v.optional(v.string()),       // ISO date YYYY-MM-DD
     end_date: v.optional(v.string()),         // ISO date YYYY-MM-DD
     pickup_date: v.optional(v.string()),      // actual gear pickup date (BF-06)
+    revenue_date: v.optional(v.string()),     // direct-site paid booking date; distinct from hire/pickup date
     duration_days: v.optional(v.number()),
     gross_paid_gbp: v.optional(v.number()),
     net_to_owner_gbp: v.optional(v.number()),
@@ -911,6 +912,7 @@ const operationalSchema = defineSchema({
     // derive forward-looking holds). Composite index lets it scope to
     // account + recent start_date in one indexed range.
     .index("by_account_start", ["account_slug", "start_date"])
+    .index("by_account_revenue_date", ["account_slug", "revenue_date"])
     .index("by_account_end", ["account_slug", "end_date"])
     .index("by_account_order_step", ["account_slug", "order_step"])
     .index("by_account_obsolete_end", ["account_slug", "is_obsolete", "end_date"])
