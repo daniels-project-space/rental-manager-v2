@@ -3281,7 +3281,7 @@ async function loadRentalHeadlineStats(
   // Reuse the bounded pickup-date window; fall back to the exact monthly index
   // range only when a fully tied key requires database ordering.
   const reusedPickupRows = confirmedPickupWindow(confirmedRows, projectionStart, monthEnd);
-  const [completedMonthRows, confirmedPickupRows] = await Promise.all([
+  const [completedMonthRows, confirmedPickupRows, websiteRevenueMonthRows] = await Promise.all([
     loadCompletedMonthlyRows(ctx, projectionStart, monthEnd, accountSlug),
     reusedPickupRows ?? takeRentalHeadlineWindow(accountSlug
       ? ctx.db.query("reservations").withIndex("by_account_status_pickup_date", (q) =>
@@ -3290,12 +3290,17 @@ async function loadRentalHeadlineStats(
       : ctx.db.query("reservations").withIndex("by_status_pickup_date", (q) =>
           q.eq("status", "confirmed").gte("pickup_date", projectionStart).lte("pickup_date", monthEnd)),
       "confirmed monthly pickup_date"),
+    !accountSlug || accountSlug === "dbcinema_web"
+      ? takeRentalHeadlineWindow(ctx.db.query("reservations").withIndex("by_account_revenue_date", (q) =>
+          q.eq("account_slug", "dbcinema_web").gte("revenue_date", monthStart).lte("revenue_date", monthEnd)),
+        "website paid-revenue month")
+      : Promise.resolve([]),
   ]);
   const pickupMonthRows: ReservationRow[] = [...confirmedPickupRows, ...completedMonthRows.pickupRows].sort((a, b) =>
     (a.pickup_date ?? "").localeCompare(b.pickup_date ?? "") || a._creationTime - b._creationTime,
   );
   const monthRowsById = new Map<string, ReservationRow>();
-  for (const row of [...confirmedMonthRows, ...completedMonthRows.startRows, ...pickupMonthRows]) {
+  for (const row of [...confirmedMonthRows, ...completedMonthRows.startRows, ...pickupMonthRows, ...websiteRevenueMonthRows]) {
     if (!accountSlug || row.account_slug === accountSlug) monthRowsById.set(row._id, row);
   }
   const projectionRows = Array.from(monthRowsById.values());

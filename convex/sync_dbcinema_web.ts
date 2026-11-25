@@ -40,6 +40,14 @@ import { rentalTimeChangedEvent, syncRentalReminders } from "./lib/rental_timing
 
 const upsertBatchRef = internal.sync_dbcinema_web.upsertSiteBookingsBatch;
 
+function londonCalendarDate(timestamp: number): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date(timestamp));
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 const WEB_SLUG = "dbcinema_web";
 // The storefront's gear is DB Cinema's gear; its product IDs live in the
 // hygglo_product_index under the "dbcinema" Hygglo account.
@@ -52,6 +60,7 @@ type SiteBooking = {
   revision?: number;
   verification?: WebsiteVerification;
   status: string;
+  checkoutPaidAt?: number | null;
   customerName: string | null;
   customerEmail: string | null;
   fulfilment: string;
@@ -127,7 +136,8 @@ export const syncDbcinemaWeb = internalAction({
  * bulk feed pre-filtered to paid statuses, which the webhook deliberately does
  * not (2026-08-18).
  */
-const SITE_STATUS_MAP: Record<string, "confirmed" | "completed" | "cancelled"> = {
+const SITE_STATUS_MAP: Record<string, "confirmed" | "completed" | "cancelled" | "pending_review"> = {
+  pending_verification: "pending_review", // paid checkout awaiting website verification/confirmation
   confirmed: "confirmed", // paid, not yet collected → upcoming
   active: "confirmed", // out with the customer (order_step DELIVERED)
   returned: "completed", // back → historical revenue
@@ -203,6 +213,7 @@ export const upsertSiteBookingsBatch = internalMutation({
     let unmappedUnits = 0;
     // Units whose listing is deliberately backed by no inventory (RULE 18).
     let marketingUnits = 0;
+    let revenueProjectionChanged = false;
     const incomingIds = new Set(
       (bookings as SiteBooking[]).map((b) => b?.id).filter(Boolean),
     );
@@ -221,6 +232,12 @@ export const upsertSiteBookingsBatch = internalMutation({
         continue;
       }
       const verification = parseWebsiteVerification(b.verification);
+      // A pending-verification marker alone is not evidence of payment or
+      // stock. Require the website's paid receipt and its exact stock ledger;
+      // never invent an allocation from the current catalogue for this state.
+      if (b.status === "pending_verification" && (!Number.isSafeInteger(b.checkoutPaidAt) || b.checkoutPaidAt! <= 0 || verification?.provider !== "didit" || !Array.isArray(b.physicalReservations) || (verification.status !== "rejected" && b.physicalReservations.length === 0))) {
+        throw Error("Paid website verification hold requires a receipt and physical allocation ledger");
+      }
       // Payment and document approval are separate. A scheduled pickup hold is
       // a collection requirement, not a reason to invent failed verification.
       const documentsApproved = verification?.documentsApproved ?? verification?.approved ?? false;
@@ -228,9 +245,17 @@ export const upsertSiteBookingsBatch = internalMutation({
       if (b.damageCases !== undefined) validateWebsiteCases(b.damageCases);
       const startISO = new Date(b.start).toISOString().slice(0, 10);
       const endISO = new Date(b.end).toISOString().slice(0, 10);
+      const paidWebsiteBooking = ["confirmed", "active", "returned"].includes(b.status);
+      const paidAt = Number.isFinite(b.checkoutPaidAt) && (b.checkoutPaidAt ?? 0) > 0
+        ? b.checkoutPaidAt!
+        : b.createdAt;
+      const revenueDate = paidWebsiteBooking && Number.isFinite(paidAt) && paidAt > 0
+        ? londonCalendarDate(paidAt)
+        : undefined;
       const order_step =
         b.status === "active" ? "DELIVERED"
         : b.status === "returned" ? "REVIEWED"
+        : b.status === "pending_verification" ? "VERIFIED"
         : b.status === "confirmed" ? documentsApproved ? "BOOKED_AFTER_VERIFIED" : "VERIFIED"
         : undefined;
 
@@ -342,6 +367,7 @@ export const upsertSiteBookingsBatch = internalMutation({
         start_date: startISO,
         end_date: endISO,
         pickup_date: startISO,
+        revenue_date: revenueDate,
         return_date: endISO,
         pickup_method: method,
         return_method: method,
@@ -367,7 +393,7 @@ export const upsertSiteBookingsBatch = internalMutation({
         source_filter: "dbcinema_web_site",
         booking_status: b.status,
         platform_close_pending:false,
-        site_projection_version: verification?.documentsApproved === undefined ? 2 : 3,
+        site_projection_version: verification?.documentsApproved === undefined ? 4 : 5,
         site_revision: b.revision ?? 0,
         site_verification: verification,
         site_item_windows,
@@ -406,17 +432,21 @@ export const upsertSiteBookingsBatch = internalMutation({
           // Upgrade a prior receiver projection only when recomputing its exact
           // old write-set proves the authenticated source otherwise unchanged.
           const priorVersion = mine.site_projection_version;
-          const upgradingDocuments = priorVersion === 2 && fields.site_projection_version === 3;
-          if (priorVersion !== undefined && !upgradingDocuments) throw Error("Conflicting website rental revision");
+          const upgradingProjection = priorVersion === 2 || priorVersion === 3 || priorVersion === 4;
+          if (priorVersion !== undefined && !upgradingProjection) throw Error("Conflicting website rental revision");
           const legacyFields: Record<string, unknown> = { ...fields };
+          if (priorVersion === undefined || priorVersion === 2 || priorVersion === 3) delete legacyFields.revenue_date;
           if (priorVersion === undefined) {
             delete legacyFields.site_projection_version;
             legacyFields.status = sourceStatus;
             legacyFields.order_step = b.status === "active" ? "DELIVERED" : b.status === "returned" ? "REVIEWED" : undefined;
           } else {
-            legacyFields.site_projection_version = 2;
-            legacyFields.status = b.status === "confirmed" && !verification?.approved ? "pending_review" : sourceStatus;
-            legacyFields.order_step = b.status === "confirmed" ? verification?.approved ? "BOOKED_AFTER_VERIFIED" : "VERIFIED" : order_step;
+            legacyFields.site_projection_version = priorVersion;
+            const legacyApproved = priorVersion === 3
+              ? (verification?.documentsApproved ?? verification?.approved ?? false)
+              : (verification?.approved ?? false);
+            legacyFields.status = b.status === "confirmed" && !legacyApproved ? "pending_review" : sourceStatus;
+            legacyFields.order_step = b.status === "confirmed" ? legacyApproved ? "BOOKED_AFTER_VERIFIED" : "VERIFIED" : order_step;
           }
           if (verification) {
             const legacyVerification = { ...verification };
@@ -426,6 +456,8 @@ export const upsertSiteBookingsBatch = internalMutation({
           const legacyHash = computePollHash(JSON.stringify({ ...legacyFields, ...(b.damageCases !== undefined ? { damageCases: b.damageCases } : {}) }));
           if (mine.poll_hash !== legacyHash) throw Error("Conflicting website rental revision");
         }
+        const revenueKeys = ["status", "booking_status", "start_date", "pickup_date", "revenue_date", "end_date", "account_slug", "is_obsolete", "order_step", "gross_paid_gbp", "net_to_owner_gbp"] as const;
+        if (revenueKeys.some((key) => (mine as Record<string, unknown>)[key] !== (fields as Record<string, unknown>)[key])) revenueProjectionChanged = true;
         await patchRevenueReservation(ctx, mine._id, {
           ...fields,
           image_hints,
@@ -433,6 +465,7 @@ export const upsertSiteBookingsBatch = internalMutation({
           poll_hash: newPollHash,
         });
       } else {
+        revenueProjectionChanged = true;
         reservationId = await insertRevenueReservation(ctx, {
           ...fields,
           image_hints,
@@ -476,6 +509,7 @@ export const upsertSiteBookingsBatch = internalMutation({
         if (r.account_slug !== WEB_SLUG) continue;
         const oid = (r as { hygglo_order_id?: string }).hygglo_order_id;
         if (oid && incomingIds.has(oid)) continue;
+        revenueProjectionChanged = true;
         await patchRevenueReservation(ctx, r._id, {
           status: "cancelled",
           is_obsolete: true,
@@ -496,6 +530,9 @@ export const upsertSiteBookingsBatch = internalMutation({
     if (upserted > 0 || cancelled > 0) {
       // Website stock and verification changes must invalidate the reply tiles immediately.
       await ctx.scheduler.runAfter(0, internal.mv.reply_queue.refresh, { force: true });
+    }
+    if (revenueProjectionChanged) {
+      await ctx.scheduler.runAfter(0, internal.mv.lifetime_revenue.refresh, {});
     }
 
     return {
