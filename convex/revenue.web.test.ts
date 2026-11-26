@@ -16,7 +16,7 @@ describe("website lifetime revenue", () => {
     const result = await compute(null); const current = result.months.find((r: any) => r.month === "2026-10"); const past = result.months.find((r: any) => r.month === "2026-09");
     expect(current.dbcinemaOrganic).toBe(250); expect(current.dbcinemaWebOrganic).toBe(80); expect(current.byAccount.dbcinema_web).toBe(80); expect(current.revenue).toBe(450);
     expect(past.dbcinemaOrganic).toBe(100); expect(past.dbcinemaWebOrganic).toBe(40); expect(past.revenue).toBe(210);
-    expect(result.totalRevenue).toBe(660); expect(current.cumulative).toBe(660); expect(result.accountBreakdownVersion).toBe(3);
+    expect(result.totalRevenue).toBe(660); expect(current.cumulative).toBe(660); expect(result.accountBreakdownVersion).toBe(4);
   });
   it("isolates website and Hygglo DB filters and keeps future payments outside realised totals", async () => {
     const web = await compute("dbcinema_web"); const db = await compute("dbcinema");
@@ -29,7 +29,7 @@ describe("website lifetime revenue", () => {
     expect((await compute(null, context({ months: [], totalRevenue: 999 }))).totalRevenue).toBe(660);
     const snapshot = { accountBreakdownVersion: 2, months: [], totalRevenue: 999 };
     expect((await compute(null, context(snapshot))).totalRevenue).toBe(660);
-    const currentSnapshot = { accountBreakdownVersion: 3, months: [], totalRevenue: 12 };
+    const currentSnapshot = { accountBreakdownVersion: 4, months: [], totalRevenue: 12 };
     expect(await compute(null, context(currentSnapshot))).toEqual(currentSnapshot);
   });
   it("attributes verified-pending direct-site rentals to their payment month, independent of hire month", async () => {

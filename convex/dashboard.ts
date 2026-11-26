@@ -323,9 +323,9 @@ function buildInsuranceCard(claimRows: ClaimRowLite[]) {
   const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10);
   const claimStage = (c: { stage?: string; status?: string }): string => {
     if (c.status === "closed" || c.stage === "closed") return "closed";
-    if (c.stage) return c.stage;
     if (c.status === "denied") return "denied";
     if (c.status === "settled" || c.status === "added_to_revenue") return "added_to_revenue";
+    if (c.stage) return c.stage;
     return "case_opened";
   };
   let openCount = 0;
@@ -1863,6 +1863,13 @@ export const getStatsDrawerData = query({
       }
     }
     claims_value_gbp = Math.round(claims_value_gbp * 100) / 100;
+    monthly.confirmed_revenue = Math.round((monthly.confirmed_revenue + claims_value_gbp) * 100) / 100;
+    monthly.current_earnings = Math.round((monthly.current_earnings + claims_value_gbp) * 100) / 100;
+    monthly.pct_of_target = pctOfTarget(monthly.confirmed_revenue, monthProjection.target);
+    monthly.expected_additional_gbp = Math.max(0, monthProjection.projected - monthly.confirmed_revenue);
+    monthly.avg_daily_rate = daysElapsed > 0
+      ? Math.round((monthly.current_earnings / daysElapsed) * 100) / 100
+      : 0;
 
     // INVARIANT: per-slug sum from realisedMonthRevenue must equal the
     // all-accounts confirmed_revenue (monthBookedRevenue) computed above —
@@ -3317,6 +3324,18 @@ async function loadRentalHeadlineStats(
       return date !== undefined && date <= today && isPostPickupRental(row);
     })
     .reduce((sum, row) => sum + netOf(row), 0);
+  const claimRows = accountSlug
+    ? await ctx.db.query("insurance_claims")
+        .withIndex("by_account", (q) => q.eq("account_slug", accountSlug)).collect()
+    : await ctx.db.query("insurance_claims").collect();
+  const claimsThisMonth = claimRows.reduce((sum, claim) => {
+    const payout = claim.payout_amount_gbp;
+    return claim.credited_to_month === monthKey && typeof payout === "number" && Number.isFinite(payout)
+      ? sum + payout
+      : sum;
+  }, 0);
+  const confirmedRevenue = Math.round((monthly.netGbp + claimsThisMonth) * 100) / 100;
+  const earnedRevenue = Math.round((earnedThisMonth + claimsThisMonth) * 100) / 100;
   const activeRentals = [...ongoingRows.map((row) => ({ row, kind: "ongoing" as const })),
     ...upcomingRows.map((row) => ({ row, kind: "upcoming" as const }))]
     .map(({ row, kind }) => {
@@ -3363,20 +3382,20 @@ async function loadRentalHeadlineStats(
       rentals: activeRentals,
     },
     monthly: {
-      confirmed_revenue: monthly.netGbp,
+      confirmed_revenue: confirmedRevenue,
       pending_review_value_gbp: pendingReviewStats.month_value_gbp,
       projected: projection.projected,
       target_gbp: projection.target,
-      pct_of_target: pctOfTarget(monthly.netGbp, projection.target),
-      expected_additional_gbp: Math.max(0, projection.projected - monthly.netGbp),
+      pct_of_target: pctOfTarget(confirmedRevenue, projection.target),
+      expected_additional_gbp: Math.max(0, projection.projected - confirmedRevenue),
       committed_gbp: projection.committed,
       projection_basis: projection.basis,
       baseline_gbp: projection.target,
       days_remaining: Math.max(0, projectionInputs.daysInMonth - elapsedCalendarDays),
       days_in_month: projectionInputs.daysInMonth,
       days_elapsed: elapsedCalendarDays,
-      avg_daily_rate: elapsedCalendarDays > 0 ? Math.round((earnedThisMonth / elapsedCalendarDays) * 100) / 100 : 0,
-      current_earnings: Math.round(earnedThisMonth * 100) / 100,
+      avg_daily_rate: elapsedCalendarDays > 0 ? Math.round((earnedRevenue / elapsedCalendarDays) * 100) / 100 : 0,
+      current_earnings: earnedRevenue,
     },
     generatedAt: now.getTime(),
   };
