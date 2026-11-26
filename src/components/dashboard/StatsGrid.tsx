@@ -493,10 +493,8 @@ function StatsGridDetails() {
         // Keep Month Confirmed live too. The broad dashboard snapshot is
         // deliberately refreshed less often, while the independent headline
         // query already tracks confirmed revenue from current reservations.
-        // Preserve the snapshot's separate insurance-claim payout component.
-        month_revenue: rentalHeadlines?.monthly.confirmed_revenue != null
-          ? Math.round((rentalHeadlines.monthly.confirmed_revenue + (rawAsAny.confirmed?.claims_value_gbp ?? 0)) * 100) / 100
-          : rawAsAny.confirmed?.month_revenue,
+        // The live headline already includes insurance payouts credited to this month.
+        month_revenue: rentalHeadlines?.monthly.confirmed_revenue ?? rawAsAny.confirmed?.month_revenue,
         rentals: pickRentals("confirmed"),
       },
     } as any;
