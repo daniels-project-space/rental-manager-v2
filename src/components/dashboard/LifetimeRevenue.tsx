@@ -268,6 +268,9 @@ export function LifetimeRevenue() {
   const hiddenDelta = Math.max(0, lifetimeActualsTotal - totalRevenue);
   const hasLeoTakeoverBoundary = data.some((row) => row.month === LEO_TAKEOVER_MONTH) &&
     data.some((row) => row.month < LEO_TAKEOVER_MONTH);
+  const xAxisTicks = data
+    .filter((row, index) => index % (Math.floor(data.length / 8) + 1) === 0 || row.month === rawCurrentMonth)
+    .map((row) => row.label);
   return (
     <>
       <Card className="relative overflow-hidden min-h-[460px]">
@@ -554,10 +557,11 @@ export function LifetimeRevenue() {
               <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.06)" strokeDasharray="0" />
               <XAxis
                 dataKey="label"
+                ticks={xAxisTicks}
                 tick={{ fill: "#8b8fa3", fontSize: 9 }}
                 axisLine={false}
                 tickLine={false}
-                interval={Math.floor(data.length / 8)}
+                interval={0}
               />
               {/* Left axis: cumulative (green) */}
               <YAxis
