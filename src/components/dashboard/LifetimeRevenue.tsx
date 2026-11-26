@@ -190,6 +190,7 @@ export function LifetimeRevenue() {
   const {
     totalRevenue,
     avgMonthly,
+    allTimeAvgMonthly,
     strongest,
     weakest,
     boostPct,
@@ -204,6 +205,8 @@ export function LifetimeRevenue() {
       return { month: row.month, sum };
     });
     const total = perMonth.filter((m) => m.month <= (rawCurrentMonth ?? "9999-12")).reduce((acc, m) => acc + m.sum, 0);
+    const allTimeMonths = perMonth.filter((m) => m.month <= (rawCurrentMonth ?? "9999-12"));
+    const allTimeAvg = allTimeMonths.length > 0 ? Math.round(total / allTimeMonths.length) : 0;
 
     // Trailing-window boundaries relative to today (auto-shifts each month).
     const now = new Date();
@@ -246,6 +249,7 @@ export function LifetimeRevenue() {
     return {
       totalRevenue: total,
       avgMonthly: avg,
+      allTimeAvgMonthly: allTimeAvg,
       strongest: best,
       weakest: worst,
       boostPct: boost,
@@ -290,6 +294,9 @@ export function LifetimeRevenue() {
               )}
             </span>
             <span>Avg/mo: <b style={{ color: "#e4e6eb" }}>{"£"}{avgMonthly.toLocaleString("en-GB")}</b></span>
+            <span title="Lifetime realized revenue divided by every calendar month in the chart through the current month. Zero-revenue months count; forecasts and Leo's takeover date do not affect this average.">
+              All-time avg/mo: <b style={{ color: "#c4b5fd" }}>{"£"}{allTimeAvgMonthly.toLocaleString("en-GB")}</b>
+            </span>
             {leoTakeover.afterMonths > 0 && (
               <span
                 title={`After Leo uses only ${LEO_TAKEOVER_MONTH} onward (${leoTakeover.afterMonths} completed calendar month${leoTakeover.afterMonths === 1 ? "" : "s"}); the comparison uses the preceding ${leoTakeover.beforeMonths} completed calendar months. Zero-revenue months count. The current partial month is EXCLUDED from both sides — same rule as Avg/mo, Best and Weakest.`}
