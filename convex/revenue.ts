@@ -314,7 +314,7 @@ export const getLifetimeByMonth = query({
         .query("mv_lifetime_revenue")
         .withIndex("by_account", (q) => q.eq("account", accountKey))
         .first();
-      if (cached?.payload?.accountBreakdownVersion === 3) return cached.payload;
+      if (cached?.payload?.accountBreakdownVersion === 4) return cached.payload;
     }
     // AI Boost parameters from settings (no hardcoded fallback — settings row is seeded)
     const settings = await ctx.db.query("settings").first();
@@ -400,7 +400,7 @@ export const getLifetimeByMonth = query({
 
     if (!firstMonth) {
       return {
-        accountBreakdownVersion: 3,
+        accountBreakdownVersion: 4,
         months: [],
         totalRevenue: 0,
         avgMonthly: 0,
@@ -756,26 +756,26 @@ export const getLifetimeByMonth = query({
         if (accountSlug === "dbcinema") {
           // Always incorporate hist.dbcinema so pre-import months surface in the dbcinema-only view.
           dbOrganic = (hist?.dbcinema !== undefined ? hist.dbcinema : 0) + dbRaw;
-          leoOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
+          leoOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = claimsByMonth.get(mo) ?? 0;
         } else if (accountSlug === "dbcinema_web") {
           webOrganic = webRaw;
-          dbOrganic = 0; leoOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
+          dbOrganic = 0; leoOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = claimsByMonth.get(mo) ?? 0;
         } else if (accountSlug === "leo") {
           // Always incorporate hist.leo so pre-import months surface in the leo-only view.
           leoOrganic = (hist?.leo !== undefined ? hist.leo : 0) + leoRaw;
-          dbOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
+          dbOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = claimsByMonth.get(mo) ?? 0;
         } else if (accountSlug === "diogo") {
           // diogo is live-only (no hist column) — realised gross is the value.
           diogoOrganic = diogoRaw;
-          dbOrganic = 0; leoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
+          dbOrganic = 0; leoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = claimsByMonth.get(mo) ?? 0;
         } else if (accountSlug === "daniel") {
           const histDaniel = hist?.daniel !== undefined ? hist.daniel : 0;
           dbOrganic = histDaniel; // surface hist column; live polling is retired
-          leoOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
+          leoOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = claimsByMonth.get(mo) ?? 0;
         } else if (accountSlug === "vertus") {
           const histVertus = hist?.vertus !== undefined ? hist.vertus : 0;
           dbOrganic = histVertus; // surface hist column; live polling is retired
-          leoOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
+          leoOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = claimsByMonth.get(mo) ?? 0;
         }
       } else {
         bookedNextVal = bookedByMonth.get(mo) ?? 0;
@@ -879,7 +879,7 @@ export const getLifetimeByMonth = query({
     const currentMonthTarget = currentProjection.target;
 
     return {
-      accountBreakdownVersion: 3,
+      accountBreakdownVersion: 4,
       months: rows,
       totalRevenue,
       avgMonthly,
