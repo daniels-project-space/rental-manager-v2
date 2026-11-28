@@ -658,6 +658,31 @@ async function scheduleShortNameDerivation(
   }
 }
 
+/**
+ * Hygglo normally sends lender earnings in GBP, but some order payloads encode
+ * this amount in minor units while totalPrice remains in major units. Since an
+ * owner's earnings cannot exceed the booking gross, normalize the clear
+ * pence-shaped case and discard any remaining impossible value so revenue
+ * falls back to the canonical owner share instead of being overstated.
+ */
+function normalizeNetToOwnerGbp(
+  net: number | undefined,
+  gross: number | undefined,
+  orderId: string,
+): number | undefined {
+  if (net === undefined || !Number.isFinite(net)) return undefined;
+  if (gross === undefined || !Number.isFinite(gross) || gross <= 0 || net <= gross) return net;
+
+  const minorUnitValue = Math.round((net / 100) * 100) / 100;
+  if (Number.isInteger(net) && minorUnitValue > 0 && minorUnitValue <= gross) {
+    console.warn(`[hygglo] normalized lender earnings for ${orderId} from minor units: ${net} → £${minorUnitValue.toFixed(2)}`);
+    return minorUnitValue;
+  }
+
+  console.warn(`[hygglo] ignored lender earnings above gross for ${orderId}: net=${net}, gross=${gross}`);
+  return undefined;
+}
+
 // Shared arg shape for both the singleton and batch reservation upsert mutations.
 const upsertOrderArgsFields = {
   account_slug: v.string(),
@@ -927,6 +952,14 @@ async function upsertOrderImpl(
   args: UpsertOrderArgs,
 ): Promise<UpsertImplResult> {
   if (Array.isArray(args.order?.steps)) args = {...args,...quickReplyProof(args.order)};
+  args = {
+    ...args,
+    net_to_owner_gbp: normalizeNetToOwnerGbp(
+      args.net_to_owner_gbp,
+      args.gross_paid_gbp,
+      args.hygglo_order_id,
+    ),
+  };
   const existing = await ctx.db
     .query("reservations")
     .withIndex("by_hygglo_order_id", (q) => q.eq("hygglo_order_id", args.hygglo_order_id))
