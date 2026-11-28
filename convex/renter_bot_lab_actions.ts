@@ -431,7 +431,22 @@ function assertPreparedScenarioLab() {
   }
 }
 
-async function assertLabCatalogReady(ctx: ActionCtx) {
+async function assertLabCatalogReady(ctx: ActionCtx, options: { preparedScenario: boolean }) {
+  // A hosted Lab is deliberately backed by a seeded set of isolated
+  // scenarios. Its authoritative listing snapshot is refreshed per selected
+  // scenario; it must not depend on the local-only full-catalogue import.
+  // Keep the local import requirement for local free-form catalogue testing.
+  if (process.env.RENTER_BOT_LAB_DEPLOYMENT === "hosted") {
+    assertPreparedScenarioLab();
+    if (process.env.RENTER_BOT_LAB_LIVE_CHAT_AUTHORIZED !== "false") {
+      throw new Error("Hosted Lab conversations require real-renter messaging to remain disabled");
+    }
+    if (!options.preparedScenario) {
+      throw new Error("Hosted Lab sessions require a prepared, source-verified rental scenario");
+    }
+    return;
+  }
+
   const catalog = await ctx.runQuery(internal.renter_bot_lab_local_setup.getCatalogStatus, {});
   const age = catalog.fetched_at == null ? Number.POSITIVE_INFINITY : Date.now() - catalog.fetched_at;
   if (catalog.status !== "ready" || !Number.isFinite(age) || age < -300_000 || age > 48 * 60 * 60 * 1000 ||
@@ -768,7 +783,7 @@ export const startPreparedScenario = action({
     context: { scenarioTitle: string; displayName: string; items: string[]; examplePrompts: string[]; initialBotMessage?: string };
   }> => {
     assertPreparedScenarioLab();
-    await assertLabCatalogReady(ctx);
+    await assertLabCatalogReady(ctx, { preparedScenario: true });
     const scenario = renterBotLabScenario(scenarioId);
     if (!scenario) throw new Error("Unknown prepared Lab example");
     if (scenario.accountSlug === "diogo") {
@@ -857,7 +872,7 @@ export const startLiveSession = action({
     };
   }> => {
     assertPreparedScenarioLab();
-    await assertLabCatalogReady(ctx);
+    await assertLabCatalogReady(ctx, { preparedScenario: args.scenarioId !== undefined });
     const threadId = `${PREFIX}lab-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     let itemNames = args.items ?? [];
     let priceGbp = args.priceGbp;
@@ -1363,7 +1378,7 @@ const runLabTurnValidators = {
 async function executeLabTurn(ctx: ActionCtx, args: RunLabTurnArgs): Promise<LabTurnExecutionResult> {
   assertLabApiAuthorization(args.auth_marker);
   if (args.readinessProbe === true) return { status: "ready" };
-  await assertLabCatalogReady(ctx);
+  await assertLabCatalogReady(ctx, { preparedScenario: args.threadId.startsWith(PREFIX) });
   if (!args.threadId.startsWith(PREFIX)) throw new Error("Only isolated Lab threads accept generated turns");
   if (!/^[A-Za-z0-9_-]{8,96}$/.test(args.turnId)) throw new Error("Invalid Lab turn id");
   if (!args.text.trim() || args.text.length > 6000) throw new Error("Test message must contain 1–6000 characters");

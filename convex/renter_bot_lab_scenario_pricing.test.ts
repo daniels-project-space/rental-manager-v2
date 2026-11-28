@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getFunctionName } from "convex/server";
 import { mapPreparedComponentsToLabIds, matchesPreparedListing, preparedListingPrice, preparedOrderPrice } from "./lib/renter_bot_lab_listing_snapshot";
 import { summarise, seed } from "./renter_bot_lab_order";
-import { startLiveSession, startPreparedScenario } from "./renter_bot_lab_actions";
+import { __service_runTestTurn, startLiveSession, startPreparedScenario } from "./renter_bot_lab_actions";
 import { verificationFailureReply } from "./lib/verification_failure";
 import { renterBotLabScenario } from "./lib/renter_bot_lab_scenarios";
 
@@ -30,6 +30,7 @@ const fetchDiogoWithoutExactMapping = (listing: typeof product) => vi.fn(async (
   return response([listing]);
 });
 
+beforeEach(() => { vi.stubEnv("RENTER_BOT_LAB_DEPLOYMENT", "local"); });
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("prepared Lab listing prices", () => {
@@ -112,6 +113,8 @@ describe("prepared Lab listing prices", () => {
 
   it.each(["prepared", "live"] as const)("hydrates the full Diogo listing through the %s Lab entry path", async (entry) => {
     vi.stubEnv("RENTER_BOT_LAB_SCENARIO_SEEDING", "enabled");
+    vi.stubEnv("RENTER_BOT_LAB_DEPLOYMENT", "hosted");
+    vi.stubEnv("RENTER_BOT_LAB_LIVE_CHAT_AUTHORIZED", "false");
     vi.stubEnv("RENTAL_MANAGER_ACCESS", "open");
     vi.spyOn(Date, "now").mockReturnValue(now);
     const diogoFx3 = { ...product, accountSlug: "diogo", productId: 1173763,
@@ -121,8 +124,7 @@ describe("prepared Lab listing prices", () => {
       prices: [{ days: 1, pricePerDay: 45 }] };
     vi.stubGlobal("fetch", fetchDiogoWithoutExactMapping(diogoFx3));
     const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
-    const ctx = { runQuery: vi.fn(async () => ({ status: "ready", fetched_at: now, inventory_count: 108, listing_count: 1165,
-      eligible_listing_count: 109, blocked_listing_count: 1056, source_receipts: [] })), runMutation: vi.fn(async (ref, args) => {
+    const ctx = { runQuery: vi.fn(async () => { throw new Error("hosted scenarios must not query the local catalogue importer"); }), runMutation: vi.fn(async (ref, args) => {
       const name = getFunctionName(ref); calls.push({ name, args });
       if (name === "renter_bot_lab_actions:ensurePreparedScenarioItem") return "Sony FX3";
       if (name === "renter_bot_lab_actions:ensurePreparedListing") return true;
@@ -139,6 +141,62 @@ describe("prepared Lab listing prices", () => {
     const orderArgs = calls.find(call => call.name === "renter_bot_lab_order:seed")?.args;
     expect(orderArgs?.prepared_price).toMatchObject({ product_id: 1173763, daily_price_gbp: 45 });
     expect(orderArgs?.prepared_price).not.toHaveProperty("listing_description");
+    expect(ctx.runQuery).not.toHaveBeenCalled();
+  });
+
+  it("lets a hosted isolated turn reach its session check without consulting local catalogue sync", async () => {
+    const marker = `lab-auth-v1:${"0".repeat(64)}`;
+    vi.stubEnv("RENTER_BOT_LAB_DEPLOYMENT", "hosted");
+    vi.stubEnv("RENTER_BOT_LAB_LIVE_CHAT_AUTHORIZED", "false");
+    vi.stubEnv("RENTER_BOT_LAB_API_SECRET", "isolated-test-secret");
+    vi.stubEnv("RENTER_BOT_LAB_AUTH_CONFIG_VERSION", marker);
+    vi.stubEnv("RENTER_BOT_LAB_SCENARIO_SEEDING", "enabled");
+    const ctx = { runQuery: vi.fn(async () => null), runMutation: vi.fn() };
+
+    await expect((__service_runTestTurn as any)._handler(ctx, {
+      auth_marker: marker,
+      threadId: "__probe__lab-hosted-turn",
+      accountSlug: "dbcinema",
+      text: "Can I collect it in Shoreditch?",
+      turnId: "hosted-turn-0001",
+      readinessProbe: false,
+    })).rejects.toThrow("Lab session/account mismatch");
+    expect(ctx.runQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("still requires a fresh full catalogue for local Lab sessions", async () => {
+    vi.stubEnv("RENTER_BOT_LAB_DEPLOYMENT", "local");
+    vi.stubEnv("RENTER_BOT_LAB_SCENARIO_SEEDING", "enabled");
+    const ctx = { runQuery: vi.fn(async () => ({ status: "missing", fetched_at: null, inventory_count: 0, listing_count: 0 })),
+      runMutation: vi.fn() };
+    await expect((startLiveSession as any)._handler(ctx, {
+      accountSlug: "dbcinema", scenarioId: "bmpcc-6k-full-frame-kit",
+    })).rejects.toThrow("isolated Lab catalogue is missing, stale, or still syncing");
+    expect(ctx.runQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("continues blocking hosted chat if real-renter messaging is ever enabled", async () => {
+    vi.stubEnv("RENTER_BOT_LAB_DEPLOYMENT", "hosted");
+    vi.stubEnv("RENTER_BOT_LAB_LIVE_CHAT_AUTHORIZED", "true");
+    vi.stubEnv("RENTER_BOT_LAB_SCENARIO_SEEDING", "enabled");
+    const ctx = { runQuery: vi.fn(), runMutation: vi.fn() };
+    await expect((startLiveSession as any)._handler(ctx, {
+      accountSlug: "dbcinema", scenarioId: "bmpcc-6k-full-frame-kit",
+    })).rejects.toThrow("Hosted Lab conversations require real-renter messaging to remain disabled");
+    expect(ctx.runQuery).not.toHaveBeenCalled();
+    expect(ctx.runMutation).not.toHaveBeenCalled();
+  });
+
+  it("does not let hosted mode open an ad hoc session without source-verified scenario data", async () => {
+    vi.stubEnv("RENTER_BOT_LAB_DEPLOYMENT", "hosted");
+    vi.stubEnv("RENTER_BOT_LAB_LIVE_CHAT_AUTHORIZED", "false");
+    vi.stubEnv("RENTER_BOT_LAB_SCENARIO_SEEDING", "enabled");
+    const ctx = { runQuery: vi.fn(), runMutation: vi.fn() };
+    await expect((startLiveSession as any)._handler(ctx, {
+      accountSlug: "dbcinema", items: ["BMPCC 6K Full Frame"], startDate: "2026-11-28", endDate: "2026-11-28",
+    })).rejects.toThrow("Hosted Lab sessions require a prepared, source-verified rental scenario");
+    expect(ctx.runQuery).not.toHaveBeenCalled();
+    expect(ctx.runMutation).not.toHaveBeenCalled();
   });
 
   it("reads only the selected account and product's fresh listing tiers", async () => {
