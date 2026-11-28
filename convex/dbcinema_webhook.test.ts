@@ -58,6 +58,24 @@ it('accepts verification only through the secret bridge and applies a new revisi
 });
 
 describe('actual website producer -> authenticated receiver -> native stock inquiry',()=>{
+ it('records a paid Didit hold as pending, keeps its exact stock reserved, and never treats it as confirmed',async()=>{
+  vi.stubEnv('DBCINEMA_WEBHOOK_SECRET','receipt-fixture');const{ctx,rows}=fixture();
+  const itemId=await ctx.db.insert('items',{name_canonical:'Sony FX3',qty:1,status:'active',is_marketing_only:false});
+  const lookup=async()=>stockForItem(await loadStockSources(ctx),rows.get(itemId),{item_name:'Sony FX3',start_date:'2035-01-01',end_date:'2035-01-01',pickup_time:'10:00',return_time:'11:00'} as any);
+  const pending={...pipeline.paid,status:'pending_verification',checkoutPaidAt:1000,verification:{...pipeline.paid.verification,provider:'didit'}};
+  for(const bad of [{...pending,checkoutPaidAt:null},{...pending,physicalReservations:undefined},{...pending,physicalReservations:[]},{...pending,verification:{...pending.verification,provider:'stripe'}}]){
+   expect((await invoke(ctx,request(bad))).status).toBe(500);expect((await lookup()).free_units).toBe(1);
+  }
+  expect(await(await invoke(ctx,request(pending))).json()).toMatchObject({outcome:'applied',appliedRevision:1});
+  const row=()=>[...rows.values()].find(r=>r.table==='reservations');
+  expect(row()).toMatchObject({status:'pending_review',booking_status:'pending_verification',order_step:'VERIFIED'});
+  expect((await lookup()).free_units).toBe(0);
+  expect(await(await invoke(ctx,request(pending))).json()).toMatchObject({outcome:'unchanged'});
+  const rejected={...pending,revision:2,verification:{...pending.verification,status:'rejected'},physicalReservations:[]};
+  expect(await(await invoke(ctx,request(rejected))).json()).toMatchObject({outcome:'applied'});
+  expect(row().status).toBe('pending_review');expect((await lookup()).free_units).toBe(1);
+  expect(await(await invoke(ctx,request(pending))).json()).toMatchObject({outcome:'stale'});expect((await lookup()).free_units).toBe(1);
+ });
  it('uses exact paid physical allocation before verification, excludes cash from income, ignores repeats/stale events and releases returned gear',async()=>{
   vi.stubEnv('DBCINEMA_WEBHOOK_SECRET','receipt-fixture');const{ctx,rows}=fixture();
   const itemId=await ctx.db.insert('items',{name_canonical:'Sony FX3',qty:1,status:'active',is_marketing_only:false});expect(itemId).toBe('items:1');

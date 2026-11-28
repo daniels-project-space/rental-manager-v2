@@ -5,8 +5,10 @@ import { websiteCaseView } from "./lib/websiteCases";
 import { mutation, query } from "./owner_functions";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { renterMaps, renterForReservation } from "./lib/renters";
+import { ACCOUNT_SLUGS } from "./lib/reservations/accounts";
 
 // Canonical case pipeline — MUST match InsuranceClaimsDrawer.PIPELINE.
 const STAGES = [
@@ -21,13 +23,21 @@ type Stage = (typeof STAGES)[number] | "denied" | "closed";
 // Legacy rows stored progress in `status`; derive a stage for them.
 function stageOf(c: { stage?: string; status?: string }): Stage {
   if (c.stage === "closed" || c.status === "closed") return "closed";
-  if (c.stage && (STAGES as readonly string[]).includes(c.stage)) return c.stage as Stage;
   if (c.stage === "denied" || c.status === "denied") return "denied";
   if (c.status === "settled" || c.status === "added_to_revenue") return "added_to_revenue";
+  if (c.stage && (STAGES as readonly string[]).includes(c.stage)) return c.stage as Stage;
   return "case_opened";
 }
 const statusForStage = (s: Stage): string =>
   s === "closed" ? "closed" : s === "denied" ? "denied" : s === "added_to_revenue" ? "settled" : "open";
+
+async function refreshClaimRevenue(ctx: MutationCtx, accountSlug?: string) {
+  await ctx.scheduler.runAfter(0, internal.mv.lifetime_revenue.refresh, {});
+  const hasAccount = !!accountSlug && (ACCOUNT_SLUGS as readonly string[]).includes(accountSlug);
+  await ctx.scheduler.runAfter(0, internal.mv.stats_drawer.refresh, hasAccount
+    ? { force: true, scope: "all_and_account", accountSlug }
+    : { force: true, scope: "all" });
+}
 
 /** W22 Insurance/Case claims — list recent, optional account filter. */
 export const list = query({
@@ -66,6 +76,8 @@ export const create = mutation({
     description: v.optional(v.string()),
     status: v.optional(v.string()),
     stage: v.optional(v.string()),
+    credited_to_month: v.optional(v.string()),
+    payout_amount_gbp: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     let accountId: Id<"accounts"> | undefined;
@@ -73,7 +85,19 @@ export const create = mutation({
       const acc = await ctx.db.query("accounts").withIndex("by_slug", (q) => q.eq("slug", args.account_slug as string)).first();
       accountId = acc?._id;
     }
-    const stage = (args.stage as Stage) ?? "case_opened";
+    const requestedStatus = args.status ?? "open";
+    const stage = (args.stage as Stage) ?? (
+      requestedStatus === "settled" ? "added_to_revenue" :
+      requestedStatus === "denied" ? "denied" : "case_opened"
+    );
+    const isSettled = stage === "added_to_revenue";
+    if (isSettled && (
+      !args.credited_to_month || !/^\d{4}-(0[1-9]|1[0-2])$/.test(args.credited_to_month) ||
+      !Number.isFinite(args.payout_amount_gbp) || (args.payout_amount_gbp ?? 0) <= 0
+    )) {
+      throw Error("A settled claim needs a credited month and a positive payout amount");
+    }
+    const now = Date.now();
     const id = await insertStockInput(ctx, "insurance_claims", {
       account_slug: args.account_slug,
       account_id: accountId,
@@ -82,10 +106,25 @@ export const create = mutation({
       amount_gbp: args.amount_gbp,
       claim_date: args.claim_date,
       description: args.description,
-      status: args.status ?? statusForStage(stage),
+      status: statusForStage(stage),
       stage,
-      created_at: Date.now(),
+      ...(isSettled ? {
+        credited_to_month: args.credited_to_month,
+        payout_amount_gbp: args.payout_amount_gbp,
+        credited_at: now,
+      } : {}),
+      created_at: now,
     });
+    await ctx.db.insert("audit_log", {
+      table_name: "insurance_claims",
+      actor: "owner",
+      op: "insert",
+      count: 1,
+      source_file: "insurance_claims.create",
+      note: `Created ${statusForStage(stage)} claim ${id} for £${args.amount_gbp.toFixed(2)}${isSettled ? `; £${args.payout_amount_gbp!.toFixed(2)} credited to ${args.credited_to_month}` : ""}`,
+      ts: now,
+    });
+    if (isSettled) await refreshClaimRevenue(ctx, args.account_slug);
     return { ok: true, id };
   },
 });
@@ -267,13 +306,28 @@ export const markDenied = mutation({
 export const creditToRevenue = mutation({
   args: { id: v.id("insurance_claims"), credited_to_month: v.string(), payout_amount_gbp: v.number() },
   handler: async (ctx, { id, credited_to_month, payout_amount_gbp }) => {
+    const row = await ctx.db.get(id);
+    if (!row) throw Error("Claim not found");
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(credited_to_month)) throw Error("Credited month must be YYYY-MM");
+    if (!Number.isFinite(payout_amount_gbp) || payout_amount_gbp <= 0) throw Error("Payout must be greater than zero");
+    const now = Date.now();
     await patchStockInput(ctx, id, {
       stage: "added_to_revenue",
       status: "settled",
       credited_to_month,
       payout_amount_gbp,
-      credited_at: Date.now(),
+      credited_at: now,
     });
+    await ctx.db.insert("audit_log", {
+      table_name: "insurance_claims",
+      actor: "owner",
+      op: "update",
+      count: 1,
+      source_file: "insurance_claims.creditToRevenue",
+      note: `Credited claim ${id}: £${payout_amount_gbp.toFixed(2)} to ${credited_to_month}`,
+      ts: now,
+    });
+    await refreshClaimRevenue(ctx, row.account_slug);
   },
 });
 

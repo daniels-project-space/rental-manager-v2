@@ -31,6 +31,8 @@ export function ClaimsRecordingModal({ onClose }: { onClose: () => void }) {
   );
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState<ClaimStatus>("open");
+  const [creditedMonth, setCreditedMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [payoutAmountGbp, setPayoutAmountGbp] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -44,6 +46,11 @@ export function ClaimsRecordingModal({ onClose }: { onClose: () => void }) {
       setError("Enter a claim date");
       return;
     }
+    const payout = payoutAmountGbp ? parseFloat(payoutAmountGbp) : amount;
+    if (status === "settled" && (!/^\d{4}-(0[1-9]|1[0-2])$/.test(creditedMonth) || !Number.isFinite(payout) || payout <= 0)) {
+      setError("Enter a valid credited month and payout amount");
+      return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -54,6 +61,10 @@ export function ClaimsRecordingModal({ onClose }: { onClose: () => void }) {
         claim_date: claimDate,
         description: description || undefined,
         status,
+        ...(status === "settled" ? {
+          credited_to_month: creditedMonth,
+          payout_amount_gbp: payout,
+        } : {}),
       });
       onClose();
     } catch (e) {
@@ -122,6 +133,34 @@ export function ClaimsRecordingModal({ onClose }: { onClose: () => void }) {
             ))}
           </select>
         </div>
+
+        {status === "settled" && (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-[#8b8fa3] mb-1 block">Credited month</label>
+              <input
+                type="month"
+                value={creditedMonth}
+                onChange={(e) => setCreditedMonth(e.target.value)}
+                className="w-full text-sm rounded-lg px-3 py-2"
+                style={INPUT_STYLE}
+              />
+            </div>
+            <div>
+              <label className="text-xs text-[#8b8fa3] mb-1 block">Payout received (£)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder={amountGbp || "0.00"}
+                value={payoutAmountGbp}
+                onChange={(e) => setPayoutAmountGbp(e.target.value)}
+                className="w-full text-sm rounded-lg px-3 py-2"
+                style={INPUT_STYLE}
+              />
+            </div>
+          </div>
+        )}
 
         <div>
           <label className="text-xs text-[#8b8fa3] mb-1 block">Description (optional)</label>

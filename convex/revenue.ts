@@ -3,7 +3,7 @@ import { loadPricingRows } from "./lib/pricing_input_cache";
 import { query, internalQueryOf } from "./owner_functions";
 import { v } from "convex/values";
 import { SLOW_WIDGET_MAX_AGE_MS } from "./lib/widget_mv";
-import { dedupByLogicalRental, effectiveDate, isConfirmedWithDates, isLive, isPendingVerification, netOf } from "./lib/reservations/predicates";
+import { dedupByLogicalRental, effectiveDate, isConfirmedWithDates, isLive, isPaidWebsiteRevenue, isPendingVerification, netOf, revenueDate } from "./lib/reservations/predicates";
 import { realisedMonthRevenue, rentalMonthProjectionInputs, isRealisedMonthRow } from "./lib/reservations/monthRevenue";
 import { ACCOUNT_SLUGS } from "./lib/reservations/accounts";
 import { projectCurrentMonth, previousMonthKeys, trailingBaseline } from "./lib/month_projection";
@@ -314,7 +314,7 @@ export const getLifetimeByMonth = query({
         .query("mv_lifetime_revenue")
         .withIndex("by_account", (q) => q.eq("account", accountKey))
         .first();
-      if (cached?.payload?.accountBreakdownVersion === 2) return cached.payload;
+      if (cached?.payload?.accountBreakdownVersion === 4) return cached.payload;
     }
     // AI Boost parameters from settings (no hardcoded fallback — settings row is seeded)
     const settings = await ctx.db.query("settings").first();
@@ -381,9 +381,14 @@ export const getLifetimeByMonth = query({
     // Determine the earliest month across live reservations AND historical data
     const histMonths = [...histByMonth.keys()].sort();
     const firstHistMonth = histMonths[0] ?? null;
-    const firstReservationDate = accountSlug
-      ? firstGlobalReservation?.start_date
-      : allDates[0];
+    const reservationDates = [
+      ...(accountSlug && firstGlobalReservation?.start_date ? [firstGlobalReservation.start_date] : []),
+      ...(allDates[0] ? [allDates[0]] : []),
+      ...allReservations
+        .filter((r) => isPaidWebsiteRevenue(r as any) && !!r.revenue_date)
+        .map((r) => r.revenue_date as string),
+    ].sort();
+    const firstReservationDate = reservationDates[0];
     const firstResMonth = firstReservationDate
       ? firstReservationDate.slice(0, 7)
       : null;
@@ -395,7 +400,7 @@ export const getLifetimeByMonth = query({
 
     if (!firstMonth) {
       return {
-        accountBreakdownVersion: 2,
+        accountBreakdownVersion: 4,
         months: [],
         totalRevenue: 0,
         avgMonthly: 0,
@@ -468,7 +473,7 @@ export const getLifetimeByMonth = query({
     const dedupedFiltered = dedupByLogicalRental(filtered as any) as typeof filtered;
 
     for (const res of dedupedFiltered) {
-      const dateStr = effectiveDate(res as any);
+      const dateStr = revenueDate(res as any);
       if (!dateStr) continue;
       if (res.is_obsolete) continue;
       if (res.status === "cancelled" || res.status === "declined") continue;
@@ -477,7 +482,8 @@ export const getLifetimeByMonth = query({
       // Pending (renter paid, doc verification in flight → order_step==="VERIFIED")
       // is shown ONLY in the next-month "Pending" overlay, never as historical
       // revenue. Standardised on canonical isPendingVerification (R2, 2026-05-22).
-      const isPending = isPendingVerification(res as any);
+      const paidWebsiteRevenue = isPaidWebsiteRevenue(res as any) && !!res.revenue_date;
+      const isPending = isPendingVerification(res as any) && !paidWebsiteRevenue;
       const amount = res.net_to_owner_gbp ?? 0;
       const slug = res.account_slug ?? "dbcinema";
       const isFutureRes = dateStr.slice(0, 7) > currentMonth;
@@ -604,11 +610,11 @@ export const getLifetimeByMonth = query({
     // This array is what tieredCreditTotals classifies per month.
     const resByMonth = new Map<string, Array<typeof dedupedFiltered[number]>>();
     for (const res of dedupedFiltered) {
-      const dateStr = effectiveDate(res as any);
+      const dateStr = revenueDate(res as any);
       if (!dateStr) continue;
       if (res.is_obsolete) continue;
       if (res.status === "cancelled" || res.status === "declined") continue;
-      if (isPendingVerification(res as any)) continue;
+      if (isPendingVerification(res as any) && !(isPaidWebsiteRevenue(res as any) && !!res.revenue_date)) continue;
       const mo = dateStr.slice(0, 7);
       if (mo > currentMonth) continue;
       let arr = resByMonth.get(mo);
@@ -750,26 +756,26 @@ export const getLifetimeByMonth = query({
         if (accountSlug === "dbcinema") {
           // Always incorporate hist.dbcinema so pre-import months surface in the dbcinema-only view.
           dbOrganic = (hist?.dbcinema !== undefined ? hist.dbcinema : 0) + dbRaw;
-          leoOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
+          leoOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = claimsByMonth.get(mo) ?? 0;
         } else if (accountSlug === "dbcinema_web") {
           webOrganic = webRaw;
-          dbOrganic = 0; leoOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
+          dbOrganic = 0; leoOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = claimsByMonth.get(mo) ?? 0;
         } else if (accountSlug === "leo") {
           // Always incorporate hist.leo so pre-import months surface in the leo-only view.
           leoOrganic = (hist?.leo !== undefined ? hist.leo : 0) + leoRaw;
-          dbOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
+          dbOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = claimsByMonth.get(mo) ?? 0;
         } else if (accountSlug === "diogo") {
           // diogo is live-only (no hist column) — realised gross is the value.
           diogoOrganic = diogoRaw;
-          dbOrganic = 0; leoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
+          dbOrganic = 0; leoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = claimsByMonth.get(mo) ?? 0;
         } else if (accountSlug === "daniel") {
           const histDaniel = hist?.daniel !== undefined ? hist.daniel : 0;
           dbOrganic = histDaniel; // surface hist column; live polling is retired
-          leoOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
+          leoOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = claimsByMonth.get(mo) ?? 0;
         } else if (accountSlug === "vertus") {
           const histVertus = hist?.vertus !== undefined ? hist.vertus : 0;
           dbOrganic = histVertus; // surface hist column; live polling is retired
-          leoOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = 0;
+          leoOrganic = 0; diogoOrganic = 0; danielOrganic = 0; vertusOrganic = 0; damageClaims = claimsByMonth.get(mo) ?? 0;
         }
       } else {
         bookedNextVal = bookedByMonth.get(mo) ?? 0;
@@ -782,11 +788,11 @@ export const getLifetimeByMonth = query({
 
       const count = !isFuture
         ? dedupedFiltered.filter((r) => {
-            const d = effectiveDate(r as any);
+            const d = revenueDate(r as any);
             if (!d || d.slice(0, 7) !== mo) return false;
             if (r.is_obsolete) return false;
             if (r.status === "cancelled" || r.status === "declined") return false;
-            if (isPendingVerification(r as any)) return false;
+            if (isPendingVerification(r as any) && !(isPaidWebsiteRevenue(r as any) && !!r.revenue_date)) return false;
             return (r.gross_paid_gbp ?? 0) > 0 || (r.net_to_owner_gbp ?? 0) > 0;
           }).length
         : 0;
@@ -873,7 +879,7 @@ export const getLifetimeByMonth = query({
     const currentMonthTarget = currentProjection.target;
 
     return {
-      accountBreakdownVersion: 2,
+      accountBreakdownVersion: 4,
       months: rows,
       totalRevenue,
       avgMonthly,
