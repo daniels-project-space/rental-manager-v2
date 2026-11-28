@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { BACKEND_URL, sourceCommit, runInstalledTool } from "./backend-publisher.mjs";
 import { syncRenterBotLabBackendRevision } from "../src/lib/renter-bot-lab-backend-revision.mjs";
+import { hostedRenterBotLabApiBase } from "./renter-bot-lab-api-base.mjs";
 
 const labAuthMarker = "RENTER_BOT_LAB_AUTH_CONFIG_VERSION";
 
@@ -81,10 +82,12 @@ if (production) {
   // forces a management API lookup and bypasses the build's deploy-key auth.
   const labEnv = { ...process.env, CONVEX_DEPLOY_KEY: labDeployKey };
   delete labEnv.CONVEX_DEPLOYMENT;
+  const labApiBase = hostedRenterBotLabApiBase(process.env);
   // Stamp the exact Convex source snapshot that is about to be published to
   // the isolated Lab backend so the page can reject stale backend code.
   syncRenterBotLabBackendRevision(process.cwd());
   await runInstalledTool("convex", ["env", "set", "RENTER_BOT_LAB_SCENARIO_SEEDING", "enabled"], labEnv);
+  await runInstalledTool("convex", ["env", "set", "RENTER_BOT_LAB_API_BASE_URL", labApiBase], labEnv);
   await ensureLabDraftApiAuth(labEnv);
   await runInstalledTool("convex", ["deploy", "--typecheck", "disable", "--codegen", "disable", "--message", `Renter Bot Lab ${sourceCommit()}`], labEnv);
   // Reconcile legacy-imported policy rows after deploying the function code.

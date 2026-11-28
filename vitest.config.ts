@@ -35,6 +35,7 @@ export default defineConfig({
       "convex/replyInbox_actions.runtime.test.ts",
       "convex/renter_bot_harness.retry.test.ts",
       "scripts/renter-bot-lab-local-process.test.mjs",
+      "scripts/renter-bot-lab-api-base.test.mjs",
       "convex/lib/renter_bot_draft_endpoint.test.ts",
       "src/lib/render/asset-cache.test.ts",
       "convex/deployment_identity.test.ts",
