@@ -104,9 +104,13 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.met
   console.log(JSON.stringify(result));
   if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, ["website", "backend", "trigger"].map(key => `${key}=${result[key]}\n`).join(""));
   if (process.argv.includes("--vercel-ignore")) {
-    // Until the independent backend publisher is qualified and enabled, retain
-    // existing backend publication through the production Vercel build.
-    const split = process.env.RM_SPLIT_DEPLOYMENTS === "enabled";
+    // The independent backend publisher only runs for protected GitHub main.
+    // Rental Manager's Vercel production branch is `vercel-production`; its
+    // build publishes the isolated Lab backend, so backend-only changes there
+    // must still build even when the team's split-publisher flag is enabled.
+    const split = process.env.RM_SPLIT_DEPLOYMENTS === "enabled" &&
+      process.env.VERCEL_ENV === "production" &&
+      process.env.VERCEL_GIT_COMMIT_REF === "main";
     process.exit(process.env.VERCEL_FORCE_BUILD === "1" || result.website || result.backend && !split ? 1 : 0);
   }
 }

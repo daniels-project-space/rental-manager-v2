@@ -93,10 +93,21 @@ test("real Git history, missing history, force override and pre-install CLI", ()
     assert.equal(impactSince("f".repeat(40), root).website, true);
     const script = path.resolve("scripts/deployment-impact.mjs");
     const run = env => spawnSync(process.execPath, [script, "--vercel-ignore"], { cwd: root, env: { ...process.env, VERCEL_GIT_PREVIOUS_SHA: base, ...env }, encoding: "utf8" });
-    assert.equal(run({ RM_SPLIT_DEPLOYMENTS: "enabled", VERCEL_FORCE_BUILD: "0" }).status, 0);
-    assert.equal(run({ RM_SPLIT_DEPLOYMENTS: "disabled", VERCEL_FORCE_BUILD: "0" }).status, 1);
-    assert.equal(run({ RM_SPLIT_DEPLOYMENTS: "enabled", VERCEL_FORCE_BUILD: "1" }).status, 1);
-    assert.equal(run({ RM_SPLIT_DEPLOYMENTS: "enabled", VERCEL_GIT_PREVIOUS_SHA: "" }).status, 1);
+    assert.equal(run({ RM_SPLIT_DEPLOYMENTS: "enabled", VERCEL_ENV: "production", VERCEL_GIT_COMMIT_REF: "main", VERCEL_FORCE_BUILD: "0" }).status, 0,
+      "protected-main's independent backend publisher can skip an unchanged website build");
+    assert.equal(run({ RM_SPLIT_DEPLOYMENTS: "enabled", VERCEL_ENV: "production", VERCEL_GIT_COMMIT_REF: "vercel-production", VERCEL_FORCE_BUILD: "0" }).status, 1,
+      "Vercel production must publish backend-only changes on vercel-production");
+    assert.equal(run({ RM_SPLIT_DEPLOYMENTS: "enabled", VERCEL_ENV: "production", VERCEL_FORCE_BUILD: "", VERCEL_GIT_COMMIT_REF: "" }).status, 1,
+      "missing branch identity fails safe and builds");
+    assert.equal(run({ RM_SPLIT_DEPLOYMENTS: "disabled", VERCEL_ENV: "production", VERCEL_GIT_COMMIT_REF: "main", VERCEL_FORCE_BUILD: "0" }).status, 1);
+    assert.equal(run({ RM_SPLIT_DEPLOYMENTS: "enabled", VERCEL_ENV: "production", VERCEL_GIT_COMMIT_REF: "main", VERCEL_FORCE_BUILD: "1" }).status, 1);
+    assert.equal(run({ RM_SPLIT_DEPLOYMENTS: "enabled", VERCEL_ENV: "production", VERCEL_GIT_COMMIT_REF: "vercel-production", VERCEL_GIT_PREVIOUS_SHA: "" }).status, 1);
+
+    const runtimeHead = git("rev-parse", "HEAD");
+    fs.writeFileSync(path.join(root, "README.md"), "Metadata only\n");
+    git("add", "."); git("commit", "-qm", "Documentation only");
+    assert.equal(run({ RM_SPLIT_DEPLOYMENTS: "enabled", VERCEL_ENV: "production", VERCEL_GIT_COMMIT_REF: "vercel-production", VERCEL_GIT_PREVIOUS_SHA: runtimeHead, VERCEL_FORCE_BUILD: "0" }).status, 0,
+      "metadata-only changes can still skip the Vercel build");
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 test("queued publishers tolerate unrelated newer commits and reject newer layer inputs", () => {
