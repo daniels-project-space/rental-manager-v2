@@ -54,6 +54,57 @@ describe("a dated single-item rental total", () => {
   expect(check(text,[{...quote,quantity:2}],scope)).not.toEqual([]);
  });
 });
+describe("a quoted date change with a parenthesized comparison", () => {
+ const scope:StockRequest={start_date:"2026-12-11",end_date:"2026-12-11",items:[{name:"BMPCC 6K Full Frame",quantity:1}]};
+ const proposal:PriceEvidence={names:[],kind:"basket",days:2,total_gbp:100,start_date:"2026-12-12",end_date:"2026-12-13",
+  items:[{name:"BMPCC 6K Full Frame",quantity:1}],call_id:"native-date-proposal",source:"native_lab_date_proposal",
+  date_proposal:{before_context_key:"current-booking",from_start_date:scope.start_date!,from_end_date:scope.end_date!,base_total_gbp:50,physical_identity_key:"same-physical-basket"}};
+ const base:PriceEvidence={names:["BMPCC 6K Full Frame"],kind:"basket",days:1,total_gbp:50,start_date:scope.start_date!,end_date:scope.end_date!,
+  items:[{name:"BMPCC 6K Full Frame",quantity:1}],call_id:"current-booking",source:"lab_order_quote"};
+ const baseLine:PriceEvidence={names:["BMPCC 6K Full Frame"],kind:"rental",days:1,quantity:1,total_gbp:50,start_date:scope.start_date!,end_date:scope.end_date!,
+  call_id:"current-booking:line",source:"lab_order_quote"};
+ const text="Moving your BMPCC 6K Full Frame rental to 12–13 December (2 days) is available and would bring the total to £100 (a £50 difference from your current £50 total). Would you like me to update the request to those dates?";
+ it("treats the parenthetical old/new amount as a comparison and accepts the exact native date quote",()=>{
+  expect(check(text,[base,baseLine,proposal],scope)).toEqual([]);
+ });
+ it("still rejects a changed proposed total or date span",()=>{
+  expect(check(text.replace("£100","£101"),[base,baseLine,proposal],scope)).not.toEqual([]);
+  expect(check(text.replace("12–13 December","13–14 December"),[base,baseLine,proposal],scope)).not.toEqual([]);
+ });
+ it("grounds a quoted date-change increase to the exact old and new totals",()=>{
+  const actual="Moving the BMPCC 6K Full Frame kit to 12–13 December (2 days) would bring the rental total to £100 (an increase of £50 from the current 1-day total). The kit is fully available for those dates.";
+  expect(check(actual,[base,baseLine,proposal],scope)).toEqual([]);
+  const proposedScope={...scope,start_date:"2026-12-12",end_date:"2026-12-13"};
+  expect(check(actual,[base,baseLine,proposal],proposedScope)).toEqual([]);
+  expect(check(actual.replace("increase of £50","increase of £49"),[base,baseLine,proposal],scope)).not.toEqual([]);
+  expect(check(actual.replace("increase of £50","increase of £49"),[base,baseLine,proposal],proposedScope)).not.toEqual([]);
+  expect(check(actual,[baseLine,proposal],proposedScope)).not.toEqual([]);
+ });
+ it("grounds the exact natural-language date-change comparison returned by the Lab retry",()=>{
+  const actual="Changing your request for the BMPCC 6K Full Frame kit to 12–13 December (2 days) would bring the total to £100, which is a £50 difference from your current £50 total. Let me know if you would like me to go ahead and update the dates for you.";
+  const proposedScope={...scope,start_date:"2026-12-12",end_date:"2026-12-13"};
+  expect(check(actual,[base,baseLine,proposal],proposedScope)).toEqual([]);
+  expect(check(actual.replace("£50 difference","£49 difference"),[base,baseLine,proposal],proposedScope)).not.toEqual([]);
+  expect(check(actual.replace("current £50 total","current £51 total"),[base,baseLine,proposal],proposedScope)).not.toEqual([]);
+  expect(check(actual,[baseLine,proposal],proposedScope)).not.toEqual([]);
+ });
+ it("accepts a date-change delta phrased as a difference from the current request",()=>{
+  const actual="Changing the dates to 12–13 December (2 days) for the BMPCC 6K Full Frame kit would bring the revised total to £100 (a difference of £50 from your current 1-day request). Let me know if you would like me to go ahead and update the dates on your request.";
+  const proposedScope={...scope,start_date:"2026-12-12",end_date:"2026-12-13"};
+  expect(check(actual,[base,baseLine,proposal],proposedScope)).toEqual([]);
+  for(const changed of [actual.replace("difference of £50","difference of £49"),actual.replace("current 1-day request","current 2-day request"),actual.replace("£100","£101")])
+   expect(check(changed,[base,baseLine,proposal],proposedScope),changed).not.toEqual([]);
+  expect(check(actual,[baseLine,proposal],proposedScope)).not.toEqual([]);
+ });
+ it("accepts the exact follow-up proposal wording with a quoted current booking total",()=>{
+  const actual="Changing your request for the BMPCC 6K Full Frame kit to 12–13 December (2 days) would bring the total to £100 (an increase of £50 from your current £50 booking). Let me know if you would like me to go ahead and update the dates on your request.";
+  const proposedScope={...scope,start_date:"2026-12-12",end_date:"2026-12-13"};
+  expect(check(actual,[base,baseLine,proposal],proposedScope)).toEqual([]);
+  for(const changed of [actual.replace("£100","£101"),actual.replace("increase of £50","increase of £49"),actual.replace("current £50 booking","current £51 booking")])
+   expect(check(changed,[base,baseLine,proposal],proposedScope),changed).not.toEqual([]);
+  expect(check(actual,[baseLine,proposal],proposedScope)).not.toEqual([]);
+ });
+});
 describe("separate item prices after a parenthesized daily rate",()=>{
  const scope:StockRequest={start_date:"2026-10-20",end_date:"2026-10-21",items:[{name:"BMPCC 6K Full Frame",quantity:1}]};
  const receipts:PriceEvidence[]=[
@@ -256,6 +307,16 @@ it("requires the revised basket total to have the same native members",()=>{
  expect(unsupportedPriceClaims("The updated total is £170.",[{...basket,items:[scope.items[0]]}],scope)).toHaveLength(1);
 });
 
+it("validates the deterministic confirmation against its accepted Lab transaction receipt",()=>{
+ const scope:StockRequest={start_date:"2026-12-10",end_date:"2026-12-12",items:[{name:"Sony FX3",quantity:2}]};
+ const receipt:PriceEvidence={names:["Sony FX3"],kind:"basket",items:scope.items,days:3,total_gbp:252,start_date:scope.start_date!,end_date:scope.end_date!,
+  source:"lab_order_transaction",call_id:"lab-action:accepted-complete-basket"};
+ const text="Done — I've updated the items and rental dates as agreed. The new total is £252.00.";
+ expect(unsupportedPriceClaims(text,[receipt],scope)).toEqual([]);
+ expect(unsupportedPriceClaims(text.replace("£252.00","£251.00"),[receipt],scope)).toHaveLength(1);
+ expect(unsupportedPriceClaims(text,[{...receipt,items:[{name:"Sony FX3",quantity:1}]}],scope)).toHaveLength(1);
+});
+
 it("keeps an explicit current booking total separate from the preceding extra-item quote",()=>{
  const scope:StockRequest={start_date:"2026-10-06",end_date:"2026-10-07",items:[{name:"Sony A7 II",quantity:1}]};
  const evidence:PriceEvidence[]=[{names:["Sony 28-70mm"],kind:"rental",total_gbp:36,daily_rate_gbp:18,days:2,quantity:1,source:"native",call_id:"lens"},{names:[],items:scope.items,kind:"basket",total_gbp:56,days:2,start_date:scope.start_date!,end_date:scope.end_date!,source:"native_order",call_id:"current"}];
@@ -283,6 +344,24 @@ it("rejects an incomplete required-adapter quote while allowing grounded compone
  expect(incompleteSetupQuotes("Blazar Remus 100mm is £50 and the PL to L mount adapter is £20 for your dates.", evidence)).toEqual([]);
  expect(incompleteSetupQuotes("Blazar Remus 100mm with my PL to L mount adapter would be £70 extra in total.", evidence)).toEqual([]);
  expect(incompleteSetupQuotes("Blazar Remus 100mm is unavailable. Your booking remains £124.", evidence)).toEqual([]);
+});
+
+describe("a single-item addition followed by a combined basket total",()=>{
+ const scope:StockRequest={start_date:"2026-12-13",end_date:"2026-12-13",items:[{name:"BMPCC 6K Full Frame",quantity:1}]};
+ const added=[{name:"BMPCC 6K Pro",quantity:1}];
+ const receipts:PriceEvidence[]=[
+  {names:["BMPCC 6K Full Frame"],kind:"rental",days:1,quantity:1,daily_rate_gbp:50,total_gbp:50,start_date:scope.start_date!,end_date:scope.end_date!,source:"lab_order_quote",call_id:"current-line"},
+  {names:["BMPCC 6K Pro","Blackmagic BMPCC6K 6K Pro Digital Cinema Camera | SSD Cage Sony Monitor Video"],kind:"rental",days:1,quantity:1,daily_rate_gbp:35,total_gbp:35,source:"hygglo_tier",call_id:"server-price"},
+  {names:["BMPCC 6K Pro"],kind:"rental",days:1,quantity:1,daily_rate_gbp:35,total_gbp:35,start_date:scope.start_date!,end_date:scope.end_date!,quote_role:"addition",source:"native_lab_proposal",call_id:"proposal:line"},
+  {names:[],kind:"basket",days:1,total_gbp:85,start_date:scope.start_date!,end_date:scope.end_date!,items:[...scope.items,...added],source:"native_lab_proposal",call_id:"proposal",proposal:{base_items:scope.items,added_items:added,additional_cost_gbp:35}},
+ ];
+ const text="The BMPCC 6K Pro is available on 13 December 2026. Adding it would be an extra £35, bringing the combined total to £85 for the 1-day rental. Let me know if you would like me to go ahead and update the request.";
+ it("accepts the exact source-backed total after the separately quoted addition price",()=>expect(check(text,receipts,scope)).toEqual([]));
+ it("keeps amount, item and receipt dates tied to the proposed basket",()=>{
+  for(const wrong of [text.replace("£85","£86"),text.replace("£35","£36"),text.replace("BMPCC 6K Pro","Sony FX3")]) expect(check(wrong,receipts,scope),wrong).not.toEqual([]);
+  const wrongDate=receipts.map(receipt=>receipt.call_id==="proposal"?{...receipt,start_date:"2026-12-14",end_date:"2026-12-14"}:receipt);
+  expect(check(text,wrongDate,scope)).not.toEqual([]);
+ });
 });
 
 describe("native component prices followed by their addition total",()=>{

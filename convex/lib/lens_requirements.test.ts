@@ -20,6 +20,10 @@ describe("verified lens requirement boundary",()=>{
   expect(meetsLensRequirements(null,{})).toBe(true);
   expect(meetsLensRequirements(null,{excluded_projections:[]})).toBe(true);
  });
+ it("uses owner-confirmed capabilities only for the exact physical identity",()=>{
+  expect(verifiedLensCapabilities(undefined,"Sony 28-70mm")).toMatchObject({focus_mode:"autofocus",coverage:"full_frame"});
+  expect(verifiedLensCapabilities(undefined,"Sony 70-200mm")).toBeNull();
+ });
  it("rejects invalid profile ranges and numeric requirements",()=>{
   expect(verifiedLensCapabilities({...spec,lens_capabilities:{...spec.lens_capabilities,focal_min_mm:40}},"Exact lens")).toBeNull();
   expect(verifiedLensCapabilities({...spec,lens_capabilities:{...spec.lens_capabilities,focal_min_mm:0}},"Exact lens")).toBeNull();

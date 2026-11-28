@@ -8,13 +8,19 @@ const part=(s:string)=>{const m=s.match(/^\s*(\d+)\s*[x×]\s*(.+)$/i);return {na
 
 /** The same owner-backed contents for bots, approval guards and the website.
  * Rich names refine a physical ID; they never change its quantity or stock pool. */
-export function canonicalKitContents(components: KitComponent[], inventory: Doc<"items">[], recorded: string[] = [], recordedItemId?: string) {
+export function canonicalKitContents(components: KitComponent[], inventory: Doc<"items">[], recorded: string[] = [], recordedItemId?: string,
+  ownerConfirmedListingContents?: string[]) {
   const optional=[...new Set(components.flatMap(c=>c.optional_parts??[]))];
   const optionalKeys=new Set(optional.map(key));
   const mapped=components.map(c=>{
     const item=c.item_id?inventory.find(i=>String(i._id)===c.item_id):undefined;
     return {name:item?.rental_facts?.source.trim()&&item.rental_facts.name.trim()?item.rental_facts.name:c.name,qty:c.units_per_listing};
   });
+  if(ownerConfirmedListingContents?.length) {
+    const exact=recordedKit(mapped,ownerConfirmedListingContents,true);
+    return {...exact,source:mapped.length?"physical_mapping_and_owner_confirmed_listing":"owner_confirmed_listing",
+      optional_contents:optional};
+  }
   const extras=components.flatMap(c=>(c.reviewed_supplied_parts??[]).map(p=>`${p.qty}x ${p.name}`));
   // Exact reviewed pack lists replace generic master-item compatibility notes
   // for that component; unioning both can double-count the same accessories.

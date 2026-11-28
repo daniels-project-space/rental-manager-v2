@@ -166,6 +166,47 @@ describe("shared kit stock across separate reservations", () => {
   });
 });
 
+describe("renter-safe dated unavailability reasons", () => {
+  const item = { _id: "camera", name_canonical: "Sony FX3", kind: "camera_body", status: "active", is_marketing_only: false, qty: 2 };
+  const requested = { ...request, item_name: item.name_canonical, quantity: 2 };
+  const source = (extra: Record<string, unknown> = {}) => ({
+    items: [item], reservations: [], productIndex: new Map(), overrides: new Map(), claims: [], blackouts: [], vacations: [], ...extra,
+  });
+  const check = (extra: Record<string, unknown> = {}, selected = item) => stockForItem(
+    source(extra) as unknown as Parameters<typeof stockForItem>[0],
+    selected as unknown as Parameters<typeof stockForItem>[1],
+    requested,
+  );
+
+  it("reports an existing rental only when the shared stock ledger proves the dated conflict", () => {
+    const result = check({
+      reservations: [{
+        hygglo_order_id: "booking-1", account_slug: "leo", status: "confirmed",
+        start_date: request.start_date, end_date: request.end_date,
+        resolved_items: [{ item_id: item._id, qty: 2 }],
+      }],
+    });
+    expect(result).toMatchObject({ available: false, reason: "insufficient_units" });
+    expect(result.renter_safe_availability_note).toBe("Some units are already booked during part of the requested period.");
+  });
+
+  it("reports repair only from a stock-holding repair claim and keeps the claim private", () => {
+    const result = check({
+      claims: [{ stage: "in_for_repair", status: "open", repair_item_ids: [item._id], description: "PRIVATE CASE NOTES" }],
+    }, { ...item, qty: 1 });
+    expect(result).toMatchObject({ available: false, reason: "insufficient_units" });
+    expect(result.renter_safe_availability_note).toBe("Some units are away for repair during part of the requested period.");
+    expect(JSON.stringify(result)).not.toContain("PRIVATE CASE NOTES");
+  });
+
+  it("does not claim a reason for marketing-only inventory or an owner blackout", () => {
+    const marketing = check({ items: [{ ...item, is_marketing_only: true }] }, { ...item, is_marketing_only: true });
+    const blackout = check({ blackouts: [{ item_id: item._id, start_date: request.start_date, end_date: request.end_date, reason: "PRIVATE BLOCK" }] });
+    expect(marketing.renter_safe_availability_note).toBeUndefined();
+    expect(blackout.renter_safe_availability_note).toBeUndefined();
+  });
+});
+
 describe("owner-confirmed minimum stock",()=>{
  const minimum={_id:"b",name_canonical:"Sony NP-FZ100 batteries",kind:"accessory",unit_kind:"unit",track_independent_stock:true,status:"active",qty:12,
   quantity_basis:{basis:"owner_lower_bound",source:"owner",note:"at least 12",recorded_at:1}};

@@ -1,11 +1,24 @@
 import {describe,it,expect} from "vitest";
 import {acceptsReplacement,requiresReplacementTransaction,type ReplacementAcceptanceQuote} from "./renter_replacement_acceptance";
-import {discloseReplacementSource,replacementProposalsFromEvidence,type SentReplacementProposal} from "./renter_replacement_proposal";
+import {discloseReplacementSource,replacementProposalsFromEvidence,sentReplacementProposalValidator,type SentReplacementProposal} from "./renter_replacement_proposal";
 const old={product_id:1163215,name:"TTArtisan 11mm f2.8",qty:1,line_total_gbp:42},next={product_id:1115113,name:"Sony GM 16-35mm f2.8",qty:1,line_total_gbp:40};
 const q:ReplacementAcceptanceQuote={context_key:"base",epoch:109,physical_identity_key:"new-physical",base_physical_identity_key:"old-physical",start_date:"2026-10-20",end_date:"2026-10-21",total_gbp:40,base_total_gbp:42,added:[next],removed:[old]};
 const record:SentReplacementProposal={context_key:q.context_key,epoch:q.epoch,physical_identity_key:q.physical_identity_key,base_physical_identity_key:q.base_physical_identity_key,quoted_for_message_id:"previous",items:[{product_id:next.product_id,qty:1}],removed_listings:[{product_id:old.product_id,qty:1}],base_items:[{name:old.name,quantity:1}],added_items:[{name:next.name,quantity:1}],removed_items:[{name:old.name,quantity:1}],start_date:q.start_date,end_date:q.end_date,total_gbp:40,base_total_gbp:42};
 const owner={body_text:"We can swap the TTArtisan 11mm f2.8 for Sony GM 16-35mm f2.8 for 20–21 October. Your updated booking total would be £40. Shall I make that swap?",quoted_replacements:[record]};
 describe("Native replacement consent",()=>{
+ it("preserves listing aliases in the replacement proposal stored on the message",()=>{
+  const aliases=["BMPCC 6K Pro","Blackmagic Pocket Cinema Camera 6K Pro"];
+  const evidence={names:[],kind:"basket" as const,source:"native_lab_proposal",call_id:"replacement-aliases",
+   start_date:q.start_date,end_date:q.end_date,total_gbp:q.total_gbp,
+   proposal:{base_items:[{name:old.name,quantity:1}],added_items:[{name:next.name,quantity:1,aliases}],removed_items:[{name:old.name,quantity:1}],
+    physical_identity_key:q.physical_identity_key,base_physical_identity_key:q.base_physical_identity_key,base_total_gbp:q.base_total_gbp,
+    added_listings:[{product_id:next.product_id,quantity:next.qty}],removed_listings:[{product_id:old.product_id,quantity:old.qty}]}};
+  const [saved]=replacementProposalsFromEvidence([evidence],{context_key:q.context_key,epoch:q.epoch,message_id:"renter-1"});
+  expect(saved?.added_items).toEqual([{name:next.name,quantity:1,aliases}]);
+  const addedItems=sentReplacementProposalValidator.fields.added_items;
+  expect(addedItems.element.fields.aliases?.isOptional).toBe("optional");
+ });
+
  it("accepts the renter's named, priced confirmation of an exact transmitted switch",()=>{
   const previous={product_id:1103089,name:"BMPCC 6K Full Frame",qty:1,line_total_gbp:50};
   const chosen={product_id:1046235,name:"Sony A7 III",qty:1,line_total_gbp:18};

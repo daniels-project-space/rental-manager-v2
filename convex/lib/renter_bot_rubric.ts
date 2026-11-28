@@ -3,13 +3,17 @@ import type {BudgetPriceCheck} from "./budget_price_check";
 import {type ReplacementValueComparison} from "./replacement_value_comparison";
 import type {OwnerCheck} from "./owner_checks";
 import {unsupportedPriceClaims,type PriceEvidence} from "./price_claims";
+import { assessIncludedKitAnswer, type KitEvidence } from "./kit_claims";
 import type {StockRequest} from "./stock_claims";
 import type { BookingRecord } from "./booking_record";
 import { hasPickupDisclosure } from "./booking_reply_claims";
 import {
   assessTravelCompensation,
   discountConcessionExceedsCap,
-  hasPickupHandoffExplanation,
+  hasPendingTravelDiscountRequest,
+  hasPickupAreaDisclosure,
+  hasUnavailablePickupAlternative,
+  isPickupListingLocationQuestion,
   isDiscountConcessionOffer,
   isPickupLocationIntent,
   isTravelCompensationOffer,
@@ -29,11 +33,9 @@ import {
  *   - the ported tone scorers
  *   - a lightweight factsClaimed grounding check
  *
- * Categories with no automated signal today are scored "n_a" with an
- * explanation, rather than faked — see docs/renter-bot-policy.md for the
- * open questions this maps to (negotiation quality, follow-up texting,
- * gear-knowledge accuracy, problem-solving quality all need either a human
- * pass or a separate LLM-judge call; out of scope for this first version).
+ * Categories with no automated signal are scored "unassessed"; "n_a" is
+ * reserved for checks that genuinely do not apply to this turn. A run with
+ * unassessed categories cannot receive an overall pass.
  */
 import { applyRenterBotFilters } from "./renter_bot_filters";
 import {
@@ -41,6 +43,7 @@ import {
   type FactClaim,
 } from "./renter_bot_filters_supplemental";
 import { scoreTone } from "./renter_bot_tone_scorer";
+import { containsCrossAccountReference } from "./cross_account_references";
 
 export interface ProductionFlag {
   type: string;
@@ -72,6 +75,8 @@ export interface RubricInput {
   lastRenterMessage?: string;
   conversationHistory?: TravelCompensationTurn[];
   pickupArea?: string | null;
+  /** Current owner-verified, listing-scoped explanation for a pickup-area mismatch. */
+  pickupReason?: string | null;
   pickupAddress?: string | null;
   pickupPrivacySources?: string[];
   pickupConfirmed?: boolean;
@@ -82,9 +87,13 @@ export interface RubricInput {
   budgetPriceChecks?:BudgetPriceCheck[];
   /** Persisted Native review tasks for this exact generated draft/context. */
   pendingOwnerChecks?: OwnerCheck[];
+  /** Source-backed manifest for the single selected item, when available. */
+  kitEvidence?: KitEvidence[];
+  /** A validated transaction confirmation assembled server-side without a model draft. */
+  serverVerifiedAction?: boolean;
 }
 
-export type RubricStatus = "pass" | "fail" | "flag" | "n_a";
+export type RubricStatus = "pass" | "fail" | "flag" | "n_a" | "unassessed";
 
 export interface RubricCategoryResult {
   category: string;
@@ -95,11 +104,46 @@ export interface RubricCategoryResult {
 
 export interface RubricOutput {
   results: RubricCategoryResult[];
-  overall_status: "pass" | "fail" | "flag";
+  overall_status: "pass" | "fail" | "flag" | "incomplete";
   filter_violation_categories: string[];
 }
 
 const TONE_PASS_THRESHOLD = 0.6;
+
+const GEAR_KNOWLEDGE_INTENT = /\b(?:spec(?:ification)?s?|accessor(?:y|ies)|what(?:'s| is) included|(?:this |that |the )?(?:kit|package|bundle) includ(?:e|es|ed|ing)|comes with|autofocus|auto-focus|manual focus|lens mount|mount type|adapter|battery|batteries|memory card|sd card|cf\s*express|ssd|storage|codec|record(?:ing)?|resolution|sensor|frame rate|fps|weight|compatib(?:le|ility)|aperture|filter|built.?in nd|dual native iso)\b/i;
+const NEGOTIATION_INTENT = /\b(?:discount|take (?:£\s*\d+|\d+\s*%)?\s*off|reduce|lower (?:the )?price|cheaper|better price|price match|can you do|deal|too expensive|travel cost|compensation|concession|budget)\b/i;
+const PROBLEM_SOLVING_INTENT = /\b(?:problem|issue|broken|damaged|wrong|can't|cannot|unable|cancel(?:lation)?|failed verification|verification failed|unavailable|out of stock|missing|refund|complaint|repair)\b/i;
+const FOLLOW_UP_INTENT = /\b(?:follow[ -]?up|remind(?:er)?|24 hours|tomorrow|check back|get back to you|send you an update|message you later)\b/i;
+
+function relevantToGearKnowledge(input: RubricInput) {
+  return GEAR_KNOWLEDGE_INTENT.test(input.lastRenterMessage ?? "") ||
+    GEAR_KNOWLEDGE_INTENT.test(input.draftText) ||
+    (input.factsClaimed ?? []).some(fact => /spec|accessor|compatib|technical|equipment/i.test(fact.kind));
+}
+
+function relevantToNegotiation(input: RubricInput) {
+  const renterMessage = input.lastRenterMessage ?? "";
+  const message = renterMessage.replace(
+    /\b(?:travel|journey|distance|trip)\b[^.!?]{0,45}\b(?:costs?|expenses?|discounts?|adjustments?|compensation|credits?)\b|\b(?:discounts?|adjustments?|compensation|credits?)\b[^.!?]{0,45}\b(?:travel|journey|distance|trip)\b/gi,
+    "",
+  );
+  const travelOnlyReliefRequest = hasPendingTravelDiscountRequest(input.conversationHistory ?? [], renterMessage) &&
+    isTravelConcern(renterMessage) &&
+    !/\b(?:rental|hire|item|kit|basket|booking|total|price|rate)\b/i.test(renterMessage);
+  if (travelOnlyReliefRequest) return false;
+  const nonTravelDiscountOffer = input.draftText.split(/(?<=[.!?])\s+/).some(sentence =>
+    isDiscountConcessionOffer(sentence) && !isTravelCompensationOffer(sentence),
+  );
+  return NEGOTIATION_INTENT.test(message) || nonTravelDiscountOffer;
+}
+
+function relevantToProblemSolving(input: RubricInput) {
+  return PROBLEM_SOLVING_INTENT.test(input.lastRenterMessage ?? "");
+}
+
+function relevantToFollowUp(input: RubricInput) {
+  return FOLLOW_UP_INTENT.test(`${input.lastRenterMessage ?? ""} ${input.draftText}`);
+}
 
 /** A withheld answer is not automatically a successful safety escalation. */
 export function scoreSkippedGeneration(reason: string | undefined, expectedEscalation: boolean): RubricOutput {
@@ -156,23 +200,32 @@ export function scoreDraft(input: RubricInput): RubricOutput {
   const priceValidationText=withoutAuthorizedTravelCompensationClaim(draftText,travelAssessment.maximumGbp,authorizedTravelOffer);
   const nativePricing=input.priceEvidence!==undefined&&input.priceRequest!==undefined;
   const nativePriceFailures=nativePricing?unsupportedPriceClaims(nativeInformationForText({replacement_value_comparisons:input.replacementValueComparisons,budget_price_checks:input.budgetPriceChecks},priceValidationText,priceValidationText).claim_text,input.priceEvidence!,input.priceRequest!,input.lastRenterMessage??"",input.bookingRecord,input.verifiedDeliveryFeeGbp):[];
+  const asksForUpdatedTotal = /\b(?:new|updated|revised|combined)\s+(?:rental\s+)?total\b/i.test(latestRenterMessage);
+  const includesExplicitTotal = /\btotal\b[^.!?\n]{0,36}£\s?\d+(?:\.\d{1,2})?|£\s?\d+(?:\.\d{1,2})?[^.!?\n]{0,36}\btotal\b/i.test(draftText);
+  const omittedVerifiedUpdatedTotal = nativePricing && asksForUpdatedTotal && effectiveRentalChargeGbp != null && !includesExplicitTotal;
   const allViolations = [...real.violations, ...supplemental.filter(v=>!nativePricing||!["MADE_UP_PRICE","UNVERIFIABLE_PRICE"].includes(v.category))];
   const cats = new Set(allViolations.map((v) => v.category));
+  if (containsCrossAccountReference(draftText)) cats.add("CROSS_ACCOUNT_REFERENCE");
   if(nativePriceFailures.length)cats.add("NATIVE_PRICE_UNSUPPORTED");
   const verificationFailed = input.rentalStage === "VERIFICATION_FAILED";
   const compensationContext = verificationFailed || isPickupLocationIntent(latestRenterMessage) ||
     isTravelConcern(latestRenterMessage) || isTravelCompensationOffer(draftText);
   const discountOfferPresent = isDiscountConcessionOffer(draftText);
+  const travelDiscountRequestPending = hasPendingTravelDiscountRequest(compensationHistory, latestRenterMessage);
   const discountPolicyViolation = discountOfferPresent && (verificationFailed ||
     (compensationContext && (!travelAssessment.eligible || discountConcessionExceedsCap(draftText, effectiveRentalChargeGbp, travelAssessment.maximumGbp))));
+  const authorizedTravelRequestIgnored = travelAssessment.eligible && travelDiscountRequestPending && !discountOfferPresent;
   const pickupQuestion = isPickupLocationIntent(latestRenterMessage);
   const pickupPrivacySources = input.pickupPrivacySources?.length
     ? input.pickupPrivacySources
     : input.pickupAddress ? [input.pickupAddress] : [];
-  const pickupPrivacyLeak = !input.pickupConfirmed && hasPickupDisclosure(draftText, pickupPrivacySources,input.pickupArea);
+  const renterDeliveryMessages = [...(input.conversationHistory ?? []).filter(turn => turn.role === "renter").map(turn => turn.content), latestRenterMessage];
+  const pickupPrivacyLeak = !input.pickupConfirmed && hasPickupDisclosure(draftText, pickupPrivacySources,input.pickupArea,renterDeliveryMessages);
   const wrongPickupArea = !verificationFailed && pickupQuestion && !!input.pickupArea && !mentionsPickupArea(draftText, input.pickupArea);
-  const missingPickupExplanation = !verificationFailed && pickupQuestion && !!input.pickupArea &&
-    !input.pickupConfirmed && !hasPickupHandoffExplanation(draftText);
+  const missingPickupAreaDisclosure = !verificationFailed && pickupQuestion && !!input.pickupArea &&
+    !input.pickupConfirmed && !hasPickupAreaDisclosure(draftText, input.pickupArea);
+  const missingListedLocationBoundary = !verificationFailed && pickupQuestion &&
+    isPickupListingLocationQuestion(latestRenterMessage) && !hasUnavailablePickupAlternative(draftText);
   const missingConfirmedPickup = !verificationFailed && pickupQuestion && !!input.pickupConfirmed && !!input.pickupAddress &&
     !draftText.toLowerCase().includes(input.pickupAddress.toLowerCase());
   const unsafePickupClaim = isUnsafePickupLocationClaim(draftText);
@@ -226,16 +279,29 @@ export function scoreDraft(input: RubricInput): RubricOutput {
   }
 
   // ── Gear knowledge ──
-  add(
-    "gear_knowledge",
-    "n_a",
-    "Production checks cover selected 4K recording, built-in ND, lens focus and kit claims. They do not verify every specification or whether the reply fully answers the renter's requirements; broader gear knowledge remains unverified.",
-  );
+  const includedKitAnswer = assessIncludedKitAnswer(input.lastRenterMessage ?? "", input.draftText, input.kitEvidence ?? []);
+  if (includedKitAnswer) {
+    add("gear_knowledge", includedKitAnswer.status, includedKitAnswer.detail, includedKitAnswer.evidence);
+  } else {
+    add("gear_knowledge", relevantToGearKnowledge(input) ? "unassessed" : "n_a",
+      relevantToGearKnowledge(input)
+        ? "This turn asks for or asserts a gear specification; the production filters do not verify every specification or whether the reply fully answers the requirement."
+        : "No technical specification or included-accessory claim is in scope for this turn.");
+  }
 
   // ── Pricing / quoting ──
-  if(nativePricing&&!has(cats,"FABRICATED_QUOTE")) {
+  if (omittedVerifiedUpdatedTotal) {
+    add(
+      "pricing_quoting",
+      "fail",
+      `The renter explicitly requested the updated total, and a verified current basket total of £${effectiveRentalChargeGbp!.toFixed(2)} was available, but the draft did not state a total.`,
+    );
+  } else if(nativePricing&&!has(cats,"FABRICATED_QUOTE")) {
+    const travelOfferAudit = isTravelCompensationOffer(draftText)
+      ? ` Travel-offer trace: explicit charge ${input.rentalChargeGbp == null ? "none" : `£${input.rentalChargeGbp.toFixed(2)}`}; resolved rental charge ${effectiveRentalChargeGbp == null ? "unknown" : `£${effectiveRentalChargeGbp.toFixed(2)}`}; allowed maximum ${travelAssessment.maximumGbp == null ? "unknown" : `£${travelAssessment.maximumGbp.toFixed(2)}`}; sequence eligible ${travelAssessment.eligible}; offer authorized ${authorizedTravelOffer}; travel offer remains in price-validation text ${isTravelCompensationOffer(priceValidationText)}.`
+      : "";
     add("pricing_quoting",nativePriceFailures.length?"fail":"pass",nativePriceFailures.length
-      ? "The quoted amounts do not have matching Native item, quantity and date proof."
+      ? "The quoted amounts do not have matching Native item, quantity and date proof." + travelOfferAudit
       : "No monetary claim lacks matching Native price proof.",nativePriceFailures.join("; ")||undefined);
   } else if (has(cats, "MADE_UP_PRICE", "FABRICATED_QUOTE")) {
     add(
@@ -256,11 +322,10 @@ export function scoreDraft(input: RubricInput): RubricOutput {
   }
 
   // ── Negotiation ──
-  add(
-    "negotiation",
-    "n_a",
-    "No automated check yet — negotiation-stance correctness needs conversation-level state (HOLD_FIRM/OFFER_ALTERNATIVES/SOFT_YIELD), not scoreable from a single draft in this pass.",
-  );
+  add("negotiation", relevantToNegotiation(input) ? "unassessed" : "n_a",
+    relevantToNegotiation(input)
+      ? "A price concession or negotiation request is present; the full conversation stance still needs trajectory-level assessment."
+      : "This turn contains no bargaining or price concession to assess.");
 
   // ── Travel compensation sequence ──
   if (discountPolicyViolation) {
@@ -269,6 +334,12 @@ export function scoreDraft(input: RubricInput): RubricOutput {
       "fail",
       "Travel compensation was offered before this account's pickup area was disclosed and objected to, after a prior offer, without a verified rental total, or above the one-time cap.",
       draftText,
+    );
+  } else if (authorizedTravelRequestIgnored) {
+    add(
+      "discounts_retention",
+      "fail",
+      `The renter asked for travel-cost help after this account's pickup area was disclosed; the verified one-time adjustment of £${travelAssessment.maximumGbp!.toFixed(2)} was eligible but not offered.`,
     );
   } else if (compensationContext) {
     add(
@@ -285,36 +356,37 @@ export function scoreDraft(input: RubricInput): RubricOutput {
   }
 
   // ── Follow-up texting ──
-  add(
-    "follow_up_texting",
-    "n_a",
-    "No rule exists in V2 for this yet (confirmed absent — open question in docs/renter-bot-policy.md), so nothing to score against.",
-  );
+  add("follow_up_texting", relevantToFollowUp(input) ? "unassessed" : "n_a",
+    relevantToFollowUp(input)
+      ? "This turn mentions a follow-up or reminder; timing and draft eligibility are checked by the Lab follow-up workflow, not this reply rubric."
+      : "No follow-up or reminder is requested or promised in this reply; delayed follow-ups are assessed by the Lab workflow.");
 
   // ── Cross-account consistency ──
-  if (has(cats, "DUAL_ACCOUNT")) {
+  if (has(cats, "DUAL_ACCOUNT", "CROSS_ACCOUNT_REFERENCE")) {
     add(
       "cross_account_consistency",
       "fail",
       "Draft implied a link between this account and another account's persona.",
-      evidenceFor(allViolations, "DUAL_ACCOUNT"),
+      evidenceFor(allViolations, "DUAL_ACCOUNT", "CROSS_ACCOUNT_REFERENCE") ??
+        (containsCrossAccountReference(draftText) ? draftText : undefined),
     );
   } else {
     add("cross_account_consistency", "pass", "No cross-account leak detected.");
   }
 
   // ── Account-specific pickup handling ──
-  if (unsafePickupClaim || pickupPrivacyLeak || wrongPickupArea || missingPickupExplanation || missingConfirmedPickup ||
+  if (unsafePickupClaim || pickupPrivacyLeak || wrongPickupArea || missingPickupAreaDisclosure || missingListedLocationBoundary || missingConfirmedPickup ||
     has(cats, "VAGUE_CONFIRMED_LOCATION", "PREMATURE_CONFIRMATION")) {
     add(
       "location_handling",
       "fail",
-      "Draft gave a false pickup explanation, omitted the item-specific reason for this account's pickup area, used the wrong area, disclosed exact details too early, or omitted the confirmed meeting point.",
+      "Draft made an unsupported location claim, omitted the account-specific pickup/return area or listed-location boundary, used the wrong area, disclosed exact details too early, or omitted the confirmed meeting point.",
       [
         unsafePickupClaim ? "unsupported location excuse" : null,
         pickupPrivacyLeak ? "exact pickup detail disclosed before confirmation" : null,
         wrongPickupArea ? "expected account area: " + input.pickupArea : null,
-        missingPickupExplanation ? "missing grounded reason for this listing's account-specific pickup point" : null,
+        missingPickupAreaDisclosure ? "missing account-specific pickup/return arrangement for this rental" : null,
+        missingListedLocationBoundary ? "did not explain that handoff from the listed pickup area cannot be arranged for this rental" : null,
         missingConfirmedPickup ? "confirmed booking missing its exact meeting point" : null,
         evidenceFor(allViolations, "VAGUE_CONFIRMED_LOCATION", "PREMATURE_CONFIRMATION"),
       ].filter(Boolean).join("; ") || undefined,
@@ -348,27 +420,30 @@ export function scoreDraft(input: RubricInput): RubricOutput {
     add("anti_manipulation_rule_adherence", "pass", "No manipulation/rule-adherence violations detected.");
   }
 
-  add("owner_review_completion",input.pendingOwnerChecks===undefined?"n_a":input.pendingOwnerChecks.length?"flag":"pass",
-    input.pendingOwnerChecks===undefined?"Persisted owner-review state was not supplied; completion is unverified.":input.pendingOwnerChecks.length
+  add("owner_review_completion",input.pendingOwnerChecks===undefined?(input.serverVerifiedAction?"n_a":"unassessed"):input.pendingOwnerChecks.length?"flag":"pass",
+    input.pendingOwnerChecks===undefined?(input.serverVerifiedAction?"A receipt-backed Lab transaction confirmation makes no new owner-dependent claims.":"Persisted owner-review state was not supplied; completion is unverified."):input.pendingOwnerChecks.length
       ?"Native owner-review work remains pending. A safe deferral does not complete the renter request."
       :"No pending Native owner-review task is attached to this draft; this alone does not prove the whole request is fulfilled.",
     input.pendingOwnerChecks?.map(check=>`${check.kind}: ${check.source_call_id}`).join("; ")||undefined);
 
   // ── Problem solving ──
-  add(
-    "problem_solving",
-    "n_a",
-    "No automated check yet — needs qualitative judgment (a human pass or a separate LLM-judge call), not implemented in this pass.",
-  );
+  add("problem_solving", relevantToProblemSolving(input) ? "unassessed" : "n_a",
+    relevantToProblemSolving(input)
+      ? "The renter reports an obstacle or asks for recovery; its resolution needs trajectory-level assessment."
+      : "No complaint, failure, damage, cancellation, or unavailable-item recovery is in scope for this turn.");
 
   // ── Tone / language ──
-  const tone = scoreTone(accountSlug, draftText);
-  if (tone.score === null) {
-    add("tone_language", "n_a", tone.reason ?? "No tone score available.");
-  } else if (tone.score >= TONE_PASS_THRESHOLD) {
-    add("tone_language", "pass", `Tone score ${tone.score.toFixed(2)} (threshold ${TONE_PASS_THRESHOLD}).`);
+  if (input.serverVerifiedAction) {
+    add("tone_language", "n_a", "This confirmation was constructed from a validated transaction receipt; model-generated account-tone scoring does not apply.");
   } else {
-    add("tone_language", "flag", `Tone score ${tone.score.toFixed(2)} below threshold ${TONE_PASS_THRESHOLD} — review manually.`);
+    const tone = scoreTone(accountSlug, draftText);
+    if (tone.score === null) {
+      add("tone_language", "unassessed", tone.reason ?? "No tone score available.");
+    } else if (tone.score >= TONE_PASS_THRESHOLD) {
+      add("tone_language", "pass", `Tone score ${tone.score.toFixed(2)} (threshold ${TONE_PASS_THRESHOLD}).`);
+    } else {
+      add("tone_language", "flag", `Tone score ${tone.score.toFixed(2)} below threshold ${TONE_PASS_THRESHOLD} — review manually.`);
+    }
   }
 
   // ── Format integrity (not one of Daniel's named categories, kept as a
@@ -393,16 +468,18 @@ export function scoreDraft(input: RubricInput): RubricOutput {
   // only through this file's own regex reimplementations above. ──
   const productionFlags = input.productionFlags ?? [];
   const identityFailures = productionFlags.filter(flag => flag.type === "RENTER_CAMERA_IDENTITY_UNVERIFIED" && flag.action === "flagged");
-  add("renter_camera_identity",input.productionFlags===undefined?"n_a":identityFailures.length?"fail":"pass",
-    input.productionFlags===undefined?"Native camera-reference check was not supplied.":identityFailures.length
+  add("renter_camera_identity",input.productionFlags===undefined?(input.serverVerifiedAction?"n_a":"unassessed"):identityFailures.length?"fail":"pass",
+    input.productionFlags===undefined?(input.serverVerifiedAction?"The receipt-backed action confirmation makes no renter-camera identity claim.":"Native camera-reference check was not supplied."):identityFailures.length
       ?"The reply assumes a renter camera identity without explicit setup evidence."
       :"No unsupported labelled renter-camera reference was detected; this does not verify camera controls or all technical advice.",
     identityFailures.map(flag=>flag.detail).join("; ")||undefined);
   if (input.productionFlags === undefined) {
     add(
       "production_guard",
-      "n_a",
-      "No productionFlags passed in for this run — caller didn't forward generateDraft's real guard output.",
+      input.serverVerifiedAction ? "n_a" : "unassessed",
+      input.serverVerifiedAction
+        ? "This confirmation is constructed from the validated Lab transaction receipt; there is no model-generated draft to guard."
+        : "No productionFlags passed in for this run — caller didn't forward generateDraft's real guard output.",
     );
   } else if(productionFlags.length===0) {
     add("production_guard","pass","Production guard output was supplied and contains no flags.");
@@ -437,7 +514,9 @@ export function scoreDraft(input: RubricInput): RubricOutput {
     ? "fail"
     : results.some((r) => r.status === "flag")
       ? "flag"
-      : "pass";
+      : results.some((r) => r.status === "unassessed")
+        ? "incomplete"
+        : "pass";
 
   return {
     results,

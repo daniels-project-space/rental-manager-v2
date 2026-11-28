@@ -36,3 +36,41 @@ export function recommendationBasket(existing: RecommendationLine[], candidate: 
   const lines=existing.flatMap((old,i)=>i!==index ? [{...old}] : old.qty>removeQty ? [{...old,qty:old.qty-removeQty}] : []);
   return {ok:true as const,use,lines:[...lines,{...candidate}],removed:[{...line,qty:removeQty}]};
 }
+
+/**
+ * Validate a complete read-only proposal for an open inquiry. Unlike
+ * recommendationBasket(), `proposed` lines are final quantities, not deltas.
+ * This lets one Native stock/price check evaluate combined date + basket
+ * changes without interpreting model-supplied quantities as additions.
+ */
+export function proposedInquiryBasket(existing: RecommendationLine[], proposed: RecommendationLine[], context: {
+  open_basket: boolean;
+  expected_use?: Exclude<RecommendationUse,"standalone"|"separate">;
+}) {
+  const fail = (reason: string) => ({ok:false as const,reason,use:"proposed" as const,lines:[] as RecommendationLine[]});
+  if (!proposed.length) return fail("proposed_basket_empty");
+  if (proposed.length > 8) return fail("use_one_to_eight_exact_items");
+  if (context.expected_use === "replacement") return fail("replacement_requires_exact_listing_selection");
+  if (!context.open_basket || !existing.length)
+    return {ok:true as const,use:"proposed" as const,lines:proposed.map(line=>({...line}))};
+
+  const identity = (line: RecommendationLine) => line.product_id != null
+    ? `product:${line.product_id}`
+    : line.item_id ? `item:${line.item_id}` : `name:${line.name.trim().toLowerCase().replace(/\s+/g," ")}`;
+  const proposedById = new Map<string, RecommendationLine>();
+  for (const line of proposed) {
+    const key=identity(line), prior=proposedById.get(key);
+    if (prior) return fail("duplicate_proposed_basket_line");
+    proposedById.set(key,line);
+    if (!Number.isInteger(line.qty) || line.qty < 1 || line.qty > 20) return fail("invalid_quantity");
+  }
+  let increased=false;
+  for (const current of existing) {
+    const next=proposedById.get(identity(current));
+    if (!next || next.qty < current.qty) return fail("proposed_basket_drops_current_item");
+    if (next.qty > current.qty) increased=true;
+  }
+  if (context.expected_use === "additional" && !increased && !proposed.some(line=>!existing.some(current=>identity(current)===identity(line))))
+    return fail("proposed_basket_does_not_include_requested_addition");
+  return {ok:true as const,use:"proposed" as const,lines:proposed.map(line=>({...line}))};
+}

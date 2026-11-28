@@ -30,18 +30,29 @@ export function claimsBookingConfirmation(text:string) {
   return assertsOutsideConditional(text,/\b(?:(?:(?:your|the|this)\s+)?(?:(?:new|next)\s+)?(?:booking|rental|request|order)|it)\s*(?:is|has been|'s|’s)\s*(?:(?:now|already|fully)\s+)*(?:confirmed|booked|secured|locked in|all set)\b|\byou(?:'re|’re| are)\s+(?:all\s+)?(?:booked|confirmed|set|good to go|locked in)\b|\b(?:confirmed|booked)\s+(?:your|the|this)\s+(?:booking|request|order|rental)\b/i);
 }
 const normal=(text:string)=>text.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+const UK_POSTCODE=/\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/gi;
+export function renterProvidedDeliveryPostcodes(messages:string[]=[]):string[] {
+ return [...new Set(messages
+  .filter(message=>/\b(?:delivery|deliver(?:ed|ing)?|courier)\b/i.test(message))
+  .flatMap(message=>[...message.matchAll(UK_POSTCODE)].map(match=>normal(match[0]))))];
+}
 /** Known private details are disclosures even inside a negative/conditional.
  * A delivery address supplied by the renter is not a pickup-location assertion. */
-export function hasPickupDisclosure(text:string,sources:string[]=[],allowedArea?:string|null):boolean {
+export function hasPickupDisclosure(text:string,sources:string[]=[],allowedArea?:string|null,renterMessages:string[]=[]):boolean {
  const value=` ${normal(text)} `;
  const area=normal(allowedArea??'');
  const fragments=sources.flatMap(source=>[source,...source.split(/[\n,]/),...(source.match(/\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/gi)??[])]).map(normal)
   .filter(part=>part.length>=4&&!/^(?:central london|london|uk|united kingdom|england)$/.test(part)&&!(area&&` ${area} `.includes(` ${part} `)));
  if(fragments.some(part=>value.includes(` ${part} `)))return true;
+ const renterDeliveryPostcodes=new Set(renterProvidedDeliveryPostcodes(renterMessages));
  return text.split(/(?<=[.!?])\s+|\n+/).some(sentence=>{
-  // Remove only the explicitly stated courier destination postcode. Any
-  // separate pickup address in the same sentence must still be detected.
-  const pickupText=sentence.replace(/(\b(?:delivery|deliver(?:ed|ing)?|courier)\b[^.!?\n]{0,80}?\bto\s+(?:your\s+)?(?:postcode\s+)?)[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i,'$1');
+  // Exempt only a destination postcode the renter supplied in a delivery
+  // message. Reply wording is not authority; exact owner pickup sources were
+  // checked first and remain blocked even if the renter repeats that postcode.
+  const sentenceDeliveryPostcodes=/\b(?:delivery|deliver(?:ed|ing)?|courier)\b/i.test(sentence)
+   ? new Set([...sentence.matchAll(UK_POSTCODE)].map(match=>normal(match[0])).filter(postcode=>renterDeliveryPostcodes.has(postcode)))
+   : new Set<string>();
+  const pickupText=sentence.replace(UK_POSTCODE,postcode=>sentenceDeliveryPostcodes.has(normal(postcode))?' ':postcode);
   return /\b(?:pick\s*up|pickup|collect(?:ion)?|meet|return|drop[ -]?off)\b/i.test(sentence) &&
    (/\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i.test(pickupText)||/\b\d+[a-z]?\s+(?:[a-z]+\s+){0,4}(?:street|road|avenue|lane|square|mall|place|drive|close|way)\b/i.test(pickupText));
  });

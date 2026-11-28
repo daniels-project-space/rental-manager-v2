@@ -12,7 +12,7 @@ import type { PriceEvidence } from "./price_claims";
 
 const scope={context_key:"current-basket",epoch:5,message_id:"renter-current"};
 const price=():PriceEvidence=>({names:[],kind:"basket",source:"native_lab_proposal",call_id:"quote",total_gbp:194,start_date:"2026-10-20",end_date:"2026-10-21",
-  proposal:{physical_identity_key:"native-addition-key",base_items:[{name:"BMPCC 6K Full Frame",quantity:1}],added_items:[{name:"Remus 100mm",quantity:1},{name:"PL to L mount",quantity:1}],
+  proposal:{physical_identity_key:"native-addition-key",base_items:[{name:"BMPCC 6K Full Frame",quantity:1}],added_items:[{name:"Remus 100mm",quantity:1,aliases:["Blazar Remus 100mm Cine Lens"]},{name:"PL to L mount",quantity:1}],
     added_listings:[{product_id:1116294,quantity:1},{product_id:1172765,quantity:1}],additional_cost_gbp:70}});
 
 describe("sent Native proposal evidence",()=>{
@@ -56,11 +56,12 @@ function fixture(){
   const context=draftContextKey(null,undefined,order);
   const conversation:any={_id:"conversation",thread_id:thread,account_slug:"leo",ai_draft_text:"The lens and adapter cost £70 extra. Shall I add both?",ai_draft_for_message_id:"renter-current",ai_draft_context_key:context,ai_draft_epoch:5,ai_draft_generated_at:10,
     ai_draft_evidence:{model_id:"test-only",stage:"CONFIRMED_UPCOMING",prices:[price()],stock:[]}};
-  const tables:Record<string,any[]>={renter_bot_lab_orders:[order],conversations:[conversation],settings:[{draft_epoch:5}],hygglo_messages:[{_id:"renter",thread_id:thread,account_slug:"leo",message_id:"renter-current",sender:"renter",body_text:"What is the complete price?",fetched_at:1,hygglo_sent_at:1}]};
-  const db:any={query:(table:string)=>{const filters:Array<[string,any]>=[];const q={eq:(k:string,v:any)=>{filters.push([k,v]);return q;}};const r:any={withIndex:(_:string,f:any)=>{f(q);return r;},collect:async()=> (tables[table]??[]).filter(i=>filters.every(([k,v])=>i[k]===v)),first:async()=> (await r.collect())[0]??null,unique:async()=> (await r.collect())[0]??null};return r;},
+  const tables:Record<string,any[]>={renter_bot_lab_orders:[order],conversations:[conversation],settings:[{draft_epoch:5}],renter_bot_lab_turns:[{_id:"turn",thread_id:thread,account_slug:"leo",turn_id:"fixture-turn",renter_message_id:"renter-current",lease_token:"fixture-lease",status:"running"}],hygglo_messages:[{_id:"renter",thread_id:thread,account_slug:"leo",message_id:"renter-current",sender:"renter",body_text:"What is the complete price?",fetched_at:1,hygglo_sent_at:1,_creationTime:1}]};
+  const db:any={query:(table:string)=>{const filters:Array<[string,any]>=[];let descending=false;const q={eq:(k:string,v:any)=>{filters.push([k,v]);return q;}};const r:any={withIndex:(_:string,f:any)=>{f(q);return r;},order:(direction:string)=>{descending=direction==="desc";return r;},collect:async()=> (tables[table]??[]).filter(i=>filters.every(([k,v])=>i[k]===v)),first:async()=>{const values=await r.collect();return (descending?values.at(-1):values[0])??null;},unique:async()=> (await r.collect())[0]??null};return r;},
     insert:async(table:string,value:any)=>{(tables[table]??=[]).push({_id:`insert-${tables[table].length}`, ...value});},patch:async(id:string,value:any)=>{Object.assign(Object.values(tables).flat().find(i=>i._id===id),value);}};
   return {thread,conversation,tables,ctx:{db,scheduler:{runAfter:async()=>null}} as any};
 }
+const appendLabMessage=async(f:ReturnType<typeof fixture>,text:string,run_id:string,draft_evidence?:any)=>(appendAssistantMessage as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,run_id,expected_message_id:"renter-current",turn_id:"fixture-turn",lease_token:"fixture-lease",...(draft_evidence?{draft_evidence}:{})});
 
 describe("owner message proposal archive",()=>{
  it("archives only an actually displayed explicit Native referral action for an empty inquiry",async()=>{
@@ -77,11 +78,66 @@ describe("owner message proposal archive",()=>{
   for(const path of ["lab","owner"]){
     it(`${path} attaches the exact approved quote before clearing or rotating its draft`,async()=>{
       const f=fixture();const text=f.conversation.ai_draft_text;
-      if(path==="lab")await (appendAssistantMessage as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,run_id:"run"});
+      if(path==="lab")await appendLabMessage(f,text,"run");
       else await (recordSentReply as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,message_id:"owner-sent"});
-      expect(f.tables.hygglo_messages.at(-1)).toMatchObject({sender:"owner",body_text:text,quoted_additions:[expect.objectContaining({items:[{product_id:1116294,qty:1},{product_id:1172765,qty:1}],total_gbp:194,additional_cost_gbp:70,physical_identity_key:"native-addition-key",quoted_for_message_id:"renter-current",epoch:5})]});
+      expect(f.tables.hygglo_messages.at(-1)).toMatchObject({sender:"owner",body_text:text,quoted_additions:[expect.objectContaining({items:[{product_id:1116294,qty:1},{product_id:1172765,qty:1}],added_items:[{name:"Remus 100mm",quantity:1,aliases:["Blazar Remus 100mm Cine Lens"]},{name:"PL to L mount",quantity:1}],total_gbp:194,additional_cost_gbp:70,physical_identity_key:"native-addition-key",quoted_for_message_id:"renter-current",epoch:5})]});
     });
   }
+ it("Lab archives the current generated quote as a simulated owner turn without changing real-chat approval rules",async()=>{
+  const f=fixture(),text=f.conversation.ai_draft_text,evidence=f.conversation.ai_draft_evidence;
+  delete f.conversation.ai_draft_text;delete f.conversation.ai_draft_evidence;
+  await appendLabMessage(f,text,"simulated-lab-reply",evidence);
+  expect(f.tables.hygglo_messages.at(-1)).toMatchObject({sender:"owner",body_text:text,
+   quoted_additions:[expect.objectContaining({items:[{product_id:1116294,qty:1},{product_id:1172765,qty:1}],quoted_for_message_id:"renter-current",epoch:5})]});
+  expect(await sentAdditionProposals(f.ctx,f.conversation,text)).toEqual([]);
+ });
+ it("classifies a proposed basket as an addition to a non-empty Lab order, not a second inquiry",async()=>{
+  const f=fixture(),text="For 2 days (20 October 2026 to 21 October 2026):\n- 1 × BMPCC 6K Full Frame: £124\n- 1 × Remus 100mm: £50\n- 1 × PL to L mount: £20\nTotal: £194";
+  const evidence={model_id:"native",stage:"CONFIRMED_UPCOMING" as const,stock:[],prices:[price()],stock_quotes:[{
+   quote_key:"complete-addition",proposed_basket:true as const,start_date:"2026-10-20",end_date:"2026-10-21",
+   items:[{item_id:"bmpcc",name:"BMPCC 6K Full Frame",quantity:1},{item_id:"remus",name:"Remus 100mm",quantity:1},{item_id:"adapter",name:"PL to L mount",quantity:1}],
+   listing_quote:{total_gbp:194,lines:[{product_id:123,name:"BMPCC 6K Full Frame",quantity:1,total_gbp:124},
+    {product_id:1116294,name:"Remus 100mm",quantity:1,total_gbp:50},{product_id:1172765,name:"PL to L mount",quantity:1,total_gbp:20}]}
+  }]};
+  f.conversation.ai_draft_text=text;f.conversation.ai_draft_evidence=evidence;
+  const proposals=await sentBookingProposals(f.ctx,f.conversation,text,{labSimulation:{draftText:text,evidence,requestMessageId:"renter-current"}});
+  expect(proposals.additions).toMatchObject([{items:[{product_id:1116294,qty:1},{product_id:1172765,qty:1}],total_gbp:194}]);
+  expect(proposals.inquiries).toEqual([]);
+ });
+ it("keeps a proposed complete basket as an inquiry when the Lab order is empty",async()=>{
+  const f=fixture(),order=f.tables.renter_bot_lab_orders[0];order.items=[];order.changes=[];
+  f.conversation.ai_draft_context_key=draftContextKey(null,undefined,order);
+  const text="For 1 day (20 October 2026):\n- 1 × Sony FX3: £51\nTotal: £51";
+  const evidence={model_id:"native",stage:"CONFIRMED_UPCOMING" as const,stock:[],prices:[],stock_quotes:[{
+   quote_key:"new-complete-basket",proposed_basket:true as const,start_date:"2026-10-20",end_date:"2026-10-20",
+   items:[{item_id:"fx3",name:"Sony FX3",quantity:1}],
+   listing_quote:{total_gbp:51,lines:[{product_id:1097510,name:"Sony FX3",quantity:1,total_gbp:51}]}
+  }]};
+  f.conversation.ai_draft_text=text;f.conversation.ai_draft_evidence=evidence;
+  const proposals=await sentBookingProposals(f.ctx,f.conversation,text,{labSimulation:{draftText:text,evidence,requestMessageId:"renter-current"}});
+  expect(proposals.inquiries).toHaveLength(1);
+  expect(proposals.additions).toEqual([]);
+ });
+ it("archives the dedicated complete-amendment quote for atomic acceptance on a saved Lab order",async()=>{
+  const f=fixture(),text="For 2 days (20 October 2026 to 21 October 2026), I can update the complete basket for £194 total.";
+  const evidence={model_id:"native",stage:"CONFIRMED_UPCOMING" as const,stock:[],prices:[],stock_quotes:[{
+   quote_key:"dedicated-complete-amendment",proposed_basket:true as const,complete_basket_amendment:true as const,
+   start_date:"2026-10-20",end_date:"2026-10-21",
+   items:[{item_id:"bmpcc",name:"BMPCC 6K Full Frame",quantity:1},{item_id:"remus",name:"Remus 100mm",quantity:1},{item_id:"adapter",name:"PL to L mount",quantity:1}],
+   listing_quote:{total_gbp:194,lines:[{product_id:123,name:"BMPCC 6K Full Frame",quantity:1,total_gbp:124},
+    {product_id:1116294,name:"Remus 100mm",quantity:1,total_gbp:50},{product_id:1172765,name:"PL to L mount",quantity:1,total_gbp:20}]}
+  }]};
+  f.conversation.ai_draft_text=text;f.conversation.ai_draft_evidence=evidence;
+  const proposals=await sentBookingProposals(f.ctx,f.conversation,text,{labSimulation:{draftText:text,evidence,requestMessageId:"renter-current"}});
+  expect(proposals.inquiries).toMatchObject([{quote:{quote_key:"dedicated-complete-amendment",complete_basket_amendment:true,proposed_basket:true}}]);
+  expect(proposals.additions).toEqual([]);
+ });
+ it("does not simulate an owner response when the exact Lab draft has an explicit current human-review block",async()=>{
+  const f=fixture(),text=f.conversation.ai_draft_text,evidence=f.conversation.ai_draft_evidence;
+  f.conversation.ai_draft_review={for_message_id:"renter-current",context_key:f.conversation.ai_draft_context_key,epoch:5,reason:"needs_human",flags:[]};
+  await appendLabMessage(f,text,"blocked-lab-reply",evidence);
+  expect(f.tables.hygglo_messages.at(-1).quoted_additions).toBeUndefined();
+ });
   for(const variant of ["edited_text","wrong_inbound","old_epoch","old_context","review_rejected","owner_latest","no_evidence","already_applied","no_order"]){
     it(`does not attach evidence from ${variant}`,async()=>{
       const f=fixture();let text=f.conversation.ai_draft_text;
@@ -106,7 +162,7 @@ describe("sent date offer archive",()=>{
    f.conversation.ai_draft_text="I can extend your booking to 20–22 October for £170 total.";
    f.conversation.ai_draft_evidence.prices=[{names:[],kind:"basket",source:"native_lab_date_proposal",call_id:"native-date",items:order.items.map((i:any)=>({name:i.name,quantity:i.qty})),total_gbp:170,start_date:"2026-10-20",end_date:"2026-10-22",date_proposal:{physical_identity_key:"native-date-key",before_context_key:f.conversation.ai_draft_context_key,from_start_date:order.start_date,from_end_date:order.end_date,base_total_gbp:124}}];
    const text=f.conversation.ai_draft_text;
-   if(path==="lab")await (appendAssistantMessage as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,run_id:"date"});
+   if(path==="lab")await appendLabMessage(f,text,"date");
    else await (recordSentReply as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,message_id:"date-owner"});
    expect(f.tables.hygglo_messages.at(-1)).toMatchObject({quoted_dates:[expect.objectContaining({context_key:f.conversation.ai_draft_context_key,from_end_date:"2026-10-21",end_date:"2026-10-22",total_gbp:170,base_total_gbp:124,physical_identity_key:"native-date-key",quoted_for_message_id:"renter-current"})]});
   });
@@ -119,7 +175,7 @@ describe("ordinary Native inquiry offer history",()=>{
   f.conversation.ai_draft_evidence={model_id:"native-test",stage:"CONFIRMED_UPCOMING",prices:[],stock:[],stock_quotes:[{quote_key:"separate-native",new_inquiry:true,start_date:"2026-10-22",end_date:"2026-10-24",items:[{item_id:"sony16",name:"Sony 16-35mm",quantity:1}],listing_quote:{total_gbp:50,lines:[{product_id:123,name:"Sony 16-35mm",quantity:1,total_gbp:50}]}}]};return f;}
  for(const path of ["lab","owner"])it(`${path} retains the reviewed independent offer with its original request and context`,async()=>{
   const f=quoted(),text=f.conversation.ai_draft_text;
-  if(path==="lab")await (appendAssistantMessage as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,run_id:"quote-history"});
+  if(path==="lab")await appendLabMessage(f,text,"quote-history");
   else await (recordSentReply as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,message_id:"owner-sent"});
   expect(f.tables.hygglo_messages.at(-1).quoted_inquiries).toEqual([{context_key:f.conversation.ai_draft_context_key,epoch:5,quoted_for_message_id:"renter-current",quote:f.conversation.ai_draft_evidence.stock_quotes[0]}]);
  });
@@ -128,7 +184,7 @@ describe("ordinary Native inquiry offer history",()=>{
   const second={...structuredClone(first),quote_key:"longer-native",end_date:"2026-10-28",listing_quote:{total_gbp:90,lines:[{...first.listing_quote.lines[0],total_gbp:90}]}};
   f.conversation.ai_draft_evidence.stock_quotes.push(second);
   f.conversation.ai_draft_text+=" Alternatively, 7 days to 28 October: £90 total.";const text=f.conversation.ai_draft_text;
-  if(path==="lab")await (appendAssistantMessage as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,run_id:"quote-options"});
+  if(path==="lab")await appendLabMessage(f,text,"quote-options");
   else await (recordSentReply as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,message_id:"options-owner"});
   expect(f.tables.hygglo_messages.at(-1).quoted_inquiries).toEqual([first,second].map(quote=>({context_key:f.conversation.ai_draft_context_key,epoch:5,quoted_for_message_id:"renter-current",quote})));
  });
@@ -152,7 +208,7 @@ describe("served rental request lineage",()=>{
   f.conversation.ai_draft_text="I can check suitable options for that shoot.";
   f.conversation.ai_draft_evidence={model_id:"test",stage:"CONFIRMED_UPCOMING",stock:[],rental_request:request};
   const text=f.conversation.ai_draft_text;
-  if(path==="lab")await (appendAssistantMessage as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,run_id:"request"});
+  if(path==="lab")await appendLabMessage(f,text,"request");
   else await (recordSentReply as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,message_id:"request-owner"});
   expect(f.conversation.active_rental_request).toEqual(request);
   expect(f.tables.hygglo_messages[0].rental_request).toEqual(request);
@@ -163,14 +219,14 @@ describe("served rental request lineage",()=>{
   for(const stale of [true,false]){
    const f=fixture();f.conversation.ai_draft_evidence.rental_request={kind:"inquiry",origin_message_id:"renter-current"};
    if(stale)f.conversation.ai_draft_epoch=4;
-   await (appendAssistantMessage as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text:stale?f.conversation.ai_draft_text:"A different reply",run_id:"unapproved-request"});
+   await appendLabMessage(f,stale?f.conversation.ai_draft_text:"A different reply","unapproved-request");
    expect(f.conversation.active_rental_request).toBeUndefined();
    expect(f.tables.hygglo_messages[0].rental_request).toBeUndefined();
   }
  });
  it("rejects a fabricated or foreign request origin atomically",async()=>{
   const f=fixture();f.conversation.ai_draft_evidence.rental_request={kind:"inquiry",origin_message_id:"foreign-renter"};
-  await expect((appendAssistantMessage as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text:f.conversation.ai_draft_text,run_id:"bad-root"})).rejects.toThrow("origin");
+  await expect(appendLabMessage(f,f.conversation.ai_draft_text,"bad-root")).rejects.toThrow("origin");
   expect(f.conversation.active_rental_request).toBeUndefined();expect(f.tables.hygglo_messages).toHaveLength(1);
  });
 });
@@ -179,6 +235,12 @@ it("does not archive an exact quote under a different rental request",()=>{
  const f=fixture();const a={kind:"inquiry",origin_message_id:"a"},b={kind:"inquiry",origin_message_id:"b"};
  const quote={quote_key:"native",rental_request:a,new_inquiry:true,start_date:"2026-10-20",end_date:"2026-10-21",items:[{item_id:"lens",name:"Lens",quantity:1}],listing_quote:{total_gbp:50,lines:[{product_id:1,name:"Lens",quantity:1,total_gbp:50}]}};
  expect(sentInquiryOffers({...f.conversation.ai_draft_evidence,rental_request:b,stock_quotes:[quote]},scope)).toEqual([]);
+});
+
+it("archives a complete proposed basket only when the isolated Lab explicitly opts in",()=>{
+ const evidence={model_id:"native",stage:"CONFIRMED_UPCOMING",stock:[],stock_quotes:[{quote_key:"complete",proposed_basket:true as const,start_date:"2026-12-10",end_date:"2026-12-12",items:[{item_id:"fx3",name:"Sony FX3",quantity:2}],listing_quote:{total_gbp:252,lines:[{product_id:1097510,name:"Sony FX3",quantity:2,total_gbp:252}]}}]};
+ expect(sentInquiryOffers(evidence,scope)).toEqual([]);
+ expect(sentInquiryOffers(evidence,scope,{allowProposedBasket:true})).toMatchObject([{quote:{proposed_basket:true,listing_quote:{total_gbp:252}}}]);
 });
 
 
@@ -190,7 +252,7 @@ describe("human edits around Native financial blocks",()=>{
   f.conversation.ai_draft_text="Here is the quote:\n\n"+block+"\n\nDoes it work for you?";
   f.conversation.ai_draft_evidence={model_id:"native-test",stage:"CONFIRMED_UPCOMING",stock:[],prices:[],rental_request:request,stock_quotes:[quote]};
   const text="Thanks for waiting.\n\n"+block+"\n\nWould you like to go ahead?";
-  if(path==="lab")await (appendAssistantMessage as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,run_id:"edited-native"});
+  if(path==="lab")await appendLabMessage(f,text,"edited-native");
   else await (recordSentReply as any)._handler(f.ctx,{thread_id:f.thread,account_slug:"leo",text,message_id:"edited-native"});
   expect(f.tables.hygglo_messages.at(-1).quoted_inquiries).toEqual([{context_key:f.conversation.ai_draft_context_key,epoch:5,quoted_for_message_id:"renter-current",quote}]);
   expect(f.tables.hygglo_messages.at(-1).rental_request).toEqual(request);expect(f.conversation.active_rental_request).toEqual(request);

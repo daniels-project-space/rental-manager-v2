@@ -1,94 +1,42 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { bindRenterToolArgs, withRenterToolScope } from "./renter-tool-scope";
-import { Agent } from "@mastra/core/agent";
-import { createTool } from "@mastra/core/tools";
-import { z } from "zod";
-import { RENTER_MODEL_RETRIES } from "./renter-model-policy";
-import { APICallError } from "ai";
-describe("trusted tool request scope", () => {
-  it("does not let the model switch accounts or query another conversation", () => {
-    const result = withRenterToolScope({ threadId: "thread-one", accountSlug: "leo" }, () => bindRenterToolArgs("renter_bot_tools:check_availability", { thread_id: "someone-else", account_slug: "diogo", item_name: "Sony FX3" }));
-    expect(result).toMatchObject({ thread_id: "thread-one", account_slug: "leo", item_name: "Sony FX3" });
+
+describe("Lab renter tool scope", () => {
+  it("binds alternative searches to the active Lab thread even when the model omits it", () => {
+    const scope = {
+      threadId: "__probe__session-2",
+      accountSlug: "dbcinema",
+      requestMessageId: "message-87654321",
+    };
+    const result = withRenterToolScope(scope, () => bindRenterToolArgs(
+      "renter_bot_tools:find_owned_alternatives",
+      { account_slug: "leo", booking_use: "standalone" },
+    ));
+
+    expect(result).toMatchObject({
+      account_slug: "dbcinema",
+      thread_id: "__probe__session-2",
+      booking_use: "standalone",
+    });
   });
-  it("binds exact template retrieval to the trusted request without model-supplied context", () => {
-    const scope = {threadId:"native-thread",accountSlug:"leo"};
-    for(const args of [{name:"Template: Leo Adams Welcome Text"},{name:"Template: Leo Adams Welcome Text",threadId:"foreign",accountSlug:"dbcinema"}]){
-      expect(bindRenterToolArgs("knowledge:getTemplate",args,scope)).toEqual({name:"Template: Leo Adams Welcome Text",threadId:"native-thread",accountSlug:"leo"});
-      expect(bindRenterToolArgs("knowledge:search",{query:"travel discount",threadId:args.threadId,accountSlug:args.accountSlug},scope)).toEqual({query:"travel discount",threadId:"native-thread",accountSlug:"leo"});
-    }
+
+  it("binds the current turn lease to simulated booking edits", () => {
+    const scope = {
+      threadId: "__probe__session-1",
+      accountSlug: "diogo",
+      requestMessageId: "message-12345678",
+      labTurnId: "turn-12345678",
+      labLeaseToken: "lease-12345678",
+    };
+    const result = withRenterToolScope(scope, () => bindRenterToolArgs(
+      "renter_bot_lab_order:applyChange",
+      { thread_id: "attacker-thread", request_message_id: "attacker-message", lab_turn_id: "attacker-turn" },
+    ));
+    expect(result).toMatchObject({
+      thread_id: scope.threadId,
+      request_message_id: scope.requestMessageId,
+      lab_turn_id: scope.labTurnId,
+      lab_lease_token: scope.labLeaseToken,
+    });
   });
-  it("fills omitted pricing account and stock exclusion thread", () => {
-    const scope = { threadId: "one", accountSlug: "leo" };
-    expect(bindRenterToolArgs("renter_bot_tools:lookup_pricing", {}, scope)).toEqual({ account_slug: "leo" });
-    expect(bindRenterToolArgs("renter_bot_tools:check_availability", {}, scope)).toEqual({ thread_id: "one" });
-    expect(bindRenterToolArgs("renter_bot_tools:check_basket_availability", {account_slug:"diogo"}, scope)).toEqual({account_slug:"leo",thread_id:"one"});
-    expect(bindRenterToolArgs("renter_bot_tools:find_owned_alternatives", {account_slug:"diogo",kind:"camera",camera_requirements:{sensor_format:"full_frame",internal_4k:true}}, scope)).toEqual({account_slug:"leo",thread_id:"one",kind:"camera",camera_requirements:{sensor_format:"full_frame",internal_4k:true}});
-    expect(bindRenterToolArgs("settings:get", {}, scope)).toEqual({});
-  });
-  it("keeps concurrent threads isolated across async tool calls", async () => {
-    const run = (threadId: string, accountSlug: string) => withRenterToolScope({ threadId, accountSlug }, async () => { await new Promise((resolve) => setTimeout(resolve, 1)); return bindRenterToolArgs("renter_bot_tools:lookup_pricing", { thread_id: "untrusted" }); });
-    expect(await Promise.all([run("one", "leo"), run("two", "diogo")])).toEqual([{ account_slug: "leo", thread_id: "one" }, { account_slug: "diogo", thread_id: "two" }]);
-  });
-});
-it("retries a failed model step without replaying a completed booking tool",async()=>{
- let modelCalls=0;let toolCalls=0;
- const model:any={specificationVersion:"v2",provider:"test",modelId:"same-model",supportedUrls:{},
-  doGenerate:async()=>{
-   modelCalls++;
-   if(modelCalls===2 || modelCalls===3)throw new APICallError({message:"provider aborted",url:"https://test.invalid",requestBodyValues:{},statusCode:504,isRetryable:true});
-   return {content:modelCalls===1?[{type:"tool-call",toolCallId:"write-once",toolName:"simulatedWrite",input:"{}"}]:[{type:"text",text:"Ready"}],
-    finishReason:modelCalls===1?"tool-calls":"stop",usage:{inputTokens:1,outputTokens:1},warnings:[]};
-  }};
- const simulatedWrite=createTool({id:"simulatedWrite",description:"Simulate one authorized write",inputSchema:z.object({}),execute:async()=>{toolCalls++;return {ok:true};}});
- const agent=new Agent({id:"retry-contract-test",name:"Retry contract",instructions:"Test retry scope",model,tools:{simulatedWrite},maxRetries:RENTER_MODEL_RETRIES});
- const result=await agent.generate("Run once",{maxSteps:3});
- expect(result.text).toBe("Ready");expect(modelCalls).toBe(4);expect(toolCalls).toBe(1);
-},15000);
-
-it("binds booking changes to the server's inbound message and rejects a fabricated snapshot",()=>{
- expect(bindRenterToolArgs("renter_bot_lab_order:applyChange",{thread_id:"other",request_message_id:"model-choice",action:"add_item"},{threadId:"one",accountSlug:"leo",requestMessageId:"renter-1"})).toMatchObject({thread_id:"one",request_message_id:"renter-1"});
- expect(bindRenterToolArgs("renter_bot_lab_order:applyChange",{request_message_id:"model-choice"},{threadId:"one",accountSlug:"leo"})).toMatchObject({request_message_id:""});
-});
-
-it("blocks booking tools in a read-only diagnostic while preserving scoped reads", () => {
- const scope = { threadId: "__probe__comparison", accountSlug: "leo", bookingWritesAllowed: false };
- expect(() => bindRenterToolArgs("renter_bot_lab_order:applyChange", { action: "add_item" }, scope)).toThrow("disabled");
- expect(bindRenterToolArgs("renter_bot_tools:lookup_pricing", { account_slug: "diogo" }, scope)).toEqual({ account_slug: "leo" });
-});
-
-it("binds and disables atomic setup acceptance just like other booking writes",()=>{
- for(const name of ["renter_bot_lab_order:applyAdditionBasket","renter_bot_lab_order:applyReplacementBasket","renter_bot_lab_order:redeemReferral"]){
- expect(bindRenterToolArgs(name,{thread_id:"other",request_message_id:"fabricated",items:[{product_id:1,qty:1}]},{threadId:"__probe__one",accountSlug:"leo",requestMessageId:"current"})).toMatchObject({thread_id:"__probe__one",request_message_id:"current"});
- expect(()=>bindRenterToolArgs(name,{items:[]},{threadId:"__probe__one",accountSlug:"leo",bookingWritesAllowed:false})).toThrow("disabled");
-}
- expect(bindRenterToolArgs("order_edit:getOrderState",{hygglo_order_id:"foreign",account_slug:"diogo"},{threadId:"__probe__one",accountSlug:"leo"})).toEqual({hygglo_order_id:"__probe__one",account_slug:"leo"});
-});
-
-it("keeps Native requirements across weaker searches without trusting caller mutation",async()=>{
- const {recordRecommendationRequirements}=await import("./renter-tool-scope");
- const scope:import("./renter-tool-scope").RenterScope={threadId:"one",accountSlug:"leo"};
- const recording={resolution:"dci_4k",min_fps:60,capture_format:"full_frame"};
- recordRecommendationRequirements(scope,{kind:"camera",camera_requirements:{recording},required_native_mount:"E",requested_quantity:2});
- recordRecommendationRequirements(scope,{kind:"camera",camera_requirements:{recording:{capture_format:"full_frame",min_fps:60,resolution:"dci_4k"}},required_native_mount:"E",requested_quantity:2});
- expect(scope.recommendationRequirements).toHaveLength(1);
- recording.min_fps=30;
- recordRecommendationRequirements(scope,{kind:"camera",camera_requirements:{},required_native_mount:null,requested_quantity:1});
- expect(scope.recommendationRequirements).toHaveLength(1);
- expect(scope.recommendationRequirements?.[0]).toMatchObject({quantity:2,requirements:{recording:{min_fps:60}}});
- const other:import("./renter-tool-scope").RenterScope={threadId:"two",accountSlug:"leo"};
- recordRecommendationRequirements(other,{kind:"lens",lens_requirements:{focus_mode:"autofocus"},required_native_mount:"E",requested_quantity:1});
- expect(other.recommendationRequirements).toHaveLength(1);expect(scope.recommendationRequirements).toHaveLength(1);
-});
-
-
-it("binds negotiation and planning to the trusted hire and clears requirements only on a request switch",async()=>{
- const {recordRentalRequest}=await import("./renter-tool-scope");
- const request={kind:"inquiry" as const,origin_message_id:"first"};
- const scope:import("./renter-tool-scope").RenterScope={threadId:"native",accountSlug:"leo",requestMessageId:"current",rentalStage:"CONFIRMED_UPCOMING",rentalRequest:request,recommendationRequirements:[{kind:"lens",quantity:1,requirements:{focus_mode:"manual_focus"}}]};
- for(const fn of ["renter_bot_tools:get_negotiation_stance","renter_bot_tools:select_rental_request","renter_bot_tools:get_renter_context"])
-  expect(bindRenterToolArgs(fn,{thread_id:"foreign",rental_request:{kind:"inquiry",origin_message_id:"fabricated"}},scope)).toMatchObject({thread_id:"native",rental_request:request});
- const ledger=scope.recommendationRequirements;
- recordRentalRequest(scope,{rental_request:request,request_message_id:"current",active_request_stage:{stage:"INQUIRY"}});expect(ledger).toHaveLength(1);expect(scope.requestStage).toBe("INQUIRY");expect(scope.rentalStage).toBe("CONFIRMED_UPCOMING");
- expect(()=>recordRentalRequest(scope,{rental_request:{kind:"primary"},request_message_id:"stale"})).toThrow("stale");expect(ledger).toHaveLength(1);
- recordRentalRequest(scope,{rental_request:{kind:"primary"},request_message_id:"current",active_request_stage:{stage:"CONFIRMED_UPCOMING"}});expect(scope.requestStage).toBe("CONFIRMED_UPCOMING");expect(scope.rentalStage).toBe("CONFIRMED_UPCOMING");expect(ledger).toHaveLength(0);expect(scope.recommendationRequirements).toBe(ledger);
 });

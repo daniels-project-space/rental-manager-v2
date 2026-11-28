@@ -3,6 +3,7 @@ import { getLabOrder } from "./renter_booking";
 import { loadListingInventory } from "./listing_inventory";
 import { recentThreadMessages } from "./thread_messages";
 import { requiredMountAdapters, renterProvidedAdapters } from "./required_mount_adapter";
+import { resolveInventoryMount } from "./reviewed_inventory_mount";
 
 /** Shared Native physical setup planning for quotes and atomic acceptance. */
 export async function additionMountRequirements(ctx: QueryCtx, args: { thread_id: string; account_slug: string; product_id?: number; quantity?: number; items?: Array<{product_id:number;qty:number}> }) {
@@ -26,11 +27,15 @@ export async function additionMountRequirements(ctx: QueryCtx, args: { thread_id
       if (!contents.complete || contents.owned !== true) return { status: "unknown" as const, items: [], reason: "Existing basket mapping is unverified." };
       existing.push(...contents.components.map(c => ({ item_id: c.item_id, quantity: c.requested_units })));
     }
+    const relevantIds = new Set([...existing, ...added].map(unit => unit.item_id));
+    const mounts = new Map(inventory.map(item => [String(item._id), resolveInventoryMount(item)]));
     const items = inventory.filter(i => i.status === "active" && !i.is_marketing_only && i.qty > 0)
-      .map(i => ({ id: String(i._id), name: i.name_canonical, kind: i.kind, mount: i.lens_mount }));
+      .map(i => ({ id: String(i._id), name: i.name_canonical, kind: i.kind, mount: mounts.get(String(i._id))?.mount ?? null }));
     const recent = await recentThreadMessages(ctx, args.thread_id, 60);
     const provided = recent.filter(message => message.sender !== "owner")
       .reduce((supplied, message) => renterProvidedAdapters(message.body_text, items, supplied), [] as Array<{ item_id: string; quantity: number }>);
-    return { ...requiredMountAdapters(items, existing, added, provided), renter_supplied: provided.map(unit => ({ name: items.find(item => item.id === unit.item_id)!.name, quantity: unit.quantity })),
+    const plan = requiredMountAdapters(items, existing, added, provided);
+    const mount_evidence = items.filter(item => relevantIds.has(item.id)).map(item => ({ item_name: item.name, ...mounts.get(item.id)!.evidence }));
+    return { ...plan, mount_evidence, renter_supplied: provided.map(unit => ({ name: items.find(item => item.id === unit.item_id)!.name, quantity: unit.quantity })),
       guidance: "Renter-supplied adapters are their responsibility and are not owner stock or paid additions. Quoting never edits the booking." };
 }

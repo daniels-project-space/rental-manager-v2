@@ -12,7 +12,13 @@ const statusColor = (s: string) =>
         ? "text-amber-400"
         : "text-[#8b8fa3]";
 
-export function RunResultsPanel() {
+export function RunResultsPanel({
+  onOpenConversation,
+  openingThreadId,
+}: {
+  onOpenConversation: (threadId: string) => void;
+  openingThreadId?: string | null;
+}) {
   const runs = useQuery(api.renter_bot_lab_actions.recentRuns, { limit: 20 });
 
   return (
@@ -40,6 +46,19 @@ export function RunResultsPanel() {
               </span>
             </summary>
             <div className="mt-2 space-y-1 text-xs">
+              {r.session_thread_id && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const threadId = r.session_thread_id;
+                    if (threadId) onOpenConversation(threadId);
+                  }}
+                  disabled={openingThreadId === r.session_thread_id}
+                  className="rounded bg-white/10 px-2 py-1 text-[#e4e6eb] hover:bg-white/20 disabled:opacity-50"
+                >
+                  {openingThreadId === r.session_thread_id ? "Opening conversation…" : "Open saved conversation"}
+                </button>
+              )}
               <p className="text-[#8b8fa3]">{r.model_id}{r.duration_ms != null ? ` · ${(r.duration_ms / 1000).toFixed(1)}s` : ""}{r.cost_usd != null ? ` · $${r.cost_usd.toFixed(4)}` : ""}{r.draft_evidence ? ` · ${r.draft_evidence.stage}` : ""}</p>
               {r.generation_error&&<div role="note" aria-label="Generation failure" className="rounded bg-red-300/5 p-2 text-red-200">
                 <p>Reply withheld: {r.generation_error.error_code} (HTTP {r.generation_error.http_status}). No model reply was approved.</p>

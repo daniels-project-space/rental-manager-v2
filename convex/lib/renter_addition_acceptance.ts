@@ -4,11 +4,12 @@ import { renterItemNames } from "./renter_item_names";
 import type { SentAdditionProposal } from "./renter_sent_proposal";
 
 export type AcceptedAdditionLine = {product_id:number;name:string;qty:number;line_total_gbp:number;daily_rate_gbp?:number;base_daily_rate_gbp?:number;aliases?:string[];identity_name?:string;primary_removal_aliases?:string[]};
-export type AdditionAcceptanceQuote = {context_key:string;start_date:string;end_date:string;total_gbp:number;additional_cost_gbp:number;lines:AcceptedAdditionLine[];physical_identity_key?:string};
+export type AdditionAcceptanceQuote = {context_key:string;start_date:string;end_date:string;total_gbp:number;additional_cost_gbp:number;lines:AcceptedAdditionLine[];base_lines?:AcceptedAdditionLine[];physical_identity_key?:string};
 const sameMoney = (a:number,b:number) => Number.isFinite(a) && Number.isFinite(b) && Math.round(a*100)===Math.round(b*100);
 const numbers:Record<string,number>={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10};
 const normal = (s:string) => s.replace(/[’‘]/g,"'").replace(/\s+/g," ").trim();
 const keys=(items:Array<{product_id:number;qty:number}>)=>JSON.stringify(items.map(i=>({product_id:i.product_id,qty:i.qty})).sort((a,b)=>a.product_id-b.product_id));
+const stripBookingTargetSuffix=(text:string)=>text.replace(/\s+\b(?:to|on|in)\s+(?:(?:my|our|the|this|a|an|current|existing)\s+[^.!?]*?\b(?:booking|basket|order|request|rental)\b|(?:booking|basket|order|request|rental)\b)[^.!?]*[.!?]*$/i,"").trim();
 
 function hasLineName(text:string,line:AcceptedAdditionLine){
   const words=tokenize(text);
@@ -23,7 +24,7 @@ function namedSelection(raw:string,lines:AcceptedAdditionLine[],action:"addition
   const count=/^(\d+)(?:x|\s*x)?\s+|^(one|two|three|four|five|six|seven|eight|nine|ten)\s+/i.exec(part);
   const qty=count?Number(count[1]??numbers[count[2].toLowerCase()]):1;
   if(count)part=part.slice(count[0].length).replace(/^(?:extra|more)\s+/i,"");
-  part=part.replace(/\s+lens\b$/i,"").replace(/[.!?]+$/,"").trim();
+  part=part.replace(/[.!?]+$/i,"").trim().replace(/\s+lens$/i,"").trim();
   if(isGenericItemQuery(part))return null;
   const match=bestMatch(part,lines,l=>l.identity_name??l.name,l=>[...renterItemNames(l.identity_name??l.name),...(l.aliases??[]),...(action==="removal"?l.primary_removal_aliases??[]:[])]);
   if(!match.confident || !match.match)return null;
@@ -46,8 +47,8 @@ export function directItemSelection(text:string, lines:AcceptedAdditionLine[], a
     const verb=action==="addition"?"(?:add|include|book|reserve)":"(?:remove|drop)";
     const request=new RegExp(`(?:^(?:(?:yes|yep|okay|ok|sure|please)[,\\s]+)*|\\b(?:please|go ahead(?: and)?|(?:can|could|would) you|(?:I|we)(?:'d| would) like (?:you )?to|(?:I|we) want (?:you )?to)\\s+)${verb}\\s+(.+)`,"i").exec(clause);
     if(!request)continue;
-    let object=request[1].replace(/\s*,?\s*(?:bringing|taking|making)\s+(?:(?:the|your|my)\s+)?(?:(?:new|updated|revised)\s+)?(?:(?:booking|order|rental)\s+)?total\s+(?:to|of)\s*£\s*\d+(?:,\d{3})*(?:\.\d{1,2})?[.!?]*$/i,"").replace(/\b(?:at|for)\s*£\s*\d+(?:,\d{3})*(?:\.\d{1,2})?(?:\s+(?:extra|more|additional))?/gi,"").replace(/\b(?:to|on|in)\s+(?:(?:my|our|the|this)\s+)?(?:booking|basket|order)\b.*$/i,"")
-      .replace(/\b(?:for|from|at|as quoted|together|only|just)\b.*$/i,"").trim();
+    let object=request[1].replace(/\s*,?\s*(?:bringing|taking|making)\s+(?:(?:the|your|my)\s+)?(?:(?:new|updated|revised)\s+)?(?:(?:booking|order|rental)\s+)?total\s+(?:to|of)\s*£\s*\d+(?:,\d{3})*(?:\.\d{1,2})?[.!?]*$/i,"").replace(/\b(?:at|for)\s*£\s*\d+(?:,\d{3})*(?:\.\d{1,2})?(?:\s+(?:extra|more|additional))?/gi,"");
+    object=stripBookingTargetSuffix(object).replace(/\b(?:for|from|at|as quoted|together|only|just)\b.*$/i,"").trim();
     if(action==="removal")object=object.replace(/\s+(?:less|reduction)[.!?]*$/i,"");
     if(/\bor\b/i.test(object))return {named:true,matches:false,items:null};
     if(/^(?:it|them|both|these|those|that|this|the (?:quoted |complete )?setup|the quote)[.!?\s]*$/i.test(object))continue;
@@ -89,6 +90,12 @@ function pricesMatch(text:string, quote:AdditionAcceptanceQuote, ownerQuote=fals
     const days=(Date.parse(quote.end_date)-Date.parse(quote.start_date))/86400000+1;
     const line=quote.lines.find(l=>hasLineName(clause,l) && sameMoney(claim.amount,daily?(l.daily_rate_gbp??l.line_total_gbp/(l.qty*days)):l.line_total_gbp));
     if(line){priced.add(line.product_id);continue;}
+    // The owner may present a full updated basket quote. Its existing-basket
+    // lines are valid context, but only the selected addition lines count
+    // toward proving the marginal offer.
+    const baseLine=ownerQuote?quote.base_lines?.find(l=>hasLineName(clause,l) &&
+      sameMoney(claim.amount,daily?(l.daily_rate_gbp??l.line_total_gbp/(l.qty*days)):l.line_total_gbp)):undefined;
+    if(baseLine)continue;
     if(ownerQuote && daily && quote.lines.some(l=>hasLineName(clause,l)&&l.base_daily_rate_gbp!=null&&sameMoney(claim.amount,l.base_daily_rate_gbp)))continue;
     return {present:true,matches:false};
   }
@@ -127,8 +134,9 @@ export function acceptsAddition(text:string,quote:AdditionAcceptanceQuote,owner?
   if(candidates.length!==1)return false;
   if(direct.matches)return true;
   if(/\b(?:if|unless|maybe|might|not|don't|do not|two of|two each|double|triple|quantity|qty)\b/i.test(message))return false;
-  const reference=/^(?:(?:yes|yep|yeah|okay|ok|sure|perfect)[,\s!]+)?(?:please\s+)?(?:go ahead(?: and (?:add|book|include) (?:it|them|both|that|those|these))?|(?:add|book|include) (?:it|them|both|that|those|these|the (?:quoted |complete )?setup))[.!\s]*(?:thanks|thank you)?[.!\s]*$/i.test(message);
-  const bare=/^(?:yes|yep|yeah|okay|ok|sure)[,!\s]*(?:please)?[.!\s]*$/i.test(message);
+  const consentMessage=stripBookingTargetSuffix(message);
+  const reference=/^(?:(?:yes|yep|yeah|okay|ok|sure|perfect)[,\s!]+)?(?:please\s+)?(?:go ahead(?: and (?:add|book|include) (?:it|them|both|that|those|these))?|(?:add|book|include) (?:it|them|both|that|those|these|the (?:quoted |complete )?setup))[.!\s]*(?:thanks|thank you)?[.!\s]*$/i.test(consentMessage);
+  const bare=/^(?:yes|yep|yeah|okay|ok|sure)[,!\s]*(?:please)?[.!\s]*$/i.test(consentMessage);
   if(!reference&&!bare)return false;
   const unambiguous=(owner.quoted_additions??[]).length===1 && !/\b(?:or|alternatively|either|instead|options?)\b/i.test(owner.body_text);
   if(bare)return unambiguous;

@@ -14,7 +14,9 @@ export function friendReferralFromMessage(text: string): string | null {
 
 /** Preserve ambiguity instead of silently falling back to an older code. */
 export function friendReferralCodesFromMessage(text:string):string[] {
- if(!/\b(?:friends?|sent me|referrals?|same basket)\b/i.test(text))return [];
+ const existingReferralSignal=/\b(?:friends?|sent me|referrals?|same basket)\b/i.test(text);
+ const naturalReferralSignal=/\breferred\b/i.test(text)&&/\bbasket references?\b/i.test(text);
+ if(!existingReferralSignal&&!naturalReferralSignal)return [];
  return [...new Set((text.match(/\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b/gi)??[]).map(c=>c.toLowerCase()))];
 }
 
@@ -23,8 +25,20 @@ export function friendReferralCodesFromMessage(text:string):string[] {
 export function requestsFriendBasketRestore(text:string) {
   const message=text.replace(/[’‘]/g,"'").replace(/```[\s\S]*?```/g," ").replace(/["“][^"”]*["”]/g," ");
   return message.split(/[;\n]|(?<=[.!?])\s+/).some(clause=>{
-    if(/\b(?:if|maybe|might|consider|thinking|suppose|example|said|says|told|don't|do not|never|wait|hold off|after I confirm|before I confirm)\b/i.test(clause))return false;
-    return /(?:^|\b(?:please|go ahead(?: and)?|(?:can|could|would) you|I(?:'d| would) like (?:you )?to)\s+)(?:restore|rebuild|add|use|copy)\s+(?:the\s+|my\s+|their\s+|that\s+|this\s+|same\s+|quoted\s+|friend's\s+)*(?:basket|gear|equipment|items?|setup)\b/i.test(clause);
+    if(/\b(?:maybe|might|consider|thinking|suppose|example|said|says|told|don't|do not|never|wait|hold off|after I confirm|before I confirm)\b/i.test(clause))return false;
+    const directAction=/(?:^|\b(?:please|go ahead(?: and)?|(?:can|could|would) you|I(?:'d| would) like (?:you )?to|and|then)\s+)(?:restore|rebuild|add|use|copy)\s+/i.test(clause);
+    const explicitBasket=/\b(?:basket|gear|equipment|items?|setup)\b/i.test(clause);
+    const explicitNamedGear=/\b(?:kit|camera|lenses?)\b/i.test(clause);
+    const explicitOwnTargetWithPronoun=/\b(?:restore|rebuild|add|use|copy)\s+(?:it|them)\b[\s\S]*\b(?:to|into)\s+my(?:\s+(?:own|new))*\s+(?:basket|request|inquiry)\b/i.test(clause);
+    if(!directAction||!(explicitBasket||explicitNamedGear||explicitOwnTargetWithPronoun))return false;
+    // A request such as “check it and add it to my request if available” is
+    // explicit conditional consent. Other hypothetical/conditional wording
+    // remains read-only, and multiple conditions are too ambiguous to write.
+    const conditions=[...clause.matchAll(/\b(?:if|when)\b/gi)];
+    if(conditions.length){
+      if(conditions.length!==1||!/(?:if|when)\s+(?:(?:it|this|that)\s+)?(?:is\s+)?available\b/i.test(clause))return false;
+    }
+    return true;
   });
 }
 

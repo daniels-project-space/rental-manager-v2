@@ -87,8 +87,8 @@ it("quotes lens and required adapter together using a read-only native basket", 
  const adapter = { ...lens, matched_canonical: "PL to L mount", product_id: 1172765, listed_total_gbp: 20 };
  let basket: unknown;
  let mutations = 0;
- const result: any = await withBookingAdditionPreview(lens, { threadId: "__probe__full-quote", accountSlug: "leo" }, async () => { mutations++; }, async () => adapter,
-  async () => ({ status: "required", items: [{ name: "PL to L mount", quantity: 1 }] }), async args => { basket = args; return { ok: true, additional_cost_gbp: 70, quote: { total_gbp: 194 }, addition_quote: { lines: [{ product_id: 1116294, qty: 1 }, { product_id: 1172765, qty: 1 }] } }; });
+ const result: any = await withBookingAdditionPreview(lens, { threadId: "__probe__full-quote", accountSlug: "leo" }, async () => { mutations++; }, async args => Number(args.product_id) === lens.product_id ? lens : adapter,
+  async () => ({ status: "required", items: [{ name: "PL to L mount", quantity: 1 }] }), async args => { basket = args; return { ok: true, additional_cost_gbp: 70, quote: { total_gbp: 194 }, addition_quote: { lines: [{ product_id: 1116294, qty: 1, name: "Blazar Remus 100mm" }, { product_id: 1172765, qty: 1, name: "PL to L mount" }] } }; });
  expect(mutations).toBe(0);
  expect(basket).toEqual({ thread_id: "__probe__full-quote", items: [{ product_id: 1116294, qty: 1 }, { product_id: 1172765, qty: 1 }] });
  expect(result.required_accessory_names).toEqual(["PL to L mount"]);
@@ -106,4 +106,28 @@ it("retains the required accessory when its exact price fails and never quotes a
  expect(result.proposal).toMatchObject({ok:false,error_code:"required_adapter_quote_unavailable"});
  expect(result.required).toEqual([{name:"PL to L mount",quantity:1}]);
  expect(basketCalls).toBe(0);
+});
+
+it("keeps a verified price-and-stock proposal useful while unknown physical compatibility stays non-actionable", async () => {
+ const lens = { found: true, source: "hygglo_listing", matched_canonical: "Sony FE 28-70mm f/3.5-5.6 OSS", product_id: 1172504, account_slug: "leo", days: 1, quantity: 1, listed_total_gbp: 18 };
+ const proposal = { ok: true, source: "native_lab_proposal", preview_only: true, additional_cost_gbp: 18,
+  quote: { total_gbp: 69 }, addition_quote: { lines: [{ product_id: 1172504, qty: 1, name: "Sony 28-70mm" }] },
+  stock_receipts: [{ source: "shared_inventory_confirmed_rentals", available: true }] };
+ let mutationCalls = 0;
+ const result: any = await withBookingAdditionPreview(lens, { threadId: "__probe__unknown-mount", accountSlug: "leo" }, async () => { mutationCalls++; },
+  async () => ({ found: true, source: "hygglo_listing", account_slug: "leo", product_id: 1172504, quantity: 1,
+    matched_canonical: "Sony 28-70mm", matched_listing: "Sony Full Frame 28-70mm zoom Lens | Sony FE / 28 70mm / f3.5-5.6 lens", display_name: "Sony FE 28-70mm f/3.5-5.6 OSS" }),
+  async () => ({ status: "unknown", reason: "The selected camera mount is unverified.", mount_evidence: [{ item_name: "Sony FX3", status: "manufacturer_reviewed", mount: "Sony E-mount" }] }),
+  async () => proposal);
+ expect(mutationCalls).toBe(0);
+ expect(result).toMatchObject({ setup_status: "compatibility_unverified", booking_addition_preview: {
+  ok: true, setup_status: "compatibility_unverified", price_and_stock_verified: true, action_eligible: false,
+  additional_cost_gbp: 18, quote: { total_gbp: 69 },
+ } });
+ expect(result.setup_quote_guidance).toContain("physical compatibility is not");
+ expect(result.setup_mount_evidence).toEqual([{ item_name: "Sony FX3", status: "manufacturer_reviewed", mount: "Sony E-mount" }]);
+ expect(result.booking_addition_preview.addition_quote.lines[0].verified_price_names).toContain("Sony FE 28-70mm f/3.5-5.6 OSS");
+ expect(renterToolReceipts([{ toolName: "lookup_pricing", toolCallId: "lens", result }])).toContainEqual(
+  expect.objectContaining({ tool: "quote_booking_addition", result: expect.objectContaining({ setup_status: "compatibility_unverified", action_eligible: false }) }),
+ );
 });

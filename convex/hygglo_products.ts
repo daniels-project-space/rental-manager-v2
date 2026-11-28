@@ -3,7 +3,7 @@ import { resolvedMarketingOnly } from "./lib/power_listing_identity";
 import { loadCatalogueProducts } from "./lib/catalogue_read_cache";
 import { loadProductReadRecords } from "./lib/product_read_model";
 import { canonicalKitContents } from "./lib/canonical_kit_contents";
-import { listingKitItem } from "./lib/listing_kit_context";
+import { listingKitItem, ownerConfirmedContentsForListing } from "./lib/listing_kit_context";
 import { createBundleMappingContext } from "./lib/bundle_mapping";
 /**
  * convex/hygglo_products — the marketing-listings layer (Phase 3, ADDITIVE).
@@ -291,11 +291,15 @@ export async function catalogueForStorefrontRows(ctx: QueryCtx, allowPrepared = 
       const classifiedMarketing=resolvedMarketingOnly(product,resolved,inventory);
       const complete = resolved.complete && components.length > 0 && components.every(c => Number.isSafeInteger(c.qty) && c.qty > 0);
       const primary = listingKitItem(resolved, inventory);
+      const ownerConfirmedContents = primary
+        ? ownerConfirmedContentsForListing(overrides, accountSlug, product.productId, String(primary._id), resolved.components)
+        : undefined;
       const kit = canonicalKitContents(
         resolved.components,
         inventory,
-        primary?.compatibility?.included_with_rental ?? [],
+        ownerConfirmedContents?.lines ?? primary?.compatibility?.included_with_rental ?? [],
         primary ? String(primary._id) : undefined,
+        ownerConfirmedContents?.lines,
       );
       const verifiedContents = complete && resolved.owned===true && !classifiedMarketing;
       const inventoryFacts = {version:1 as const,contents:verifiedContents?kit.contents:[],optionalContents:verifiedContents?kit.optional_contents:[],

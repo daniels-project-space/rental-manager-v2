@@ -3,14 +3,14 @@ import { z } from "zod";
 import { RENTER_BOT_INTENTS, CONVERSATION_STAGES } from "../../convex/lib/renter_bot_intents";
 
 export const RENTER_BOT_OUTPUT_SCHEMA = z.object({
-  draft: z.string().describe("Renter-facing reply when reply_parts is omitted. Empty when reply_parts is used or needs_human=true."),
+  draft: z.string().describe("The complete renter-facing reply for ordinary conversation. Empty only when server-rendered reply_parts are used or needs_human=true."),
   reply_parts: z.array(z.discriminatedUnion("type",[
     z.object({type:z.literal("text"),text:z.string()}),
     z.object({type:z.literal("quote"),quote_key:z.string().regex(/^inquiry_[a-f0-9]{32}$/),offer_action:z.literal("restore_referral").optional()}),
     z.object({type:z.literal("budget_check"),budget_key:z.string().regex(/^budget_[a-f0-9]{32}$/)}),
     z.object({type:z.literal("replacement_value"),value_key:z.string().regex(/^value_[a-f0-9]{32}$/)}),
     z.object({type:z.literal("booking_record"),record_key:z.string().regex(/^record_[a-f0-9]{32}$/)}),
-  ])).min(1).max(12).optional().describe("Use text parts without money, budget_check parts selecting Native budget_price_checks.budget_key for the search maximum and verified price comparisons (not hire offers), replacement_value parts selecting a Native replacement_value_comparisons.value_key for equipment values, quote parts selecting renter_quote.quote_key for prospective hires, and booking_record parts selecting booking_record.record_key for an original closed rental. Both financial purposes can appear together. Leave draft empty; the server renders each verified block."),
+  ])).min(1).max(12).optional().describe("Use only when selecting server-rendered Native quote, budget, replacement-value, or historical-booking blocks. Use concise text parts around those blocks only when needed, without repeating facts. For ordinary conversation, put the complete reply in draft and omit reply_parts; never split plain prose across multiple text parts. Text parts cannot contain financial amounts."),
   intent: z.enum(RENTER_BOT_INTENTS),
   conversation_stage: z.enum(CONVERSATION_STAGES),
   red_flags: z.array(z.string()),
@@ -66,7 +66,28 @@ export function renterBotOutputDiagnostics(value:unknown,text:string,termination
   }catch{/* Content stays private. */}}
  }
  const steps=Array.isArray(termination.steps)?termination.steps:[];
+ const resultStatusByCallId=new Map<string,"ok"|"error">();
+ for(const step of steps){
+  const results=step&&typeof step==="object"&&Array.isArray((step as {toolResults?:unknown}).toolResults)?(step as {toolResults:Array<Record<string,unknown>>}).toolResults:[];
+  for(const toolResult of results){
+   const payload=(toolResult?.payload??toolResult) as Record<string,unknown>;
+   const callId=payload?.toolCallId??payload?.tool_call_id;
+   if(callId==null)continue;
+   const output=payload?.result??payload?.output;
+   resultStatusByCallId.set(String(callId),output&&typeof output==="object"&&"error" in output?"error":"ok");
+  }
+ }
+ const toolTrace=steps.flatMap(step=>{
+  const calls=step&&typeof step==="object"&&Array.isArray((step as {toolCalls?:unknown}).toolCalls)?(step as {toolCalls:Array<Record<string,unknown>>}).toolCalls:[];
+  return calls.map(toolCall=>{
+   const payload=(toolCall?.payload??toolCall) as Record<string,unknown>;
+   const rawName=payload?.toolName??payload?.tool_name;
+   const rawId=payload?.toolCallId??payload?.tool_call_id;
+   const name=typeof rawName==="string"&&/^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(rawName)?rawName:"unknownTool";
+   return {name,result:rawId==null?"missing" as const:resultStatusByCallId.get(String(rawId))??"missing" as const};
+  });
+ });
  return sanitizeModelOutputDiagnostics({object_type:value===undefined?"missing":value===null?"null":Array.isArray(value)?"array":["object","string","number","boolean"].includes(typeof value)?typeof value:"other",
   text_status:textStatus,text_length:text.length,object_issues:schemaIssues(value),text_issues:textIssues,finish_reason:termination.finishReason,step_count:steps.length,
-  tool_call_count:steps.reduce((n,s)=>n+(s&&typeof s==="object"&&Array.isArray(s.toolCalls)?s.toolCalls.length:0),0)})!;
+  tool_call_count:toolTrace.length,tool_trace:toolTrace})!;
 }

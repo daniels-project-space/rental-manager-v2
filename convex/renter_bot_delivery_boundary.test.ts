@@ -64,3 +64,56 @@ it("returns only the exact checkout receipt for the current Lab basket and rente
   expect(await (check_location as any)._handler(ctx,{thread_id:"__probe__delivery",renter_postcode:"E1 6AN"})).toMatchObject({ok:false});
   expect(calls).toEqual([]);
 });
+
+it("does not turn a failed configured DB Cinema checkout quote into pickup-only", async () => {
+  vi.stubEnv("RENTAL_MANAGER_ACCESS", "open");
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, request: RequestInit) => {
+    const body = JSON.parse(String(request.body));
+    const value = body.path === "catalog:discovery"
+      ? { page: [{ slug: "blackmagic-kit-1103089" }], isDone: true }
+      : body.path === "catalog:getListingBySlug"
+        ? { _id: "website-listing", slug: "blackmagic-kit-1103089", bookable: true, marketingOnly: false }
+        : null;
+    if (body.path === "delivery:quote") throw new Error("checkout unavailable");
+    return new Response(JSON.stringify({ status: "success", value }));
+  }));
+  const ctx = { runQuery: vi.fn(async (ref: Parameters<typeof getFunctionName>[0]) => {
+    switch (getFunctionName(ref)) {
+      case "renter_bot_tools:__service_deliverySpecs":
+        return { ok: true, account_slug: "dbcinema", basket_updated_at: 1, inventory_updated_at: 2,
+          items: [], checkout: { startDate: "2026-11-26", endDate: "2026-11-26", items: [{ productId: 1103089, qty: 1 }] } };
+      case "replyInbox:getThreadContext": return { messages: [{ role: "renter", content: "Delivery to SW1A 1AA?" }] };
+      default: throw new Error(`Unexpected query: ${getFunctionName(ref)}`);
+    }
+  }) };
+  const result = await (check_location as any)._handler(ctx, { thread_id: "__probe__checkout-failed", renter_postcode: "SW1A 1AA" });
+  expect(result).toMatchObject({
+    ok: false,
+    delivery_status: "checkout_verification_required",
+    account_slug: "dbcinema",
+    thread_id: "__probe__checkout-failed",
+  });
+  expect(result.delivery_status).not.toBe("pickup_only");
+});
+
+it("marks an account with no delivery hub as pickup-only with exact account and thread scope", async () => {
+  vi.stubEnv("RENTAL_MANAGER_ACCESS", "open");
+  const ctx = { runQuery: vi.fn(async (ref: Parameters<typeof getFunctionName>[0]) => {
+    switch (getFunctionName(ref)) {
+      case "renter_bot_tools:__service_deliverySpecs":
+        return { ok: true, account_slug: "diogo", basket_updated_at: 1, inventory_updated_at: 2, items: [] };
+      case "replyInbox:getThreadContext":
+        return { messages: [{ role: "renter", content: "Could you deliver to E1 6AN?" }] };
+      case "settings:__service_listAccountHubs": return [{ slug: "diogo", hub_postcode: null, hub_label: null }];
+      default: throw new Error(`Unexpected query: ${getFunctionName(ref)}`);
+    }
+  }) };
+  const result = await (check_location as any)._handler(ctx, { thread_id: "__probe__pickup-only", renter_postcode: "E1 6AN" });
+  expect(result).toMatchObject({
+    ok: false,
+    delivery_status: "pickup_only",
+    account_slug: "diogo",
+    thread_id: "__probe__pickup-only",
+    reason: "No delivery hub set for this account — pickup only.",
+  });
+});

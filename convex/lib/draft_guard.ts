@@ -10,12 +10,13 @@ import { unsupportedCatalogueReadinessClaims, type CatalogueReadinessEvidence } 
 import { unsupportedSensorIdentityClaims } from "./camera_sensor_comparisons";
 import { forbiddenFulfillmentClaims } from "./fulfillment_claims";
 import { unsupportedPriceClaims, incompleteSetupQuotes, type PriceEvidence } from "./price_claims";
-import { supportsRentalEligibilityDecline, rentalRefusalSubject, unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
+import { isPickupLocationAvailabilityBoundaryClaim, supportsRentalEligibilityDecline, rentalRefusalSubject, unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
 import { requestedIncludedKitEntries, unsupportedKitClaims, type KitEvidence } from "./kit_claims";
 import { unsupportedCameraModeClaims, unsupportedBuiltInNDClaims, type CameraEvidence } from "./camera_mode_claims";
 import { unsupportedLensFocusClaims, type LensFocusEvidence } from "./lens_focus_claims";
 import { renterItemNames } from "./renter_item_names";
-import { assessTravelCompensation, hasPickupHandoffExplanation, isDiscountConcessionOffer, isPickupLocationIntent, isTravelCompensationOffer, isTravelConcern, isUnsafePickupLocationClaim, mentionsPickupArea, replaceTravelCompensationOffers, stripTravelCompensationOffers, verifiedRentalChargeGbp, withoutAuthorizedTravelCompensationClaim } from "./travel_compensation";
+import { assessTravelCompensation, hasPickupAreaAcceptance, hasPickupAreaDisclosure, hasUnavailablePickupAlternative, isDiscountConcessionOffer, isPickupListingLocationQuestion, isPickupLocationIntent, isTravelCompensationOffer, isTravelConcern, isUnsafePickupLocationClaim, mentionsPickupArea, replaceTravelCompensationOffers, stripPrematureDiscountDiscussion, stripTravelCompensationOffers, verifiedRentalChargeGbp, withoutAuthorizedTravelCompensationClaim } from "./travel_compensation";
+import { stripCrossAccountReferenceSentences } from "./cross_account_references";
 /**
  * Draft guard — output policing for AI-generated owner replies (Phase 1).
  *
@@ -86,9 +87,13 @@ export interface GuardOpts {
   pickupWindows?: { start: string; end: string }[];
   /** Per-account vague pickup area; exact address remains separately gated. */
   pickupArea?: string | null;
+  /** Current, owner-verified item-specific reason; never inferred from prose. */
+  pickupReason?: string | null;
   /** Exact meeting point; only shared when pickupConfirmed is true. */
   pickupAddress?: string | null;
   pickupConfirmed?: boolean;
+  /** Current account's delivery capability, established by a scoped tool receipt. */
+  deliveryCapability?: "pickup_only";
   /** Verified rental charge excluding delivery; unknown means no travel offer. */
   rentalChargeGbp?: number | null;
   /** Accounts that speak in the first person singular ("I", not "we"). */
@@ -217,6 +222,7 @@ const SEVERITY: Record<string, FlagSeverity> = {
   LOCATION_ASK_FOR_DISCOUNT: "high",
   TRAVEL_COMPENSATION_GATE: "high",
   PICKUP_LOCATION_CORRECTED: "high",
+  CROSS_ACCOUNT_REFERENCE: "high",
   UNGROUNDED_SPEC: "high",
   LENS_FOCUS_HALLUCINATION: "high",
   RENTER_CAMERA_IDENTITY_UNVERIFIED: "high",
@@ -610,7 +616,7 @@ export function guardDraft(draft: string, opts: GuardOpts): GuardResult {
         // blackouts and vacation are already deducted from the receipt capacity.
         const checkedAvailable = statedUnits != null && typeof it.free_units === "number"
           ? it.free_units >= statedUnits : it.available;
-        const negative = /\b(not available|unavailable|isn'?t available|aren'?t available|out of stock|booked out|fully booked|already booked|currently rented|all booked|none (?:left|available))\b/i.test(clause);
+        const negative = !isPickupLocationAvailabilityBoundaryClaim(clause) && /\b(not available|unavailable|isn'?t available|aren'?t available|out of stock|booked out|fully booked|already booked|currently rented|all booked|none (?:left|available))\b/i.test(clause);
         const positive = !negative && /\b(available|in stock|i'?ve got|i have|free for|ready for|can do|yep,? got)\b/i.test(clause);
         if ((checkedAvailable && negative) || (!checkedAvailable && positive)) push(
           "AVAILABILITY_CONTRADICTION",
@@ -635,6 +641,7 @@ const ASSERTS_AVAIL_RE =
     if (refusal) return !supportsRentalEligibilityDecline(sentence,opts.stockRequest ?? {items:[]},marketingItems);
     const match = negativeStock.exec(sentence);
     if (!match) return false;
+    if (isPickupLocationAvailabilityBoundaryClaim(sentence)) return false;
     const subject = sentence.slice(0, match.index);
     // Equipment stock is separate from a recording feature or pickup policy.
     // "4K isn't available on the A7 II" is not a claim that its body is out.
@@ -647,7 +654,12 @@ const ASSERTS_AVAIL_RE =
   }
 
   if (opts.stockEvidence !== undefined || text.split(/(?<=[.!?])\s+|\n+|;\s*|,\s+/).some(sentence=>rentalRefusalSubject(sentence))) {
-    for (const failure of unsupportedStockClaims(nativeInformationForText({replacement_value_comparisons:opts.replacementValueComparisons,budget_price_checks:opts.budgetPriceChecks},text,text).claim_text, opts.stockEvidence ?? [], nativeInformationClaimRequest(opts.stockRequest ?? { items: [] },opts.budgetPriceChecks), marketingItems, opts.lastRenterMessage)) {
+    // Travel-adjustment sentences are rewritten or removed below. Checking
+    // their raw wording as equipment stock first misreads "£5 towards travel
+    // from Shoreditch" as an item available from Shoreditch and blocks the
+    // whole reply before the policy rewrite can run.
+    const stockClaimText = isTravelConcern(opts.lastRenterMessage) ? stripTravelCompensationOffers(text) : text;
+    for (const failure of unsupportedStockClaims(nativeInformationForText({replacement_value_comparisons:opts.replacementValueComparisons,budget_price_checks:opts.budgetPriceChecks},stockClaimText,stockClaimText).claim_text, opts.stockEvidence ?? [], nativeInformationClaimRequest(opts.stockRequest ?? { items: [] },opts.budgetPriceChecks), marketingItems, opts.lastRenterMessage)) {
       push(failure.negative ? "UNGROUNDED_UNAVAILABILITY" : "UNGROUNDED_AVAILABILITY", failure.detail, "flagged");
     }
   }
@@ -902,7 +914,9 @@ const ASSERTS_AVAIL_RE =
 
   // 10c. ACCOUNT PICKUP LOCATION + TRAVEL COMPENSATION — enforce the owner's
   // sequence against the generated text, not just the model prompt. A pickup
-  // area must be disclosed before a renter can qualify for travel relief.
+  // area must be disclosed before a renter can qualify for travel relief. An
+  // explicit objection after disclosure qualifies even before the renter
+  // accepts the area; accepting it is still required before booking proceeds.
   const effectiveRentalChargeGbp = verifiedRentalChargeGbp({
     rentalChargeGbp: opts.rentalChargeGbp,
     priceEvidence: opts.priceEvidence,
@@ -925,11 +939,14 @@ const ASSERTS_AVAIL_RE =
   // drop the delivery question when a quote cannot be established).
   const asksDelivery = /\b(?:deliver(?:y|ed)?|courier|shipping|ship)\b/i.test(message);
   const deliveryFee = factPack?.pricing?.deliveryFeeGbp;
+  const pickupOnlyDeliveryAnswer = "For this account, I can arrange collection only, so delivery isn't available.";
   const renterProvidedPostcode = [...opts.history.filter(turn => turn.role === "renter").map(turn => turn.content), message]
     .some(content => /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i.test(content));
   const independentDeliveryAnswer = asksPickupLocation && asksDelivery
     ? typeof deliveryFee === "number" && Number.isFinite(deliveryFee) && deliveryFee > 0
       ? `Delivery and collection would cost £${deliveryFee.toFixed(2).replace(/\.00$/, "")} in total.`
+      : opts.deliveryCapability === "pickup_only"
+        ? null
       : renterProvidedPostcode
         ? "I can check delivery and the charge for you."
         : "I can check delivery and the charge for you. What is the full delivery postcode?"
@@ -949,39 +966,88 @@ const ASSERTS_AVAIL_RE =
   const proposedMinutes = requestedTime ? parseTimeToMinutes(requestedTime[1]) : null;
   const asksHours = (proposedMinutes !== null || /\b(?:hours|opening times|time windows?|time slots?|what times?|when can (?:i|we)|(?:pickup|pick[ -]?up|collection|return|drop[ -]?off)(?:\s+and\s+(?:pickup|pick[ -]?up|collection|return|drop[ -]?off))?\s+(?:times?|windows?|hours))\b/i.test(message)) &&
     /\b(?:pickup|pick[ -]?up|collection|collect|return|drop[ -]?off|opening)\b/i.test(message);
+  const asksAboutListedLocation = isPickupListingLocationQuestion(opts.lastRenterMessage);
   const timeLabel = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
   const windowText = ranges.map(([start, end]) => `${timeLabel(start)} to ${timeLabel(end)}`).join(" or ");
   const independentHoursAnswer = asksPickupLocation && asksHours
     ? ranges.length
       ? proposedMinutes === null
-        ? `Pickup and return windows are ${windowText}. What exact times work within your rental dates?`
+        ? asksAboutListedLocation ? `Pickup and return windows: ${windowText}.` : `Pickup and return windows are ${windowText}. What exact times work within your rental dates?`
         : inAnyWindow(proposedMinutes, ranges)
-          ? `${timeLabel(proposedMinutes)} is within our usual windows (${windowText}); I'll check that exact time.`
-          : `${timeLabel(proposedMinutes)} is outside our pickup and return windows: ${windowText}. What exact times work within your rental dates?`
+          ? asksAboutListedLocation ? `${timeLabel(proposedMinutes)} falls within these windows (${windowText}).` : `${timeLabel(proposedMinutes)} is within our usual windows (${windowText}); I'll check that exact time.`
+          : asksAboutListedLocation ? `${timeLabel(proposedMinutes)} is outside these windows (${windowText}).` : `${timeLabel(proposedMinutes)} is outside our pickup and return windows: ${windowText}. What exact times work within your rental dates?`
       : proposedMinutes === null ? "I'll check the pickup and return hours for your rental."
         : `I'll check whether ${timeLabel(proposedMinutes)} works and confirm the pickup and return hours.`
     : null;
   const withIndependentAnswer = (location: string) =>
     [independentKitAnswer, location, independentDeliveryAnswer, independentRentalAnswer, independentHoursAnswer].filter(Boolean).join(" ");
-  const pickupAreaDisclosure = (area: string) => {
-    if (travelCompensation.pickupAreaDisclosed) {
-      const exactDetailsRequested = /\b(?:address|postcode|exact|map|meeting point)\b/i.test(opts.lastRenterMessage);
-      const acknowledgesNegativeQuestion = /\b(?:so|then)\s+not\b/i.test(opts.lastRenterMessage);
-      return `${acknowledgesNegativeQuestion ? "That's right. " : ""}For this rental, collection is only available from the ${area}, where we handle the requested equipment. Would that work for you?${exactDetailsRequested ? " I'll share the exact meeting point once the booking is confirmed." : ""}`;
+  const retainIndependentAnswers = (draft: string) => {
+    let result = draft.trim();
+    if (independentKitAnswer) {
+      const includedKitClaim = /\b(?:the|this) kit (?:includes|comes with)\b[^.!?\n]*[.!?]?/i;
+      if (includedKitClaim.test(result)) result = result.replace(includedKitClaim, independentKitAnswer);
+      else if (!result.includes(independentKitAnswer)) result = `${independentKitAnswer} ${result}`.trim();
     }
+    for (const answer of [independentDeliveryAnswer, independentRentalAnswer]) {
+      if (answer && !result.includes(answer)) result = `${result} ${answer}`.trim();
+    }
+    if (independentHoursAnswer) {
+      const hasRequestedTime = proposedMinutes !== null && result.includes(timeLabel(proposedMinutes));
+      const timeToken = String.raw`(?:\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)|\d{1,2}:\d{2})`;
+      const hasExplicitTimeRange = new RegExp(String.raw`\b${timeToken}\s*(?:to|until|through|[-–])\s*${timeToken}\b`, "i").test(result);
+      const hasWindowAnswer = /\b(?:pickup|collection|return)\b.{0,35}\b(?:windows?|hours|time slots?)\b/i.test(result) || hasExplicitTimeRange;
+      if (!hasRequestedTime && !hasWindowAnswer) result = `${result} ${independentHoursAnswer}`.trim();
+    }
+    return result;
+  };
+  const pickupAreaWasAccepted = (area: string) => hasPickupAreaAcceptance(
+    opts.history,
+    opts.lastRenterMessage,
+    area,
+  );
+  const asksPickupAreaConfirmation = (draft: string) =>
+    /\b(?:would|does|will|could|if|whether)\b[^.!?\n]{0,180}\b(?:pickup|pick[ -]?up|collection|collecting|return(?:ing)?|area|location|place)\b[^.!?\n]{0,120}\b(?:work(?:s|able)?|suit(?:s)?|okay|fine|comfortable)\b/i.test(draft) ||
+    /\b(?:work(?:s|able)?|suit(?:s)?|okay|fine|comfortable)\b[^.!?\n]{0,60}\b(?:for you|for your dates)\b/i.test(draft);
+  const pickupAreaDisclosure = (area: string) => {
     const exactDetailsRequested = /\b(?:address|postcode|exact|map|meeting point)\b/i.test(opts.lastRenterMessage);
-    return `For this rental, the equipment is at our pickup point in the ${area}, so collection is only available there. Does that work?${exactDetailsRequested ? " I'll share the exact meeting point once the booking is confirmed." : ""}`;
+    const acknowledgesNegativeQuestion = /\b(?:so|then)\s+not\b/i.test(opts.lastRenterMessage);
+    const preface = asksAboutListedLocation ? "Sorry for the confusion. " : acknowledgesNegativeQuestion ? "That's right. " : "";
+    const accepted = pickupAreaWasAccepted(area);
+    const listedLocationReason = asksAboutListedLocation
+      ? asksHours
+        ? " I can't hand off at the listing location."
+        : " I can't arrange a handoff from the location shown on the listing."
+      : "";
+    const verifiedReason = opts.pickupReason?.trim();
+    const pickupExplanation = verifiedReason
+      ? `${verifiedReason.replace(/[.!?]+$/, "")}. Pickup and return are from the ${area}.`
+      : asksAboutListedLocation && asksHours
+        ? `For this rental, pickup and return are from ${area}.`
+        : `For this rental, pickup and return are arranged from the ${area}.`;
+    const confirmation = accepted ? "" : asksAboutListedLocation && asksHours
+      ? " Would that area and one of these windows work for your dates?"
+      : " Would that work for your dates?";
+    const exactDetails = exactDetailsRequested && !opts.pickupConfirmed ? " I'll share the exact point once the booking is confirmed." : "";
+    return `${preface}${pickupExplanation}${listedLocationReason}${confirmation}${exactDetails}`;
   };
   const travelCompensationContext = asksPickupLocation || asksTravel || isTravelCompensationOffer(text);
   const verificationFailed = opts.stage === "VERIFICATION_FAILED";
   const firstLocationAndDiscountRequest = asksPickupLocation && !travelCompensation.pickupAreaDisclosed &&
     /\b(?:discount|\boff\b|price break|cheaper|reduce|lower (?:the|my) (?:price|rate)|travel.{0,20}(?:cost|adjustment|compensation|credit|discount)|compensation|credit)\b/i.test(opts.lastRenterMessage) &&
     (/\b(?:discount|\boff\b|price break|cheaper|travel.{0,20}(?:cost|adjustment|compensation|credit|discount)|compensation|price adjustment|credit)\b/i.test(text) ||
-      /\b(?:can't|cannot|won't|unable to|not able to|fixed (?:rate|price)|rates? (?:are|is) fixed|not possible|not an option)\b/i.test(text));
+      /\b(?:can't|cannot|won't|unable to|not able to|fixed (?:rate|price)|rates? (?:are|is) fixed|not possible|not an option)\b[^.!?]{0,60}\b(?:offer|give|apply|take|reduce|lower|discount|off|travel|compensation|credit|price)\b/i.test(text));
   let travelCompensationAuthorized = false;
   if (firstLocationAndDiscountRequest && opts.pickupArea) {
-    text = withIndependentAnswer(pickupAreaDisclosure(opts.pickupArea));
-    push("TRAVEL_COMPENSATION_GATE", "Deferred discount discussion until the renter responds to the confirmed pickup area", "rewritten");
+    const originalText = text.trim();
+    const pickupAnswer = stripPrematureDiscountDiscussion(text);
+    const groundedPickupAnswer = mentionsPickupArea(pickupAnswer, opts.pickupArea) &&
+      hasPickupAreaDisclosure(pickupAnswer, opts.pickupArea) &&
+      (!asksAboutListedLocation || hasUnavailablePickupAlternative(pickupAnswer)) &&
+      !isUnsafePickupLocationClaim(pickupAnswer);
+    text = withIndependentAnswer(groundedPickupAnswer ? pickupAnswer : pickupAreaDisclosure(opts.pickupArea));
+    if (text.trim() !== originalText) {
+      push("TRAVEL_COMPENSATION_GATE", "Deferred discount discussion until the renter responds to the confirmed pickup area", "rewritten");
+    }
   } else if ((verificationFailed || travelCompensationContext) && isDiscountConcessionOffer(text)) {
     if (verificationFailed || !travelCompensation.eligible || travelCompensation.maximumGbp == null) {
       text = stripTravelCompensationOffers(text);
@@ -1006,10 +1072,36 @@ const ASSERTS_AVAIL_RE =
       );
     } else {
       text = replaceTravelCompensationOffers(text, travelCompensation.maximumGbp);
+      if (!travelCompensation.pickupAreaAccepted && opts.pickupArea &&
+          !asksPickupAreaConfirmation(text)) {
+        text = `${text.trim()} Would that make collecting and returning from ${opts.pickupArea} workable for your dates?`;
+      }
       travelCompensationAuthorized = true;
       push(
         "TRAVEL_COMPENSATION_GATE",
         `Capped the one-time travel adjustment at £${travelCompensation.maximumGbp.toFixed(2)} for this verified rental amount`,
+        "rewritten",
+      );
+    }
+  }
+
+  // Pickup acceptance is durable conversation state. A later travel-cost
+  // message must not erase an earlier “that area works”. If the renter objects
+  // before accepting it, keep the compensation offer and ask whether it makes
+  // this disclosed pickup workable rather than restarting the disclosure.
+  if (!verificationFailed && travelCompensationContext && opts.pickupArea &&
+      travelCompensation.pickupAreaDisclosed && !travelCompensation.pickupAreaAccepted &&
+      !travelCompensation.renterObjected) {
+    text = withIndependentAnswer(pickupAreaDisclosure(opts.pickupArea));
+    push(
+      "TRAVEL_COMPENSATION_GATE",
+      "Asked the renter to confirm this account's pickup area before discussing a travel adjustment",
+      "rewritten",
+    );
+    if (asksPickupLocation || asksAboutListedLocation) {
+      push(
+        "PICKUP_LOCATION_CORRECTED",
+        "Restated the account's confirmed pickup area and asked the renter to confirm it",
         "rewritten",
       );
     }
@@ -1032,10 +1124,12 @@ const ASSERTS_AVAIL_RE =
     const privacySources = opts.pickupPrivacySources?.length
       ? opts.pickupPrivacySources
       : opts.pickupAddress ? [opts.pickupAddress] : [];
-    const leakedExactAddress = !opts.pickupConfirmed && hasPickupDisclosure(text, privacySources, opts.pickupArea);
+    const renterDeliveryMessages = [...opts.history.filter(message => message.role === "renter").map(message => message.content), opts.lastRenterMessage];
+    const leakedExactAddress = !opts.pickupConfirmed && hasPickupDisclosure(text, privacySources, opts.pickupArea, renterDeliveryMessages);
     const missingRequiredExact = opts.pickupConfirmed && !!opts.pickupAddress && !text.toLowerCase().includes(opts.pickupAddress.toLowerCase());
-    const missingHandoffExplanation = !opts.pickupConfirmed && !hasPickupHandoffExplanation(text);
-    if (!areaMentioned || unsafeLocationClaim || leakedExactAddress || missingRequiredExact || missingHandoffExplanation) {
+    const missingPickupDisclosure = !opts.pickupConfirmed &&
+      (!hasPickupAreaDisclosure(text, opts.pickupArea) || (asksAboutListedLocation && !hasUnavailablePickupAlternative(text)));
+    if (!areaMentioned || unsafeLocationClaim || leakedExactAddress || missingRequiredExact || missingPickupDisclosure) {
       text = withIndependentAnswer(opts.pickupConfirmed && opts.pickupAddress
         ? `For this confirmed booking, pickup is ${opts.pickupAddress}`
         : pickupAreaDisclosure(opts.pickupArea));
@@ -1046,12 +1140,15 @@ const ASSERTS_AVAIL_RE =
           unsafeLocationClaim && "unsupported location claim",
           leakedExactAddress && "exact location disclosed too early",
           missingRequiredExact && "confirmed meeting point missing",
-          missingHandoffExplanation && "equipment-specific collection explanation missing",
+          missingPickupDisclosure && "pickup/return area disclosure or listed-location boundary missing",
         ].filter(Boolean).join(", ")}`,
         "rewritten",
       );
     }
   }
+  // A valid pickup-area sentence must not suppress separate item, delivery,
+  // rental-total, or requested-time answers from the same renter message.
+  if (asksPickupLocation) text = retainIndependentAnswers(text);
 
   // Before inviting a renter to submit or complete a booking, establish that
   // they accepted this account's collection area. Keep the quote and other
@@ -1066,8 +1163,8 @@ const ASSERTS_AVAIL_RE =
     const locationAccepted=subsequent.some(t=>/\b(?:location|area|collection|pickup|pick up|there|that)\b.{0,35}\b(?:works|fine|okay|ok|suits|good|agree)\b|\b(?:works|fine|okay|ok|good)\b.{0,25}\b(?:location|area|collection|pickup|there|that)\b/i.test(t.content)) ||
       subsequent.length===1 && /^\s*(?:yes|yep|yeah|okay|ok|sure)[.!\s]*$/i.test(subsequent[0].content) && /\b(?:work|okay|ok|fine|suit)\b/i.test(turns[disclosure].content);
     const locationRejected=subsequent.some(t=>/\b(?:too far|doesn['’]?t work|not (?:okay|ok|fine)|cannot collect|can['’]?t collect)\b/i.test(t.content));
-    const steps=text.split(/(?<=[.!?])\s+/);
-    const isPremature=(s:string)=>/\b(?:go ahead|complete|submit|place|finali[sz]e)\b/i.test(s) && /\b(?:booking|request|reservation)\b/i.test(s) || /^\s*(?:please\s+)?submit\s+it\b/i.test(s);
+    const steps=text.split(/(?<=[.!?])\s+|\n+/);
+    const isPremature=(s:string)=>/\b(?:complete|submit|place|finali[sz]e|book|pay for|checkout)\b/i.test(s) && /\b(?:booking|request|reservation|rental)\b/i.test(s) || /^\s*(?:please\s+)?submit\s+it\b/i.test(s);
     if((!locationAccepted || locationRejected) && steps.some(isPremature)){
       const removedChecks=steps.filter(isPremature).some(s=>/\b(?:verification|payment|approval)\b/i.test(s));
       text=steps.filter(s=>!isPremature(s)).join(" ").trim();
@@ -1080,6 +1177,12 @@ const ASSERTS_AVAIL_RE =
   } else if(!verificationFailed && !opts.pickupConfirmed && !opts.pickupArea && /\b(?:go ahead|complete|submit|place|finali[sz]e)\b[^.!?]*\b(?:booking|request|reservation)\b/i.test(text)){
     text=text.split(/(?<=[.!?])\s+/).filter(s=>!/\b(?:go ahead|complete|submit|place|finali[sz]e)\b[^.!?]*\b(?:booking|request|reservation)\b/i.test(s)).join(" ").trim()+" I'll confirm the collection area before you decide.";
     push("PICKUP_AREA_CONFIRMATION_REQUIRED","The collection area must be established before inviting booking.","rewritten");
+  }
+
+  const crossAccountStrip = stripCrossAccountReferenceSentences(text);
+  if (crossAccountStrip.removed) {
+    text = crossAccountStrip.text;
+    push("CROSS_ACCOUNT_REFERENCE", "Removed a reference linking this account to other rental accounts or their listings", "stripped");
   }
 
   // A below-value prospective quote explicitly permits a shoot question when
@@ -1436,7 +1539,8 @@ const ASSERTS_AVAIL_RE =
       (opts.rentalPermissions?.booking_dates||opts.newInquiry) && unsupportedBookingDateClaims(text,opts.rentalPermissions?.booking_dates??{},opts.newInquiry).length>0)) {
     push("PREMATURE_CONFIRMATION", "Claims confirmation or acceptance outside the current platform order's authority", "flagged");
   }
-  if ((opts.newInquiry || permissions && !permissions.can_share_pickup_address) && hasPickupDisclosure(text,opts.pickupPrivacySources,opts.pickupArea)) {
+  const renterDeliveryMessages = [...opts.history.filter(message => message.role === "renter").map(message => message.content), opts.lastRenterMessage];
+  if ((opts.newInquiry || permissions && !permissions.can_share_pickup_address) && hasPickupDisclosure(text,opts.pickupPrivacySources,opts.pickupArea,renterDeliveryMessages)) {
     push("PICKUP_DETAILS_EARLY", "Shares pickup details without a current confirmed platform order", "flagged");
   }
 
@@ -1471,7 +1575,7 @@ const ASSERTS_AVAIL_RE =
   if (!opts.bookingModified) {
     const editPatterns = [
       /\bI(?:'?ve| have)?\s*(?:just\s+)?(?:added|removed|taken off|put)\s+(?:the|it|that|those|them)\b/gi,
-      /\b(?:added|removed|updated|changed|moved)\s+(?:it|the|your|this)\s*(?:booking|order|dates?|reservation)\b/gi,
+      /\b(?:added|removed|updated|changed|moved)\s+(?:it|the|your|this)\s*(?:booking|order|request|basket|rental|dates?|reservation)\b/gi,
       /\byour (?:booking|order) (?:now )?(?:includes|has been updated|is updated)\b/gi,
     ];
     const claimedEdit = editPatterns.some(pattern => [...text.matchAll(pattern)].some(match =>
@@ -1508,9 +1612,35 @@ const ASSERTS_AVAIL_RE =
   // and must match it exactly. Avoid treating an unrelated daily rental price
   // in the same sentence as a delivery fee.
   const deliveryTerms = /\b(?:deliver\w*|courier|drop[\s-]?off|postage|shipping)\b/i;
-  const deliverySentences = text
+  let deliverySentences = text
     .split(/(?<=[.!?])\s+|\n+/)
     .filter((sentence) => deliveryTerms.test(sentence));
+  if (opts.deliveryCapability === "pickup_only" && asksDelivery) {
+    const deliveryPromise = /\b(?:can|could|will|would|able to|happy to|check|confirm|quote|arrange|offer|provide|available|possible)\b[^.!?\n]{0,65}\b(?:delivery|deliver\w*|courier|shipping|charge|fee|quote)\b|\b(?:delivery|deliver\w*|courier|shipping)\b[^.!?\n]{0,30}\b(?:available|possible|offered)\b/i;
+    const negativeDelivery = /\b(?:can't|cannot|won't|wouldn't|not able to|unable to|don't|do not|isn't|is not|unavailable|not available)\b[^.!?\n]{0,50}\b(?:delivery|deliver\w*|courier|shipping)\b|\b(?:delivery|deliver\w*|courier|shipping)\b[^.!?\n]{0,35}\b(?:isn't|is not|unavailable|not available)\b/i;
+    const sentences = text.split(/(?<=[.!?])\s+|\n+/);
+    const kept = sentences.filter((sentence) => {
+      if (!deliveryTerms.test(sentence)) return true;
+      const clauses = sentence.split(/[,;]|\bbut\b|\bhowever\b/i);
+      const promisesInPositiveClause = clauses.some((clause) =>
+        deliveryPromise.test(clause) && !negativeDelivery.test(clause),
+      );
+      return !promisesInPositiveClause;
+    });
+    if (kept.length !== sentences.length) {
+      text = kept.join(" ").trim();
+      push(
+        "DELIVERY_CAPABILITY_CORRECTED",
+        "Removed a delivery promise contradicted by the current account-scoped pickup-only check",
+        "rewritten",
+      );
+    }
+    const alreadyExplainsPickupOnly = /\b(?:don't|do not|can't|cannot|isn't|is not|unavailable|not available)\b[^.!?\n]{0,50}\b(?:delivery|deliver\w*|courier|shipping)\b|\b(?:delivery|deliver\w*|courier|shipping)\b[^.!?\n]{0,35}\b(?:isn't|is not|unavailable|not available)\b/i.test(text);
+    if (!alreadyExplainsPickupOnly) text = `${text} ${pickupOnlyDeliveryAnswer}`.trim();
+    deliverySentences = text
+      .split(/(?<=[.!?])\s+|\n+/)
+      .filter((sentence) => deliveryTerms.test(sentence));
+  }
   const deliveryAmountClaims = deliverySentences.flatMap((sentence) => {
     const terms = [...sentence.matchAll(/\b(?:deliver\w*|courier|drop[\s-]?off|postage|shipping)\b/gi)]
       .map((match) => ({ start: match.index ?? 0, end: (match.index ?? 0) + match[0].length }));
@@ -1697,6 +1827,14 @@ const ASSERTS_AVAIL_RE =
   } else {
     for (const v of contract.violations)
       push(`CONTRACT:${v.label}`, v.detail, "flagged");
+  }
+
+  if (!verificationFailed && travelCompensation.eligible && travelCompensation.maximumGbp != null &&
+      opts.pickupArea &&
+      !isDiscountConcessionOffer(text)) {
+    text = `${text.trim()}${text.trim() ? " " : ""}I can offer a one-time £${travelCompensation.maximumGbp.toFixed(2)} travel adjustment on this rental if that would make collecting and returning from ${opts.pickupArea} workable for your dates.`;
+    travelCompensationAuthorized = true;
+    push("TRAVEL_COMPENSATION_GATE", `Offered the authorized one-time travel adjustment after the renter objected to the disclosed pickup area; capped the offer at £${travelCompensation.maximumGbp.toFixed(2)}`, "rewritten");
   }
 
   if (!text.trim()) push("EMPTY_DRAFT", "Cleanup left no renter-facing reply", "flagged");

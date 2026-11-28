@@ -1,10 +1,181 @@
 import passiveActionFixture from "../../src/lib/fixtures/renter-passive-action-stock-claim.json";
 import { describe, expect, it } from "vitest";
-import { stockRequestForSeparateCheck, stockRequestForInquiryQuote, unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
+import { stockRequestForSeparateCheck, stockRequestForInquiryQuote, priceRequestForInquiryQuote, stockRequestWithVerifiedQuoteItems, unsupportedStockClaims, type StockReceipt, type StockRequest } from "./stock_claims";
+import { unsupportedPriceClaims, type PriceEvidence } from "./price_claims";
 import { guardDraft } from "./draft_guard";
 const request: StockRequest = { start_date: "2026-10-02", end_date: "2026-10-04", items: [{ name: "Sony FX3", quantity: 1 }] };
 const stock: StockReceipt = { item: "Sony FX3", start_date: "2026-10-02", end_date: "2026-10-04", quantity: 1, available: false, free_units: 0, checked_at: 1790850651000, call_id: "fx3-stock" };
 const check = (text: string, receipts = [stock], scope = request) => unsupportedStockClaims(text, receipts, scope);
+describe("selected exact listing-option availability",()=>{
+ const scope:StockRequest={start_date:"2026-12-12",end_date:"2026-12-12",items:[{
+  name:"BMPCC 6K Full Frame",quantity:1,complete:true,components:[
+   {name:"BMPCC 6K Full Frame",quantity:1},{name:"ND filter",quantity:1},
+   {name:"NP-F570 batteries",quantity:5},{name:"EF to L mount",quantity:1},
+  ],
+ }]};
+ const basket=[{name:"BMPCC 6K Pro",quantity:1},{name:"BMPCC 6K Full Frame",quantity:1},
+  {name:"ND filter",quantity:1},{name:"NP-F570 batteries",quantity:5},{name:"EF to L mount",quantity:1}];
+ const receipts:StockReceipt[]=basket.map((item,index)=>({...stock,item:item.name,kind:item.name.includes("BMPCC")?"camera":"accessory",
+  start_date:scope.start_date!,end_date:scope.end_date!,quantity:item.quantity,available:true,free_units:item.quantity,owned:true,
+  checked_at:1795863079966,call_id:`selected-option:${index}`,basket:{available:true,items:basket}}));
+ const candidate="Option 1 for the BMPCC 6K Pro is available for 12 December at £35, which would bring the combined total with the BMPCC 6K Full Frame to £85. Would you like me to go ahead and add that to your request?";
+ it("binds the selected option label to its exact joint Native stock proof",()=>{
+  expect(unsupportedStockClaims(candidate,receipts,scope)).toEqual([]);
+  expect(unsupportedStockClaims(candidate,receipts.map(r=>({...r,end_date:"2026-12-13"})),scope)).not.toEqual([]);
+ });
+});
+describe("referral source wording keeps the exact checked kit identity",()=>{
+ const scope:StockRequest={start_date:"2026-12-11",end_date:"2026-12-11",items:[]};
+ const items=[{name:"EF to L mount",quantity:1},{name:"ND filter",quantity:1},
+  {name:"BMPCC 6K Full Frame",quantity:1},{name:"NP-F570 batteries",quantity:5}];
+ const receipts:StockReceipt[]=items.map((item,index)=>({...stock,item:item.name,kind:index===2?"camera":index===3?"power":"accessory",
+  start_date:scope.start_date!,end_date:scope.end_date!,quantity:item.quantity,available:true,free_units:item.quantity,
+  call_id:`referral-kit:${index}`,basket:{available:true,items}}));
+ it("accepts an availability paraphrase that names the referred kit and exact date",()=>{
+  const text="The BMPCC 6K Full Frame kit from that referral is available for 11 December.";
+  expect(unsupportedStockClaims(text,receipts,scope)).toEqual([]);
+  expect(unsupportedStockClaims(text,receipts.map(r=>({...r,end_date:"2026-12-12"})),scope)).not.toEqual([]);
+  expect(guardDraft(text,{history:[],lastRenterMessage:"Please check the referred BMPCC kit for 11 December.",
+   stockEvidence:receipts,stockRequest:scope,hasItemGrounding:true}).flags.filter(f=>f.type==="UNGROUNDED_AVAILABILITY")).toEqual([]);
+ });
+});
+describe("plural camera availability binds to the exact checked item",()=>{
+ const scope:StockRequest={start_date:"2026-12-10",end_date:"2026-12-12",items:[
+  {name:"Sony FX3",quantity:2},{name:"Sony NP-FZ100 batteries",quantity:6},
+ ]};
+ const basket=scope.items.map(item=>({name:item.name,quantity:item.quantity}));
+ const receipts:StockReceipt[]=[
+  {...stock,item:"Sony FX3",kind:"camera",start_date:scope.start_date!,end_date:scope.end_date!,quantity:2,available:true,free_units:4,
+   basket:{available:true,items:basket}},
+  {...stock,item:"Sony NP-FZ100 batteries",kind:"accessory",start_date:scope.start_date!,end_date:scope.end_date!,quantity:6,available:true,free_units:12,
+   basket:{available:true,items:basket}},
+ ];
+ const candidate="I have a second Sony FX3 available, and both cameras are free for 10 to 12 December.";
+ it("binds ‘both cameras’ to the single immediately named model while preserving the exact two-unit receipt",()=>{
+  expect(unsupportedStockClaims(candidate,receipts,scope)).toEqual([]);
+  expect(unsupportedStockClaims("I have a second Sony FX3 available, and both are free for 10 to 12 December.",receipts,scope)).toEqual([]);
+  const guarded=guardDraft(candidate,{history:[],lastRenterMessage:"Could I add a second FX3 and extend to 12 December?",hasItemGrounding:true,
+   stockEvidence:receipts,stockRequest:scope});
+  expect(guarded.flags.filter(f=>f.type==="UNGROUNDED_AVAILABILITY"||f.type==="AVAILABILITY_CONTRADICTION")).toEqual([]);
+ });
+ it("still rejects a missing, stale, under-count or ambiguous camera receipt",()=>{
+  expect(unsupportedStockClaims("Both cameras are free for 10 to 12 December.",receipts,scope)).not.toEqual([]);
+  expect(unsupportedStockClaims(candidate,receipts.map(r=>({...r,end_date:"2026-12-11"})),scope)).not.toEqual([]);
+  expect(unsupportedStockClaims(candidate,receipts.map(r=>r.item==="Sony FX3"?{...r,quantity:1,free_units:1}:r),scope)).not.toEqual([]);
+  expect(unsupportedStockClaims("I have a second Sony FX3 available, and both are free for 10 to 12 December.",receipts.map(r=>r.item==="Sony FX3"?{...r,quantity:1,free_units:1}:r),scope)).not.toEqual([]);
+  expect(unsupportedStockClaims("Both are free for 10 to 12 December.",receipts,scope)).not.toEqual([]);
+  const ambiguous={...scope,items:[...scope.items,{name:"Sony A7 III",quantity:2}]};
+  const otherCamera:StockReceipt={...stock,item:"Sony A7 III",kind:"camera",start_date:scope.start_date!,end_date:scope.end_date!,quantity:2,available:true,free_units:2};
+  expect(unsupportedStockClaims(candidate,[...receipts,otherCamera],ambiguous)).not.toEqual([]);
+  expect(unsupportedStockClaims("I have a second Sony FX3 available, and both are free for 10 to 12 December.",[...receipts,otherCamera],ambiguous)).not.toEqual([]);
+ });
+});
+describe("quoted basket availability uses the priced items and full physical stock check",()=>{
+ const scope:StockRequest={start_date:"2026-12-11",end_date:"2026-12-11",items:[
+  {name:"Sony FX3",quantity:1},{name:"Sony 28-70mm",quantity:1},{name:"Sony NP-FZ100 batteries",quantity:3},
+ ]};
+ const basket=scope.items.map(({name,quantity})=>({name,quantity}));
+ const receipts:StockReceipt[]=scope.items.map((item,index)=>({...stock,item:item.name,kind:index===0?"camera":index===1?"lens":"accessory",
+  start_date:scope.start_date!,end_date:scope.end_date!,quantity:item.quantity,available:true,free_units:12,call_id:`proposed:${index}`,
+  basket:{available:true,items:basket}}));
+ const quote={start_date:scope.start_date!,end_date:scope.end_date!,proposed_basket:true as const,items:basket,
+  listing_quote:{total_gbp:70,lines:[{name:"Sony FX3",quantity:1},{name:"Sony 28-70mm",quantity:1}]}};
+ const candidate="Both are available for your date.";
+ it("binds a plural reply to the exact two priced items only after the complete basket is positively checked",()=>{
+  const request=stockRequestWithVerifiedQuoteItems(scope,[quote],receipts);
+  expect(request.quoted_items).toEqual(quote.listing_quote.lines);
+  expect(unsupportedStockClaims(candidate,receipts,request)).toEqual([]);
+  expect(unsupportedStockClaims("Both items are available for your date.",receipts,request)).toEqual([]);
+  expect(unsupportedStockClaims(candidate,receipts,scope)).not.toEqual([]);
+  const guarded=guardDraft(candidate,{history:[],lastRenterMessage:"Could you add the Sony 28-70mm to my FX3 request?",hasItemGrounding:true,
+   stockEvidence:receipts,stockRequest:request});
+  expect(guarded.flags.filter(f=>f.type==="UNGROUNDED_AVAILABILITY")).toEqual([]);
+ });
+ it("keeps vague claims blocked when the quote, date, line receipt, or full basket is not proven",()=>{
+  expect(stockRequestWithVerifiedQuoteItems(scope,[quote,quote],receipts).quoted_items).toBeUndefined();
+  expect(stockRequestWithVerifiedQuoteItems(scope,[{...quote,end_date:"2026-12-12"}],receipts).quoted_items).toBeUndefined();
+  expect(stockRequestWithVerifiedQuoteItems(scope,[quote],receipts.filter(r=>r.item!=="Sony 28-70mm")).quoted_items).toBeUndefined();
+  expect(stockRequestWithVerifiedQuoteItems(scope,[quote],receipts.map(r=>r.item==="Sony 28-70mm"?{...r,basket:{available:false,items:basket}}:r)).quoted_items).toBeUndefined();
+  for(const invalid of [receipts.map(r=>({...r,end_date:"2026-12-12"})),receipts.map(r=>r.item==="Sony 28-70mm"?{...r,available:false}:r)])
+   expect(unsupportedStockClaims(candidate,invalid,scope)).not.toEqual([]);
+ });
+});
+describe("pickup-location boundaries are separate from equipment stock", () => {
+  const scope: StockRequest = { start_date: "2026-12-10", end_date: "2026-12-12", items: request.items };
+  const availableReceipt: StockReceipt = { ...stock, start_date: "2026-12-10", end_date: "2026-12-12", available: true, free_units: 1 };
+
+  it("does not classify a pickup-area boundary as a negative stock claim", () => {
+    const candidate = "Collection and return for this Sony FX3 kit are arranged from Northumberland Street rather than Shoreditch, so it isn't available for pickup in Shoreditch. Does collecting from Northumberland Street work for your dates?";
+    expect(check(candidate, [availableReceipt], scope)).toEqual([]);
+    const guarded = guardDraft(candidate, {
+      history: [],
+      lastRenterMessage: "Is Shoreditch the pickup location? If not, can I collect in Northumberland Street?",
+      stockEvidence: [availableReceipt],
+      stockRequest: scope,
+      pickupArea: "Northumberland Street area",
+      pickupConfirmed: false,
+    });
+    expect(guarded.flags).not.toContainEqual(expect.objectContaining({ type: "UNGROUNDED_UNAVAILABILITY" }));
+    expect(guarded.text).toMatch(/work(?:s)? for your dates/i);
+  });
+
+  it("still requires stock evidence for an actual equipment unavailability claim", () => {
+    expect(check("Sony FX3 isn't available.", [availableReceipt], scope)).not.toEqual([]);
+    expect(check("Sony FX3 isn't available for pickup because it is currently rented.", [availableReceipt], scope)).not.toEqual([]);
+  });
+});
+describe("availability references to a single current rental during a date change",()=>{
+ const start_date="2026-12-13",end_date="2026-12-13";
+ const items=[{name:"EF to L mount",quantity:1},{name:"ND filter",quantity:1},
+  {name:"BMPCC 6K Full Frame",quantity:1},{name:"NP-F570 batteries",quantity:5}];
+ const scope:StockRequest={start_date,end_date,items:[{name:"BMPCC 6K Full Frame",quantity:1,complete:true,components:items}]};
+ const receipts:StockReceipt[]=items.map((item,index)=>({...stock,item:item.name,kind:index===2?"camera":index===3?"power":"accessory",
+  start_date,end_date,quantity:item.quantity,available:true,free_units:item.quantity,call_id:`date-change:${index}`,basket:{available:true,items}}));
+ const candidate="Yes, moving the rental to 13 December works and the gear is available.";
+ it("binds ‘the rental’ to one exact proposed booking and requires its whole physical basket",()=>{
+  expect(unsupportedStockClaims(candidate,receipts,scope)).toEqual([]);
+  const guarded=guardDraft(candidate,{history:[],lastRenterMessage:"Could I move the pickup and return to 13 December?",
+   hasItemGrounding:true,stockEvidence:receipts,stockRequest:scope});
+  expect(guarded.flags.filter(flag=>flag.type==="UNGROUNDED_AVAILABILITY")).toEqual([]);
+  expect(unsupportedStockClaims(candidate,receipts.filter(r=>r.item!=="ND filter"),scope)).not.toEqual([]);
+  expect(unsupportedStockClaims(candidate,receipts.map(r=>({...r,start_date:"2026-12-12",end_date:"2026-12-12"})),scope)).not.toEqual([]);
+ });
+ it("does not infer a booking subject when more than one rental is active",()=>{
+  const multiple={...scope,items:[...scope.items,{name:"Sony FX3",quantity:1}]};
+  expect(unsupportedStockClaims(candidate,receipts,multiple)).not.toEqual([]);
+ });
+});
+describe("Native inquiry quote price and stock scopes",()=>{
+  const physical:StockRequest={start_date:"2026-12-10",end_date:"2026-12-12",items:[
+    {name:"Sony FX3",quantity:2},{name:"Sony NP-FZ100 batteries",quantity:6},
+  ]};
+  const existing:StockRequest={start_date:"2026-12-10",end_date:"2026-12-10",items:[{name:"Sony FX3",quantity:1}]};
+  const quote={start_date:"2026-12-10",end_date:"2026-12-12",proposed_basket:true as const,
+    items:physical.items,listing_quote:{total_gbp:252,lines:[{product_id:1097510,name:"Sony FX3",quantity:2,total_gbp:252}]}};
+  const prices:PriceEvidence[]=[
+    {kind:"basket",names:[],items:[{name:"Sony FX3",quantity:2}],total_gbp:252,days:3,start_date:quote.start_date,
+      end_date:quote.end_date,quote_role:"inquiry",call_id:"proposal",source:"native_inquiry_basket"},
+    {kind:"rental",names:["Sony FX3"],quantity:2,total_gbp:252,daily_rate_gbp:42,days:3,
+      start_date:quote.start_date,end_date:quote.end_date,call_id:"proposal:line:1097510",source:"native_inquiry_basket"},
+  ];
+  const draft="For 3 days (10 December 2026 to 12 December 2026):\n- 2 × Sony FX3: £252\nTotal: £252";
+
+  it("keeps full physical stock scope while validating money against selected listing lines",()=>{
+    expect(stockRequestForInquiryQuote(existing,[quote])).toEqual(physical);
+    const priceRequest=priceRequestForInquiryQuote(existing,[quote]);
+    expect(priceRequest).toEqual({start_date:quote.start_date,end_date:quote.end_date,items:[{name:"Sony FX3",quantity:2}]});
+    expect(unsupportedPriceClaims(draft,prices,priceRequest)).toEqual([]);
+    expect(unsupportedPriceClaims(draft,prices,existing)).not.toEqual([]);
+  });
+
+  it("does not narrow pricing scope for stale, ambiguous or incomplete quotes",()=>{
+    expect(priceRequestForInquiryQuote(existing,[quote,quote])).toBe(existing);
+    expect(priceRequestForInquiryQuote(existing,[{...quote,proposed_basket:undefined}])).toBe(existing);
+    expect(priceRequestForInquiryQuote(existing,[{...quote,listing_quote:undefined}])).toBe(existing);
+    expect(priceRequestForInquiryQuote(existing,[{...quote,listing_quote:{...quote.listing_quote,lines:[{...quote.listing_quote.lines[0],quantity:0}]}}])).toBe(existing);
+  });
+});
+
 describe("descriptive pronouns in an alternative recommendation",()=>{
  const scope:StockRequest={start_date:"2026-11-26",end_date:"2026-11-26",items:[{name:"BMPCC 6K Full Frame",quantity:1}]};
  const camera:StockReceipt={...stock,item:"Sony A7 III",kind:"camera",start_date:"2026-11-26",end_date:"2026-11-26",available:true,free_units:1};
@@ -176,6 +347,11 @@ describe("references to an additional booked-kit lens",()=>{
   expect(unsupportedStockClaims(reply.replace("a second unit","a third unit"),[{...lens,quantity:1,available:true,free_units:2,quantity_basis:"owner_lower_bound"}],scope)).not.toEqual([]);
   expect(unsupportedStockClaims(reply.replace("a second unit","a third unit"),[{...lens,quantity:1,available:true,free_units:2,quantity_basis:"owner_exact"}],scope)).toEqual([]);
  });
+ it("matches 'a second unit of [item]' to the two-unit stock check",()=>{
+  const direct="A second unit of Canon EF 24-105mm f4 isn't available for 20 to 21 October.";
+  expect(unsupportedStockClaims(direct,[lens],scope)).toEqual([]);
+  expect(unsupportedStockClaims(direct,[{...lens,quantity:1,available:true,free_units:2}],scope)).not.toEqual([]);
+ });
  it("resolves counted copy/unit references while preserving capacity and antecedent",()=>{
   for(const reference of ["a second copy","a second unit","two copies"]) {
    const reply=text.replace("a second one",reference);
@@ -250,6 +426,40 @@ describe("amendment date claims", () => {
   it("keeps years and neighbouring days distinct", () => {
     expect(unsupportedStockClaims("The FX3 isn't available for 6 to 8 October 2025.", [proposed], original)).toHaveLength(1);
     expect(unsupportedStockClaims("The FX3 is booked on 9 October.", [{ ...proposed, start_date: "2026-10-08" }], original)).toHaveLength(1);
+  });
+  it("grounds a date-change availability statement against every component of the quoted basket", () => {
+    const order = {
+      start_date: "2026-12-11",
+      end_date: "2026-12-11",
+      items: [{
+        name: "BMPCC 6K Full Frame",
+        aliases: ["Blackmagic 6K Full Frame Camera"],
+        quantity: 1,
+        complete: true,
+        components: [
+          { name: "BMPCC 6K Full Frame", quantity: 1 },
+          { name: "ND filter", quantity: 1 },
+          { name: "NP-F570 batteries", quantity: 5 },
+          { name: "EF to L mount", quantity: 1 },
+        ],
+      }],
+    };
+    const requested = order.items[0].components;
+    const receipts = requested.map((item, index) => ({
+      item: item.name,
+      start_date: "2026-12-12",
+      end_date: "2026-12-13",
+      quantity: item.quantity,
+      available: true,
+      free_units: item.quantity,
+      checked_at: 1_795_795_635_072,
+      call_id: `native-date:${index}`,
+    }));
+    const text = "Moving your BMPCC 6K Full Frame rental to 12–13 December (2 days) is available and would bring the total to £100.";
+    expect(unsupportedStockClaims(text, receipts, order)).toEqual([]);
+    expect(unsupportedStockClaims(text, receipts.slice(0, -1), order)).toHaveLength(1);
+    expect(unsupportedStockClaims(text, receipts.map(receipt => ({ ...receipt, end_date: "2026-12-14" })), order)).toHaveLength(1);
+    expect(unsupportedStockClaims(text.replace("BMPCC 6K Full Frame", "Sony FX3"), receipts, order)).toHaveLength(1);
   });
 });
 describe("catalogue rental eligibility is distinct from calendar stock", () => {
@@ -554,6 +764,12 @@ describe("booking status is not equipment occupancy",()=>{
   for(const text of ["Sony FX3 is booked out.","Sony FX3 is booked by another customer.","Your request is not yet booked; Sony FX3 is unavailable.","The rental is booked out."])expect(unsupportedStockClaims(text,[],request)).not.toEqual([]);
   expect(unsupportedStockClaims("Your request is not yet booked, and Sony FX3 is unavailable for 2 to 4 October.",[stock],request)).toEqual([]);
  });
+ it("does not treat a catalogue restriction as evidence that an item is unavailable for the requested dates",()=>{
+  const scope:StockRequest={start_date:"2026-12-11",end_date:"2026-12-11",items:[{name:"DJI RS3 Pro gimbal",quantity:1}]};
+  const catalogueOnly:StockReceipt={item:"DJI RS3 Pro gimbal",start_date:scope.start_date!,end_date:scope.end_date!,quantity:1,available:null,free_units:null,checked_at:1,call_id:"unrentable-listing"};
+  expect(unsupportedStockClaims("The DJI RS3 Pro gimbal isn't available for 11 December.",[catalogueOnly],scope)).not.toEqual([]);
+  expect(unsupportedStockClaims("I don't have another gimbal available for 11 December.",[catalogueOnly],scope)).not.toEqual([]);
+ });
 });
 
 describe("booking actions versus occupied equipment", () => {
@@ -598,5 +814,9 @@ describe("monetary concession availability",()=>{
  it("does not treat an adjustment as physical stock, while still checking a named item",()=>{
   expect(unsupportedStockClaims("A 10% travel adjustment to help with the journey is available.",[],{items:[]})).toEqual([]);
   expect(unsupportedStockClaims("Sony FX3 is available and a 10% travel adjustment is available.",[],request).length).toBeGreaterThan(0);
+ });
+ it("does not reinterpret a capped travel counter-offer as equipment availability",()=>{
+  const reply="I can't do £10 off, but I can offer £5 off to help with the extra travel to the Northumberland Street area. Let me know if that works for you.";
+  expect(unsupportedStockClaims(reply,[stock],request,[],"Northumberland Street works for me, though it is still quite a long trip from Shoreditch. Could you take £10 off for the travel?")).toEqual([]);
  });
 });

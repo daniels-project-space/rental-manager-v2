@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getFunctionName } from "convex/server";
-import { preparedListingPrice } from "./lib/renter_bot_lab_listing_snapshot";
+import { mapPreparedComponentsToLabIds, matchesPreparedListing, preparedListingPrice, preparedOrderPrice } from "./lib/renter_bot_lab_listing_snapshot";
 import { summarise, seed } from "./renter_bot_lab_order";
-import { startLiveSession } from "./renter_bot_lab_actions";
+import { startLiveSession, startPreparedScenario } from "./renter_bot_lab_actions";
 import { verificationFailureReply } from "./lib/verification_failure";
 import { renterBotLabScenario } from "./lib/renter_bot_lab_scenarios";
 
@@ -10,20 +10,146 @@ const now = 1794480000000;
 const product = {
   accountSlug: "dbcinema", productId: 1103089, masterItemId: "kn740n15w16172sn1qj8h89gx586b2xf",
   isPublished: true, isMarketingOnly: false, lastSyncedAt: now - 1000,
+  name: "Blackmagic 6K Full Frame Camera BMPCC 6K | Variable ND VND Filter",
+  description: "Owner supplied Full Frame camera set with its verified accessories.",
+  descriptionSyncedAt: now - 1000,
+  publicUrl: "https://hygglo.com/uk/i/0f1-blackmagic-6k-full-frame-kit",
   prices: [{ days: 1, pricePerDay: 50 }, { days: 3, pricePerDay: 130 / 3 }, { days: 30 }],
 };
 const response = (rows: unknown[]) => new Response(JSON.stringify({ status: "success", value: rows }));
+const fetchProduct = (listing: typeof product, mappedItems: string | Array<{ item_id: string; qty: number }> = listing.masterItemId) => vi.fn(async (_url: unknown, init?: RequestInit) => {
+  const path = JSON.parse(String(init?.body)).path;
+  if (path === "listing_overrides:getRevision") return new Response(JSON.stringify({ status: "success", value: { available: true,
+    revision: JSON.stringify({ account_slug: listing.accountSlug, product_id: listing.productId,
+      components: typeof mappedItems === "string" ? [{ item_id: mappedItems, qty: 1 }] : mappedItems }) } }));
+  return response([listing]);
+});
+const fetchDiogoWithoutExactMapping = (listing: typeof product) => vi.fn(async (_url: unknown, init?: RequestInit) => {
+  const path = JSON.parse(String(init?.body)).path;
+  if (path === "listing_overrides:getRevision") return new Response(JSON.stringify({ status: "success", value: { available: true, revision: "null" } }));
+  return response([listing]);
+});
 
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("prepared Lab listing prices", () => {
+  it("binds Diogo's kit listing to the shared Sony FX3 inventory identity", () => {
+    expect(matchesPreparedListing("diogo", 1173763, "Sony FX3")).toBe(true);
+    expect(matchesPreparedListing("diogo", 1173763, "Sony FX3 Full-Frame Camera Kit")).toBe(false);
+  });
+
   it("loads the owner-confirmed FX3 battery, charger and memory card into the prepared kit", () => {
     expect(renterBotLabScenario("sony-fx3-batteries")?.item.compatibility?.included_with_rental).toEqual(
       expect.arrayContaining(["3× Sony NP-FZ100 batteries", "1× 320GB CFexpress Type A card", "Sony dual battery charger"]),
     );
   });
+  it("uses the exact Diogo FX3 master item and current listing price", async () => {
+    const diogoFx3 = { ...product, accountSlug: "diogo", productId: 1173763,
+      masterItemId: "kn7bw2cr1ye5hqj3x770b332ks86atzw", name: "Sony FX3 Camera FX 3 4K Full Frame",
+      description: "Sony FX3 camera kit with its owner-confirmed kit contents.",
+      publicUrl: "https://hygglo.com/uk/i/448-sony-fx3-full-frame-cinema-camera",
+      prices: [{ days: 1, pricePerDay: 45 }] };
+    const fetcher = fetchDiogoWithoutExactMapping(diogoFx3);
+    const snapshot = await preparedListingPrice("diogo-sony-fx3-kit", "diogo", fetcher as typeof fetch, now);
+    expect(snapshot).toMatchObject({ account_slug: "diogo", product_id: 1173763, daily_price_gbp: 45,
+      master_item_id: "kn7bw2cr1ye5hqj3x770b332ks86atzw", inventory_name: "Sony FX3",
+      listing_name: diogoFx3.name, listing_description: diogoFx3.description,
+      listing_description_synced_at: now - 1000, public_url: diogoFx3.publicUrl, mapping_verified: true,
+      mapping_source: "owner-confirmed prepared Lab mapping",
+      mapping_components: [{ item_id: "kn7bw2cr1ye5hqj3x770b332ks86atzw", qty: 1 }] });
+    const [, request] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(request.body))).toEqual({ path: "hygglo_products:getByMasterItem",
+      args: { masterItemId: "kn7bw2cr1ye5hqj3x770b332ks86atzw" }, format: "json" });
+  });
+
+  it("uses the owner-confirmed Diogo mapping only for an explicit null revision", async () => {
+    const diogoFx3 = { ...product, accountSlug: "diogo", productId: 1173763,
+      masterItemId: "kn7bw2cr1ye5hqj3x770b332ks86atzw", name: "Sony FX3 Camera FX 3 4K Full Frame",
+      description: "Sony FX3 camera kit with its owner-confirmed kit contents.",
+      publicUrl: "https://hygglo.com/uk/i/448-sony-fx3-full-frame-cinema-camera",
+      prices: [{ days: 1, pricePerDay: 45 }] };
+    const invalidMappingResults = [
+      { available: false },
+      { available: true, revision: "not-json" },
+      { available: true, revision: JSON.stringify({ account_slug: "leo", product_id: 1173763,
+        components: [{ item_id: diogoFx3.masterItemId, qty: 1 }] }) },
+    ];
+
+    for (const mappingResult of invalidMappingResults) {
+      const fetcher = vi.fn(async (_url: unknown, init?: RequestInit) => {
+        const path = JSON.parse(String(init?.body)).path;
+        if (path === "listing_overrides:getRevision") {
+          return new Response(JSON.stringify({ status: "success", value: mappingResult }));
+        }
+        return response([diogoFx3]);
+      });
+      expect(await preparedListingPrice("diogo-sony-fx3-kit", "diogo", fetcher as typeof fetch, now)).toBeNull();
+    }
+  });
+
+  it("preserves every component in an exact prepared listing mapping", async () => {
+    const bodyId = "kn7bw2cr1ye5hqj3x770b332ks86atzw";
+    const cardId = "kn78qeqezcrpjr12gzmynyfgb986b1rn";
+    const leoFx3 = { ...product, accountSlug: "leo", productId: 1097510, masterItemId: bodyId,
+      name: "Sony FX3 Camera 4K Full Frame", publicUrl: "https://hygglo.com/uk/i/leo-sony-fx3" };
+    const snapshot = await preparedListingPrice("sony-fx3-batteries", "leo",
+      fetchProduct(leoFx3, [{ item_id: bodyId, qty: 1 }, { item_id: cardId, qty: 1 }]) as typeof fetch, now);
+    expect(snapshot).toMatchObject({ mapping_verified: true, mapping_components: [
+      { item_id: bodyId, qty: 1 }, { item_id: cardId, qty: 1 },
+    ] });
+  });
+
+  it("translates source inventory IDs to Lab IDs before comparing a multi-item mapping", () => {
+    const sourceBodyId = "kn7bw2cr1ye5hqj3x770b332ks86atzw";
+    const sourceCardId = "kn78qeqezcrpjr12gzmynyfgb986b1rn";
+    const sourceComponents = [{ item_id: sourceBodyId, qty: 1 }, { item_id: sourceCardId, qty: 1 }];
+    const localIdsBySource = new Map([[sourceBodyId, "lab-body-id"], [sourceCardId, "lab-card-id"]]);
+    expect(mapPreparedComponentsToLabIds(sourceComponents, localIdsBySource)).toEqual([
+      { item_id: "lab-body-id", qty: 1 }, { item_id: "lab-card-id", qty: 1 },
+    ]);
+    expect(mapPreparedComponentsToLabIds(sourceComponents, new Map([[sourceBodyId, "lab-body-id"]]))).toBeNull();
+  });
+
+  it.each(["prepared", "live"] as const)("hydrates the full Diogo listing through the %s Lab entry path", async (entry) => {
+    vi.stubEnv("RENTER_BOT_LAB_SCENARIO_SEEDING", "enabled");
+    vi.stubEnv("RENTAL_MANAGER_ACCESS", "open");
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const diogoFx3 = { ...product, accountSlug: "diogo", productId: 1173763,
+      masterItemId: "kn7bw2cr1ye5hqj3x770b332ks86atzw", name: "Sony FX3 Camera FX 3 4K Full Frame",
+      description: "Sony FX3 camera kit with current owner-confirmed listing details.",
+      publicUrl: "https://hygglo.com/uk/i/448-sony-fx3-full-frame-cinema-camera",
+      prices: [{ days: 1, pricePerDay: 45 }] };
+    vi.stubGlobal("fetch", fetchDiogoWithoutExactMapping(diogoFx3));
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const ctx = { runQuery: vi.fn(async () => ({ status: "ready", fetched_at: now, inventory_count: 108, listing_count: 1165,
+      eligible_listing_count: 109, blocked_listing_count: 1056, source_receipts: [] })), runMutation: vi.fn(async (ref, args) => {
+      const name = getFunctionName(ref); calls.push({ name, args });
+      if (name === "renter_bot_lab_actions:ensurePreparedScenarioItem") return "Sony FX3";
+      if (name === "renter_bot_lab_actions:ensurePreparedListing") return true;
+      return {};
+    }) };
+    if (entry === "prepared") await (startPreparedScenario as any)._handler(ctx, { scenarioId: "diogo-sony-fx3-kit" });
+    else await (startLiveSession as any)._handler(ctx, { accountSlug: "diogo", scenarioId: "diogo-sony-fx3-kit",
+      lifecycle: "inquiry", startDate: "2026-12-10", endDate: "2026-12-10" });
+    const listingArgs = calls.find(call => call.name === "renter_bot_lab_actions:ensurePreparedListing")?.args;
+    expect(listingArgs?.snapshot).toMatchObject({ product_id: 1173763, listing_name: diogoFx3.name,
+      listing_description: diogoFx3.description, public_url: diogoFx3.publicUrl, mapping_verified: true });
+    expect(calls.find(call => call.name === "renter_bot_probe:seed")?.args.items)
+      .toEqual([{ name: "Sony FX3", product_id: 1173763 }]);
+    const orderArgs = calls.find(call => call.name === "renter_bot_lab_order:seed")?.args;
+    expect(orderArgs?.prepared_price).toMatchObject({ product_id: 1173763, daily_price_gbp: 45 });
+    expect(orderArgs?.prepared_price).not.toHaveProperty("listing_description");
+  });
+
   it("reads only the selected account and product's fresh listing tiers", async () => {
-    const fetcher = vi.fn(async () => response([{ ...product, accountSlug: "leo" }, product]));
+    const fetcher = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const path = JSON.parse(String(init?.body)).path;
+      return path === "listing_overrides:getRevision"
+        ? new Response(JSON.stringify({ status: "success", value: { available: true, revision: JSON.stringify({
+          account_slug: "dbcinema", product_id: 1103089, components: [{ item_id: product.masterItemId, qty: 1 }],
+        }) } }))
+        : response([{ ...product, accountSlug: "leo" }, product]);
+    });
     const snapshot = await preparedListingPrice("bmpcc-6k-full-frame-kit", "dbcinema", fetcher as typeof fetch, now);
     expect(snapshot).toMatchObject({ product_id: 1103089, daily_price_gbp: 50,
       price_tiers: [{ days: 1, pricePerDay: 50 }, { days: 3, pricePerDay: 130 / 3 }] });
@@ -42,7 +168,18 @@ describe("prepared Lab listing prices", () => {
       return response([product]);
     });
     expect((await preparedListingPrice("bmpcc-6k-full-frame-kit","dbcinema",fetcher(product.masterItemId) as typeof fetch,now))?.mapping_verified).toBe(true);
-    expect((await preparedListingPrice("bmpcc-6k-full-frame-kit","dbcinema",fetcher("other-item") as typeof fetch,now))?.mapping_verified).toBe(false);
+    expect(await preparedListingPrice("bmpcc-6k-full-frame-kit","dbcinema",fetcher("other-item") as typeof fetch,now)).toBeNull();
+  });
+
+  it("rejects snapshots without a current description or with the wrong listing identity", async () => {
+    for (const invalid of [
+      { ...product, description: "  " },
+      { ...product, descriptionSyncedAt: now - 49 * 60 * 60 * 1000 },
+      { ...product, name: "Sony A7S III Camera Kit" },
+      { ...product, publicUrl: "https://example.com/fake" },
+    ]) {
+      expect(await preparedListingPrice("bmpcc-6k-full-frame-kit", "dbcinema", fetchProduct(invalid) as typeof fetch, now)).toBeNull();
+    }
   });
 
   it("withholds prices when the source is stale, ambiguous, unpublished or unavailable", async () => {
@@ -59,16 +196,22 @@ describe("prepared Lab listing prices", () => {
     vi.stubEnv("RENTER_BOT_LAB_SCENARIO_SEEDING", "enabled");
     vi.stubEnv("RENTAL_MANAGER_ACCESS", "open");
     vi.spyOn(Date, "now").mockReturnValue(now);
-    vi.stubGlobal("fetch", vi.fn(async () => response([product])));
+    vi.stubGlobal("fetch", fetchProduct(product));
     const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
-    const ctx = { runMutation: vi.fn(async (ref, args) => {
+    const ctx = { runQuery: vi.fn(async () => ({ status: "ready", fetched_at: now, inventory_count: 108, listing_count: 1165,
+      eligible_listing_count: 109, blocked_listing_count: 1056, source_receipts: [] })), runMutation: vi.fn(async (ref, args) => {
       const name = getFunctionName(ref); calls.push({ name, args });
-      return name === "renter_bot_lab_actions:ensurePreparedScenarioItem" ? "BMPCC 6K Full Frame" : {};
+      if (name === "renter_bot_lab_actions:ensurePreparedScenarioItem") return "BMPCC 6K Full Frame";
+      if (name === "renter_bot_lab_actions:ensurePreparedListing") return true;
+      return {};
     }) };
     await (startLiveSession as any)._handler(ctx, { accountSlug: "dbcinema", scenarioId: "bmpcc-6k-full-frame-kit",
       lifecycle: "awaiting_owner_approval", startDate: "2026-11-26", endDate: "2026-11-26" });
     const seedArgs = calls.find(call => call.name === "renter_bot_lab_order:seed")?.args;
     expect(seedArgs?.prepared_price).toMatchObject({ product_id: 1103089, daily_price_gbp: 50 });
+    expect(seedArgs?.prepared_price).not.toHaveProperty("listing_description");
+    expect(calls.find(call => call.name === "renter_bot_lab_actions:ensurePreparedListing")?.args.snapshot)
+      .toMatchObject({ listing_name: product.name, listing_description: product.description, public_url: product.publicUrl });
     // Regular and verification-failed examples must independently refresh
     // the same verified alternative, including withdrawing stale evidence.
     expect(calls.find(call => call.name === "renter_bot_lab_actions:ensurePreparedAlternative")?.args)
@@ -79,11 +222,13 @@ describe("prepared Lab listing prices", () => {
     vi.stubEnv("RENTER_BOT_LAB_SCENARIO_SEEDING", "enabled");
     vi.stubEnv("RENTAL_MANAGER_ACCESS", "open");
     vi.spyOn(Date, "now").mockReturnValue(now);
-    vi.stubGlobal("fetch", vi.fn(async () => response([product])));
+    vi.stubGlobal("fetch", fetchProduct(product));
     const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
-    const ctx = { runMutation: vi.fn(async (ref, args) => {
+    const ctx = { runQuery: vi.fn(async () => ({ status: "ready", fetched_at: now, inventory_count: 108, listing_count: 1165,
+      eligible_listing_count: 109, blocked_listing_count: 1056, source_receipts: [] })), runMutation: vi.fn(async (ref, args) => {
       const name = getFunctionName(ref); calls.push({ name, args });
       if (name === "renter_bot_lab_actions:ensurePreparedScenarioItem") return "BMPCC 6K Full Frame";
+      if (name === "renter_bot_lab_actions:ensurePreparedListing") return true;
       if (name === "renter_bot_lab_order:__service_simulateVerificationFailure") return { message: verificationFailureReply(String(args.referral_code)) };
       return {};
     }) };
@@ -106,15 +251,15 @@ describe("prepared Lab listing prices", () => {
       const db = {
         query: (table: string) => table === "items" ? { collect: async () => [item] }
           : { withIndex: () => ({ unique: async () => mapped && table === "listing_resolution_override"
-            ? {components:[{item_id:item._id,qty:1}]}
+            ? {components:[{item_id:item._id,qty:1},{item_id:"fixture-card",qty:1}]}
             : mapped && table === "hygglo_products" ? {masterItemId:item._id,isPublished:true,isMarketingOnly:false} : null }) },
         insert: async (_table: string, value: unknown) => { inserted = value; return "fixture-order"; },
       };
       await (seed as any)._handler({ db }, { thread_id: "__probe__price", account_slug: "dbcinema",
-        item_names: [item.name_canonical], prepared_price: snapshot });
+        item_names: [item.name_canonical], prepared_price: snapshot ? preparedOrderPrice(snapshot) : null });
       return inserted.items;
     }
-    const snapshot = await preparedListingPrice("bmpcc-6k-full-frame-kit", "dbcinema", async () => response([product]), now);
+    const snapshot = await preparedListingPrice("bmpcc-6k-full-frame-kit", "dbcinema", fetchProduct(product) as typeof fetch, now);
     const lines = await run(snapshot);
     expect(lines[0]).toMatchObject({ source_product_id: 1103089, daily_price_gbp: 50, pricing_basis: "listing" });
     expect(summarise(lines, "2026-11-26", "2026-11-26").total_gbp).toBe(50);

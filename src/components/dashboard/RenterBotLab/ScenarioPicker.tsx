@@ -2,6 +2,8 @@
 
 import {
   RENTER_BOT_LAB_SCENARIOS,
+  renterBotLabAccountName,
+  renterBotLabPickupPoint,
   type RenterBotLabScenarioId,
 } from "../../../../convex/lib/renter_bot_lab_scenarios";
 
@@ -26,8 +28,9 @@ export function ScenarioPicker({
         <article key={scenario.id} className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
           <p className="text-sm font-semibold text-[#e4e6eb]">{scenario.title}</p>
           <p className="mt-1 text-xs text-[#8b8fa3]">
-            {scenario.accountSlug === "dbcinema" ? "DB Cinema" : "Leo"} · {scenario.displayName}
+            {renterBotLabAccountName(scenario.accountSlug)} · pickup: {renterBotLabPickupPoint(scenario.accountSlug)?.area}
           </p>
+          <p className="mt-1 text-xs text-[#8b8fa3]">{scenario.displayName}</p>
           {scenario.startStage === "verification_failed" && (
             <p className="mt-1 text-xs text-[#8b8fa3]">A failed verification cancels the test booking and shows the automatic reply.</p>
           )}

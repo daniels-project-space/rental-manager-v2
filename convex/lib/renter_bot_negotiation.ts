@@ -1,4 +1,5 @@
 import {PRIMARY_RENTAL_REQUEST,sameRentalRequest,type RentalRequest} from "./rental_request";
+import {assessTravelCompensation} from "./travel_compensation";
 /**
  * V1 negotiation strategy — pure-function port.
  *
@@ -45,7 +46,7 @@ export interface NegotiationOutput {
 
 /** Native facts use the complete chronological thread; only the model's
  * visible transcript is windowed. Returns compact facts, not old prose. */
-export function negotiationFromMessages(messages:Array<{message_id?:string;sender:string;body_text:string;rental_request?:RentalRequest;quoted_inquiries?:SentInquiryOffer[]}>,selected?:RentalRequest) {
+export function negotiationFromMessages(messages:Array<{message_id?:string;sender:string;body_text:string;rental_request?:RentalRequest;quoted_inquiries?:SentInquiryOffer[]}>,selected?:RentalRequest,pickupArea?:string|null,verifiedRentalChargeGbp?:number|null) {
   const request=selected??messages.filter(m=>m.sender==="owner"&&m.rental_request).at(-1)?.rental_request??PRIMARY_RENTAL_REQUEST;
   // Tagged renter turns are authoritative. Untagged legacy history belongs to
   // the primary booking; newer unsent turns inherit the last served request.
@@ -59,10 +60,22 @@ export function negotiationFromMessages(messages:Array<{message_id?:string;sende
   const renterMessages=scoped.filter(message=>message.sender==="renter").map(message=>message.body_text);
   const latestOptions=scoped.filter(message=>message.sender==="owner"&&message.quoted_inquiries?.length).at(-1)?.quoted_inquiries??[];
   const latestOffer=latestOptions.length===1?latestOptions[0]:null;
+  const travelHistory=messages.filter(message=>(message.sender==="owner"||message.sender==="renter")&&typeof message.body_text==="string").map(message=>({
+    role:message.sender as "owner"|"renter",content:message.body_text,
+  }));
+  const travelCompensation=assessTravelCompensation({
+    history:travelHistory,
+    lastRenterMessage:renterMessages.at(-1)??"",
+    pickupArea,
+    // A sent Native quote is authoritative in production. The isolated Lab
+    // may also supply its exact current order total before a quote has been
+    // sent, so its policy assessment matches the order shown in the UI.
+    rentalChargeGbp:latestOffer?.quote.listing_quote?.total_gbp??verifiedRentalChargeGbp??null,
+  });
   return {...computeNegotiationStance({latestMessage:renterMessages.at(-1)??"",priorRenterMessages:renterMessages.slice(0,-1),
     lastPriceOfferedGbp:latestOffer?.quote.listing_quote?.total_gbp??null}),rentalRequest:request,
     threadObjectionCount:countObjections(messages.filter(m=>m.sender==="renter").map(m=>m.body_text)),
-    lastInquiryOffer:latestOffer,...(latestOptions.length>1?{lastInquiryOptions:latestOptions}:{})};
+    lastInquiryOffer:latestOffer,travelCompensation,...(latestOptions.length>1?{lastInquiryOptions:latestOptions}:{})};
 }
 
 // Price objections require price language; another hire or a delivery request
@@ -83,7 +96,7 @@ function countObjections(messages: string[]): number {
 // The tool supplies strategy, not business facts or financial approval.
 // Both the draft context and Mastra consume this same guidance.
 const FRAMING = {
-  NONE: "No current price objection. Answer the current request using its verified facts; do not introduce a discount or repeat an unrelated quote.",
+  NONE: "No general rental-price objection. Do not initiate a discretionary price discount or repeat an unrelated quote. Check travelCompensation separately: if it is eligible, offer exactly its authorized one-time amount; otherwise do not offer travel compensation.",
   COMPETITOR_ACK:
     "Acknowledge the comparison politely without disparaging the competitor. Explain value only from verified item facts and current policy; do not invent coverage, service or logistical benefits.",
   HOLD_FIRM:

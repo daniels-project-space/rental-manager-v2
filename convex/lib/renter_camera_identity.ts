@@ -48,6 +48,12 @@ export function unsupportedRenterCameraClaims(text: string, messages: string[]):
       if (/^\s+options?\b/i.test(sentence.slice(match.index! + match[0].length))) continue;
       const reference = clean(match[1]);
       if (!reference || generic.test(reference) || genericDescription.test(reference)) continue;
+      // In a rental amendment, ordinal phrases such as "your request ... the
+      // second body" refer to the proposed basket, not a camera the renter
+      // owns. Do not let the intervening request wording turn "second" into
+      // an unverified renter-camera identity.
+      if (/\b(?:request|basket|order|booking)\b/i.test(reference) &&
+          /\b(?:second|another|additional|extra|one more)\s*$/i.test(reference)) continue;
       const claim = normal(reference);
       // A stated exact model establishes its brand; a brand never establishes
       // a particular model. Token boundaries preserve FX3 versus FX30.

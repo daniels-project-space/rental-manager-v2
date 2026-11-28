@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { tokenize, rankByName, bestMatch, substitutionScore, sameMount, isGenericItemQuery, isPlatformNotice, exactTitleMatch } from "./item_name_match";
+import { tokenize, rankByName, bestMatch, substitutionScore, sameMount, isGenericItemQuery, isPlatformNotice, exactTitleMatch, hasRoleConflictingCompatibilityAlias } from "./item_name_match";
 
 const ITEMS = [
   { name: "BMPCC 6K Pro", kind: "camera", lens_mount: "Canon EF mount" },
@@ -10,6 +10,10 @@ const ITEMS = [
 ];
 
 describe("tokenize", () => {
+  it("unifies spaced and compact DJI RS family model numbers", () => {
+    expect(tokenize("DJI RS 2")).toEqual(tokenize("DJI RS2"));
+    expect(tokenize("DJI RSC 2")).toEqual(tokenize("DJI RSC2"));
+  });
   it("KEEPS variant words that distinguish two bodies", () => {
     // The original bug: "pro"/"full"/"frame" were stopwords, so these two
     // cameras were indistinguishable.
@@ -65,6 +69,34 @@ describe("rankByName — the lookup_pricing bundle false-match", () => {
 });
 
 describe("bestMatch confidence gate", () => {
+  it("prioritizes an exact canonical item name over token-overlapping aliases", () => {
+    const inventory = [
+      { name: "DJI RS3 Pro gimbal", aliases: [] },
+      { name: "DJI gimbal battery", aliases: ["DJI RS3 Pro gimbal"] },
+    ];
+    expect(bestMatch("DJI RS3 Pro gimbal", inventory, (item) => item.name, (item) => item.aliases)).toMatchObject({
+      match: inventory[0], confident: true, ambiguousWith: [], score: 1,
+    });
+  });
+
+  it("keeps duplicate exact canonical names ambiguous", () => {
+    const inventory = [{ name: "DJI RS3 Pro gimbal" }, { name: "DJI RS3 Pro gimbal" }];
+    expect(bestMatch("DJI RS3 Pro gimbal", inventory, (item) => item.name)).toMatchObject({
+      match: inventory[0], confident: false, ambiguousWith: [inventory[1]], score: 1,
+    });
+  });
+
+  it("does not identify a gimbal by a spare battery compatibility alias", () => {
+    const battery = { name: "DJI gimbal battery", kind: "power", aliases: ["DJI Ronin RS2 RS3 Pro Gimbal Battery"] };
+    const requestedGimbal = bestMatch("DJI RS 2", [battery], (item) => item.name, (item) => item.aliases);
+    expect(requestedGimbal).toMatchObject({ match: null, confident: false, ambiguousWith: [] });
+    expect(hasRoleConflictingCompatibilityAlias("DJI RS 2", [battery], (item) => item.name, (item) => item.aliases)).toBe(true);
+
+    const requestedBattery = bestMatch("DJI RS2 battery", [battery], (item) => item.name, (item) => item.aliases);
+    expect(requestedBattery).toMatchObject({ match: battery, confident: false });
+    expect(hasRoleConflictingCompatibilityAlias("DJI RS2 battery", [battery], (item) => item.name, (item) => item.aliases)).toBe(false);
+  });
+
   it("distinguishes adapter destination mounts, including one-letter names", () => {
     const adapters = ["PL to Sony E mount", "PL to EF mount", "PL to RF mount", "PL to L mount"].map(name => ({ name }));
     for (const name of adapters.map(a => a.name)) {
@@ -242,6 +274,14 @@ describe("exactTitleMatch — the retry-loop fix", () => {
     expect(exactTitleMatch("  blackmagic   bmpcc 6k pro ", LISTINGS, nameOf)?.name).toBe(
       "Blackmagic BMPCC 6K Pro",
     );
+  });
+
+  it("fails closed when more than one listing has the same exact normalized title", () => {
+    const duplicateTitles = [
+      { name: "Blackmagic BMPCC 6K Pro", product_id: 954030 },
+      { name: "Blackmagic BMPCC 6K Pro", product_id: 1048175 },
+    ];
+    expect(exactTitleMatch("Blackmagic BMPCC 6K Pro", duplicateTitles, nameOf)).toBeNull();
   });
 
   it("does NOT match a listing that merely mentions the item", () => {

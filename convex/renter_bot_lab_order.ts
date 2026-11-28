@@ -7,6 +7,7 @@ import { acceptsDateChange } from "./lib/renter_date_acceptance";
 import { offeringConsentIdentity } from "./lib/offering_consent_identity";
 import { acceptsRemoval } from "./lib/renter_removal_acceptance";
 import { acceptsAddition } from "./lib/renter_addition_acceptance";
+import { acceptsCompleteBasketOffer } from "./lib/renter_complete_basket_acceptance";
 import { renterRequestsReadOnly, renterProhibitsItemChange, type ConsentInventoryItem } from "./lib/renter_booking_consent";
 import { friendBasketReply, verificationFailureReply, requestsFriendBasketRestore } from "./lib/verification_failure";
 import { loadThreadReferralReference,referralReferenceSelection } from "./lib/thread_referral_reference";
@@ -22,15 +23,81 @@ export { inclusiveDays, summarise } from "./lib/renter_order_quote";
 import { checkRentalStock, validIsoDate, loadStockSources } from "./lib/renter_stock";
 import { checkOrderRentalStock, resolveOrderPhysicalItems, sameOrderPhysicalItems, orderPhysicalIdentityKey, type OrderPhysicalItem } from "./lib/renter_order_stock";
 import { loadListingInventory } from "./lib/listing_inventory";
+import { listingKitContext } from "./lib/listing_kit_context";
 import { getBotBooking, getLabOrder } from "./lib/renter_booking";
 import { draftContextKey } from "./lib/draft_review";
-import type { QueryCtx } from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { rentalStage } from "./lib/rental_stage";
 import { recentThreadMessages } from "./lib/thread_messages";
 import { londonToday } from "./lib/effectiveDates";
 import { performJointStockCheck } from "./renter_bot_tools";
 import { recommendationRequirementValidator, recommendationRequirementsKey } from "./lib/recommendation_qualification";
 import { confirmedLabTimes } from "./lib/lab_schedule";
+import { renterBotLabPickupPoint } from "./lib/renter_bot_lab_scenarios";
+import { assessTravelCompensation, clearlyAcceptsTravelCompensation, isTravelCompensationOffer, travelCompensationMaximum, travelCompensationOfferAmountGbp } from "./lib/travel_compensation";
+import type { Doc } from "./_generated/dataModel";
+import { parseReferralRestoreTurnKey, referralRestoreTurnKey, verifiedReferralRestoreReplay } from "./lib/renter_bot_lab_turn_action";
+
+function labQuoteWithTravelCompensation<T extends { total_gbp: number | null }>(quote: T, travelCompensationGbp = 0) {
+  return {
+    ...quote,
+    subtotal_gbp: quote.total_gbp,
+    travel_compensation_gbp: travelCompensationGbp,
+    total_gbp: quote.total_gbp == null ? null : Math.max(0, Math.round((quote.total_gbp - travelCompensationGbp) * 100) / 100),
+  };
+}
+
+function labOrderSummary(items: OrderLine[], startDate?: string, endDate?: string, travelCompensationGbp = 0) {
+  return labQuoteWithTravelCompensation(summarise(items, startDate, endDate), travelCompensationGbp);
+}
+
+type LabOrderSummary = ReturnType<typeof labOrderSummary>;
+type LabOrderView = LabOrderSummary & {
+  travel_compensation_applied_at: number | null;
+  changes: Doc<"renter_bot_lab_orders">["changes"];
+  stage: string;
+  pickup_time: string | null;
+  pickup_date: string | null;
+  return_time: string | null;
+  return_date: string | null;
+  referral_code?: string;
+  account_slug: string;
+  same_turn_replay?: {
+    source: "native_lab_amendment";
+    action: "restore_referral_basket";
+    thread_id: string;
+    account_slug: string;
+    request_message_id: string;
+    start_date: string;
+    end_date: string;
+    items: Array<{ product_id: number; qty: number }>;
+  };
+};
+
+type AcceptedTravelCompensationResult = {
+  ok: boolean;
+  action_performed: boolean;
+  already_applied?: boolean;
+  error?: string;
+  error_code?: string;
+  applied?: string;
+  order?: LabOrderSummary;
+  previous_change_summary?: string;
+  note?: string;
+  context_transition?: {
+    source: "native_lab_amendment";
+    thread_id: string;
+    before_context_key: string;
+    after_context_key: string;
+    before_revision: number;
+    after_revision: number;
+  };
+};
+
+function travelCompensationExceedsCurrentCap(amountGbp: number, subtotalGbp: number | null | undefined): boolean {
+  const maximum = travelCompensationMaximum(subtotalGbp);
+  return amountGbp > 0 && (maximum == null || amountGbp > maximum + 0.001);
+}
 
 async function prohibitsSelectedItems(ctx: QueryCtx, accountSlug:string, text:string, action:"add_item"|"remove_item", lines:Array<{product_id?:number;item_id?:string;name?:string;qty:number}>) {
   const inventory=await ctx.db.query("items").collect();
@@ -50,22 +117,44 @@ async function amendmentContext(ctx: QueryCtx, threadId: string) {
   return draftContextKey(await getBotBooking(ctx, threadId), conv?.inquiry_items, await getLabOrder(ctx, threadId));
 }
 
+/** Failed or withheld assistant turns leave renter messages adjacent. Preserve the latest live owner offer across those retries. */
+function latestOwnerBeforeCurrentRenter<T extends { sender: string }>(messages: T[]): T | undefined {
+  if (messages.at(-1)?.sender !== "renter") return undefined;
+  for (let index = messages.length - 2; index >= 0; index -= 1) {
+    if (messages[index].sender === "owner") return messages[index];
+  }
+  return undefined;
+}
+
 async function additionConsent(ctx:QueryCtx,threadId:string,account:string,text:string,
-  complete:ReturnType<typeof summarise>,addition:ReturnType<typeof summarise>,additionalCost:number,referralCode?:string) {
+  complete:ReturnType<typeof summarise>,addition:ReturnType<typeof summarise>,base:ReturnType<typeof summarise>|undefined,
+  additionalCost:number,referralCode?:string) {
   if(!complete.start_date || !complete.end_date || complete.total_gbp==null ||
     addition.lines.some(l=>!Number.isInteger(l.product_id) || !l.product_id || l.line_total_gbp==null))return false;
-  const messages=await recentThreadMessages(ctx,threadId,2);
-  // recentThreadMessages returns oldest-to-newest within the selected window.
-  const previous=messages.at(-2)?.sender==="owner" ? messages.at(-2) : undefined;
+  // A failed/withheld assistant turn can leave two renter messages adjacent.
+  // Keep the last actual owner offer available, but only while its exact
+  // source message, booking context, and configuration epoch remain current.
+  const messages=await recentThreadMessages(ctx,threadId,48);
+  const previous=latestOwnerBeforeCurrentRenter(messages);
+  const ownerIndex=previous ? messages.lastIndexOf(previous) : -1;
+  const sourceRenter=ownerIndex>0 ? [...messages.slice(0,ownerIndex)].reverse().find(message=>message.sender==="renter") : undefined;
+  const settings=await ctx.db.query("settings").first();
+  const contextKey=await amendmentContext(ctx,threadId);
+  const currentOffers=previous?.quoted_additions?.filter(offer=>offer.context_key===contextKey &&
+    offer.epoch===(settings?.draft_epoch??0) && offer.quoted_for_message_id===sourceRenter?.message_id) ?? [];
   const inventory=await ctx.db.query("items").collect();
   const identities=await Promise.all(addition.lines.map(line=>offeringConsentIdentity(ctx,account,line,inventory)));
   if(identities.some(i=>!i))return false;
   const physical=await resolveOrderPhysicalItems(ctx,account,complete.lines,inventory);
   if(!physical.items.length)return false;
-  return acceptsAddition(text,{context_key:await amendmentContext(ctx,threadId),start_date:complete.start_date,end_date:complete.end_date,
+  const acceptanceLines=(quote:ReturnType<typeof summarise>)=>quote.lines.flatMap(line=>
+    Number.isInteger(line.product_id)&&line.product_id!>0&&line.line_total_gbp!=null?[{product_id:line.product_id!,name:line.name,qty:line.qty,
+      line_total_gbp:line.line_total_gbp,daily_rate_gbp:line.effective_rate_gbp??undefined,base_daily_rate_gbp:line.daily_price_gbp??undefined}]:[]);
+  return acceptsAddition(text,{context_key:contextKey,start_date:complete.start_date,end_date:complete.end_date,
     physical_identity_key:orderPhysicalIdentityKey(physical.items),
-    total_gbp:complete.total_gbp,additional_cost_gbp:additionalCost,
-    lines:addition.lines.map((l,index)=>({...identities[index]!,product_id:l.product_id!,name:l.name,qty:l.qty,line_total_gbp:l.line_total_gbp!,daily_rate_gbp:l.effective_rate_gbp??undefined,base_daily_rate_gbp:l.daily_price_gbp}))},previous && referralCode?{...previous,quoted_additions:previous.quoted_additions?.filter(p=>p.referral_code===referralCode)}:previous);
+    total_gbp:complete.total_gbp,additional_cost_gbp:additionalCost,base_lines:base?acceptanceLines(base):undefined,
+    lines:addition.lines.map((l,index)=>({...identities[index]!,product_id:l.product_id!,name:l.name,qty:l.qty,line_total_gbp:l.line_total_gbp!,daily_rate_gbp:l.effective_rate_gbp??undefined,base_daily_rate_gbp:l.daily_price_gbp}))},
+    previous ? {...previous,quoted_additions:currentOffers.filter(p=>!referralCode||p.referral_code===referralCode)} : undefined);
 }
 
 async function prepareDateChange(ctx:QueryCtx,row:NonNullable<Awaited<ReturnType<typeof getLabOrder>>>,start:string,end:string) {
@@ -77,9 +166,11 @@ async function prepareDateChange(ctx:QueryCtx,row:NonNullable<Awaited<ReturnType
   const collected=!!booking?.pickup_date || booking?.status==="ongoing";
   if(collected && start!==row.start_date)return {ok:false as const,error:"The rental has already been collected. Keep its original pickup date when extending the return."};
   if(!collected && start<londonToday())return {ok:false as const,error:"An upcoming rental cannot be backdated. Quote pickup from today or later."};
-  const base_quote=summarise(row.items,row.start_date,row.end_date),quote=summarise(row.items,start,end);
+  const discount=row.travel_compensation_gbp??0;
+  const base_quote=labOrderSummary(row.items,row.start_date,row.end_date,discount),quote=labOrderSummary(row.items,start,end,discount);
   if(!base_quote.start_date || !base_quote.end_date || !row.items.length || base_quote.total_gbp==null || quote.total_gbp==null)
     return {ok:false as const,error_code:"unpriced_booking",error:"The complete booking needs known Native dates and prices before a date quote or edit."};
+  if(travelCompensationExceedsCurrentCap(discount,quote.subtotal_gbp))return {ok:false as const,error_code:"travel_compensation_cap_changed",error:"This date change would make the accepted travel adjustment exceed its permitted cap. Ask the owner to review the revised total; no dates or prices changed."};
   const stock=await checkOrderRentalStock(ctx,row.account_slug,row.items,start,end,row.thread_id);
   if(stock.available!==true)return {ok:false as const,error_code:"stock_unavailable_or_unknown",error:`Cannot change this basket to ${start} – ${end}: ${stock.reason}. No dates or prices were changed. A failed range check alone does not identify which individual day is booked.`,stock_receipts:stock.receipts};
   return {ok:true as const,preview_only:true as const,source:"native_lab_date_proposal" as const,thread_id:row.thread_id,
@@ -117,6 +208,23 @@ function assertLabThread(threadId: string) {
       "renter_bot_lab_order only operates on Lab/probe threads — refusing a real conversation",
     );
   }
+}
+
+async function currentLabTurnLease(
+  ctx: MutationCtx,
+  args: { thread_id: string; account_slug: string; request_message_id?: string; lab_turn_id?: string; lab_lease_token?: string },
+) {
+  // Unit-level pricing and consent tests deliberately run without a deployed
+  // Lab secret. Every real Lab deployment has one and must fence mutations.
+  if (!process.env.RENTER_BOT_LAB_API_SECRET?.trim()) return true;
+  if (!args.request_message_id || !args.lab_turn_id || !args.lab_lease_token) return false;
+  const [turn, latest] = await Promise.all([
+    ctx.db.query("renter_bot_lab_turns").withIndex("by_turn", q => q.eq("turn_id", args.lab_turn_id!)).first(),
+    ctx.db.query("hygglo_messages").withIndex("by_thread", q => q.eq("thread_id", args.thread_id)).order("desc").first(),
+  ]);
+  return Boolean(turn && turn.thread_id === args.thread_id && turn.account_slug === args.account_slug &&
+    turn.renter_message_id === args.request_message_id && turn.status === "running" && turn.lease_token === args.lab_lease_token &&
+    latest?.sender === "renter" && latest.account_slug === args.account_slug && latest.message_id === args.request_message_id);
 }
 
 /**
@@ -232,8 +340,8 @@ async function tiersForProduct(
 }
 
 export const get = query({
-  args: { thread_id: v.string() },
-  handler: async (ctx, { thread_id }) => {
+  args: { thread_id: v.string(), request_message_id: v.optional(v.string()) },
+  handler: async (ctx, { thread_id, request_message_id }): Promise<LabOrderView | null> => {
     const row = await ctx.db
       .query("renter_bot_lab_orders")
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
@@ -243,15 +351,39 @@ export const get = query({
     const booking = await getBotBooking(ctx, thread_id);
     // Derive confirmed times from the isolated transcript; proposals and
     // approximate times must not appear as confirmed schedule facts.
-    const chat = (await recentThreadMessages(ctx, thread_id, 32)).map(m => ({sender:m.sender,body_text:m.body_text,hygglo_sent_at:m.hygglo_sent_at ?? m.fetched_at}));
+    const messages = await recentThreadMessages(ctx, thread_id, 32);
+    const chat = messages.map(m => ({sender:m.sender,body_text:m.body_text,hygglo_sent_at:m.hygglo_sent_at ?? m.fetched_at}));
     const times = row.start_date && row.end_date ? await confirmedLabTimes(ctx,{account:row.account_slug,startDate:row.start_date,endDate:row.end_date,booking,messages:chat}) : null;
     const referral = await ctx.db.query("renter_bot_lab_referrals").withIndex("by_source", q => q.eq("source_thread_id", thread_id)).unique();
+    let sameTurnReplay: LabOrderView["same_turn_replay"];
+    const latest = messages.at(-1);
+    const lastChange = row.changes.at(-1);
+    const restored = request_message_id && latest?.sender === "renter" && latest.message_id === request_message_id
+      ? parseReferralRestoreTurnKey(lastChange?.request_key, request_message_id)
+      : null;
+    if (restored) {
+      const redeemed = await ctx.db.query("renter_bot_lab_referrals").withIndex("by_code", q => q.eq("code", restored.referral_code)).unique();
+      sameTurnReplay = verifiedReferralRestoreReplay({
+        change_key: lastChange?.request_key,
+        request_message_id: restored.request_message_id,
+        latest_renter_message_id: latest?.sender === "renter" ? latest.message_id : undefined,
+        thread_id,
+        account_slug: row.account_slug,
+        start_date: row.start_date,
+        end_date: row.end_date,
+        order_items: row.items,
+        redeemed_by: redeemed?.redeemed_by,
+        referral_account_slug: redeemed?.account_slug,
+      }) ?? undefined;
+    }
     return {
-      ...summarise(
+      ...labOrderSummary(
         row.items.map((i) => ({ ...i, display_name: i.product_id != null ? display.name(row.account_slug, i.product_id, i.name) : i.item_id ? shortItemName(display.itemMap.get(String(i.item_id)) ?? i.name) : shortItemName(i.name), item_id: i.item_id ? String(i.item_id) : undefined })),
         row.start_date,
         row.end_date,
+        row.travel_compensation_gbp ?? 0,
       ),
+      travel_compensation_applied_at: row.travel_compensation_applied_at ?? null,
       changes: row.changes,
       stage: rentalStage(booking, londonToday()).stage,
       pickup_time: times?.pickup?.time ?? null,
@@ -260,6 +392,7 @@ export const get = query({
       return_date: times?.returned?.date ?? null,
       referral_code: referral?.code,
       account_slug: row.account_slug,
+      ...(sameTurnReplay ? { same_turn_replay: sameTurnReplay } : {}),
     };
   },
 });
@@ -340,7 +473,13 @@ export const seed = internalMutation({
           q.eq("account_slug", a.account_slug).eq("product_id", prepared.product_id)).unique();
         const product = await ctx.db.query("hygglo_products").withIndex("by_account_product", q =>
           q.eq("accountSlug", a.account_slug).eq("productId", prepared.product_id)).unique();
-        if (mapping?.components.length === 1 && mapping.components[0].item_id === hit._id && mapping.components[0].qty === 1 &&
+        // A listing may map to a camera plus separately-owned kit components.
+        // Requiring a one-component mapping silently dropped product_id for
+        // real kits and removed listing, pickup, and description evidence from
+        // every subsequent chat turn.
+        const primaryMatches = mapping?.components.filter(component =>
+          component.item_id === hit._id && component.qty === 1) ?? [];
+        if (primaryMatches.length === 1 &&
             product?.masterItemId === hit._id && product.isPublished === true && !product.isMarketingOnly)
           preparedProductId = prepared.product_id;
       }
@@ -387,7 +526,7 @@ export const seed = internalMutation({
  */
 /** A single read-only quote for multiple exact offerings and retained gear. */
 /** Preparation is shared by quoting and the single acceptance transaction. */
-async function prepareEquipmentProposal(ctx: QueryCtx, a: {thread_id:string;items:Array<{product_id:number;qty:number}>;replacement?:{product_id:number;qty:number}}) {
+async function prepareEquipmentProposal(ctx: QueryCtx, a: {thread_id:string;items:Array<{product_id:number;qty:number}>;replacement?:{product_id:number;qty:number};complete_basket?:boolean;start_date?:string;end_date?:string}) {
     assertLabThread(a.thread_id);
     if(!a.items.length || a.items.length>8 || a.items.some(i=>!Number.isInteger(i.product_id)||i.product_id<1||!Number.isInteger(i.qty)||i.qty<1||i.qty>20))
       return {ok:false,error:"Use one to eight exact listing IDs with whole quantities from 1 to 20."};
@@ -399,7 +538,18 @@ async function prepareEquipmentProposal(ctx: QueryCtx, a: {thread_id:string;item
     if(booking?.return_date || ["COMPLETED","CANCELLED","VERIFICATION_FAILED"].includes(stage))
       return {ok:false,error:"This rental is closed. Arrange a new booking rather than quoting additions."};
     if(!row.start_date || !row.end_date)return {ok:false,error:"Confirm pickup and return dates before quoting additions."};
-    let retained=row.items;
+    if(a.complete_basket&&a.replacement)return {ok:false,error:"A complete proposed basket cannot also use replacement fields."};
+    const start_date=a.complete_basket?a.start_date:row.start_date;
+    const end_date=a.complete_basket?a.end_date:row.end_date;
+    if(!start_date||!end_date)return {ok:false,error:"A complete proposal needs exact pickup and return dates."};
+    if(a.complete_basket){
+      if(!validIsoDate(start_date)||!validIsoDate(end_date)||end_date<start_date||inclusiveDays(start_date,end_date)>366)
+        return {ok:false,error:"Use valid pickup and return dates in order, up to 366 rental days."};
+      const collected=!!booking?.pickup_date||booking?.status==="ongoing";
+      if(collected&&start_date!==row.start_date)return {ok:false,error:"The rental has already been collected. Keep its original pickup date when extending the return."};
+      if(!collected&&start_date<londonToday())return {ok:false,error:"An upcoming rental cannot be backdated. Quote pickup from today or later."};
+    }
+    let retained=a.complete_basket?[]:row.items;
     let removed:typeof row.items=[];
     if(a.replacement) {
       if(booking?.pickup_date || ["IN_USE","RETURN_OVERDUE"].includes(stage))return {ok:false,error:"Collected equipment needs owner return confirmation before a replacement quote."};
@@ -414,7 +564,7 @@ async function prepareEquipmentProposal(ctx: QueryCtx, a: {thread_id:string;item
     if(a.replacement && !basePhysical?.items.length)return {ok:false,error:"The current basket physical identity is unverified. No booking changes were made."};
     const catalog=await listingDisplayCatalog(ctx,row.account_slug);
     const added:OrderLine[]=[];
-    const added_kit_evidence:Array<{name:string;contents:string[];source:"physical_mapping_and_inventory"}>=[];
+    const added_kit_evidence:Array<{name:string;contents:string[];source:string}>=[];
     for(const input of a.items) {
       const listing=await ctx.db.query("online_listings").withIndex("by_account_product",q=>q.eq("account_slug",row.account_slug).eq("product_id",input.product_id)).first();
       const inventory=await loadListingInventory(ctx,row.account_slug,input.product_id,input.qty,sources);
@@ -426,8 +576,17 @@ async function prepareEquipmentProposal(ctx: QueryCtx, a: {thread_id:string;item
       if(inventory.components.every(c=>c.name && Number.isInteger(c.units_per_listing) && c.units_per_listing>0)) {
         const cameras=inventory.components.filter(c=>/^camera(?:_body)?$/.test(c.kind??""));
         const primary=cameras.length===1 && cameras[0].units_per_listing===1 ? sources.items.find(item=>String(item._id)===cameras[0].item_id) : undefined;
-        const ownerKit=primary?.owner_verified_kit?.source.trim() ? primary.owner_verified_kit.contents : [];
-        added_kit_evidence.push({name:line.name,source:"physical_mapping_and_inventory",contents:[...new Set([...inventory.components.map(c=>`${c.units_per_listing}x ${c.rental_name ?? c.name}`),...ownerKit])]});
+        const listingOverride=await ctx.db.query("listing_resolution_override").withIndex("by_account_product",q=>
+          q.eq("account_slug",row.account_slug).eq("product_id",input.product_id)).unique();
+        if(listingOverride?.owner_confirmed_kit_contents&&primary) {
+          const context=await listingKitContext(ctx,row.account_slug,primary,inventory.components,sources.items,
+            {indexes:[],overrides:[listingOverride],peers:[]},input.product_id);
+          if(context.included_with_rental_source&&!context.contents_review_required&&context.kit.contents.length)
+            added_kit_evidence.push({name:line.name,source:context.kit.source,contents:context.kit.contents});
+        } else {
+          const ownerKit=primary?.owner_verified_kit?.source.trim() ? primary.owner_verified_kit.contents : [];
+          added_kit_evidence.push({name:line.name,source:"physical_mapping_and_inventory",contents:[...new Set([...inventory.components.map(c=>`${c.units_per_listing}x ${c.rental_name ?? c.name}`),...ownerKit])]});
+        }
       }
       const duplicate=added.find(l=>l.product_id===line.product_id);
       if(duplicate)duplicate.qty+=line.qty;
@@ -440,17 +599,18 @@ async function prepareEquipmentProposal(ctx: QueryCtx, a: {thread_id:string;item
       if(same)same.qty+=line.qty;
       else lines.push({...line});
     }
-    const stock=await checkOrderRentalStock(ctx,row.account_slug,lines,row.start_date,row.end_date,a.thread_id,sources);
+    const stock=await checkOrderRentalStock(ctx,row.account_slug,lines,start_date,end_date,a.thread_id,sources);
     const basket={available:stock.available,items:stock.receipts.map(r=>({name:r.item_name,quantity:r.requested_units}))};
     const stock_receipts=stock.receipts.map(r=>({...r,basket}));
     if(stock.available!==true)return {ok:false,error_code:"basket_stock_unavailable_or_unknown",error:"The complete proposed basket cannot be verified available. No items or prices changed.",stock_receipts};
-    const quote=summarise(lines,row.start_date,row.end_date),base_quote=summarise(row.items,row.start_date,row.end_date),addition_quote=summarise(added,row.start_date,row.end_date);
+    const quote=summarise(lines,start_date,end_date),base_quote=summarise(row.items,row.start_date,row.end_date),addition_quote=summarise(added,start_date,end_date);
     if(quote.total_gbp==null || base_quote.total_gbp==null || addition_quote.total_gbp==null)
       return {ok:false,error:"The proposal includes unpriced items. Ask the owner for a quote; no booking changes were made."};
-    return {ok:true,action_performed:false,preview_only:true,source:"native_lab_proposal" as const,thread_id:a.thread_id,account_slug:row.account_slug,
+    return {ok:true,action_performed:false,preview_only:true,source:"native_lab_proposal" as const,thread_id:a.thread_id,account_slug:row.account_slug,rental_stage:stage,
       physical_identity_key:stock.physical_identity_key,
       base_items:row.items.map(l=>({name:l.name,quantity:l.qty})),added_items:added.map(l=>({name:l.name,quantity:l.qty})),
       ...(a.replacement?{removed_items:removed.map(l=>({name:l.name,quantity:l.qty})),change_kind:"replacement" as const,price_delta_gbp:quote.total_gbp-base_quote.total_gbp,base_physical_identity_key:orderPhysicalIdentityKey(basePhysical!.items),removed_listings:removed.map(l=>({product_id:l.product_id!,quantity:l.qty}))}:{}),
+      ...(a.complete_basket?{complete_basket:true as const}:{}),
       quote,base_quote,addition_quote,additional_cost_gbp:quote.total_gbp-base_quote.total_gbp,stock_receipts,added_kit_evidence,proposed_lines:lines};
 }
 
@@ -461,6 +621,17 @@ export const quoteAdditionBasket = query({
     if ("proposed_lines" in result) { const {proposed_lines: _private, ...quote} = result; return quote; }
     return result;
   },
+});
+
+/** Read-only exact quote for a Lab transaction that changes basket and dates together. */
+export const quoteCompleteBasketAmendment=query({
+ args:{thread_id:v.string(),start_date:v.string(),end_date:v.string(),items:v.array(v.object({product_id:v.number(),qty:v.number()}))},
+ handler:async(ctx,a)=>{
+  assertLabThread(a.thread_id);
+  const result=await prepareEquipmentProposal(ctx,{...a,complete_basket:true});
+  if("proposed_lines" in result){const {proposed_lines:_private,...quote}=result;return quote;}
+  return result;
+ }
 });
 
 /** Exact replacement quote uses the same pricing and joint stock preparation, never a mutation. */
@@ -475,16 +646,19 @@ export const quoteReplacementBasket=query({
 export const __service_quoteReplacementBasket=internalQueryOf(quoteReplacementBasket);
 
 export const applyAdditionBasket = mutation({
-  args:{thread_id:v.string(),request_message_id:v.string(),items:v.array(v.object({product_id:v.number(),qty:v.number()}))},
+  args:{thread_id:v.string(),request_message_id:v.string(),lab_turn_id:v.optional(v.string()),lab_lease_token:v.optional(v.string()),items:v.array(v.object({product_id:v.number(),qty:v.number()}))},
   handler:async(ctx,a)=>{
     assertLabThread(a.thread_id);
     if (!a.items.length || a.items.length>8 || a.items.some(i=>!Number.isInteger(i.product_id)||i.product_id<1||!Number.isInteger(i.qty)||i.qty<1||i.qty>20))
       return {ok:false,action_performed:false,error:"Use one to eight exact listing IDs with whole quantities from 1 to 20."};
     const row=await ctx.db.query("renter_bot_lab_orders").withIndex("by_thread",q=>q.eq("thread_id",a.thread_id)).unique();
     if (!row) return {ok:false,action_performed:false,error:"No simulated order for this session."};
-    const [latest]=await recentThreadMessages(ctx,a.thread_id,1);
+    const messages=await recentThreadMessages(ctx,a.thread_id,32);
+    const latest=messages.at(-1);
     if (!a.request_message_id || latest?.sender!=="renter" || a.request_message_id!==latest.message_id)
       return {ok:false,action_performed:false,error_code:"stale_inbound",error:"Use the current renter message. No booking changes were made."};
+    if (!await currentLabTurnLease(ctx,{thread_id:a.thread_id,account_slug:row.account_slug,request_message_id:a.request_message_id,lab_turn_id:a.lab_turn_id,lab_lease_token:a.lab_lease_token}))
+      return {ok:false,action_performed:false,error_code:"stale_lab_turn",error:"This Lab generation no longer owns the active turn. No booking changes were made."};
     if (renterRequestsReadOnly(latest.body_text,"add_item"))
       return {ok:false,action_performed:false,error_code:"renter_requested_read_only",error:"The renter requested pricing only or prohibited this edit. No booking changes were made."};
     const selections=new Map<number,number>();
@@ -495,24 +669,29 @@ export const applyAdditionBasket = mutation({
     const previous=row.changes.find(change=>change.request_key===requestKey);
     if(previous) return {ok:true,already_applied:true,action_performed:false,previous_change_summary:previous.summary,
       note:"No new edit was made. Describe the CURRENT returned order, not a historical change.",order:summarise(row.items,row.start_date,row.end_date)};
-    const preceding=(await recentThreadMessages(ctx,a.thread_id,2)).at(-2);
-    if(requiresReplacementTransaction(latest.body_text,preceding?.sender==="owner"?preceding:undefined))return {ok:false,action_performed:false,error_code:"atomic_replacement_required",error:"Use the complete agreed replacement transaction, never independent removal/addition calls. No booking changes were made."};
+    const preceding=messages.at(-2)?.sender==="owner" ? messages.at(-2) : undefined;
+    if(requiresReplacementTransaction(latest.body_text,preceding))return {ok:false,action_performed:false,error_code:"atomic_replacement_required",error:"Use the complete agreed replacement transaction, never independent removal/addition calls. No booking changes were made."};
     const plan=await additionMountRequirements(ctx,{thread_id:a.thread_id,account_slug:row.account_slug,items});
     if(plan.status!=="none") return {ok:false,action_performed:false,error_code:"complete_setup_required",required_accessories:plan.items,
       error:"The selected setup is incomplete or its compatibility is unverified. Quote the complete setup and obtain agreement to its required accessories; then include every selected listing in one add_items request. No booking changes were made."};
     const prepared=await prepareEquipmentProposal(ctx,{thread_id:a.thread_id,items});
     if(!prepared.ok || !("proposed_lines" in prepared)) return {...prepared,action_performed:false};
+    const discount=row.travel_compensation_gbp??0;
+    const quotedOrder=labQuoteWithTravelCompensation(prepared.quote,discount);
+    const quotedBase=labQuoteWithTravelCompensation(prepared.base_quote,discount);
+    if(travelCompensationExceedsCurrentCap(discount,quotedOrder.subtotal_gbp))return {ok:false,action_performed:false,error_code:"travel_compensation_cap_changed",error:"This addition would make the accepted travel adjustment exceed its permitted cap. No booking changes were made; ask the owner to review the revised total."};
     if(await prohibitsSelectedItems(ctx,row.account_slug,latest.body_text,"add_item",items))
       return {ok:false,action_performed:false,error_code:"renter_prohibited_item",error:"The selected items conflict with a named renter restriction, or the restriction cannot be reconciled. No booking changes were made. Clarify the restricted item instead of ignoring it."};
-    if(!await additionConsent(ctx,a.thread_id,row.account_slug,latest.body_text,prepared.quote,prepared.addition_quote,prepared.additional_cost_gbp))
+    if(!await additionConsent(ctx,a.thread_id,row.account_slug,latest.body_text,quotedOrder,prepared.addition_quote,quotedBase,(quotedOrder.total_gbp??0)-(quotedBase.total_gbp??0)))
       return {ok:false,action_performed:false,error_code:"addition_consent_unverified",error:"The current renter message does not agree to these exact items, quantities and Native quote terms. No booking changes were made. Answer their question or quote the complete setup; do not infer permission from an unrelated message. Clear agreement to an unchanged sent quote can be used directly."};
     const {proposed_lines:_private,...verified_quote}=prepared;
+    const verifiedQuote={...verified_quote,quote:quotedOrder,base_quote:quotedBase};
     const beforeContext=await amendmentContext(ctx,a.thread_id);
     const beforeRevision=row.changes.length;
     const summaryText=`added together: ${prepared.added_items.map(i=>`${i.quantity}x ${i.name}`).join(", ")}`;
     await ctx.db.patch(row._id,{items:prepared.proposed_lines.map(line=>({...line,item_id:line.item_id as never})),
       changes:[...row.changes,{at:Date.now(),summary:summaryText,request_key:requestKey}],updated_at:Date.now()});
-    return {ok:true,action_performed:true,source:"native_lab_amendment" as const,thread_id:a.thread_id,account_slug:row.account_slug,applied:summaryText,order:prepared.quote,verified_quote,additional_cost_gbp:prepared.additional_cost_gbp,stock_receipts:prepared.stock_receipts,
+    return {ok:true,action_performed:true,source:"native_lab_amendment" as const,thread_id:a.thread_id,account_slug:row.account_slug,applied:summaryText,order:quotedOrder,verified_quote:verifiedQuote,additional_cost_gbp:prepared.additional_cost_gbp,stock_receipts:prepared.stock_receipts,
       context_transition:{source:"native_lab_amendment" as const,thread_id:a.thread_id,before_context_key:beforeContext,
         after_context_key:await amendmentContext(ctx,a.thread_id),before_revision:beforeRevision,after_revision:beforeRevision+1}};
   },
@@ -520,7 +699,7 @@ export const applyAdditionBasket = mutation({
 
 /** One consent-bound transaction: a refused replacement leaves the old basket intact. */
 export const applyReplacementBasket=mutation({
- args:{thread_id:v.string(),request_message_id:v.string(),items:v.array(v.object({product_id:v.number(),qty:v.number()})),replace_product_id:v.number(),replace_quantity:v.number()},
+ args:{thread_id:v.string(),request_message_id:v.string(),lab_turn_id:v.optional(v.string()),lab_lease_token:v.optional(v.string()),items:v.array(v.object({product_id:v.number(),qty:v.number()})),replace_product_id:v.number(),replace_quantity:v.number()},
  handler:async(ctx,a)=>{
   assertLabThread(a.thread_id);
   if(!a.items.length||a.items.length>8||a.items.some(i=>!Number.isInteger(i.product_id)||i.product_id<1||!Number.isInteger(i.qty)||i.qty<1||i.qty>20)||!Number.isInteger(a.replace_product_id)||a.replace_product_id<1||!Number.isInteger(a.replace_quantity)||a.replace_quantity<1||a.replace_quantity>20)return {ok:false,action_performed:false,error:"Use exact listing IDs and whole quantities from 1 to 20."};
@@ -528,6 +707,7 @@ export const applyReplacementBasket=mutation({
   if(!row)return {ok:false,action_performed:false,error:"No simulated order."};
   const messages=await recentThreadMessages(ctx,a.thread_id,2),latest=messages.at(-1);
   if(!a.request_message_id||latest?.sender!=="renter"||latest.message_id!==a.request_message_id)return {ok:false,action_performed:false,error_code:"stale_inbound",error:"Use the current renter message. No booking changes were made."};
+  if(!await currentLabTurnLease(ctx,{thread_id:a.thread_id,account_slug:row.account_slug,request_message_id:a.request_message_id,lab_turn_id:a.lab_turn_id,lab_lease_token:a.lab_lease_token}))return {ok:false,action_performed:false,error_code:"stale_lab_turn",error:"This Lab generation no longer owns the active turn. No booking changes were made."};
   if(renterRequestsReadOnly(latest.body_text,"add_item")||renterRequestsReadOnly(latest.body_text,"remove_item"))return {ok:false,action_performed:false,error_code:"renter_requested_read_only",error:"The renter requested pricing only or prohibited changes. No booking changes were made."};
   const totals=new Map<number,number>();for(const i of a.items)totals.set(i.product_id,(totals.get(i.product_id)??0)+i.qty);
   const items=[...totals].sort((a,b)=>a[0]-b[0]).map(([product_id,qty])=>({product_id,qty}));
@@ -539,6 +719,9 @@ export const applyReplacementBasket=mutation({
   if(plan.status!=="none")return {ok:false,action_performed:false,error_code:"complete_setup_required",required_accessories:plan.items,error:"Quote and agree to the complete compatible replacement setup, including required adapters. No booking changes were made."};
   const prepared=await prepareEquipmentProposal(ctx,{thread_id:a.thread_id,items,replacement:{product_id:a.replace_product_id,qty:a.replace_quantity}});
   if(!prepared.ok||!("proposed_lines" in prepared)||!prepared.removed_items||!prepared.base_physical_identity_key)return {...prepared,action_performed:false};
+  const discount=row.travel_compensation_gbp??0;
+  const quotedOrder=labQuoteWithTravelCompensation(prepared.quote,discount),quotedBase=labQuoteWithTravelCompensation(prepared.base_quote,discount);
+  if(travelCompensationExceedsCurrentCap(discount,quotedOrder.subtotal_gbp))return {ok:false,action_performed:false,error_code:"travel_compensation_cap_changed",error:"This replacement would make the accepted travel adjustment exceed its permitted cap. No booking changes were made; ask the owner to review the revised total."};
   if(await prohibitsSelectedItems(ctx,row.account_slug,latest.body_text,"add_item",items)||await prohibitsSelectedItems(ctx,row.account_slug,latest.body_text,"remove_item",[{product_id:a.replace_product_id,qty:a.replace_quantity}]))return {ok:false,action_performed:false,error_code:"renter_prohibited_item",error:"The replacement conflicts with a named renter restriction. No booking changes were made."};
   const inventory=await ctx.db.query("items").collect();
   const addedLines=prepared.addition_quote.lines;
@@ -547,12 +730,13 @@ export const applyReplacementBasket=mutation({
   if(identities.some(i=>!i))return {ok:false,action_performed:false,error:"The replacement identities need owner review. No booking changes were made."};
   const consentLine=(l:typeof addedLines[number],index:number)=>({...identities[index]!,product_id:l.product_id!,name:l.name,qty:l.qty,line_total_gbp:l.line_total_gbp!,daily_rate_gbp:l.effective_rate_gbp??undefined,base_daily_rate_gbp:l.daily_price_gbp});
   const settings=await ctx.db.query("settings").first(),beforeContext=await amendmentContext(ctx,a.thread_id);
-  if(!acceptsReplacement(latest.body_text,{context_key:beforeContext,epoch:settings?.draft_epoch??0,physical_identity_key:prepared.physical_identity_key,base_physical_identity_key:prepared.base_physical_identity_key,start_date:prepared.quote.start_date!,end_date:prepared.quote.end_date!,total_gbp:prepared.quote.total_gbp!,base_total_gbp:prepared.base_quote.total_gbp!,added:addedLines.map(consentLine),removed:removedLines.map((l,index)=>consentLine(l,addedLines.length+index))},messages.at(-2)?.sender==="owner"?messages.at(-2):undefined))return {ok:false,action_performed:false,error_code:"replacement_consent_unverified",error:"The current renter message does not agree to these exact removed and replacement units, dates and complete Native price. Quote the full swap or reconcile their request. No booking changes were made."};
+  if(!acceptsReplacement(latest.body_text,{context_key:beforeContext,epoch:settings?.draft_epoch??0,physical_identity_key:prepared.physical_identity_key,base_physical_identity_key:prepared.base_physical_identity_key,start_date:quotedOrder.start_date!,end_date:quotedOrder.end_date!,total_gbp:quotedOrder.total_gbp!,base_total_gbp:quotedBase.total_gbp!,added:addedLines.map(consentLine),removed:removedLines.map((l,index)=>consentLine(l,addedLines.length+index))},(messages.at(-2)?.sender==="owner"?messages.at(-2):undefined)))return {ok:false,action_performed:false,error_code:"replacement_consent_unverified",error:"The current renter message does not agree to these exact removed and replacement units, dates and complete Native price. Quote the full swap or reconcile their request. No booking changes were made."};
   const {proposed_lines:_private,...verified_quote}=prepared;
+  const verifiedQuote={...verified_quote,quote:quotedOrder,base_quote:quotedBase};
   const beforeRevision=row.changes.length;
   const summary=`replaced ${prepared.removed_items.map(i=>`${i.quantity}x ${i.name}`).join(", ")} with ${prepared.added_items.map(i=>`${i.quantity}x ${i.name}`).join(", ")}`;
   await ctx.db.patch(row._id,{items:prepared.proposed_lines.map(l=>({...l,item_id:l.item_id as never})),changes:[...row.changes,{at:Date.now(),summary,request_key:requestKey}],updated_at:Date.now()});
-  return {ok:true,action_performed:true,source:"native_lab_amendment" as const,thread_id:a.thread_id,account_slug:row.account_slug,applied:summary,order:prepared.quote,verified_quote,stock_receipts:prepared.stock_receipts,context_transition:{source:"native_lab_amendment" as const,thread_id:a.thread_id,before_context_key:beforeContext,after_context_key:await amendmentContext(ctx,a.thread_id),before_revision:beforeRevision,after_revision:beforeRevision+1}};
+  return {ok:true,action_performed:true,source:"native_lab_amendment" as const,thread_id:a.thread_id,account_slug:row.account_slug,applied:summary,order:quotedOrder,verified_quote:verifiedQuote,stock_receipts:prepared.stock_receipts,context_transition:{source:"native_lab_amendment" as const,thread_id:a.thread_id,before_context_key:beforeContext,after_context_key:await amendmentContext(ctx,a.thread_id),before_revision:beforeRevision,after_revision:beforeRevision+1}};
  },
 });
 
@@ -560,18 +744,106 @@ export const applyReplacementBasket=mutation({
  * existing atomic mutation independently rechecks consent, identity, price,
  * stock and message freshness before making any change. */
 export const __service_acceptedReplacementCandidate=internalQuery({
- args:{thread_id:v.string()},
- handler:async(ctx,{thread_id})=>{
+ args:{thread_id:v.string(),request_message_id:v.string(),lab_turn_id:v.optional(v.string()),lab_lease_token:v.optional(v.string())},
+ handler:async(ctx,args)=>{
+  const {thread_id}=args;
   assertLabThread(thread_id);
-  const messages=await recentThreadMessages(ctx,thread_id,2),owner=messages[0],renter=messages[1];
-  if(owner?.sender!=="owner" || renter?.sender!=="renter" || !renter.message_id || owner.quoted_replacements?.length!==1
+  const messages=await recentThreadMessages(ctx,thread_id,2),renter=messages.at(-1),owner=messages.at(-2)?.sender==="owner"?messages.at(-2):undefined;
+  if(owner?.sender!=="owner" || renter?.sender!=="renter" || renter.message_id!==args.request_message_id || owner.quoted_replacements?.length!==1
     || renterRequestsReadOnly(renter.body_text,"add_item") || renterRequestsReadOnly(renter.body_text,"remove_item"))return null;
   const offer=owner.quoted_replacements[0];
   if(offer.removed_listings.length!==1 || !offer.items.length)return null;
-  return {thread_id,request_message_id:renter.message_id,items:offer.items,replace_product_id:offer.removed_listings[0].product_id,replace_quantity:offer.removed_listings[0].qty};
+  return {thread_id,request_message_id:renter.message_id,...(args.lab_turn_id?{lab_turn_id:args.lab_turn_id}:{}),...(args.lab_lease_token?{lab_lease_token:args.lab_lease_token}:{}),
+    items:offer.items,replace_product_id:offer.removed_listings[0].product_id,replace_quantity:offer.removed_listings[0].qty};
  }
 });
 export const __service_applyReplacementBasket=internalMutationOf(applyReplacementBasket);
+
+/**
+ * A single previously sent addition quote can be routed to the atomic
+ * mutation before model generation. The mutation still checks consent,
+ * current stock, physical identity, current price, context, and the Lab lease.
+ */
+export const __service_acceptedAdditionCandidate=internalQuery({
+ args:{thread_id:v.string(),request_message_id:v.string(),lab_turn_id:v.optional(v.string()),lab_lease_token:v.optional(v.string())},
+ handler:async(ctx,args)=>{
+  const {thread_id}=args;
+  assertLabThread(thread_id);
+  const row=await ctx.db.query("renter_bot_lab_orders").withIndex("by_thread",q=>q.eq("thread_id",thread_id)).unique();
+  const messages=await recentThreadMessages(ctx,thread_id,48),renter=messages.at(-1),owner=latestOwnerBeforeCurrentRenter(messages);
+  if(!row||owner?.sender!=="owner"||renter?.sender!=="renter"||renter.message_id!==args.request_message_id||
+    owner.quoted_additions?.length!==1||owner.quoted_inquiries?.length||owner.quoted_dates?.length||owner.quoted_replacements?.length||
+    renterRequestsReadOnly(renter.body_text,"add_item"))return null;
+  const ownerIndex=messages.lastIndexOf(owner);
+  const sourceRenter=ownerIndex>0?[...messages.slice(0,ownerIndex)].reverse().find(message=>message.sender==="renter"):undefined;
+  if(!sourceRenter)return null;
+  const settings=await ctx.db.query("settings").first();
+  const epoch=settings?.draft_epoch??0,contextKey=await amendmentContext(ctx,thread_id),offer=owner.quoted_additions[0];
+  const members=(items:Array<{name:string;quantity:number}>)=>JSON.stringify([...items.reduce((totals,item)=>{
+    totals.set(item.name,(totals.get(item.name)??0)+item.quantity);return totals;
+  },new Map<string,number>())].sort((a,b)=>a[0].localeCompare(b[0])));
+  const currentMembers=members(row.items.map(item=>({name:item.name,quantity:item.qty})));
+  if(offer.quoted_for_message_id!==sourceRenter.message_id||offer.context_key!==contextKey||offer.epoch!==epoch||
+    offer.start_date!==row.start_date||offer.end_date!==row.end_date||members(offer.base_items)!==currentMembers||
+    !offer.items.length||offer.items.length>8||offer.items.some(item=>!Number.isInteger(item.product_id)||item.product_id<1||!Number.isInteger(item.qty)||item.qty<1||item.qty>20)||
+    new Set(offer.items.map(item=>item.product_id)).size!==offer.items.length)return null;
+  return {thread_id,request_message_id:renter.message_id,...(args.lab_turn_id?{lab_turn_id:args.lab_turn_id}:{}),...(args.lab_lease_token?{lab_lease_token:args.lab_lease_token}:{}),items:offer.items};
+ }
+});
+export const __service_applyAdditionBasket=internalMutationOf(applyAdditionBasket);
+
+/** Apply one accepted full basket/date quote as a single Lab-only transaction. */
+export const applyAcceptedCompleteBasketOffer=mutation({
+ args:{thread_id:v.string(),request_message_id:v.string(),lab_turn_id:v.optional(v.string()),lab_lease_token:v.optional(v.string())},
+ handler:async(ctx,a)=>{
+  assertLabThread(a.thread_id);
+  const row=await ctx.db.query("renter_bot_lab_orders").withIndex("by_thread",q=>q.eq("thread_id",a.thread_id)).unique();
+  if(!row)return {ok:false,action_performed:false,error:"No simulated order."};
+  const messages=await recentThreadMessages(ctx,a.thread_id,3),latest=messages.at(-1),owner=messages.at(-2),request=messages.at(-3);
+  if(!a.request_message_id||latest?.sender!=="renter"||latest.message_id!==a.request_message_id||request?.sender!=="renter"||owner?.sender!=="owner")
+    return {ok:false,action_performed:false,error_code:"stale_inbound",error:"A complete offer can only be accepted immediately after it was sent."};
+  const offers=owner.quoted_inquiries??[];
+  if(offers.length!==1||offers[0].quote.proposed_basket!==true||offers[0].quoted_for_message_id!==request.message_id)
+    return {ok:false,action_performed:false,error_code:"complete_offer_missing",error:"There is no single current complete-basket offer to accept."};
+  const offer=offers[0],listingQuote=offer.quote.listing_quote;
+  if(!listingQuote||!listingQuote.lines.length||listingQuote.lines.length>8||!offer.quote.start_date||!offer.quote.end_date)
+    return {ok:false,action_performed:false,error_code:"complete_offer_invalid",error:"The complete offer does not contain exact items, dates and prices."};
+  const requestKey=JSON.stringify([a.request_message_id,"complete_basket",offer.quote.quote_key]);
+  const previous=row.changes.find(change=>change.request_key===requestKey);
+  if(previous)return {ok:true,already_applied:true,action_performed:false,previous_change_summary:previous.summary,order:labOrderSummary(row.items,row.start_date,row.end_date,row.travel_compensation_gbp??0),note:"This exact complete basket was already applied. No new edit occurred."};
+  if(!await currentLabTurnLease(ctx,{thread_id:a.thread_id,account_slug:row.account_slug,request_message_id:a.request_message_id,lab_turn_id:a.lab_turn_id,lab_lease_token:a.lab_lease_token}))
+    return {ok:false,action_performed:false,error_code:"stale_lab_turn",error:"This Lab generation no longer owns the active turn."};
+  if(!acceptsCompleteBasketOffer(latest.body_text,{start_date:offer.quote.start_date,end_date:offer.quote.end_date,total_gbp:listingQuote.total_gbp,lines:listingQuote.lines}))
+    return {ok:false,action_performed:false,error_code:"complete_offer_consent_unverified",error:"The renter has not clearly accepted the exact complete basket, dates and total."};
+  const settings=await ctx.db.query("settings").first(),contextKey=await amendmentContext(ctx,a.thread_id);
+  if(offer.context_key!==contextKey||offer.epoch!==(settings?.draft_epoch??0))
+    return {ok:false,action_performed:false,error_code:"complete_offer_stale",error:"The booking changed after this complete offer was sent."};
+  const items=listingQuote.lines.map(line=>({product_id:line.product_id,qty:line.quantity}));
+  if(items.some(i=>!Number.isInteger(i.product_id)||i.product_id<1||!Number.isInteger(i.qty)||i.qty<1||i.qty>20)||new Set(items.map(i=>i.product_id)).size!==items.length)
+    return {ok:false,action_performed:false,error_code:"complete_offer_invalid",error:"The offered item identities or quantities are invalid."};
+  const prepared=await prepareEquipmentProposal(ctx,{thread_id:a.thread_id,items,complete_basket:true,start_date:offer.quote.start_date,end_date:offer.quote.end_date});
+  if(!prepared.ok||!("proposed_lines" in prepared)||prepared.physical_identity_key==null)
+    return {...prepared,ok:false,action_performed:false};
+  const discount=row.travel_compensation_gbp??0,verifiedQuote=labQuoteWithTravelCompensation(prepared.quote,discount);
+  if(travelCompensationExceedsCurrentCap(discount,verifiedQuote.subtotal_gbp)||Math.round(verifiedQuote.total_gbp!*100)!==Math.round(listingQuote.total_gbp*100))
+    return {ok:false,action_performed:false,error_code:"complete_offer_price_changed",error:"The complete quote no longer matches current Native pricing. No dates, items or prices changed."};
+  if(verifiedQuote.start_date!==offer.quote.start_date||verifiedQuote.end_date!==offer.quote.end_date)
+    return {ok:false,action_performed:false,error_code:"complete_offer_dates_changed",error:"The current order dates no longer match this offer."};
+  const expectedLines=[...listingQuote.lines].map(l=>[l.product_id,l.quantity,Math.round(l.total_gbp*100)]).sort((x,y)=>Number(x[0])-Number(y[0]));
+  const currentLines=verifiedQuote.lines.map(l=>[l.product_id,l.qty,Math.round((l.line_total_gbp??0)*100)]).sort((x,y)=>Number(x[0])-Number(y[0]));
+  if(JSON.stringify(expectedLines)!==JSON.stringify(currentLines))return {ok:false,action_performed:false,error_code:"complete_offer_lines_changed",error:"The selected listing prices or quantities changed after the offer."};
+  const expectedPhysical=offer.quote.items.map(i=>[i.item_id,i.name,i.quantity]).sort((x,y)=>String(x[0]).localeCompare(String(y[0])));
+  const currentPhysical=prepared.stock_receipts.map(r=>[r.item_id,r.item_name,r.requested_units]).sort((x,y)=>String(x[0]).localeCompare(String(y[0])));
+  if(JSON.stringify(expectedPhysical)!==JSON.stringify(currentPhysical))return {ok:false,action_performed:false,error_code:"complete_offer_stock_identity_changed",error:"The physical inventory behind this offer changed. No booking changes were made."};
+  const booking=await getBotBooking(ctx,a.thread_id),beforeContext=await amendmentContext(ctx,a.thread_id),beforeRevision=row.changes.length;
+  const summary=`complete basket -> ${items.map((item,index)=>`${item.qty}x ${verifiedQuote.lines.find(l=>l.product_id===item.product_id)?.name??item.product_id}`).join(", ")}; dates -> ${offer.quote.start_date} to ${offer.quote.end_date}`;
+  await ctx.db.patch(row._id,{items:prepared.proposed_lines.map(line=>({...line,item_id:line.item_id as never})),start_date:offer.quote.start_date,end_date:offer.quote.end_date,
+    changes:[...row.changes,{at:Date.now(),summary,request_key:requestKey}],updated_at:Date.now()});
+  if(booking)await patchRevenueReservation(ctx,booking._id,{start_date:offer.quote.start_date,end_date:offer.quote.end_date});
+  return {ok:true,action_performed:true,source:"native_lab_amendment" as const,thread_id:a.thread_id,account_slug:row.account_slug,applied:summary,order:verifiedQuote,verified_quote:{...prepared,quote:verifiedQuote},stock_receipts:prepared.stock_receipts,
+    context_transition:{source:"native_lab_amendment" as const,thread_id:a.thread_id,before_context_key:beforeContext,after_context_key:await amendmentContext(ctx,a.thread_id),before_revision:beforeRevision,after_revision:beforeRevision+1}};
+ }
+});
 
 export const applyChange = mutation({
   args: {
@@ -584,6 +856,8 @@ export const applyChange = mutation({
     preview_only: v.optional(v.boolean()),
     /** Bound by the canonical server tool scope, never chosen by the model. */
     request_message_id: v.optional(v.string()),
+    lab_turn_id: v.optional(v.string()),
+    lab_lease_token: v.optional(v.string()),
     item_name: v.optional(v.string()),
     product_id: v.optional(v.number()),
     qty: v.optional(v.number()),
@@ -599,10 +873,16 @@ export const applyChange = mutation({
       .unique();
     if (!row) return { ok: false, error: "no simulated order for this session" };
 
-    const [latestMessage] = await recentThreadMessages(ctx, a.thread_id, 1);
+    const messages = await recentThreadMessages(ctx, a.thread_id, 48);
+    const latestMessage = messages.at(-1);
+    const previousMessage = messages.at(-2);
+    const precedingOwner = previousMessage?.sender === "owner" ? previousMessage : undefined;
+    const dateOffer = latestOwnerBeforeCurrentRenter(messages);
     if ((!a.preview_only && (!a.request_message_id || latestMessage?.sender !== "renter")) ||
       (a.request_message_id !== undefined && a.request_message_id !== latestMessage?.message_id))
       return { ok:false, action_performed:false, error_code:"stale_inbound", error:"Booking edits require the current renter message ID. No booking changes were made; regenerate using the current conversation." };
+    if (!a.preview_only && !await currentLabTurnLease(ctx,{thread_id:a.thread_id,account_slug:row.account_slug,request_message_id:a.request_message_id,lab_turn_id:a.lab_turn_id,lab_lease_token:a.lab_lease_token}))
+      return {ok:false,action_performed:false,error_code:"stale_lab_turn",error:"This Lab generation no longer owns the active turn. No booking changes were made."};
     if (!a.preview_only && latestMessage?.sender === "renter" &&
       renterRequestsReadOnly(latestMessage.body_text, a.action))
       return {ok:false,action_performed:false,error_code:"renter_requested_read_only",
@@ -638,11 +918,10 @@ export const applyChange = mutation({
     const previous = requestKey ? row.changes.find(change => change.request_key === requestKey || legacyKey !== undefined && change.request_key === legacyKey) : undefined;
     if (previous) return {ok:true,already_applied:true,action_performed:false,previous_change_summary:previous.summary,
       note:"This request was applied previously. NO new edit was made. Describe the CURRENT order below, using already set to or already contains where appropriate; never say I moved, added or removed it this time. A later edit may have changed the order since that earlier action.",
-      order:summarise(row.items,row.start_date,row.end_date)};
+      order:labOrderSummary(row.items,row.start_date,row.end_date,row.travel_compensation_gbp??0)};
 
     if(!a.preview_only && ["add_item","remove_item"].includes(a.action)) {
-      const preceding=(await recentThreadMessages(ctx,a.thread_id,2)).at(-2);
-      if(requiresReplacementTransaction(latestMessage?.body_text??"",preceding?.sender==="owner"?preceding:undefined))return {ok:false,action_performed:false,error_code:"atomic_replacement_required",error:"An agreed swap must be applied together through replace_items. No booking changes were made."};
+      if(requiresReplacementTransaction(latestMessage?.body_text??"",precedingOwner))return {ok:false,action_performed:false,error_code:"atomic_replacement_required",error:"An agreed swap must be applied together through replace_items. No booking changes were made."};
     }
     const beforeContext = await amendmentContext(ctx, a.thread_id);
     const beforeRevision = row.changes.length;
@@ -671,12 +950,11 @@ export const applyChange = mutation({
       if (a.start_date === row.start_date && end === row.end_date)
         return {ok:true,already_applied:true,action_performed:false,unchanged:true,
           note:"The booking already has these dates. No new edit occurred. Say the dates are already set, not that you moved or changed them.",
-          order:summarise(lines,row.start_date,row.end_date)};
+          order:labOrderSummary(lines,row.start_date,row.end_date,row.travel_compensation_gbp??0)};
       const prepared=await prepareDateChange(ctx,row,a.start_date,end);
       if(!prepared.ok)return prepared;
       if(a.preview_only)return prepared;
-      const messages=await recentThreadMessages(ctx,a.thread_id,2);
-      const owner=messages.at(-2)?.sender==="owner" ? messages.at(-2) : undefined;
+      const owner=dateOffer;
       if(!acceptsDateChange(latestMessage!.body_text,{context_key:beforeContext,
         physical_identity_key:prepared.physical_identity_key??undefined,
         from_start_date:prepared.base_quote.start_date!,from_end_date:prepared.base_quote.end_date!,
@@ -741,6 +1019,9 @@ export const applyChange = mutation({
       const removedIdentity=identities[lines.indexOf(selected)]!;
       selected.qty -= qty;
       const kept = lines.filter(l => l !== selected || selected.qty > 0);
+      const discount=row.travel_compensation_gbp??0;
+      const keptQuote=labOrderSummary(kept,row.start_date,row.end_date,discount);
+      if(travelCompensationExceedsCurrentCap(discount,keptQuote.subtotal_gbp))return {ok:false,action_performed:false,error_code:"travel_compensation_cap_changed",error:"This removal would make the accepted travel adjustment exceed its permitted cap. No booking changes were made; ask the owner to review the revised total."};
       summaryText = `removed ${qty}x ${match.match.native?.name_canonical ?? selected.name}`;
       await ctx.db.patch(row._id, {
         items: kept.map((l) => ({ ...l, item_id: l.item_id as never })),
@@ -753,7 +1034,7 @@ export const applyChange = mutation({
         ok: true,
         action_performed: true,
         applied: summaryText,
-        order: summarise(kept, row.start_date, row.end_date),
+        order: keptQuote,
         context_transition: await transition(),
       };
     }
@@ -851,10 +1132,12 @@ export const applyChange = mutation({
     }
 
     if (a.preview_only) {
-      const quote = summarise(lines, row.start_date, row.end_date);
-      const baseQuote = summarise(row.items, row.start_date, row.end_date);
+      const discount=row.travel_compensation_gbp??0;
+      const quote = labOrderSummary(lines, row.start_date, row.end_date, discount);
+      const baseQuote = labOrderSummary(row.items, row.start_date, row.end_date, discount);
       const additionQuote = summarise([additionLine], row.start_date, row.end_date);
       if (quote.total_gbp == null || baseQuote.total_gbp == null || additionQuote.total_gbp == null) return {ok:false,error:"The complete proposed basket has unpriced items. Ask the owner for a quote; no items or prices changed."};
+      if(travelCompensationExceedsCurrentCap(discount,quote.subtotal_gbp))return {ok:false,error_code:"travel_compensation_cap_changed",error:"This addition would make the accepted travel adjustment exceed its permitted cap. No items or prices changed."};
       return {ok:true, action_performed:false, preview_only:true, source:"native_lab_proposal" as const,
         physical_identity_key:basketStock.physical_identity_key,
         thread_id:a.thread_id, account_slug:row.account_slug,
@@ -866,11 +1149,13 @@ export const applyChange = mutation({
         stock_receipts:basketStock.receipts};
     }
 
-    const completeQuote=summarise(lines,row.start_date,row.end_date);
+    const discount=row.travel_compensation_gbp??0;
+    const completeQuote=labOrderSummary(lines,row.start_date,row.end_date,discount);
     const additionQuote=summarise([additionLine],row.start_date,row.end_date);
-    const baseQuote=summarise(row.items,row.start_date,row.end_date);
+    const baseQuote=labOrderSummary(row.items,row.start_date,row.end_date,discount);
+    if(travelCompensationExceedsCurrentCap(discount,completeQuote.subtotal_gbp))return {ok:false,action_performed:false,error_code:"travel_compensation_cap_changed",error:"This addition would make the accepted travel adjustment exceed its permitted cap. No booking changes were made; ask the owner to review the revised total."};
     if(completeQuote.total_gbp==null || baseQuote.total_gbp==null ||
-      !await additionConsent(ctx,a.thread_id,row.account_slug,latestMessage!.body_text,completeQuote,additionQuote,completeQuote.total_gbp-baseQuote.total_gbp))
+      !await additionConsent(ctx,a.thread_id,row.account_slug,latestMessage!.body_text,completeQuote,additionQuote,baseQuote,completeQuote.total_gbp-baseQuote.total_gbp))
       return {ok:false,action_performed:false,error_code:"addition_consent_unverified",error:"This exact addition and its price are not agreed by the current renter message or an unchanged sent Native quote. No booking changes were made. Use a read-only quote when agreement is missing."};
 
     await ctx.db.patch(row._id, {
@@ -882,7 +1167,7 @@ export const applyChange = mutation({
       ok: true,
       action_performed: true,
       applied: summaryText,
-      order: summarise(lines, row.start_date, row.end_date),
+      order: completeQuote,
       stock_receipt: { ...stock, start_date: row.start_date, end_date: row.end_date },
       stock_receipts: basketStock.receipts,
       context_transition: await transition(),
@@ -926,7 +1211,7 @@ export const __service_simulateVerificationFailure = internalMutationOf(simulate
 
 /** Explicit basket handoff. No inherited verification, payment or approval. */
 export const redeemReferral = mutation({
-  args: { thread_id: v.string(), code: v.string(), preview_only:v.optional(v.boolean()), request_message_id:v.optional(v.string()),
+  args: { thread_id: v.string(), code: v.string(), preview_only:v.optional(v.boolean()), request_message_id:v.optional(v.string()), lab_turn_id:v.optional(v.string()), lab_lease_token:v.optional(v.string()),
     start_date:v.optional(v.string()),end_date:v.optional(v.string()),items:v.optional(v.array(v.object({product_id:v.number(),qty:v.number()}))),recommendation_requirements:v.optional(v.array(recommendationRequirementValidator)) },
   handler: async (ctx, a) => {
     assertLabThread(a.thread_id);
@@ -940,6 +1225,8 @@ export const redeemReferral = mutation({
       return {ok:false,action_performed:false,error:"Use the current renter message. No basket was changed",reason:"stale_inbound"};
     if(!a.preview_only && (!latest || latest.sender!=="renter" || renterRequestsReadOnly(latest.body_text,"add_item") ))
       return {ok:false,action_performed:false,error:"Restoring this basket needs a current renter request that allows basket changes. Use a read-only referral preview otherwise",reason:"referral_restore_not_authorized"};
+    if(!a.preview_only && !await currentLabTurnLease(ctx,{thread_id:a.thread_id,account_slug:referral.account_slug,request_message_id:a.request_message_id,lab_turn_id:a.lab_turn_id,lab_lease_token:a.lab_lease_token}))
+      return {ok:false,action_performed:false,error_code:"stale_lab_turn",error:"This Lab generation no longer owns the active turn. No basket changes were made."};
     const selectedReference=referralReferenceSelection(await loadThreadReferralReference(ctx,a.thread_id));
     if((selectedReference.code??(!selectedReference.ambiguous?previousReferralOffer(messages)?.referral_code:undefined))!==a.code)
       return {ok:false,action_performed:false,error:"Use the exact basket reference supplied by this renter. No basket was changed",reason:"referral_not_in_current_context"};
@@ -1015,7 +1302,7 @@ export const redeemReferral = mutation({
     if(verified_inquiry_quote && lines.some(l=>!quote.lines.some(q=>q.product_id===l.product_id && q.qty===l.qty)))
       return {ok:false,error:"Current quote does not identify every selected listing. No basket was changed"};
     if(!a.preview_only && !requestsFriendBasketRestore(latest!.body_text) &&
-      !await additionConsent(ctx,a.thread_id,target.account_slug,latest!.body_text,quote,quote,quote.total_gbp,a.code))
+      !await additionConsent(ctx,a.thread_id,target.account_slug,latest!.body_text,quote,quote,undefined,quote.total_gbp,a.code))
       return {ok:false,action_performed:false,error:"Accept the exact basket offer or explicitly request restoration. No basket was changed",reason:"referral_restore_not_authorized"};
     const pricedLines=verified_inquiry_quote?lines.map(l=>{const current=quote.lines.find(q=>q.product_id===l.product_id && q.qty===l.qty)!;return {...l,name:current.name,daily_price_gbp:current.daily_price_gbp,price_tiers:current.price_tiers,pricing_basis:"listing" as const};}):lines;
     const display = await listingDisplayCatalog(ctx, target.account_slug);
@@ -1023,7 +1310,10 @@ export const redeemReferral = mutation({
     if(a.preview_only)return {ok:true,preview_only:true,action_performed:false,order:quote,message,stock_receipts:stock.receipts};
     const beforeContext=await amendmentContext(ctx,a.thread_id),beforeRevision=target.changes.length;
     const now = Date.now();
-    await ctx.db.patch(target._id, { items: pricedLines, start_date: start, end_date: end, changes: [{ at: now, summary: "Friend referral: basket restored with fresh prices and stock; new booking checks still required" }], updated_at: now });
+    const requestKey=a.request_message_id?referralRestoreTurnKey({request_message_id:a.request_message_id,referral_code:a.code,start_date:start,end_date:end,
+      items:requested.flatMap(line=>Number.isInteger(line.product_id)&&line.product_id!>0?[{product_id:line.product_id!,qty:line.qty}]:[])}):undefined;
+    await ctx.db.patch(target._id, { items: pricedLines, start_date: start, end_date: end,
+      changes: [...target.changes,{ at: now, summary: "Friend referral: basket restored with fresh prices and stock; new booking checks still required", ...(requestKey?{request_key:requestKey}:{}) }], updated_at: now });
     const conv = await ctx.db.query("conversations").withIndex("by_thread", q => q.eq("thread_id", a.thread_id)).first();
     if (conv) await ctx.db.patch(conv._id, { inquiry_items: pricedLines.map(l => ({ name: l.name, qty: l.qty, ...(l.product_id != null ? { product_id: l.product_id } : {}) })) });
     await ctx.db.patch(referral._id, { redeemed_by: a.thread_id });
@@ -1040,3 +1330,89 @@ export const redeemReferral = mutation({
 export const __service_redeemReferral = internalMutationOf(redeemReferral);
 
 export const __service_get = internalQueryOf(get);
+
+/** Apply an already offered and explicitly accepted one-time travel adjustment to a Lab order only. */
+export const applyAcceptedTravelCompensation = mutation({
+  args: { thread_id: v.string(), request_message_id: v.string(), lab_turn_id: v.optional(v.string()), lab_lease_token: v.optional(v.string()) },
+  handler: async (ctx, args): Promise<AcceptedTravelCompensationResult> => {
+    assertLabThread(args.thread_id);
+    const row = await ctx.db.query("renter_bot_lab_orders")
+      .withIndex("by_thread", q => q.eq("thread_id", args.thread_id)).unique();
+    if (!row) return { ok: false, action_performed: false, error: "There is no simulated order for this Lab chat." };
+
+    const messages = await recentThreadMessages(ctx, args.thread_id, 48);
+    const latest = messages.at(-1);
+    if (!latest || latest.sender !== "renter" || !args.request_message_id || latest.message_id !== args.request_message_id) {
+      return { ok: false, action_performed: false, error_code: "stale_inbound", error: "The adjustment must be tied to the current renter message. No price was changed." };
+    }
+    if (!await currentLabTurnLease(ctx,{thread_id:args.thread_id,account_slug:row.account_slug,request_message_id:args.request_message_id,lab_turn_id:args.lab_turn_id,lab_lease_token:args.lab_lease_token}))
+      return {ok:false,action_performed:false,error_code:"stale_lab_turn",error:"This Lab generation no longer owns the active turn. No price was changed."};
+    const existingAmount = row.travel_compensation_gbp ?? 0;
+    if (existingAmount > 0) {
+      const requestKey = JSON.stringify([args.request_message_id, "travel_compensation", existingAmount]);
+      const previous = row.changes.find(change => change.request_key === requestKey);
+      return {
+        ok: true,
+        action_performed: false,
+        already_applied: true,
+        ...(previous ? { previous_change_summary: previous.summary } : {}),
+        order: labOrderSummary(row.items, row.start_date, row.end_date, existingAmount),
+        note: `The one-time £${existingAmount.toFixed(2)} travel adjustment is already applied to this Lab order. No further price change was made.`,
+      };
+    }
+    const offer = latestOwnerBeforeCurrentRenter(messages);
+    const offerIndex = offer ? messages.findIndex(message => message.message_id === offer.message_id) : -1;
+    if (!offer || offer.sender !== "owner" || offerIndex < 0 || !isTravelCompensationOffer(offer.body_text)) {
+      return { ok: false, action_performed: false, error_code: "travel_compensation_offer_missing", error: "The latest owner reply before this renter message is not an explicit travel-compensation offer. No price was changed." };
+    }
+    const quote = summarise(row.items, row.start_date, row.end_date);
+    if (quote.total_gbp == null || quote.total_gbp <= 0) {
+      return { ok: false, action_performed: false, error_code: "unpriced_booking", error: "The current Lab basket has no verified rental total, so compensation cannot be calculated." };
+    }
+    const priorTurns = messages.slice(0, offerIndex).map(message => ({
+      role: message.sender === "owner" ? "owner" as const : "renter" as const,
+      content: message.body_text,
+    }));
+    const priorObjection = [...priorTurns].reverse().find(turn => turn.role === "renter");
+    const pickupArea = renterBotLabPickupPoint(row.account_slug)?.area;
+    const eligibility = priorObjection && pickupArea ? assessTravelCompensation({
+      history: priorTurns,
+      lastRenterMessage: priorObjection.content,
+      pickupArea,
+      rentalChargeGbp: quote.total_gbp,
+    }) : null;
+    const maximumGbp = travelCompensationMaximum(quote.total_gbp);
+    const amountGbp = travelCompensationOfferAmountGbp(offer.body_text, quote.total_gbp);
+    if (!eligibility?.eligible || maximumGbp == null || amountGbp == null || amountGbp > maximumGbp + 0.001) {
+      return { ok: false, action_performed: false, error_code: "travel_compensation_not_eligible", error: "The offer does not meet the disclosed-location, renter-objection and one-time discount limit. No price was changed." };
+    }
+    if (!clearlyAcceptsTravelCompensation(latest.body_text, amountGbp, quote.total_gbp)) {
+      return { ok: false, action_performed: false, error_code: "travel_compensation_consent_unverified", error: "The current renter message is not a clear acceptance of the exact latest travel offer. No price was changed." };
+    }
+
+    const requestKey = JSON.stringify([args.request_message_id, "travel_compensation", amountGbp]);
+
+    const booking = await getBotBooking(ctx, args.thread_id);
+    const stage = rentalStage(booking, londonToday()).stage;
+    if (booking?.return_date || ["COMPLETED", "CANCELLED", "VERIFICATION_FAILED"].includes(stage)) {
+      return { ok: false, action_performed: false, error_code: "closed_booking", error: "The Lab rental is closed; its price cannot be adjusted." };
+    }
+    const beforeContext = await amendmentContext(ctx, args.thread_id);
+    const beforeRevision = row.changes.length;
+    await ctx.db.patch(row._id, {
+      travel_compensation_gbp: amountGbp,
+      travel_compensation_applied_at: Date.now(),
+      changes: [...row.changes, { at: Date.now(), summary: `travel compensation -> -£${amountGbp.toFixed(2)}`, request_key: requestKey }],
+      updated_at: Date.now(),
+    });
+    return {
+      ok: true,
+      action_performed: true,
+      applied: `£${amountGbp.toFixed(2)} travel compensation`,
+      order: labOrderSummary(row.items, row.start_date, row.end_date, amountGbp),
+      context_transition: { source: "native_lab_amendment" as const, thread_id: args.thread_id,
+        before_context_key: beforeContext, after_context_key: await amendmentContext(ctx, args.thread_id),
+        before_revision: beforeRevision, after_revision: beforeRevision + 1 },
+    };
+  },
+});

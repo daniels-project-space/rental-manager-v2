@@ -1,8 +1,8 @@
 import {inquiryOffersForText,monetaryProse} from "../../convex/lib/native_inquiry_offer";
 import { REFERRAL_RESTORE_OFFER } from "../../convex/lib/referral_offer";
-import {stockRequestForInquiryQuote} from "../../convex/lib/stock_claims";
+import {priceRequestForInquiryQuote,stockRequestForInquiryQuote} from "../../convex/lib/stock_claims";
 import {describe,it,expect} from "vitest";
-import {nativeInquiryQuote,nativeBookingRecord,nativeReplacementValueComparisons,nativeBudgetPriceChecks,renderNativeQuoteReply,reviewNativeQuoteReply} from "./renter-native-quote";
+import {nativeInquiryQuote,nativeCompleteLabBasketQuote,nativeBookingRecord,nativeReplacementValueComparisons,nativeBudgetPriceChecks,renderNativeQuoteReply,reviewNativeQuoteReply,explicitRenterQuoteRequest} from "./renter-native-quote";
 import {bookingRecordText,type BookingRecord} from "../../convex/lib/booking_record";
 import {renterPriceEvidence} from "./renter-price-evidence";
 import {renterToolReceipts,stockReceipts} from "./renter-tool-evidence";
@@ -32,6 +32,104 @@ describe("Native monetary prose classification",()=>{
 });
 const parts=(key=nativeInquiryQuote(fixtures.first,scope)!.quote_key):RenterBotOutput=>({...base,reply_parts:[{type:"text",text:"The R5 kit isn't available, but I can offer this Sony setup:"},{type:"quote",quote_key:key},{type:"text",text:"Would this work for your shoot?"}]});
 describe("Native inquiry quote rendering",()=>{
+ it("binds date-change replies to the same checked dates for downstream stock and price guards",()=>{
+  const context={...scope,threadId:"__probe__date-change",rentalStage:"CONFIRMED_UPCOMING"};
+  const quote={start_date:"2026-12-12",end_date:"2026-12-13",days:2,total_gbp:100,lines:[{name:"BMPCC 6K Full Frame",qty:1,product_id:1173042,item_id:"bmpcc-6k-ff",daily_price_gbp:50,effective_rate_gbp:50,line_total_gbp:100}]};
+  const baseQuote={...quote,start_date:"2026-12-11",end_date:"2026-12-11",days:1,total_gbp:50,lines:quote.lines.map(line=>({...line,line_total_gbp:50}))};
+  const physical=[{item_id:"bmpcc-6k-ff",item_name:"BMPCC 6K Full Frame",requested_units:1,start_date:quote.start_date,end_date:quote.end_date,
+   available:true,free_units:1,owned:true,source:"shared_inventory_confirmed_rentals",checked_at:1790850651000}];
+  const result={thread_id:context.threadId,ok:true,preview_only:true,source:"native_lab_date_proposal",before_context_key:"order-revision-4",
+   physical_identity_key:JSON.stringify([["bmpcc-6k-ff","BMPCC 6K Full Frame",1]]),quote,base_quote:baseQuote,price_delta_gbp:50,stock_receipts:physical};
+  const rendered=renderNativeQuoteReply({...base,draft:"Moving your BMPCC 6K Full Frame rental to 12–13 December is available and would bring the total to £100."},
+   [{tool:"quote_booking_dates",call_id:"date-change-quote",result}],context);
+  expect(rendered.ok).toBe(true);if(!rendered.ok)return;
+  expect(rendered.stock_quotes).toMatchObject([{proposed_basket:true,start_date:quote.start_date,end_date:quote.end_date,
+   listing_quote:{total_gbp:100,lines:[{product_id:1173042,name:"BMPCC 6K Full Frame",quantity:1,total_gbp:100}]},items:[{item_id:"bmpcc-6k-ff",quantity:1}]}]);
+  expect(rendered.stock_quotes[0].complete_basket_amendment).toBeUndefined();
+  const ambiguous=renderNativeQuoteReply({...base,draft:"Moving it to those dates."},[{tool:"quote_booking_dates",call_id:"date-change-quote",result},
+   {tool:"quote_booking_addition",call_id:"another-proposal",result:{ok:true}}],context);
+  expect(ambiguous.ok&&ambiguous.stock_quotes).toEqual([]);
+ });
+ it("renders one complete Lab amendment quote and archives it as a proposed basket",()=>{
+  const context={...scope,threadId:"__probe__confirmed-amendment",rentalStage:"CONFIRMED_UPCOMING"};
+  const source=clone();
+  const pricedQuote={...source.quote!,subtotal_gbp:source.quote!.total_gbp,travel_compensation_gbp:8,total_gbp:source.quote!.total_gbp-8};
+  const result={ok:true,complete_basket:true,source:"native_lab_proposal",thread_id:context.threadId,account_slug:context.accountSlug,rental_stage:context.rentalStage,
+    physical_identity_key:source.physical_identity_key,quote:pricedQuote,stock_receipts:source.components,technical_qualification:source.technical_qualification};
+  expect(nativeInquiryQuote({...source,thread_id:context.threadId,rental_stage:context.rentalStage,booking_use:"proposed"},context)).not.toBeNull();
+  const quote=nativeCompleteLabBasketQuote(result,context);
+  expect(quote).not.toBeNull();if(!quote)return;
+  const toolReceipt={tool:"quote_booking_amendment",call_id:"complete-amendment",result:{...result,renter_quote:quote}};
+  const rendered=renderNativeQuoteReply(parts(quote.quote_key),[toolReceipt],context);
+  expect(rendered.ok).toBe(true);if(!rendered.ok)return;
+  expect(rendered.stock_quotes).toMatchObject([{proposed_basket:true,complete_basket_amendment:true,start_date:source.start_date,end_date:source.end_date,travel_compensation_gbp:8,listing_quote:{total_gbp:pricedQuote.total_gbp}}]);
+  expect(rendered.draft).toContain("One-time travel adjustment: -£8");expect(rendered.draft).toContain("Total: £130");
+  expect(renterPriceEvidence([{tool:"quote_booking_amendment",call_id:"complete-amendment",result}],[],context.threadId)).toEqual(expect.arrayContaining([
+    expect.objectContaining({kind:"basket",source:"native_inquiry_basket",quote_role:"inquiry",total_gbp:130}),
+    expect.objectContaining({kind:"rental",source:"native_inquiry_basket",total_gbp:98}),
+  ]));
+  expect(nativeCompleteLabBasketQuote({...result,thread_id:"real-thread"},{...context,threadId:"real-thread"})).toBeNull();
+ });
+ it("renders a complete proposal for an isolated simulated request awaiting owner approval",()=>{
+  const context={...scope,threadId:"__probe__lab-proposal",rentalStage:"AWAITING_OWNER_APPROVAL"};
+  const result={...clone(),thread_id:context.threadId,rental_stage:context.rentalStage,booking_use:"proposed"};
+  const quote=nativeInquiryQuote(result,context);
+  expect(quote).not.toBeNull();if(!quote)return;
+  const rendered=renderNativeQuoteReply(parts(quote.quote_key),[receipt(result as typeof fixtures.first,context)],context);
+  expect(rendered.ok).toBe(true);if(!rendered.ok)return;
+  expect(rendered.stock_quotes[0]).toMatchObject({start_date:result.start_date,end_date:result.end_date,listing_quote:{total_gbp:result.quote.total_gbp}});
+  expect(rendered.stock_quotes[0].proposed_basket).toBe(true);
+  const scopedRequest=stockRequestForInquiryQuote({start_date:"2026-10-20",end_date:"2026-10-20",items:[{name:"Sony FX3",quantity:1}]},rendered.stock_quotes);
+  expect(scopedRequest.start_date).toBe(result.start_date);expect(scopedRequest.end_date).toBe(result.end_date);
+  expect(scopedRequest.items.map(line=>line.name).sort()).toEqual(rendered.stock_quotes[0].items.map(line=>line.name).sort());
+  expect(rendered.draft).toContain("Total:");
+  const real={...result,thread_id:"real-thread"};
+  expect(nativeInquiryQuote(real,{...context,threadId:"real-thread"})).toBeNull();
+ });
+ it("renders a fresh current inquiry quote without marking it as a proposed change",()=>{
+  const result={...clone(),rental_stage:"INQUIRY",booking_use:"current"};
+  const quote=nativeInquiryQuote(result,scope);
+  expect(quote).not.toBeNull();if(!quote)return;
+  const rendered=renderNativeQuoteReply(parts(quote.quote_key),[receipt(result,scope)],scope);
+  expect(rendered.ok).toBe(true);if(!rendered.ok)return;
+  expect(rendered.draft).toContain("Total:");
+  expect(rendered.stock_quotes[0].proposed_basket).toBeUndefined();
+ });
+ it("renders a single verified quote when the model repeats its exact total in prose",()=>{
+  const context={...scope,threadId:"__probe__lab-proposal",rentalStage:"AWAITING_OWNER_APPROVAL"};
+  const result={...clone(),thread_id:context.threadId,rental_stage:context.rentalStage,booking_use:"proposed"};
+  const quote=nativeInquiryQuote(result,context)!;
+  const modelOutput={...base,draft:`I checked the selected setup for those dates.\n\n${quote.display_text}\n\nWould you like me to update the request?`};
+  const reviewed=reviewNativeQuoteReply(modelOutput,[receipt(result as typeof fixtures.first,context)],context);
+  expect(reviewed.needs_human_reason).toBeNull();
+  expect(reviewed.renderedReply.draft).toContain(quote.display_text);
+  expect(reviewed.renderedReply.stock_quotes[0].proposed_basket).toBe(true);
+  const wrongAmount=reviewNativeQuoteReply({...modelOutput,draft:modelOutput.draft.replace(/£\d+(?:\.\d+)?/g,"£999")},[receipt(result as typeof fixtures.first,context)],context);
+  expect(wrongAmount.needs_human_reason).toBe("native_quote_selection");
+ });
+ it("server-selects the sole current Native quote when the renter explicitly asked for it",()=>{
+  const context={...scope,threadId:"__probe__lab-proposal",rentalStage:"AWAITING_OWNER_APPROVAL"};
+  const result={...clone(),thread_id:context.threadId,rental_stage:context.rentalStage,booking_use:"proposed"};
+  const quote=nativeInquiryQuote(result,context)!;
+  const before=structuredClone(result);
+  const reviewed=reviewNativeQuoteReply({...base,draft:"I checked that for you."},[receipt(result as typeof fixtures.first,context)],context,{explicitQuoteRequest:true});
+  expect(reviewed.needs_human_reason).toBeNull();
+  expect(reviewed.renderedReply.quote_keys).toEqual([quote.quote_key]);
+  expect(reviewed.renderedReply.draft).toContain(quote.display_text);
+  expect(reviewed.renderedReply.draft).toContain("Nothing has been changed yet.");
+  expect(result).toEqual(before);
+
+  const unanswered=reviewNativeQuoteReply({...base,draft:"I checked that for you."},[receipt(result as typeof fixtures.first,context)],context);
+  expect(unanswered.needs_human_reason).toBeNull();
+  expect(unanswered.renderedReply.quote_keys).toEqual([]);
+  expect(unanswered.renderedReply.draft).not.toContain(quote.display_text);
+ });
+ it("recognizes quote requests without treating acceptance as another quote request",()=>{
+  expect(explicitRenterQuoteRequest("Show me the revised total and wait for my approval.")).toBe(true);
+  expect(explicitRenterQuoteRequest("Actually skip the lens. Please quote the same kit for 11 December only.")).toBe(true);
+  expect(explicitRenterQuoteRequest("That £45 total works; please apply it now.")).toBe(false);
+  expect(explicitRenterQuoteRequest("I don't need a quote now.")).toBe(false);
+ });
  it("accepts a server-mapped kit label when its verified listing identity matches the checked camera",()=>{
   const result=clone();
   const line=result.quote!.lines.find(l=>l.name==="Sony FX3")!;
@@ -251,7 +349,18 @@ describe("Native inquiry quote rendering",()=>{
   const receipts=renterToolReceipts([{toolName:"restore_referral_basket",toolCallId:"restore-once",result}]);
   const rendered=renderNativeQuoteReply(parts(quote.quote_key),receipts,next);
   expect(rendered.ok).toBe(true);expect(stockReceipts(receipts)).toHaveLength(fixtures.first.components.length);
-  if(rendered.ok){expect(rendered.draft).toContain("approval, payment and verification");expect(rendered.draft).toContain("even if your account was verified before");}
+  if(rendered.ok){
+   expect(rendered.draft).toContain("approval, payment and verification");expect(rendered.draft).toContain("even if your account was verified before");
+   expect(rendered.stock_quotes[0]?.new_inquiry).toBe(true);
+   const line=fixtures.first.quote.lines[0];
+   expect(priceRequestForInquiryQuote({items:[]},rendered.stock_quotes)).toEqual({start_date:fixtures.first.start_date,end_date:fixtures.first.end_date,
+    items:fixtures.first.quote.lines.map(l=>({name:l.name,quantity:l.qty}))});
+   const candidate=`I have added the ${line.name} to your rental inquiry for ${fixtures.first.start_date}.\n\nFor ${quote.display_text}\n\nThis is your own new request, not a confirmed booking.`;
+   const reviewed=reviewNativeQuoteReply({...base,draft:candidate},receipts,next);
+   expect(reviewed.needs_human_reason).toBeNull();
+   expect(unsupportedPriceClaims(reviewed.renderedReply.draft,renterPriceEvidence(receipts,[],scope.threadId),
+    priceRequestForInquiryQuote({items:[]},reviewed.renderedReply.stock_quotes))).toEqual([]);
+  }
   const readOnly=renderNativeQuoteReply(parts(quote.quote_key),[receipt(fixtures.first,next)],next);
   if(readOnly.ok)expect(readOnly.draft).not.toContain("even if your account was verified before");
   const prose={...base,draft:"I've restored the gear to your inquiry."};

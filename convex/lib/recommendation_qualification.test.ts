@@ -55,6 +55,18 @@ describe("selected camera and lens setup qualification",()=>{
   expect(qualifyRecommendationBasket([],[body,lens])).toMatchObject({verified:true,setup:{applied:true,status:"match"}});
   for(const requirements of [criteria,[]])expect(qualifyRecommendationBasket(requirements,[body,{...lens,native_mount:"PL"}])).toMatchObject({verified:false,setup:{status:"unknown",unknown:["mount_adapter",...(requirements.length?["adapted_autofocus"]:[])]}});
  });
+ it("uses the same exact manufacturer-reviewed identity when inventory mount fields and item specs are blank",()=>{
+  const camera:QualificationItem={item_id:"fx3",name:"Sony FX3",kind:"camera",quantity:1,native_mount:null,spec:null};
+  const sonyLens:QualificationItem={item_id:"sony-zoom",name:"Sony 28-70mm",kind:"lens",quantity:1,native_mount:null,spec:null};
+  expect(qualifyRecommendationBasket([],[camera,sonyLens])).toMatchObject({verified:true,setup:{applied:true,status:"match",unknown:[],mismatched:[]}});
+  const explicit:RecommendationRequirement[]=[
+   {kind:"camera",quantity:1,native_mount:"Sony E-mount",requirements:{role:"interchangeable_lens"}},
+   {kind:"lens",quantity:1,native_mount:"Sony E-mount",requirements:{coverage:"full_frame"}},
+  ];
+  expect(qualifyRecommendationBasket(explicit,[camera,sonyLens])).toMatchObject({verified:true,setup:{status:"match"},groups:[{verified:true},{verified:true}]});
+  expect(qualifyRecommendationBasket([],[{...camera,native_mount:"Canon EF"},sonyLens])).toMatchObject({verified:false,setup:{status:"unknown"}});
+  expect(qualifyRecommendationBasket([],[camera,{...sonyLens,native_mount:"Canon EF"}])).toMatchObject({verified:false,setup:{status:"unknown"}});
+ });
  it("does not borrow lens coverage from the camera's full-frame sensor",()=>{
   const unknown={...lens,spec:{...lens.spec!,lens_capabilities:{...lens.spec!.lens_capabilities!,coverage:undefined}}};
   expect(qualifyRecommendationBasket(criteria,[body,unknown])).toMatchObject({verified:false,setup:{unknown:["lens_sensor_coverage"]}});

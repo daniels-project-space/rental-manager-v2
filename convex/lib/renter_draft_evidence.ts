@@ -4,6 +4,7 @@ import {rentalRequestValidator} from "./rental_request";
 import { v, type Infer } from "convex/values";
 import { recommendationRequirementValidator } from "./recommendation_qualification";
 import { bookingRecordValidator } from "./booking_record";
+import { dateProposalEvidenceValidator } from "./renter_date_proposal";
 
 /** Selected Native quotes retain physical identity and the criteria checked for them.
  * At approval, current catalogue reviews must satisfy these criteria again. */
@@ -17,10 +18,17 @@ export const stockQuoteEvidenceValidator=v.object({
   quote_key:v.string(),start_date:v.string(),end_date:v.string(),
   rental_request:v.optional(rentalRequestValidator),
   new_inquiry:v.optional(v.literal(true)),
+  /** This quote checks the full final basket for a simulated Lab amendment. */
+  proposed_basket:v.optional(v.literal(true)),
+  /** Exact existing-order date proposal; listing lines are bound to the full physical basket. */
+  date_change_proposal:v.optional(v.object({before_context_key:v.string(),physical_identity_key:v.string()})),
+  /** Dedicated complete-order amendment quote, eligible for atomic Lab acceptance. */
+  complete_basket_amendment:v.optional(v.literal(true)),
   // Exact Native financial block; referral offers additionally retain the action.
   referral_code:v.optional(v.string()),offer_text:v.optional(v.string()),
   // Optional for schema compatibility; old drafts are invalidated on release.
   listing_quote:v.optional(v.object({total_gbp:v.number(),lines:v.array(v.object({product_id:v.number(),name:v.string(),quantity:v.number(),total_gbp:v.number()}))})),
+  travel_compensation_gbp:v.optional(v.number()),
   items:v.array(v.object({item_id:v.string(),name:v.string(),quantity:v.number()})),
 });
 export type StockQuoteEvidence=Infer<typeof stockQuoteEvidenceValidator>;
@@ -42,6 +50,53 @@ export const draftEvidenceValidator = v.object({
   rental_eligibility: v.optional(v.object({
     ineligible_items: v.array(v.string()), source: v.literal("native_catalogue"),
   })),
+  /** Exact listing-to-inventory links and source freshness used by generation. */
+  listing_sources: v.optional(v.array(v.object({
+    account_slug: v.string(),
+    product_id: v.number(),
+    listing_name: v.string(),
+    checked_at: v.number(),
+    listing_source: v.optional(v.string()),
+    public_url: v.optional(v.string()),
+    listing_synced_at: v.optional(v.number()),
+    listing_description_synced_at: v.optional(v.number()),
+    listing_description_source: v.optional(v.string()),
+    listing_description_updated_at: v.optional(v.number()),
+    inventory_name: v.optional(v.string()),
+    inventory_updated_at: v.optional(v.number()),
+    mapping_complete: v.optional(v.boolean()),
+    kit_source: v.optional(v.string()),
+    kit_contents: v.optional(v.array(v.string())),
+    kit_contents_source: v.optional(v.string()),
+    kit_contents_recorded_at: v.optional(v.number()),
+    inventory_components: v.array(v.object({
+      name: v.string(),
+      requested_units: v.number(),
+      source_updated_at: v.optional(v.number()),
+    })),
+  }))),
+  /** Pickup explanations are exact-account/listing facts, not model inference. */
+  pickup_facts: v.optional(v.array(v.object({
+    account_slug: v.string(),
+    product_id: v.number(),
+    listing_name: v.string(),
+    pickup_area: v.optional(v.string()),
+    status: v.union(
+      v.literal("account_area_only"),
+      v.literal("currently_on_rental"),
+      v.literal("in_repair"),
+      v.literal("assigned_to_set"),
+      v.literal("unknown"),
+    ),
+    customer_explanation: v.optional(v.string()),
+    source: v.string(),
+    source_url: v.optional(v.string()),
+    verified_at: v.number(),
+    valid_until: v.optional(v.number()),
+    applies_start_date: v.optional(v.string()),
+    applies_end_date: v.optional(v.string()),
+    checked_at: v.number(),
+  }))),
   commercial: v.optional(v.object({stage:v.string(),threshold_gbp:v.number(),total_gbp:v.union(v.number(),v.null()),
     status:v.union(v.literal("below"),v.literal("meets"),v.literal("unknown"),v.literal("not_applicable"),v.literal("disabled")),
     basis:v.union(v.literal("current_booking"),v.literal("complete_requested_quote"),v.literal("lowest_selected_inquiry_quote"),v.literal("none")),
@@ -52,8 +107,9 @@ export const draftEvidenceValidator = v.object({
     daily_rate_gbp:v.optional(v.number()),base_rate_gbp:v.optional(v.number()),total_gbp:v.optional(v.number()),
     days:v.optional(v.number()),quantity:v.optional(v.number()),start_date:v.optional(v.string()),end_date:v.optional(v.string()),
     items:v.optional(v.array(v.object({name:v.string(),quantity:v.number()}))),
-    proposal:v.optional(v.object({base_physical_identity_key:v.optional(v.string()),base_total_gbp:v.optional(v.number()),removed_listings:v.optional(v.array(v.object({product_id:v.number(),quantity:v.number()}))),removed_items:v.optional(v.array(v.object({name:v.string(),quantity:v.number()}))),base_items:v.array(v.object({name:v.string(),quantity:v.number()})),added_items:v.array(v.object({name:v.string(),quantity:v.number()})),added_listings:v.optional(v.array(v.object({product_id:v.number(),quantity:v.number()}))),additional_cost_gbp:v.optional(v.number()),physical_identity_key:v.optional(v.string())})),
-    date_proposal:v.optional(v.object({before_context_key:v.string(),from_start_date:v.string(),from_end_date:v.string(),base_total_gbp:v.number(),physical_identity_key:v.optional(v.string())})),
+    proposal:v.optional(v.object({base_physical_identity_key:v.optional(v.string()),base_total_gbp:v.optional(v.number()),removed_listings:v.optional(v.array(v.object({product_id:v.number(),quantity:v.number()}))),removed_items:v.optional(v.array(v.object({name:v.string(),quantity:v.number()}))),base_items:v.array(v.object({name:v.string(),quantity:v.number()})),added_items:v.array(v.object({name:v.string(),quantity:v.number(),aliases:v.optional(v.array(v.string()))})),added_listings:v.optional(v.array(v.object({product_id:v.number(),quantity:v.number()}))),additional_cost_gbp:v.optional(v.number()),physical_identity_key:v.optional(v.string())})),
+    date_proposal:v.optional(dateProposalEvidenceValidator),
+    travel_adjustment:v.optional(v.object({base_total_gbp:v.number(),amount_gbp:v.number(),total_gbp:v.number()})),
     required_accessory_names:v.optional(v.array(v.string())),
     call_id:v.string(),source:v.string(),
   }))),
@@ -63,6 +119,8 @@ export const draftEvidenceValidator = v.object({
     items: v.array(v.object({name:v.string(),quantity:v.number(),aliases:v.optional(v.array(v.string())),complete:v.optional(v.boolean()),
       components:v.optional(v.array(v.object({name:v.string(),quantity:v.number()}))),
     })),
+    /** Priced listing lines for pronoun resolution; physical stock stays in items/baskets above. */
+    quoted_items:v.optional(v.array(v.object({name:v.string(),quantity:v.number(),aliases:v.optional(v.array(v.string()))}))),
   })),
   stock: v.array(v.object({
     item: v.string(), start_date: v.string(), end_date: v.string(),

@@ -6,6 +6,8 @@ describe("durable renter referral identity",()=>{
  it("preserves multiple references and deduplicates the same reference",()=>{
   expect(friendReferralCodesFromMessage(`My friends sent basket referrals ${a} and ${b}.`)).toEqual([a,b]);
   expect(friendReferralCodesFromMessage(`Basket referral ${a} again ${a.toUpperCase()}`)).toEqual([a]);
+  expect(friendReferralCodesFromMessage(`I was referred by the renter from a cancelled booking. Their basket reference is ${a}.`)).toEqual([a]);
+  expect(friendReferralCodesFromMessage(`I was referred to support. Ticket reference ${a}.`)).toEqual([]);
   expect(friendReferralCodesFromMessage(`An unrelated ticket ${a}`)).toEqual([]);
   expect(referralReferenceSelection({codes:[a,b],message_id:"current"})).toEqual({code:null,ambiguous:true});
  });

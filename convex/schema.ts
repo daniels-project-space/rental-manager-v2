@@ -164,6 +164,10 @@ const operationalSchema = defineSchema({
   // ── Inventory ────────────────────────────────────────────────
   items: defineTable({
     name_canonical: v.string(),
+    // Source identity for isolated catalog snapshots; local Convex document
+    // IDs remain distinct from the owner deployment's IDs.
+    lab_source_inventory_id: v.optional(v.string()),
+    lab_catalog_revision: v.optional(v.string()),
     display_name: v.optional(v.string()),
     name_input: v.string(),
     slug: v.string(),
@@ -219,7 +223,8 @@ const operationalSchema = defineSchema({
   })
     .index("by_canonical_name", ["name_canonical"])
     .index("by_slug", ["slug"])
-    .index("by_kind", ["kind"]),
+    .index("by_kind", ["kind"])
+    .index("by_lab_source_inventory_id", ["lab_source_inventory_id"]),
 
   // Owner-confirmed WallE intake. The single item_id is the physical stock
   // pool; account listings below never create additional units.
@@ -1268,6 +1273,7 @@ const operationalSchema = defineSchema({
     hygglo_sent_at: v.optional(v.number()),
     fetched_at: v.number(),
     raw: v.optional(v.string()),
+    lab_run_id: v.optional(v.string()),
     rental_request:v.optional(rentalRequestValidator),
     quoted_inquiries:v.optional(v.array(sentInquiryOfferValidator)),
     quoted_additions: v.optional(v.array(sentAdditionProposalValidator)),
@@ -2226,6 +2232,38 @@ const operationalSchema = defineSchema({
     public_url: v.optional(v.string()),
     note: v.optional(v.string()),
     source: v.optional(v.string()),
+    lab_catalog_revision: v.optional(v.string()),
+    // Exact owner-confirmed physical contents for one prepared listing. The
+    // component snapshot binds this evidence to the same kit mapping; shared
+    // inventory-item compatibility notes must not leak across listings.
+    owner_confirmed_kit_contents: v.optional(v.object({
+      lines: v.array(v.string()),
+      mapping_components: v.array(v.object({ item_id: v.id("items"), qty: v.number() })),
+      source: v.string(),
+      recorded_at: v.number(),
+    })),
+    // Pickup status is scoped to this exact account/listing and linked physical
+    // mapping. Temporary reasons require an owner source and expiry in the
+    // renter-bot consumer; account-area-only is the safe stable fallback.
+    pickup_availability: v.optional(v.object({
+      status: v.union(
+        v.literal("account_area_only"),
+        v.literal("currently_on_rental"),
+        v.literal("in_repair"),
+        v.literal("assigned_to_set"),
+        v.literal("unknown"),
+      ),
+      customer_explanation: v.optional(v.string()),
+      source: v.string(),
+      source_url: v.optional(v.string()),
+      verified_at: v.number(),
+      valid_until: v.optional(v.number()),
+      // Transient reasons must be explicitly scoped to the renter's complete
+      // requested dates; a current status alone is not enough to establish a
+      // future availability explanation.
+      applies_start_date: v.optional(v.string()),
+      applies_end_date: v.optional(v.string()),
+    })),
     updated_at: v.number(),
   }).index("by_account_product", ["account_slug", "product_id"])
     .index("by_stock_item", ["stock_item_id"]),
@@ -2301,6 +2339,8 @@ const operationalSchema = defineSchema({
     // overwrite this choice; absent means use the automatic provider match.
     isMarketingOnlyOverride: v.optional(v.boolean()),
     marketingOnlyUpdatedAt: v.optional(v.number()),
+    // Source revision for the isolated Renter Bot Lab catalogue only.
+    lab_catalog_revision: v.optional(v.string()),
     // Best fuzzy-match score recorded for audit/tuning (coverage ratio).
     matchScore: v.optional(v.number()),
     lastSyncedAt: v.number(),
@@ -2820,6 +2860,7 @@ const operationalSchema = defineSchema({
     is_published: v.boolean(),
     public_url: v.optional(v.string()),
     updated_at: v.number(),
+    lab_catalog_revision: v.optional(v.string()),
   })
     .index("by_account", ["account_slug"])
     .index("by_account_product", ["account_slug", "product_id"]),
@@ -3024,6 +3065,9 @@ const operationalSchema = defineSchema({
     ),
     start_date: v.optional(v.string()),
     end_date: v.optional(v.string()),
+    /** One-time, accepted travel compensation recorded only in the isolated Lab order. */
+    travel_compensation_gbp: v.optional(v.number()),
+    travel_compensation_applied_at: v.optional(v.number()),
     /** Append-only trail of what the bot did, for the Lab's overview panel. */
     changes: v.array(v.object({ at: v.number(), summary: v.string(), request_key: v.optional(v.string()),
       removed_item:v.optional(v.object({product_id:v.number(),qty:v.number(),identity_name:v.string(),aliases:v.array(v.string())})),
@@ -3069,10 +3113,52 @@ const operationalSchema = defineSchema({
     .index("by_active", ["active"]),
 
   // ── Renter-bot test lab: harness run results ──────────────────────────
+  renter_bot_lab_turns: defineTable({
+    turn_id: v.string(),
+    thread_id: v.string(),
+    account_slug: v.string(),
+    renter_message_id: v.string(),
+    renter_text: v.string(),
+    status: v.union(v.literal("running"), v.literal("complete"), v.literal("failed")),
+    lease_token: v.string(),
+    lease_started_at: v.number(),
+    updated_at: v.number(),
+    run_id: v.optional(v.id("renter_bot_harness_runs")),
+    failure_reason: v.optional(v.string()),
+  }).index("by_turn", ["turn_id"])
+    .index("by_thread", ["thread_id"]),
+
+  renter_bot_lab_catalog_snapshots: defineTable({
+    snapshot_key: v.string(),
+    version: v.string(),
+    sync_id: v.optional(v.string()),
+    sync_status: v.optional(v.union(v.literal("syncing"), v.literal("ready"), v.literal("failed"))),
+    error_code: v.optional(v.string()),
+    fetched_at: v.number(),
+    source_receipts: v.array(v.object({ source: v.string(), fetched_at: v.number(), row_count: v.number() })),
+    inventory_count: v.number(),
+    listing_count: v.number(),
+    eligible_listing_count: v.number(),
+    blocked_listing_count: v.number(),
+  }).index("by_key", ["snapshot_key"]),
+
   // One row per (fixture × run). Records the REAL generateDraft output for
   // that fixture plus rubric scoring. Never a live send — no relationship to
   // renter_bot_drafts or any Hygglo write path.
   renter_bot_harness_runs: defineTable({
+    lab_turn_id: v.optional(v.string()),
+    generation_status: v.optional(v.union(v.literal("complete"), v.literal("failed"))),
+    failure_reason: v.optional(v.string()),
+    candidate_text: v.optional(v.string()),
+    production_guard_flags: v.optional(v.array(v.any())),
+    tool_stats: v.optional(v.any()),
+    token_usage: v.optional(v.object({
+      prompt: v.optional(v.number()),
+      cached: v.optional(v.number()),
+      completion: v.optional(v.number()),
+      cost: v.optional(v.number()),
+    })),
+    source_receipts: v.optional(v.any()),
     generation_error:v.optional(canonicalGenerationErrorValidator),
     native_quote_diagnostic:v.optional(v.string()),
     pending_owner_checks:v.optional(v.array(ownerCheckValidator)),
@@ -3102,6 +3188,7 @@ const operationalSchema = defineSchema({
         v.literal("fail"),
         v.literal("flag"),
         v.literal("n_a"),
+        v.literal("unassessed"),
       ),
       detail: v.string(),
       evidence: v.optional(v.string()),
@@ -3110,6 +3197,7 @@ const operationalSchema = defineSchema({
       v.literal("pass"),
       v.literal("fail"),
       v.literal("flag"),
+      v.literal("incomplete"),
     ),
     triggered_by: v.union(
       v.literal("harness_batch"),
@@ -3121,6 +3209,7 @@ const operationalSchema = defineSchema({
   })
     .index("by_fixture", ["fixture_id"])
     .index("by_session_thread", ["session_thread_id"])
+    .index("by_lab_turn", ["lab_turn_id"])
     .index("by_run_batch", ["run_batch_id"])
     .index("by_account", ["account_slug"])
     .index("by_overall_status", ["overall_status"])

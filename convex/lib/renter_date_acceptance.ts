@@ -40,6 +40,14 @@ function targetMatches(text:string,terms:Terms,offer=false){
   if(/\b(?:pickup|pick up|collection|collect)\b/i.test(before))return terms.end_date===terms.from_end_date&&refs[0].start===terms.start_date;
   return false;
 }
+function singleDayDestinationMatches(text:string,terms:Terms){
+  if(terms.start_date!==terms.end_date)return false;
+  const refs=dateReferences(text,terms.today);
+  return refs.length===1&&!refs[0].end&&refs[0].start===terms.start_date&&
+    /\b(?:move|change|reschedule|shift|set|update)\b/i.test(text)&&
+    /\b(?:rental|booking|request|dates?|it|this|that)\b/i.test(text)&&
+    /\b(?:to|on|for)\s+(?:the\s+)?$/i.test(text.slice(0,refs[0].index));
+}
 function priceMatches(text:string,terms:Terms){
   const claims=amendmentMoneyClaims(text);
   if(!claims.length)return {present:false,matches:false};
@@ -55,7 +63,7 @@ function priceMatches(text:string,terms:Terms){
 }
 export function acceptsDateChange(text:string,terms:Terms,owner?:{body_text:string;quoted_dates?:SentDateProposal[]}){
   const message=normal(text);
-  if(/\b(?:don't|do not|never|unless|later|wait|hold off|after I confirm|before I confirm)\b/i.test(message))return false;
+  if(/\b(?:don't|do not|never|unless|later|wait|hold off|after I confirm|before I confirm|no thanks|not yet)\b/i.test(message))return false;
   const price=priceMatches(message,terms);if(price.present&&!price.matches)return false;
   let requested=false;
   for(const clause of message.split(/[;\n]|(?<=[.!?])\s+|\bbut\b/i)){
@@ -63,7 +71,7 @@ export function acceptsDateChange(text:string,terms:Terms,owner?:{body_text:stri
     const action=/(?:^(?:(?:yes|okay|ok|sure|please)[,\s]+)*|\b(?:please|go ahead(?: and)?|(?:can|could|would) you|I(?:'d| would) like (?:you )?to)\s+)(?:move|change|extend|reschedule|shift|set|update)\s+(.+)/i.exec(clause);
     if(!action)continue;
     if(!dateReferences(action[0],terms.today).length && /^(?:it|them|the dates)(?:[.!\s]|$)/i.test(action[1]))continue;
-    requested=true;if(!targetMatches(action[0],terms))return false;
+    requested=true;if(!targetMatches(action[0],terms)&&!singleDayDestinationMatches(action[0],terms))return false;
   }
   if(requested&&(price.matches||terms.total_gbp<=terms.base_total_gbp))return true;
   if(!owner)return false;
@@ -71,8 +79,13 @@ export function acceptsDateChange(text:string,terms:Terms,owner?:{body_text:stri
     &&(!terms.physical_identity_key||p.physical_identity_key===terms.physical_identity_key)
     &&p.start_date===terms.start_date&&p.end_date===terms.end_date&&sameMoney(p.total_gbp,terms.total_gbp)&&sameMoney(p.base_total_gbp,terms.base_total_gbp));
   if(offers.length!==1||(owner.quoted_dates??[]).length!==1||/\b(?:alternatively|either|instead|options?)\b|\bor\b/i.test(owner.body_text))return false;
-  if(/\bunavailable\b|(?:not|aren't|isn't|can't|cannot|unavailable).{0,25}(?:available|extend|change|move|possible)|\b(?:don't|do not)\s+(?:extend|change|move)/i.test(owner.body_text))return false;
+  if(/\b(?:unavailable|not yet|no thanks)\b|(?:not|aren't|isn't|can't|cannot|unavailable).{0,25}(?:available|extend|change|move|possible)|\b(?:don't|do not)\s+(?:extend|change|move)/i.test(owner.body_text))return false;
   if(!targetMatches(owner.body_text,terms,true)||!priceMatches(owner.body_text,terms).matches)return false;
   const bare=/^(?:yes|yep|yeah|okay|ok|sure)[,!\s]*(?:please)?[.!\s]*$/i.test(message.trim());
-  return requested||bare||/^(?:(?:yes|yep|yeah|okay|ok|sure|perfect)[,!\s]*)?(?:please\s*)?(?:go ahead(?: and (?:change|extend|move|update) (?:it|them|the dates))?|(?:change|extend|move|update) (?:it|them|the dates)|yes|yep|yeah|okay|ok|sure)[.!\s]*(?:thanks|thank you)?[.!\s]*$/i.test(message.trim());
+  const referencesQuotedPeriod=/\b(?:those|these|that|same|the offered|the quoted)\s+(?:dates?|period|date range|option)\b/i.test(message);
+  const affirmsQuotedPeriod=referencesQuotedPeriod&&(
+    /^(?:yes|yep|yeah|okay|ok|sure|perfect|great)\b/i.test(message)||
+    /\b(?:go ahead|please\s+(?:update|change|move|reschedule|shift|set|book|apply|proceed)|(?:update|change|move|reschedule|shift|set|book|apply|proceed)\b|i accept|that works|works for me|sounds good|looks good)\b/i.test(message)||
+    /\b(?:those|these|that|same)\s+(?:dates?|period|date range|option)\s+(?:are|is)\s+(?:fine|good|great|okay)\b/i.test(message));
+  return requested||bare||affirmsQuotedPeriod||/^(?:(?:yes|yep|yeah|okay|ok|sure|perfect)[,!\s]*)?(?:please\s*)?(?:go ahead(?: and (?:change|extend|move|update) (?:it|them|the dates))?|(?:change|extend|move|update) (?:it|them|the dates)|yes|yep|yeah|okay|ok|sure)[.!\s]*(?:thanks|thank you)?[.!\s]*$/i.test(message.trim());
 }

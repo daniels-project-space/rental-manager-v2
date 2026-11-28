@@ -2,17 +2,30 @@
 export const RENTER_BOT_LAB_SCENARIO_IDS = [
   "bmpcc-6k-full-frame-kit",
   "sony-fx3-batteries",
+  "diogo-sony-fx3-kit",
   "verification-failed",
   "confirmed-booking",
 ] as const;
 
 export type RenterBotLabScenarioId = (typeof RENTER_BOT_LAB_SCENARIO_IDS)[number];
 
+export type RenterBotLabAccountSlug = "leo" | "dbcinema" | "diogo";
+
+const RENTER_BOT_LAB_ACCOUNT_NAMES: Record<RenterBotLabAccountSlug, string> = {
+  leo: "Leo",
+  dbcinema: "DB Cinema",
+  diogo: "Diogo",
+};
+
+export function renterBotLabAccountName(accountSlug: string): string {
+  return RENTER_BOT_LAB_ACCOUNT_NAMES[accountSlug as RenterBotLabAccountSlug] ?? "Rental account";
+}
+
 /** Owner-confirmed pickup facts for isolated Lab conversations only. */
 export const RENTER_BOT_LAB_PICKUP_POINTS = {
   diogo: {
     area: "Charing Cross Station area",
-    address: "Next to bus stop H outside Charing Cross Station, London WC2N 5NG. Apple Maps: https://maps.apple/p/XXmY-sP81IyKyI",
+    address: "Next to Bus Stop H outside Charing Cross Station, London WC2N 5NG, England. Apple Maps: https://maps.apple/p/XXmY-sP81IyKyI",
   },
   leo: {
     area: "Trafalgar Square area",
@@ -53,12 +66,14 @@ interface ScenarioItem {
 export interface RenterBotLabScenario {
   id: RenterBotLabScenarioId;
   title: string;
-  accountSlug: "leo" | "dbcinema";
+  accountSlug: RenterBotLabAccountSlug;
   displayName: string;
   /** A final platform failure event, simulated entirely within the Lab. */
   startStage?: "verification_failed" | "confirmed";
   /** Seed a normal, pending rental request with a current future date range. */
   rentalSetup: { startInDays: number; durationDays: number };
+  /** Exact physical inclusions confirmed for this listing, never the shared item. */
+  ownerConfirmedKitContents?: { lines: string[]; source: string };
   item: ScenarioItem;
 }
 
@@ -69,6 +84,19 @@ const BASE_SCENARIOS: RenterBotLabScenario[] = [
     accountSlug: "dbcinema",
     displayName: "BMPCC 6K Full Frame Kit",
     rentalSetup: { startInDays: 14, durationDays: 1 },
+    ownerConfirmedKitContents: {
+      source: "Owner-confirmed Lab scenario for DB Cinema listing 1103089",
+      lines: [
+        "5× NP-F570 batteries",
+        "1× Lexar Professional 1TB CFexpress Type B card",
+        "Tilta cage",
+        "Variable ND filter",
+        "BMPCC charger",
+        "Lens mount cap",
+        "Carry case",
+        "1× EF-to-L mount adapter",
+      ],
+    },
     item: {
       name_canonical: "BMPCC 6K Full Frame",
       display_name: "BMPCC 6K Full Frame Kit",
@@ -103,6 +131,14 @@ const BASE_SCENARIOS: RenterBotLabScenario[] = [
     accountSlug: "leo",
     displayName: "Sony FX3 Camera Kit",
     rentalSetup: { startInDays: 14, durationDays: 1 },
+    ownerConfirmedKitContents: {
+      source: "Owner-confirmed Lab scenario for Leo Sony FX3 camera kits",
+      lines: [
+        "3× Sony NP-FZ100 batteries",
+        "1× 320GB CFexpress Type A card",
+        "Sony dual battery charger",
+      ],
+    },
     item: {
       name_canonical: "Sony FX3",
       display_name: "Sony FX3 Camera Kit",
@@ -124,8 +160,42 @@ const BASE_SCENARIOS: RenterBotLabScenario[] = [
   },
 ];
 
+const DIOGO_FX3_SCENARIO: RenterBotLabScenario = {
+  id: "diogo-sony-fx3-kit",
+  title: "Sony FX3 single-camera kit",
+  accountSlug: "diogo",
+  displayName: "Sony FX3 Full-Frame Cinema Camera",
+  rentalSetup: { startInDays: 14, durationDays: 1 },
+  item: {
+    name_canonical: "Sony FX3",
+    display_name: "Sony FX3",
+    name_input: "Sony FX3 Full-Frame Cinema Camera",
+    slug: "lab-diogo-fx3-kit",
+    kind: "camera",
+    sub_kind: "cinema_camera",
+    qty: 1,
+    unit_kind: "kit",
+    battery_type: "Sony NP-FZ100",
+    card_type: "CFexpress Type A",
+    notes: "Diogo's single-camera listing includes one Sony FX3 Cinema Line camera, a 320GB Lexar CFexpress Type A card, camera cage, three NP-FZ100 batteries, protective carry case and charger. Only the proprietary charging cable is supplied; standard USB-C or USB 2.0 leads are not included. Some FX3 units are Asian-market models, so ask if the renter needs the UK/PAL selector and confirm which unit will be supplied. The listing describes 9am–10pm as a general availability window; agree an exact pickup and return time, and do not promise a full battery after a tight turnaround.",
+    compatibility: {
+      batteries: ["Sony NP-FZ100"],
+      cards: ["CFexpress Type A"],
+      included_with_rental: [
+        "1× Sony FX3 Cinema Line camera",
+        "1× 320GB Lexar CFexpress Type A card",
+        "1× camera cage",
+        "3× Sony NP-FZ100 batteries",
+        "1× protective carrying case",
+        "Sony charger (proprietary charging cable only)",
+      ],
+    },
+  },
+};
+
 export const RENTER_BOT_LAB_SCENARIOS: RenterBotLabScenario[] = [
   ...BASE_SCENARIOS,
+  DIOGO_FX3_SCENARIO,
   { ...BASE_SCENARIOS[0], id: "verification-failed", title: "Verification failed",
     startStage: "verification_failed" },
   { ...BASE_SCENARIOS[0], id: "confirmed-booking", title: "Confirmed booking and times",

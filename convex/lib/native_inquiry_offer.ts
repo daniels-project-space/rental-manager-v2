@@ -61,12 +61,15 @@ const money=(value:number)=>`£${value.toFixed(2).replace(/\.00$/,"")}`;
 const date=(iso:string)=>new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"long",year:"numeric",timeZone:"UTC"}).format(new Date(`${iso}T12:00:00Z`));
 
 /** One serializer is used by the renderer and send-time evidence matching. */
-export function inquiryQuoteText(quote:Pick<StockQuoteEvidence,"start_date"|"end_date"|"listing_quote">):string|null{
+export function inquiryQuoteText(quote:Pick<StockQuoteEvidence,"start_date"|"end_date"|"listing_quote">&{travel_compensation_gbp?:number}):string|null{
  const days=inclusiveRentalDays(quote.start_date,quote.end_date),priced=quote.listing_quote;
  if(!days||!priced||!priced.lines.length||!Number.isFinite(priced.total_gbp)||priced.lines.some(l=>!Number.isFinite(l.total_gbp)||!l.name||/[\r\n]/.test(l.name)||!Number.isInteger(l.quantity)||l.quantity<1))return null;
  const period=quote.start_date===quote.end_date?date(quote.start_date):`${date(quote.start_date)} to ${date(quote.end_date)}`;
  const rows=priced.lines.map(l=>`- ${l.quantity} × ${shortItemName(l.name)}: ${money(l.total_gbp)}`);
- return `For ${days} ${days===1?"day":"days"} (${period}):\n${rows.join("\n")}\nTotal: ${money(priced.total_gbp)}`;
+ const adjustment=quote.travel_compensation_gbp??0;
+ if(!Number.isFinite(adjustment)||adjustment<0||adjustment>priced.lines.reduce((sum,line)=>sum+line.total_gbp,0)+0.01||
+   Math.round((priced.lines.reduce((sum,line)=>sum+line.total_gbp,0)-adjustment)*100)!==Math.round(priced.total_gbp*100))return null;
+ return `For ${days} ${days===1?"day":"days"} (${period}):\n${rows.join("\n")}${adjustment?`\nOne-time travel adjustment: -${money(adjustment)}`:""}\nTotal: ${money(priced.total_gbp)}`;
 }
 
 /** A human may change surrounding text or remove an option. Each surviving

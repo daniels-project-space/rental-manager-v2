@@ -44,6 +44,13 @@ export function createRenterBotLabConvexServiceClient(): ConvexServiceClient {
   }
   const url = parsed.origin;
   if (url === RENTAL_CONVEX_URL) throw new Error("Renter-bot Lab cannot use the production rental deployment");
+  const local = parsed.protocol === "http:" && ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname);
+  if (local) {
+    if (process.env.NODE_ENV !== "development" || process.env.RENTER_BOT_LAB_DEPLOYMENT !== "local") {
+      throw new Error("Local Renter Bot Lab transport is allowed only in the explicit local development mode");
+    }
+    return new ConvexHttpClient(url) as ConvexServiceClient;
+  }
   if (parsed.protocol !== "https:" || !parsed.hostname.endsWith(".convex.cloud")) {
     throw new Error("Renter-bot Lab URL must be an isolated Convex cloud deployment");
   }

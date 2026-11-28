@@ -66,7 +66,11 @@ export function tokenize(str: string): Set<string> {
   const out = new Set<string>();
   // Inventory uses f2.8 while renters commonly type f/2.8. Splitting the
   // slash first discarded the f and left a different identity token (2).
-  const surface = normalizeApertureNotation(str).toLowerCase();
+  // The gimbal family is written both as "RS2" and "RS 2" in inventory
+  // and renter messages. Keep the model number as one identity token.
+  const surface = normalizeApertureNotation(str)
+    .toLowerCase()
+    .replace(/\b(rsc?)\s+(\d{1,2})\b/g, "$1$2");
   for (const raw of surface.match(/[a-z0-9]+/g) ?? []) {
     if (raw.length < 1) continue;
     const t = normToken(raw);
@@ -133,6 +137,42 @@ export function rankByName<T>(
   return out.sort((a, b) => b.score - a.score || b.coverage - a.coverage);
 }
 
+function asksForGimbalIdentity(query: string): boolean {
+  const compactQuery = query.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return /\b(?:gimbal|stabilizer|stabiliser|ronin)\b/.test(compactQuery) ||
+    /\b(?:rs|rsc)\s*\d{1,2}\b/.test(compactQuery);
+}
+
+function explicitlyAsksForPowerAccessory(query: string): boolean {
+  return /\b(?:batter(?:y|ies)|charger|spare|power\s*pack|bg\s*\d+)\b/i.test(query);
+}
+
+function isPowerIdentityCandidate<T>(candidate: T, nameOf: (candidate: T) => string): boolean {
+  const row = candidate as { kind?: unknown; name_canonical?: unknown };
+  const kind = typeof row.kind === "string" ? row.kind.toLowerCase() : "";
+  const canonicalName = typeof row.name_canonical === "string" ? row.name_canonical : nameOf(candidate);
+  return kind === "power" || /\b(?:battery|batteries|charger|power pack)\b/i.test(canonicalName);
+}
+
+/**
+ * True when a full model query is covered only by a power item's compatibility
+ * alias (for example, "DJI RS2" appearing in a gimbal-battery alias). Callers
+ * that have a secondary listing-name fallback must not use that mention as
+ * product identity after the physical inventory matcher has rejected it.
+ */
+export function hasRoleConflictingCompatibilityAlias<T>(
+  query: string,
+  candidates: T[],
+  nameOf: (candidate: T) => string,
+  aliasesOf?: (candidate: T) => string[],
+): boolean {
+  if (!asksForGimbalIdentity(query) || explicitlyAsksForPowerAccessory(query)) return false;
+  return candidates.some((candidate) => {
+    if (!isPowerIdentityCandidate(candidate, nameOf)) return false;
+    return rankByName(query, [candidate], nameOf, aliasesOf).some((match) => match.coverage === 1);
+  });
+}
+
 /**
  * Best single match, with a confidence gate.
  *
@@ -153,7 +193,37 @@ export function bestMatch<T>(
   aliasesOf?: (c: T) => string[],
   tokenCache?: Map<string, Set<string>>,
 ): { match: T | null; confident: boolean; ambiguousWith: T[]; score: number } {
-  const ranked = rankByName(query, candidates, nameOf, aliasesOf, tokenCache);
+  // Compatibility aliases sometimes mention a device that a consumable fits
+  // (for example, an RS2/RS3 gimbal battery). Those mentions are useful when
+  // parsing a battery description, but they must never make the battery the
+  // answer to a request for the gimbal itself. Filter this role contradiction
+  // before exact-alias and token-overlap matching can turn compatibility into
+  // product identity.
+  const identityCandidates = candidates.filter((candidate) => {
+    return !(
+      isPowerIdentityCandidate(candidate, nameOf) &&
+      asksForGimbalIdentity(query) &&
+      !explicitlyAsksForPowerAccessory(query)
+    );
+  });
+  if (!identityCandidates.length) return { match: null, confident: false, ambiguousWith: [], score: 0 };
+  // Exact canonical identity must win before token-overlap ambiguity. Without
+  // this, a fully named item such as "DJI RS3 Pro gimbal" can still tie with
+  // a sibling like "DJI gimbal battery", causing price lookup to report an
+  // ambiguity and the agent to spend more calls trying spelling variants.
+  const exactName = normaliseTitle(query);
+  if (exactName && !isGenericItemQuery(query)) {
+    const exactCanonical = identityCandidates.filter((candidate) => normaliseTitle(nameOf(candidate)) === exactName);
+    if (exactCanonical.length === 1) return { match: exactCanonical[0], confident: true, ambiguousWith: [], score: 1 };
+    if (exactCanonical.length > 1) return { match: exactCanonical[0], confident: false, ambiguousWith: exactCanonical.slice(1), score: 1 };
+
+    const exactAliases = aliasesOf
+      ? identityCandidates.filter((candidate) => aliasesOf(candidate).some((alias) => normaliseTitle(alias) === exactName))
+      : [];
+    if (exactAliases.length === 1) return { match: exactAliases[0], confident: true, ambiguousWith: [], score: 1 };
+    if (exactAliases.length > 1) return { match: exactAliases[0], confident: false, ambiguousWith: exactAliases.slice(1), score: 1 };
+  }
+  const ranked = rankByName(query, identityCandidates, nameOf, aliasesOf, tokenCache);
   if (ranked.length === 0) return { match: null, confident: false, ambiguousWith: [], score: 0 };
   const top = ranked[0];
   // Every candidate the query fully describes — if there is more than one, the
@@ -334,7 +404,16 @@ export function exactTitleMatch<T>(
   candidates: readonly T[],
   nameOf: (c: T) => string | null | undefined,
 ): T | null {
+  const matches = exactTitleMatches(query, candidates, nameOf);
+  return matches.length === 1 ? matches[0] : null;
+}
+
+export function exactTitleMatches<T>(
+  query: string,
+  candidates: readonly T[],
+  nameOf: (c: T) => string | null | undefined,
+): T[] {
   const target = normaliseTitle(query);
-  if (!target) return null;
-  return candidates.find((c) => normaliseTitle(nameOf(c)) === target) ?? null;
+  if (!target) return [];
+  return candidates.filter((candidate) => normaliseTitle(nameOf(candidate)) === target);
 }

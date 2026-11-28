@@ -64,6 +64,16 @@ describe("independent exact schedule agreement", () => {
       ])?.time,
     ).toBe("17:00"));
   it("accepts an agreed literal noon without inventing broad daypart clocks",()=>expect(proof([["renter","Return at noon"],["owner","Yes!"]],"return","12:00")?.time).toBe("12:00"));
+  it("keeps opening-hour clocks from replacing agreed pickup and return times", () => {
+    const chat = messages([
+      ["renter", "I can return at 20:00 instead. Please confirm 11:00 collection and 20:00 return on 9 October."],
+      ["owner", "Yes, 11:00 collection and 20:00 return on 9 October work well, as they fit within our 10am to 12pm and 7pm to 9pm windows in the Northumberland Street area."],
+    ]);
+    expect(recoverConfirmedChatClock(chat, "pickup", "2026-10-09", "hash"))
+      .toMatchObject({ date: "2026-10-09", time: "11:00" });
+    expect(recoverConfirmedChatClock(chat, "return", "2026-10-09", "hash"))
+      .toMatchObject({ date: "2026-10-09", time: "20:00" });
+  });
   it("cannot authorize an extension without a matching date", () =>
     expect(
       proof(

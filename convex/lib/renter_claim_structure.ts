@@ -19,9 +19,13 @@ export function parenthesizedPriceBreakdowns(text:string):Map<number,PriceBreakd
     if(end===undefined)continue;
     const body=text.slice(start+1,end),amounts=[...body.matchAll(currency)];
     if(amounts.length<2)continue; // contents, dates and a single daily rate are not a breakdown
-    // A difference and its baseline describe a comparison, not two priced
-    // components of the total preceding this parenthesis.
-    if(/^\s*(?:a\s+)?£\s*\d+(?:\.\d{1,2})?\s+(?:reduction|saving|decrease)\s+from\s+£\s*\d+(?:\.\d{1,2})?\s*$/i.test(body))continue;
+    // An amount plus its comparison baseline is not an item-price breakdown.
+    // Accept both "£10 less from £50" and "an increase of £10 from your
+    // current £50 booking"; rejecting the latter used to discard a valid
+    // amended total merely because the reply explained the verified delta.
+    const comparisonAmount="£\\s*\\d+(?:,\\d{3})*(?:\\.\\d{1,2})?";
+    const comparison=new RegExp(`^\\s*(?:(?:an?\\s+)?(?:increase|reduction|saving|decrease|difference)\\s+of\\s+${comparisonAmount}|(?:an?\\s+)?${comparisonAmount}\\s+(?:increase|reduction|saving|decrease|difference))\\s+from\\s+(?:(?:your|the|current|existing)\\s+)*${comparisonAmount}(?:\\s+(?:total|booking|rental|order|request|hire)(?:\\s+total)?)?\\s*$`,"i");
+    if(comparison.test(body))continue;
     const parts:PriceBreakdownPart[]=[];
     let valid=amounts.length>=2 && !body.slice(0,amounts[0].index).trim();
     for(let index=0;index<amounts.length;index++) {

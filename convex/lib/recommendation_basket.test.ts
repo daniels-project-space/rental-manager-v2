@@ -1,5 +1,5 @@
 import {describe,expect,it} from "vitest";
-import {explicitRecommendationUse,recommendationBasket} from "./recommendation_basket";
+import {explicitRecommendationUse,recommendationBasket,proposedInquiryBasket} from "./recommendation_basket";
 const ff={name:"Full Frame + Canon kit",qty:1,product_id:1172450};
 const pro={name:"Pro body kit",qty:1,product_id:1172895};
 const ctx={requires_booking_context:true,open_basket:true,can_replace:true};
@@ -53,4 +53,22 @@ it("does not use a declared replacement to bypass an explicit additional request
   expect(recommendationBasket([ff,pro],pro,{...ctx,expected_use}).lines).toEqual([ff,pro,pro]);
   expect(explicitRecommendationUse("Could I add another camera, or replace my booked kit instead?")).toBeUndefined();
   expect(explicitRecommendationUse("Suggest a replacement for the Full Frame kit.")).toBe("replacement");
+});
+
+describe("complete inquiry basket proposals",()=>{
+  const current={name:"Sony FX3 kit",qty:1,product_id:1097510};
+  it("treats proposed quantities as final totals when a renter adds a second unit and changes dates",()=>{
+    const expected_use=explicitRecommendationUse("Could you extend the rental and add a second Sony FX3 kit?");
+    expect(expected_use).toBe("additional");
+    expect(proposedInquiryBasket([current],[{...current,qty:2}],{open_basket:true,expected_use})).toEqual({ok:true,use:"proposed",lines:[{...current,qty:2}]});
+  });
+  it("requires the complete proposal to retain every unchanged item",()=>{
+    expect(proposedInquiryBasket([ff,pro],[{...pro,qty:2}],{open_basket:true})).toMatchObject({ok:false,reason:"proposed_basket_drops_current_item"});
+    expect(proposedInquiryBasket([ff,pro],[ff,{...pro,qty:2}],{open_basket:true})).toMatchObject({ok:true,use:"proposed",lines:[ff,{...pro,qty:2}]});
+  });
+  it("keeps replacements on the exact replacement path and rejects duplicate or invalid final lines",()=>{
+    expect(proposedInquiryBasket([current],[{...current,qty:2}],{open_basket:true,expected_use:"replacement"})).toMatchObject({ok:false,reason:"replacement_requires_exact_listing_selection"});
+    expect(proposedInquiryBasket([current],[current,current],{open_basket:true})).toMatchObject({ok:false,reason:"duplicate_proposed_basket_line"});
+    expect(proposedInquiryBasket([current],[{...current,qty:1.5}],{open_basket:true})).toMatchObject({ok:false,reason:"invalid_quantity"});
+  });
 });

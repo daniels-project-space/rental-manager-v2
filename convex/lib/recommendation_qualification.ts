@@ -1,10 +1,11 @@
 import { v, type Infer } from "convex/values";
 import { cameraRequirementsValidator } from "./camera_requirement_validator";
 import { lensRequirementsValidator } from "./owner_checks";
-import { assessCameraRequirements, verifiedCameraCapabilities, type CameraSpec } from "./camera_requirements";
+import { assessCameraRequirements, requestedCameraRole, verifiedCameraCapabilities, type CameraSpec } from "./camera_requirements";
 import { assessLensRequirements, verifiedLensCapabilities, type LensSpec } from "./lens_requirements";
 import { sameMount } from "./item_name_match";
 import { requiredMountAdapters } from "./required_mount_adapter";
+import { resolveInventoryMount } from "./reviewed_inventory_mount";
 import type { OwnerCheck } from "./owner_checks";
 import type { Id } from "../_generated/dataModel";
 export const recommendationRequirementValidator=v.union(
@@ -53,9 +54,10 @@ function qualifyCameraLensSetup(requirements:RecommendationRequirement[],items:Q
  const unknown:string[]=[],mismatched:string[]=[],caps=cameras.map(i=>verifiedCameraCapabilities(i.spec,i.name));
  cameras.forEach((camera,index)=>{
   const cap=caps[index];
-  if(!cap?.role)unknown.push("camera_role");else if(cap.role!=="interchangeable_lens")mismatched.push("camera_role");
-  if(!cap?.native_mount||!camera.native_mount)unknown.push("camera_mount");
-  else if(!sameMount(cap.native_mount,camera.native_mount))mismatched.push("camera_mount_identity");
+  const role=cap?.role??requestedCameraRole(camera.name,camera.kind);
+  if(!role)unknown.push("camera_role");else if(role!=="interchangeable_lens")mismatched.push("camera_role");
+  if(!camera.native_mount)unknown.push("camera_mount");
+  else if(cap?.native_mount&&!sameMount(cap.native_mount,camera.native_mount))mismatched.push("camera_mount_identity");
  });
  if(cameras.some(c=>!sameMount(c.native_mount,cameras[0].native_mount)))unknown.push("camera_lens_assignment");
  lenses.forEach(lens=>{if(!lens.native_mount)unknown.push("lens_mount");});
@@ -81,13 +83,21 @@ function qualifyCameraLensSetup(requirements:RecommendationRequirement[],items:Q
  * item must meet all of them; different bodies cannot each satisfy one half.
  * Additional basket accessories do not become the qualifying primary item. */
 export function qualifyRecommendationBasket(requirements:RecommendationRequirement[],items:QualificationItem[]) {
- const setup=qualifyCameraLensSetup(requirements,items);
+ // Every caller gets the same exact-identity manufacturer mount resolution.
+ // A missing raw inventory mount stays usable only when that canonical item
+ // has a reviewed model row; conflicts in the stored row still fail closed.
+ const resolvedItems=items.map(item=>({...item,native_mount:resolveInventoryMount({name_canonical:item.name,kind:item.kind,lens_mount:item.native_mount}).mount}));
+ const setup=qualifyCameraLensSetup(requirements,resolvedItems);
  const slots=[...new Set(requirements.map(r=>JSON.stringify([r.kind,r.target_item_id??null])))];
  const groups=slots.map(slot=>{
   const constraints=requirements.filter(r=>JSON.stringify([r.kind,r.target_item_id??null])===slot),kind=constraints[0].kind,required_units=Math.max(...constraints.map(r=>r.quantity));
-  const candidates=items.filter(i=>kind==="camera"?["camera","camera_body"].includes(i.kind):i.kind==="lens").map(item=>{
+  const candidates=resolvedItems.filter(i=>kind==="camera"?["camera","camera_body"].includes(i.kind):i.kind==="lens").map(item=>{
    const assessments=constraints.map(c=>{
-    if(c.kind==="camera")return assessCameraRequirements(verifiedCameraCapabilities(item.spec,item.name),c.requirements,c.native_mount);
+    if(c.kind==="camera"){
+      const reviewed=verifiedCameraCapabilities(item.spec,item.name),role=reviewed?.role??requestedCameraRole(item.name,item.kind);
+      const capabilities=reviewed||role||item.native_mount?{...(reviewed??{}),...(role?{role}:{}),...(item.native_mount?{native_mount:item.native_mount}:{})}:null;
+      return assessCameraRequirements(capabilities,c.requirements,c.native_mount);
+    }
     const assessment=assessLensRequirements(verifiedLensCapabilities(item.spec??undefined,item.name),c.requirements);
     if(c.native_mount&&!item.native_mount)return {...assessment,status:"unknown" as const,unknown:[...assessment.unknown,"native_mount"]};
     if(c.native_mount&&!sameMount(item.native_mount,c.native_mount))return {...assessment,status:"mismatch" as const,mismatched:[...assessment.mismatched,"native_mount"]};

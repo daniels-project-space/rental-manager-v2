@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { recordedKit, recommendationKit } from "./recommendation_kit";
+import { canonicalKitContents } from "./canonical_kit_contents";
 const body = { _id: "body", name_canonical: "BMPCC 6K Full Frame", kind: "camera", compatibility: { included_with_rental: ["5× NP-F570 batteries", "1TB CFexpress Type B"] } };
 const lens = { _id: "lens", name_canonical: "Native L lens", kind: "lens" };
 describe("recommendation kit provenance", () => {
@@ -46,6 +47,15 @@ it("does not list the same five physical batteries twice through mapping and inv
 });
 
 describe("mapped media and accessory-note identity",()=>{
+ it("uses an owner-confirmed physical media name to reconcile a generic stock label",()=>{
+  const card={_id:"card",name_canonical:"CF Express Type A card",rental_facts:{
+   name:"320GB CFexpress Type A card",source:"owner-confirmed physical stock detail",
+  }} as any;
+  const kit=canonicalKitContents([{item_id:"card",name:"CF Express Type A card",units_per_listing:1}],
+   [card],["1× 320GB CFexpress Type A card"]);
+  expect(kit.contents).toEqual(["1 × 320GB CFexpress Type A card"]);
+  expect(kit.unreconciled_contents).toEqual([]);
+ });
  it("keeps the actual generic card without inventing its format or a second card",()=>{
   const kit=recordedKit([{name:"256GB card",qty:1}],["CF Express Type A card","2× battery sets"]);
   expect(kit.contents).toEqual(["1 × 256GB card","2× battery sets"]);

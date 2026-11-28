@@ -1,17 +1,19 @@
+"use node";
+
 import type { BookingRecord } from "./lib/booking_record";
 import type { RecommendationQuoteEvidence } from "./lib/renter_draft_evidence";
 import { equipmentClaimsNeedProfiles } from "./lib/equipment_claim_profiles";
 import { committedAmendmentConfirmation } from "./lib/amendment_confirmation";
 import { replacementQuoteFallback } from "./lib/replacement_quote_fallback";
-import { verifiedSensorComparisons } from "./lib/camera_sensor_comparisons";
 import { minimumRentalContext, type MinimumRentalContext } from "./lib/minimum_rental";
 import type { PriceEvidence } from "./lib/price_claims";
-import type { StockRequest, StockReceipt } from "./lib/stock_claims";
+import { stockRequestWithVerifiedQuoteItems, type StockRequest, type StockReceipt } from "./lib/stock_claims";
 import type { KitEvidence } from "./lib/kit_claims";
 import { amendedDraftContext, currentDraftReview, type DraftContextTransition, type DraftReview } from "./lib/draft_review";
 import { unknownKitItems } from "./lib/renter_kit_evidence";
-import { canonicalGenerationError, type CanonicalGenerationError } from "./lib/canonical_generation_error";
-"use node";
+import { canonicalGenerationError, canonicalGenerationException, type CanonicalGenerationError, type GenerationDiagnosticStage } from "./lib/canonical_generation_error";
+import { renterBotDraftEndpoint } from "./lib/renter_bot_draft_endpoint";
+import { hasCompleteRenterBotLabTurnBinding, renterBotLabTurnBindingMatches } from "./lib/renter_bot_lab_turn_binding";
 
 import {renterAccountVoice} from "./lib/renter_account_voice";
 import type { OwnerCheck } from "./lib/owner_checks";
@@ -40,6 +42,7 @@ import { sameDraftApproval } from "./lib/draft_review";
 import { renterBotRuntimeAllowed } from "./lib/renter_bot_runtime";
 import { guardDraft, guardFinalDraft, type DraftFlag } from "./lib/draft_guard";
 import { discloseReplacementSource } from "./lib/renter_replacement_proposal";
+import { verifiedPickupReasonForSingleListing } from "./lib/renter_bot_listing_pickup";
 import { assessTravelCompensation, verifiedRentalChargeGbp } from "./lib/travel_compensation";
 import { dnaSummary } from "./lib/renter_dna";
 import {
@@ -64,6 +67,10 @@ import {
 export const generateDraft = action({
   args: {
     thread_id: v.string(),
+    /** Canonical Lab turn identity; carried through draft generation and tools. */
+    request_message_id: v.optional(v.string()),
+    lab_turn_id: v.optional(v.string()),
+    lab_lease_token: v.optional(v.string()),
     /**
      * Prompt-optimiser hook (GEPA). Forwarded verbatim to the draft route,
      * which honours it ONLY on __probe__ threads and only swaps the CRAFT
@@ -80,7 +87,7 @@ export const generateDraft = action({
   },
   handler: async (
     ctx,
-    { thread_id, craft_override, model_override, retry_review },
+    { thread_id, request_message_id, lab_turn_id, lab_lease_token, craft_override, model_override, retry_review },
   ): Promise<{
     status: "ok" | "skipped";
     draft?: string;
@@ -88,6 +95,8 @@ export const generateDraft = action({
     flags?: DraftFlag[];
     rejectedDraft?: string;
     usedTools?: boolean;
+    tool_stats?: { steps: number; total: number; byName: Record<string, number>; duplicates: number; errors: number; queries?: string[]; calls?: Array<{ call_id?: string; name: string; args: unknown; result?: unknown; error: boolean }> } | null;
+    token_usage?: { prompt: number | null; completion: number | null; cached: number | null; cost: number | null } | null;
     model_id?: string;
     draft_intent?: string;
     draft_stage?: string;
@@ -110,6 +119,21 @@ export const generateDraft = action({
     review?: DraftReview;
   }> => {
     if (!renterBotRuntimeAllowed(thread_id)) return {status:"skipped",reason:"lab_only_pending_written_consent"};
+    if (thread_id.startsWith("__probe__")) {
+      if (!hasCompleteRenterBotLabTurnBinding(thread_id, request_message_id, lab_turn_id, lab_lease_token)) {
+        return {status:"skipped",reason:"stale_lab_turn"};
+      }
+      const [turn, latest] = await Promise.all([
+        ctx.runQuery(internal.renter_bot_lab_actions.getTestTurn, { turn_id: lab_turn_id! }),
+        ctx.runQuery(internal.renter_bot_lab_actions.getLatestMessageForThread, { thread_id }),
+      ]);
+      if (!renterBotLabTurnBindingMatches({
+        thread_id,
+        request_message_id: request_message_id!,
+        lab_turn_id: lab_turn_id!,
+        lab_lease_token: lab_lease_token!,
+      }, turn, latest)) return {status:"skipped",reason:"stale_lab_turn"};
+    }
     const generationToken = crypto.randomUUID();
     const claim = await ctx.runMutation(internal.replyInbox.claimDraftGeneration, { thread_id, token: generationToken });
     if (!claim.ok) return { status: "skipped", reason: claim.reason };
@@ -398,37 +422,6 @@ export const generateDraft = action({
       facts.push(
         `Pickup/return windows (Europe/London): ${c.pickup_windows.map((w) => `${w.start}–${w.end}`).join(", ")}`,
       );
-    // Full owned inventory by category — lets the draft offer the closest real
-    // alternative when we don't have exactly what the renter asked for.
-    const KIND_LABEL: Record<string, string> = {
-      camera: "Cameras",
-      lens: "Lenses",
-      audio: "Audio/mics",
-      lighting: "Lighting",
-      monitor: "Monitors",
-      gimbal: "Gimbals",
-      stabilizer: "Stabilizers",
-      drone: "Drones",
-      dj_audio: "DJ/PA",
-      power: "Power",
-      grip: "Grip",
-      support: "Tripods/support",
-      motion: "Sliders/motion",
-      video: "Video",
-      effects: "FX",
-      transmission: "Wireless video",
-      accessory: "Accessories",
-      storage_card: "Cards",
-      smoke_fx: "Smoke/FX",
-    };
-    const inv = c.owned_inventory ?? {};
-    const invParts = Object.keys(KIND_LABEL)
-      .filter((k) => (inv[k] ?? []).length)
-      .map((k) => `${KIND_LABEL[k]}: ${inv[k].join(", ")}`);
-    if (invParts.length)
-      facts.push(
-        `Gear I own (ONLY ever offer items from this list; if I don't have exactly what they asked, suggest the closest of these in the SAME category instead of just saying no) — ${invParts.join("; ")}`,
-      );
     if (c.unfulfillable?.length)
       facts.push(
         `NOT IN OUR INVENTORY — ${c.unfulfillable.join(", ")}. We don't stock this exact item. Do NOT confirm it, say it's approved, or quote a price for it. Tell the renter warmly that we can't provide that specific item and offer a real owned alternative (or say I'll sort it). Do NOT explain why the listing exists or call it a test/error.`,
@@ -494,9 +487,14 @@ export const generateDraft = action({
     const pickupArea = c.pickup_area?.trim() || null;
     const pickupAddress = c.pickup_address?.trim() || null;
     const pickupConfirmed = bookingApproved && !!pickupAddress;
-    const rentalChargeGbp = c.gross_paid_gbp != null
-      ? Math.max(0, c.gross_paid_gbp - (c.delivery_fee_gbp ?? 0))
-      : null;
+    const rentalChargeGbp = verifiedRentalChargeGbp({
+      rentalChargeGbp: c.gross_paid_gbp != null
+        ? Math.max(0, c.gross_paid_gbp - (c.delivery_fee_gbp ?? 0))
+        : null,
+      // A complete Native inquiry quote is the authoritative rental amount
+      // before payment; estimates and per-day rates never authorize a cap.
+      verifiedInquiryQuoteGbp: c.negotiation?.lastPriceOfferedGbp ?? null,
+    });
     const travelCompensation = assessTravelCompensation({
       history: c.messages as { role: "owner" | "renter"; content: string }[],
       lastRenterMessage: lastRenter,
@@ -509,7 +507,7 @@ export const generateDraft = action({
           pickupConfirmed
             ? `The current booking is confirmed. Exact pickup point: ${pickupAddress}. You may share it now.`
             : "The current booking is not confirmed. Share only the vague pickup area above; do not reveal any street address, postcode, map link, or exact meeting point.",
-          "If the renter names a different listing area or asks if it is real, acknowledge the mismatch naturally and explain that this listing is only available for collection from this account's configured pickup point. Do not merely repeat the area or say 'rather than [other area]'. Do not say the other area is fake/nonexistent or that all accounts use one central pickup. Do not add a separate reason such as repair, another rental, relocation, or consolidation unless owner-confirmed facts explicitly support it. Ask whether this account's vague pickup area works before proceeding, and share the exact point only after confirmation. If the same first message also asks for a discount, neither offer nor reject a discount until the renter has responded to that pickup-area question.",
+          "If the renter names a different listing area or asks if it is real, answer with the grounded reason: state that this kit is only available for collection and return from this account's configured pickup area, then explain that a handoff from the other/listed location cannot be arranged for this rental. Apologize briefly for the confusion; ask whether collecting and returning in this account's area works for their dates. A bare 'collection is arranged from [area]' is incomplete and must not be the whole answer. Do not say the other area is fake/nonexistent or that all accounts use one central pickup. Never invent repair, another rental, relocation, or consolidation as the reason unless owner-confirmed facts explicitly support it. Share the exact point only after booking confirmation. If the same first message also asks for a discount, neither offer nor reject it until the renter has responded to the pickup-area question.",
           travelCompensation.eligible && travelCompensation.maximumGbp != null
             ? `The renter already received this pickup-area disclosure and has now objected to the travel. Offer one travel adjustment of exactly £${travelCompensation.maximumGbp.toFixed(2)} for this rental; this is the lower of 10% of the verified rental charge or £10. Do not offer it again.`
             : "Do not offer or mention travel compensation on this turn. It becomes eligible only after this pickup area has been disclosed and the renter then explicitly objects to the travel; the verified rental charge must also be known. A generic discount request or listing location alone is not enough.",
@@ -558,8 +556,7 @@ export const generateDraft = action({
       ? "MARKETING LISTING — the renter asked about: " +
         c.marketing_asks.join(", ") +
         ". We advertise this to show the CLASS of gear but do NOT stock that exact model. " +
-        "Do NOT say it's a mistake or just that 'we don't have it' — warmly point them to the closest thing we DO own (same category, from the owned inventory above), " +
-        "give its real price + what's included, sell it as the equivalent, then offer to check availability for their dates."
+        "Do NOT expose that internal status or invent a reason. Use find_owned_alternatives for the same category, verify its exact listing, contents and price, then offer only that supported option."
       : null;
 
     const prompt = [
@@ -624,9 +621,10 @@ export const generateDraft = action({
     // fix shipped, a correctly-answerable fresh inquiry still hard-escalated
     // as UNGROUNDED_AVAILABILITY/UNGROUNDED_PRICE, because this signal was
     // still empty.
-    let generationMeta: { diagnostic_candidate?: string; native_quote_diagnostic?: string; evidence?: DraftEvidence; model_id?: string; draft_intent?: string; draft_stage?: string; cost_usd?: number; facts_claimed?: Array<{ kind: string; value: string; sourceTool: string; sourceCallId: string; verified: boolean }> } = {};
+    let generationMeta: { diagnostic_candidate?: string; native_quote_diagnostic?: string; evidence?: DraftEvidence; model_id?: string; draft_intent?: string; draft_stage?: string; cost_usd?: number; generation_error?: CanonicalGenerationError; tool_stats?: { steps: number; total: number; byName: Record<string, number>; duplicates: number; errors: number; queries?: string[]; calls?: Array<{ call_id?: string; name: string; args: unknown; result?: unknown; error: boolean }> } | null; token_usage?: { prompt: number | null; completion: number | null; cached: number | null; cost: number | null } | null; facts_claimed?: Array<{ kind: string; value: string; sourceTool: string; sourceCallId: string; verified: boolean }> } = {};
     let routeStockRequest: StockRequest | undefined;
     let routeDeliveryFeeGbp: number | undefined;
+    let routeDeliveryCapability: "pickup_only" | undefined;
     let freshInquiryItems: Array<{ name: string; dailyRateGbp?: number }> = [];
     // Names the draft route resolved but has NO kit text for — see
     // draft_guard KIT_HALLUCINATION.
@@ -657,7 +655,7 @@ export const generateDraft = action({
     let nativeRecoveryReason:string|undefined;
     // A transport failure may hide the tool receipt after its Native write.
     // Read the current ledger instead of calling the model or edit tool again.
-    const recoverCommittedFailure=async(reason:string):Promise<boolean>=>{
+    const recoverCommittedFailure=async(reason:string,committedAction?:{call_id:string;name:string;args:unknown;result:unknown},generationError?:CanonicalGenerationError):Promise<boolean>=>{
       if(!initialOrder)return false;
       try{
         const fresh=await ctx.runQuery(internal.replyInbox.getThreadContext,{thread_id});
@@ -672,11 +670,26 @@ export const generateDraft = action({
           transitions:[transition],before:initialOrder,after});
         if(!confirmation)return false;
         c=fresh;amendmentTransitions=[transition];nativeRecoveryReason=reason;
+        const deterministicModelId="deterministic-lab-amendment-recovery-v1";
+        const didNotCallModel=Boolean(committedAction) || (!generationMeta.model_id && !generationError);
+        generationMeta.model_id=didNotCallModel?deterministicModelId:(generationMeta.model_id??generationError?.model_id??"unknown");
+        if(generationError)generationMeta.generation_error=generationError;
+        if(committedAction){
+          generationMeta.tool_stats={steps:0,total:1,byName:{[committedAction.name]:1},duplicates:0,errors:0,
+            calls:[{call_id:committedAction.call_id,name:committedAction.name,args:committedAction.args,result:committedAction.result,error:false}]};
+        }
+        if(didNotCallModel){
+          generationMeta.cost_usd=0;
+          generationMeta.token_usage={prompt:0,completion:0,cached:0,cost:0};
+        }else if(generationMeta.cost_usd==null && generationError?.cost_usd!=null){
+          generationMeta.cost_usd=generationError.cost_usd;
+          generationMeta.token_usage??={prompt:null,completion:null,cached:null,cost:generationError.cost_usd};
+        }
         draft=confirmation.text;usedTools=true;mastraOk=true;routeBookingModified=true;
         routePriceEvidence=confirmation.prices;routePriceRequest=confirmation.request;
         generationMeta.draft_stage=fresh.rental_stage.stage;
-        generationMeta.evidence={...(generationMeta.evidence??{model_id:generationMeta.model_id??"native-amendment-recovery",stage:fresh.rental_stage.stage,stock:[]}),
-          stage:fresh.rental_stage.stage,prices:confirmation.prices,stock_request:confirmation.request};
+        generationMeta.evidence={...(generationMeta.evidence??{model_id:generationMeta.model_id,stage:fresh.rental_stage.stage,stock:[]}),
+          model_id:generationMeta.model_id,cost_usd:generationMeta.cost_usd,stage:fresh.rental_stage.stage,prices:confirmation.prices,stock_request:confirmation.request};
         return true;
       }catch{return false;}
     };
@@ -685,43 +698,72 @@ export const generateDraft = action({
     // mutation the agent uses; the mutation still rejects any unproven consent.
     // This path is strictly Lab-only and never targets a real conversation.
     if(initialOrder && initialMessageId){
-      const candidate=await ctx.runQuery(internal.renter_bot_lab_order.__service_acceptedReplacementCandidate,{thread_id});
+      const candidate=await ctx.runQuery(internal.renter_bot_lab_order.__service_acceptedReplacementCandidate,{thread_id,
+        request_message_id:initialMessageId,lab_turn_id,lab_lease_token});
       if(candidate?.request_message_id===initialMessageId){
         const applied=await ctx.runMutation(internal.renter_bot_lab_order.__service_applyReplacementBasket,candidate);
-        if(applied.ok && applied.action_performed && !await recoverCommittedFailure("accepted_native_replacement"))
+        if(applied.ok && applied.action_performed && !await recoverCommittedFailure("accepted_native_replacement",{
+          call_id:`lab-native-amendment:${initialMessageId}:replacement`,name:"applyAcceptedReplacementBasket",
+          args:{thread_id,request_message_id:initialMessageId},result:applied,
+        }))
+          return {status:"skipped",reason:"needs_human:committed_change_reconciliation"};
+      }
+      // A clear acceptance of one previously sent addition is also a
+      // transaction, not a new tool-selection problem for the language model.
+      // Quote, current stock, owner text, renter consent, and the active Lab
+      // turn are independently revalidated inside the atomic mutation.
+      const additionCandidate=await ctx.runQuery(internal.renter_bot_lab_order.__service_acceptedAdditionCandidate,{thread_id,
+        request_message_id:initialMessageId,lab_turn_id,lab_lease_token});
+      if(additionCandidate?.request_message_id===initialMessageId){
+        const applied=await ctx.runMutation(internal.renter_bot_lab_order.__service_applyAdditionBasket,additionCandidate);
+        if(applied.ok && applied.action_performed && !await recoverCommittedFailure("accepted_native_addition",{
+          call_id:`lab-native-amendment:${initialMessageId}:addition`,name:"applyAcceptedAdditionBasket",
+          args:{thread_id,request_message_id:initialMessageId},result:applied,
+        }))
           return {status:"skipped",reason:"needs_human:committed_change_reconciliation"};
       }
     }
+    let generationDiagnosticStage: GenerationDiagnosticStage = "endpoint_configuration";
     if(!nativeRecoveryReason) { // One canonical generation path for Lab and human-reviewed drafts.
       try {
-        const base = process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app";
-        const apiSecret = process.env.RENTER_BOT_API_SECRET;
-        if (!apiSecret) throw new Error("RENTER_BOT_API_SECRET is not configured");
-        const resp = await fetch(`${base}/api/renter-bot-draft`, {
+        const endpoint = renterBotDraftEndpoint(thread_id, {
+          ...process.env,
+          NOTIF_BASE_URL: process.env.NOTIF_BASE_URL ?? "https://rental-manager-v2-nu.vercel.app",
+        });
+        generationDiagnosticStage = "endpoint_request";
+        const resp = await fetch(endpoint.url, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${apiSecret}`,
-            ...(thread_id.startsWith("__probe__") ? { "X-Renter-Bot-Lab": "true" } : {}),
+            Authorization: endpoint.authorization,
+            ...(endpoint.lab ? { "X-Renter-Bot-Lab": "true" } : {}),
           },
           body: JSON.stringify({
             thread_id,
+            ...(endpoint.lab && request_message_id ? {
+              request_message_id,
+              lab_turn_id,
+              lab_lease_token,
+            } : {}),
             ...(craft_override ? { craft_override } : {}),
             ...(model_override ? { model_override } : {}),
           }),
         });
         if (!resp.ok) {
+          generationDiagnosticStage = "response_body";
           const generation_error = await canonicalGenerationError(resp);
           console.warn("[generateDraft] canonical generation failed", generation_error);
-          if(!await recoverCommittedFailure(`canonical_generation_http_${resp.status}`)) {
+          if(!await recoverCommittedFailure(`canonical_generation_http_${resp.status}`,undefined,generation_error)) {
             if(generation_error.error_code==="invalid_model_output") {
               const reason="needs_human:invalid_model_output";
               const saved=await recordReview(reason,[{type:"INVALID_MODEL_OUTPUT",severity:"critical",action:"flagged",detail:"The model did not return a valid decision envelope. No generated reply was approved."}]);
-              return saved.ok ? {status:"skipped",reason,review:saved.review,generation_error,model_id:generation_error.model_id,cost_usd:generation_error.cost_usd} : {status:"skipped",reason:"stale_inbound",generation_error};
+              return saved.ok ? {status:"skipped",reason,review:saved.review,generation_error,model_id:generation_error.model_id,cost_usd:generation_error.cost_usd,
+                token_usage:generation_error.lab_trace?.token_usage,tool_stats:generation_error.lab_trace?.tool_stats} : {status:"skipped",reason:"stale_inbound",generation_error};
             }
             return { status: "skipped", reason: `canonical_generation_http_${resp.status}`, generation_error };
           }
         } else {
+        generationDiagnosticStage = "response_json";
         const j = (await resp.json()) as {
           draft?: string;
           model_id?: string;
@@ -737,6 +779,9 @@ export const generateDraft = action({
           rental_request?:DraftEvidence["rental_request"];
           availabilityReceipts?: Array<{ item_name: string; start_date: string; end_date: string; requested_units: number; available: boolean | null; free_units: number | null; checked_at: number; call_id: string; kind?: string; owned?: boolean; new_inquiry?:true; identity_names?:string[]; basket?: StockReceipt["basket"]; quantity_basis?: {basis?:string} }>;
           stockRequest?: StockRequest;
+          listing_sources?: DraftEvidence["listing_sources"];
+          pickup_facts?: DraftEvidence["pickup_facts"];
+          camera_comparisons?: DraftEvidence["camera_comparisons"];
           deliveryQuote?: {
             fee_gbp: number;
             account_slug: string;
@@ -744,6 +789,11 @@ export const generateDraft = action({
             basket_updated_at: number;
             inventory_updated_at: number;
             source: "db_cinema_weighted_checkout_v1";
+          };
+          deliveryCapability?: {
+            status: "pickup_only";
+            account_slug: string;
+            thread_id: string;
           };
           factsClaimed?: unknown;
           owner_checks?: OwnerCheck[];
@@ -779,6 +829,7 @@ export const generateDraft = action({
             errors: number;
             /** `tool(args)` per call — what makes a call judgeable as removable. */
             queries?: string[];
+            calls?: Array<{ call_id?: string; name: string; args: unknown; result?: unknown; error: boolean }>;
           } | null;
           /** Convex round trips issued vs saved by the request-scoped memo. */
           hydration?: { queries: number; dedupedRoundTrips: number };
@@ -790,10 +841,16 @@ export const generateDraft = action({
             cost: number | null;
           } | null;
         };
+        generationDiagnosticStage = "response_processing";
         ownerChecks = j.owner_checks ?? [];
-        generationMeta = { model_id: j.model_id, draft_intent: j.intent, draft_stage: j.conversation_stage, cost_usd: j.tokenUsage?.cost ?? undefined, facts_claimed: normalizeClaimedFacts(j.factsClaimed) };
+        generationMeta = {
+          model_id: j.model_id, draft_intent: j.intent, draft_stage: j.conversation_stage,
+          cost_usd: j.tokenUsage?.cost ?? undefined, facts_claimed: normalizeClaimedFacts(j.factsClaimed),
+          tool_stats: j.toolStats, token_usage: j.tokenUsage,
+        };
         if (thread_id.startsWith("__probe__")) {generationMeta.diagnostic_candidate = j.diagnostic_candidate;generationMeta.native_quote_diagnostic=j.native_quote_diagnostic;}
         if (j.bookingContextTransitions?.length) {
+          generationDiagnosticStage = "context_revalidation";
           const amendedKey = amendedDraftContext(c.draft_context_key, thread_id, j.bookingContextTransitions);
           if (amendedKey === null) return { status: "skipped", reason: "stale_context", ...generationMeta };
           const fresh = await ctx.runQuery(internal.replyInbox.getThreadContext, { thread_id });
@@ -809,7 +866,7 @@ export const generateDraft = action({
         routePriceRequest = j.priceRequest;
         routeCommercialContext = j.commercialContext ? minimumRentalContext(c.rental_stage.stage,
           j.commercialContext.threshold_gbp, j.priceEvidence ?? [], j.priceRequest ?? {items:[]},j.selectedInquiryQuotes??[]) : undefined;
-        generationMeta.evidence = { rental_request:j.rental_request, booking_record:j.booking_record, stock_quotes:j.stock_quotes,replacement_value_comparisons:j.replacement_value_comparisons,budget_price_checks:j.budget_price_checks, recommendation_quotes: j.recommendation_quotes, camera_comparisons: verifiedSensorComparisons, rental_eligibility: { ineligible_items: [...new Set([...(c.fact_pack?.marketingItems ?? []), ...(j.marketingItems ?? [])].filter((n): n is string => typeof n === "string" && !!n))], source: "native_catalogue" }, commercial: routeCommercialContext, prices: routePriceEvidence, model_id: j.model_id ?? "unknown", stage: c.rental_stage.stage, cost_usd: j.tokenUsage?.cost ?? undefined, stock: (j.availabilityReceipts ?? []).filter((r) => typeof r.item_name === "string" && typeof r.start_date === "string" && typeof r.end_date === "string" && typeof r.requested_units === "number" && typeof r.checked_at === "number" && (typeof r.available === "boolean" || r.available === null) && (typeof r.free_units === "number" || r.free_units === null) && typeof r.call_id === "string").map((r) => ({ item: r.item_name, start_date: r.start_date, end_date: r.end_date, quantity: r.requested_units, available: r.available, free_units: r.free_units, checked_at: r.checked_at, call_id: r.call_id })) };
+        generationMeta.evidence = { rental_request:j.rental_request, booking_record:j.booking_record, stock_quotes:j.stock_quotes,replacement_value_comparisons:j.replacement_value_comparisons,budget_price_checks:j.budget_price_checks, listing_sources:j.listing_sources, pickup_facts:j.pickup_facts, recommendation_quotes: j.recommendation_quotes, camera_comparisons: j.camera_comparisons ?? [], rental_eligibility: { ineligible_items: [...new Set([...(c.fact_pack?.marketingItems ?? []), ...(j.marketingItems ?? [])].filter((n): n is string => typeof n === "string" && !!n))], source: "native_catalogue" }, commercial: routeCommercialContext, prices: routePriceEvidence, model_id: j.model_id ?? "unknown", stage: c.rental_stage.stage, cost_usd: j.tokenUsage?.cost ?? undefined, stock: (j.availabilityReceipts ?? []).filter((r) => typeof r.item_name === "string" && typeof r.start_date === "string" && typeof r.end_date === "string" && typeof r.requested_units === "number" && typeof r.checked_at === "number" && (typeof r.available === "boolean" || r.available === null) && (typeof r.free_units === "number" || r.free_units === null) && typeof r.call_id === "string").map((r) => ({ item: r.item_name, start_date: r.start_date, end_date: r.end_date, quantity: r.requested_units, available: r.available, free_units: r.free_units, checked_at: r.checked_at, call_id: r.call_id })) };
         generationMeta.evidence.stock_request = routeStockRequest;
         generationMeta.evidence.stock.forEach(receipt=>{
           const native=j.availabilityReceipts?.find(r=>r.call_id===receipt.call_id&&r.item_name===receipt.item);
@@ -822,6 +879,10 @@ export const generateDraft = action({
             && Array.isArray(native.basket.items) && native.basket.items.length>0
             && native.basket.items.every(i=>typeof i.name==="string" && !!i.name && Number.isInteger(i.quantity) && i.quantity>0))receipt.basket=native.basket;
         });
+        if(routeStockRequest){
+          routeStockRequest=stockRequestWithVerifiedQuoteItems(routeStockRequest,generationMeta.evidence.stock_quotes??[],generationMeta.evidence.stock);
+          generationMeta.evidence.stock_request=routeStockRequest;
+        }
         if (j.needs_human) {
           const reason = `needs_human:${j.needs_human_reason ?? "unknown"}`;
           const saved = await recordReview(reason, [], generationMeta.evidence);
@@ -851,6 +912,12 @@ export const generateDraft = action({
           routeOfferedPrices = j.offeredPrices ?? [];
           routeBookingModified = j.bookingModified === true;
           if (
+            thread_id.startsWith("__probe__") &&
+            j.deliveryCapability?.status === "pickup_only" &&
+            j.deliveryCapability.account_slug === c.account_slug &&
+            j.deliveryCapability.thread_id === thread_id
+          ) routeDeliveryCapability = "pickup_only";
+          if (
             !routeBookingModified &&
             thread_id.startsWith("__probe__") &&
             j.deliveryQuote?.thread_id === thread_id &&
@@ -858,6 +925,7 @@ export const generateDraft = action({
             j.deliveryQuote.source === "db_cinema_weighted_checkout_v1" &&
             Number.isSafeInteger(j.deliveryQuote.fee_gbp)
           ) {
+            generationDiagnosticStage = "delivery_verification";
             const currentDeliverySpecs = await ctx.runQuery(
               internal.renter_bot_tools.__service_deliverySpecs,
               { thread_id },
@@ -893,6 +961,7 @@ export const generateDraft = action({
           );
         if (j.toolStats?.queries?.length)
           console.log(`[generateDraft] toolQueries ${JSON.stringify(j.toolStats.queries)}`);
+          generationDiagnosticStage = "generation_telemetry";
           // Surface token/cache accounting so prompt-caching is observable
           // end-to-end rather than assumed (it fails silently otherwise).
           if (j.tokenUsage?.prompt != null) {
@@ -908,9 +977,17 @@ export const generateDraft = action({
         }
       } catch (error) {
         const kind = error instanceof Error ? error.name.replace(/[^a-zA-Z0-9_]/g, "").toLowerCase() : "unknown";
-        console.warn(`[generateDraft] canonical generation failed (${kind})`);
-        if(!await recoverCommittedFailure(`canonical_generation_error_${kind}`))
-          return { status: "skipped", reason: `canonical_generation_error_${kind}` };
+        const reason = `canonical_generation_error_${kind}`;
+        const generation_error = canonicalGenerationException(error, "agent", 500, generationDiagnosticStage);
+        console.warn(`[generateDraft] canonical generation failed (${kind})`, {
+          error_code: generation_error.error_code,
+          diagnostic_stage: generation_error.diagnostic_stage,
+          upstream_status: generation_error.upstream_status,
+          failure_hint: generation_error.failure_hint,
+          error_frames: generation_error.error_frames,
+        });
+        if(!await recoverCommittedFailure(reason,undefined,generation_error))
+          return { status: "skipped", reason, generation_error };
       }
     }
 
@@ -976,6 +1053,11 @@ export const generateDraft = action({
     const guardCandidate = thread_id.startsWith("__probe__") ? { guard_candidate: checkedDraft } : {};
     const profiles = equipmentClaimsNeedProfiles(checkedDraft)
       ? await ctx.runQuery(internal.renter_bot_tools.__service_get_verified_equipment_profiles, {}) : {cameras:[],lenses:[]};
+    const pickupReason = verifiedPickupReasonForSingleListing(
+      generationMeta.evidence?.listing_sources,
+      generationMeta.evidence?.pickup_facts,
+      c.account_slug,
+    );
     const guardOptions: Parameters<typeof guardDraft>[1] = {
       catalogueReadinessEvidence: ownerChecks.length && unsupportedCatalogueReadinessClaims(checkedDraft,[]).length ? await ctx.runQuery(internal.renter_bot_owner_checks.readinessEvidence,{checks:ownerChecks}) : [],
       cameraEvidence:profiles.cameras,lensEvidence:profiles.lenses,
@@ -994,7 +1076,9 @@ export const generateDraft = action({
       account: c.account_slug ?? undefined,
       stage: guardStage,
       pickupWindows: c.pickup_windows ?? undefined,
+      deliveryCapability: routeDeliveryCapability,
       pickupArea,
+      pickupReason,
       pickupAddress,
       pickupConfirmed,
       rentalChargeGbp: verifiedRentalChargeGbp({

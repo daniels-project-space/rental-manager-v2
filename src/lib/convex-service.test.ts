@@ -60,4 +60,25 @@ describe("isolated renter-bot Lab transport", () => {
     expect(url).toBe("https://clean-bulldog-494.convex.cloud/api/query");
     expect(init.headers.Authorization).toBeUndefined();
   });
+
+  it("permits loopback Lab calls only under the explicit local development flag", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("RENTER_BOT_LAB_DEPLOYMENT", "local");
+    vi.stubEnv("RENTER_BOT_LAB_CONVEX_URL", "http://127.0.0.1:3214");
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      status: "success", value: { isolated_lab: true }, logLines: [],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetch);
+    const client = createRenterBotLabConvexServiceClient();
+    expect(await client.query(makeFunctionReference<"query">("renter_bot_lab_probe:publicStatus"), {}))
+      .toEqual({ isolated_lab: true });
+    expect(fetch.mock.calls[0][0]).toBe("http://127.0.0.1:3214/api/query");
+    expect(fetch.mock.calls[0][1].headers.Authorization).toBeUndefined();
+
+    vi.stubEnv("RENTER_BOT_LAB_DEPLOYMENT", "hosted");
+    expect(() => createRenterBotLabConvexServiceClient()).toThrow("explicit local development mode");
+    vi.stubEnv("RENTER_BOT_LAB_DEPLOYMENT", "local");
+    vi.stubEnv("NODE_ENV", "production");
+    expect(() => createRenterBotLabConvexServiceClient()).toThrow("explicit local development mode");
+  });
 });

@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { unsupportedSensorIdentityClaims } from "./camera_sensor_comparisons";
+import { relevantSensorComparisons, sensorComparisonInstruction, unsupportedSensorIdentityClaims } from "./camera_sensor_comparisons";
 import { guardDraft } from "./draft_guard";
 
 describe("manufacturer reviewed sensor comparisons", () => {
+  it("supplies only comparisons relevant to the renter's message and selected listing", () => {
+    expect(relevantSensorComparisons("BMPCC 6K Full Frame listing; is pickup in Shoreditch?" )).toEqual([]);
+    expect(sensorComparisonInstruction("BMPCC 6K Full Frame listing; is pickup in Shoreditch?")).toBe("");
+    expect(relevantSensorComparisons("Does the Sony FX3 share a sensor with the A7S III?" )).toHaveLength(1);
+    expect(sensorComparisonInstruction("Does the Sony FX3 share a sensor with the A7S III?" )).toContain("Sony FX3");
+  });
   it("qualifies the captured marketing refusal followed by the owned alternative", () => {
     expect(unsupportedSensorIdentityClaims("The Sony A7S III isn't available. I can offer the Sony FX3 instead, which shares the same full-frame sensor and native E-mount.")).toEqual([]);
     expect(unsupportedSensorIdentityClaims("The FX3 has the same sensor as the A7s3.")).toEqual([]);

@@ -52,7 +52,10 @@ describe('current rental reply permissions',()=>{
   for(const text of [`Collect from ${address}.`,'The address is 12 Example Road.','It is not at W1A 1AA.'])expect(hasPickupDisclosure(text,[address])).toBe(true);
   expect(hasPickupDisclosure('Collect at 17 Another Street, SW1A 1AA.')).toBe(true);
   expect(hasPickupDisclosure('Delivery to your W1A 2AB postcode needs a location check.')).toBe(false);
-  expect(hasPickupDisclosure('Round-trip delivery and collection to SW1A 1AA is £35.')).toBe(false);
+  expect(hasPickupDisclosure('Round-trip delivery and collection to SW1A 1AA is £35.',[],undefined,['Can you quote delivery to SW1A 1AA?'])).toBe(false);
+  expect(hasPickupDisclosure('We can deliver to and collect from E1 6AN. Delivery and collection is £62.', ['10 Northumberland Street, London WC2N 5DB'], undefined, ['Can you deliver and collect from E1 6AN?'])).toBe(false);
+  expect(hasPickupDisclosure('We can deliver to and collect from E1 6AN.', ['10 Northumberland Street, London WC2N 5DB'])).toBe(true);
+  expect(hasPickupDisclosure('We can deliver to E1 6AN; collection is from 10 Northumberland Street, London WC2N 5DB.', ['10 Northumberland Street, London WC2N 5DB'])).toBe(true);
   expect(hasPickupDisclosure('Delivery to SW1A 1AA is available; collect from 17 Another Street, SW1A 1AA.')).toBe(true);
   expect(hasPickupDisclosure('Delivery to SW1A 1AA is available; pickup will be 17 Another Street.')).toBe(true);
   expect(hasPickupDisclosure('Pickup is in central London. I can send the exact address once confirmed.',[address,'central London'])).toBe(false);
@@ -67,5 +70,14 @@ describe('current rental reply permissions',()=>{
   expect(guardDraft(text,{...opts,stage:'COMPLETED'}).flags.some(f=>f.type==='PICKUP_DETAILS_EARLY')).toBe(true);
   expect(guardDraft(text,{...opts,stage:'CONFIRMED_UPCOMING'}).flags.some(f=>f.type==='PICKUP_DETAILS_EARLY')).toBe(false);
   expect(guardDraft(`Return it to ${address}.`,{...opts,stage:'IN_USE'}).flags.some(f=>f.type==='PICKUP_DETAILS_EARLY')).toBe(false);
+ });
+ it('allows a renter-provided delivery postcode without exposing the owner pickup point',()=>{
+  const text='Yes, we can arrange delivery and collection for E1 6AN. The total charge for both is £62.';
+  const opts={history:[{role:'renter' as const,content:'Can you deliver and collect the BMPCC kit from E1 6AN?'}],lastRenterMessage:'Thanks, what is the total charge?',newInquiry:true,
+   pickupArea:'Northumberland Street area',pickupPrivacySources:['10 Northumberland Street, London WC2N 5DB'],verifiedDeliveryFeeGbp:62};
+  const result=guardDraft(text,opts);
+  expect(result.flags.some(flag=>flag.type==='PICKUP_DETAILS_EARLY')).toBe(false);
+  expect(guardDraft('We can deliver and collect from E1 6AN; the exact pickup is 10 Northumberland Street, London WC2N 5DB.',opts).flags.some(flag=>flag.type==='PICKUP_DETAILS_EARLY')).toBe(true);
+  expect(guardDraft('Delivery is £62; pickup is 10 Northumberland Street, London WC2N 5DB.',opts).flags.some(flag=>flag.type==='PICKUP_DETAILS_EARLY')).toBe(true);
  });
 });

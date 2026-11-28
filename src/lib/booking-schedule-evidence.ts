@@ -1,4 +1,4 @@
-import { contextualScheduleMessages, scheduleAcceptance as acceptance, scheduleRejection as rejection, scheduleClockPattern, literalScheduleTime, type PriorScheduleClock } from "./booking-schedule-context";
+import { contextualScheduleMessages, scheduleAcceptance as acceptance, scheduleRejection as rejection, scheduleClockPattern, scheduleContextForClock, literalScheduleTime, type PriorScheduleClock } from "./booking-schedule-context";
 import type { BookingTimeMessage } from "./booking-time-transcript";
 export type ScheduleProof = {
   source: "agreed_chat" | "provider_booking" | "website_contract";
@@ -63,18 +63,29 @@ function corroborateChatClock(
       if(side===endpoint && !/\d{1,2}(?:[:.]\d{2}|\s*[ap]\.?m)|noon|midday|midnight/i.test(clause) && /morning|evening|afternoon|during the day|tonight|tomorrow|\d+(?:st|nd|rd|th)/i.test(clause)){agreement=undefined;proposal=undefined;}
     }
     for (const clock of text.matchAll(scheduleClockPattern())) {
-      const preceding = context.filter((c) => c.index! <= clock.index!).at(-1),
-        following = context.find((c) => c.index! > clock.index!);
-      const c = preceding ?? following;
+      const c = scheduleContextForClock(
+        text,
+        context,
+        clock.index!,
+        clock.index! + clock[0].length,
+      );
       if (!c) continue;
       const side = /^(?:return|drop|back)/i.test(c[0]) ? "return" : "pickup";
       if (side !== endpoint) continue;
       const explicit = literalScheduleTime(clock[0]);
       if (!explicit) continue;
+      const sentenceStart = Math.max(
+        text.lastIndexOf(".", clock.index!),
+        text.lastIndexOf("!", clock.index!),
+        text.lastIndexOf("?", clock.index!),
+        text.lastIndexOf(";", clock.index!),
+        text.lastIndexOf("\n", clock.index!),
+      ) + 1;
       const clause = text.slice(
-        c.index!>clock.index!?Math.max(0,clock.index!-15):c.index!,
-        context.find((next) => next.index! > clock.index!)?.index ??
-          text.length,
+        c.index! > clock.index!
+          ? Math.max(sentenceStart, clock.index! - 24)
+          : c.index!,
+        context.find((next) => next.index! > c.index!)?.index ?? text.length,
       );
       if (
         /\b(?:before|after|by|not|cannot|can't)\b/i.test(clause) ||

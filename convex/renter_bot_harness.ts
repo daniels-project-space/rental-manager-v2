@@ -13,13 +13,21 @@ import { action, internalMutation, internalQuery, internalActionOf } from "./own
 import { v } from "convex/values";
 import { ownerCheckValidator } from "./lib/owner_checks";
 import { draftEvidenceValidator } from "./lib/renter_draft_evidence";
-import { internal } from "./_generated/api";
-import { scoreDraft, scoreSkippedGeneration } from "./lib/renter_bot_rubric";
+import { api, internal } from "./_generated/api";
 import { PREFIX } from "./renter_bot_probe";
+import { renterBotLabAuthMarkerMatches } from "./lib/renter_bot_lab_contract";
+import { renterBotLabRentalDates, renterBotLabScenario, type RenterBotLabScenarioId } from "./lib/renter_bot_lab_scenarios";
+import type { Doc } from "./_generated/dataModel";
+
+function assertLabApiAuthorization(marker: string) {
+  if (!renterBotLabAuthMarkerMatches(marker, process.env)) {
+    throw new Error("Isolated Lab API authorization failed");
+  }
+}
 
 export const getFixture = internalQuery({
   args: { fixtureId: v.id("renter_bot_fixtures") },
-  handler: async (ctx, { fixtureId }) => ctx.db.get(fixtureId),
+  handler: async (ctx, { fixtureId }): Promise<Doc<"renter_bot_fixtures"> | null> => ctx.db.get(fixtureId),
 });
 
 export const getDraftByThread = internalQuery({
@@ -31,9 +39,15 @@ export const getDraftByThread = internalQuery({
       .first(),
 });
 
+export const getRunForLabTurn = internalQuery({
+  args: { lab_turn_id: v.string() },
+  handler: async (ctx, { lab_turn_id }) => ctx.db.query("renter_bot_harness_runs")
+    .withIndex("by_lab_turn", q => q.eq("lab_turn_id", lab_turn_id)).first(),
+});
+
 export const listActiveFixtures = internalQuery({
   args: {},
-  handler: async (ctx) =>
+  handler: async (ctx): Promise<Doc<"renter_bot_fixtures">[]> =>
     (await ctx.db.query("renter_bot_fixtures").collect()).filter(
       (f) => f.active,
     ),
@@ -59,6 +73,7 @@ const rubricResultValidator = v.object({
     v.literal("fail"),
     v.literal("flag"),
     v.literal("n_a"),
+    v.literal("unassessed"),
   ),
   detail: v.string(),
   evidence: v.optional(v.string()),
@@ -66,6 +81,16 @@ const rubricResultValidator = v.object({
 
 export const insertRun = internalMutation({
   args: {
+    expected_message_id: v.optional(v.string()),
+    lab_turn_id: v.optional(v.string()),
+    lab_lease_token: v.optional(v.string()),
+    generation_status: v.optional(v.union(v.literal("complete"), v.literal("failed"))),
+    failure_reason: v.optional(v.string()),
+    candidate_text: v.optional(v.string()),
+    production_guard_flags: v.optional(v.array(v.any())),
+    tool_stats: v.optional(v.any()),
+    token_usage: v.optional(v.object({ prompt:v.optional(v.number()), cached:v.optional(v.number()), completion:v.optional(v.number()), cost:v.optional(v.number()) })),
+    source_receipts: v.optional(v.any()),
     generation_error:v.optional(canonicalGenerationErrorValidator),
     native_quote_diagnostic:v.optional(v.string()),
     draft_evidence: v.optional(draftEvidenceValidator),
@@ -95,6 +120,7 @@ export const insertRun = internalMutation({
       v.literal("pass"),
       v.literal("fail"),
       v.literal("flag"),
+      v.literal("incomplete"),
     ),
     triggered_by: v.union(
       v.literal("harness_batch"),
@@ -104,129 +130,86 @@ export const insertRun = internalMutation({
     duration_ms: v.optional(v.number()),
     cost_usd: v.optional(v.number()),
   },
-  handler: async (ctx, args) => ctx.db.insert("renter_bot_harness_runs", args),
+  handler: async (ctx, args) => {
+    const { expected_message_id, lab_lease_token, ...runArgs } = args;
+    if (runArgs.lab_turn_id) {
+      if (!expected_message_id || !lab_lease_token || !runArgs.session_thread_id) throw new Error("Lab run must be bound to a current turn lease");
+      const turn = await ctx.db.query("renter_bot_lab_turns").withIndex("by_turn", q => q.eq("turn_id", runArgs.lab_turn_id!)).first();
+      if (!turn || turn.thread_id !== runArgs.session_thread_id || turn.account_slug !== runArgs.account_slug ||
+          turn.renter_message_id !== expected_message_id || turn.lease_token !== lab_lease_token || turn.status !== "running") {
+        throw new Error("stale_lab_turn");
+      }
+    }
+    if (expected_message_id && runArgs.session_thread_id) {
+      const latest = await ctx.db.query("hygglo_messages")
+        .withIndex("by_thread", q => q.eq("thread_id", runArgs.session_thread_id!)).order("desc").first();
+      if (latest?.message_id !== expected_message_id || latest.sender !== "renter" || latest.account_slug !== runArgs.account_slug) {
+        throw new Error("stale_inbound");
+      }
+    }
+    if (runArgs.lab_turn_id) {
+      const existing = await ctx.db.query("renter_bot_harness_runs")
+        .withIndex("by_lab_turn", q => q.eq("lab_turn_id", runArgs.lab_turn_id!)).first();
+      if (existing) {
+        // A retry is a new immutable result for the same renter turn. Replace
+        // the whole run so omitted optional fields (especially an earlier
+        // failure_reason/generation_error) cannot survive from a failed try.
+        await ctx.db.replace(existing._id, runArgs);
+        return existing._id;
+      }
+    }
+    return ctx.db.insert("renter_bot_harness_runs", runArgs);
+  },
 });
 
 export const runFixture = action({
   args: {
+    auth_marker: v.string(),
     fixtureId: v.id("renter_bot_fixtures"),
     runBatchId: v.optional(v.string()),
     triggeredBy: v.optional(
       v.union(v.literal("harness_batch"), v.literal("lab_ui_manual")),
     ),
-    // runBatch/runToCleanStreak set this so cleanup happens once at the end
-    // instead of after every single fixture.
-    skipCleanup: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
     args,
-  ): Promise<{ runId: string; overall_status: string }> => {
+  ): Promise<{ threadId: string; runId: string; overall_status: string }> => {
+    assertLabApiAuthorization(args.auth_marker);
     const fixture = await ctx.runQuery(internal.renter_bot_harness.getFixture, {
       fixtureId: args.fixtureId,
     });
     if (!fixture) throw new Error(`Fixture ${args.fixtureId} not found`);
 
-    const threadId = `${PREFIX}${args.fixtureId}-${Date.now()}`;
-    const startedAt = Date.now();
-
-    await ctx.runMutation(internal.renter_bot_probe.seed, {
-      thread_id: threadId,
-      account_slug: fixture.account_slug,
-      items: (fixture.seed_context?.items ?? []).map((name) => ({ name })),
-      messages: fixture.messages.map((m) => ({ role: m.role, text: m.text })),
+    const session = await ctx.runAction(api.renter_bot_lab_actions.startLiveSession, {
+      accountSlug: fixture.account_slug,
+      fixtureId: args.fixtureId,
     });
-
-    const draftResult = await ctx.runAction(
-      internal.replyInbox_actions.__service_generateDraft,
-      { thread_id: threadId },
-    );
-
-    let runId: string;
-    let overallStatus: string;
-    if (draftResult.status === "skipped") {
-      const skippedScore = scoreSkippedGeneration(draftResult.reason,
-        ["complaint", "damage_report", "cancellation", "blacklisted"].includes(fixture.scenario_type));
-      overallStatus = skippedScore.overall_status;
-      runId = await ctx.runMutation(internal.renter_bot_harness.insertRun, {
-        fixture_id: args.fixtureId,
-        run_batch_id: args.runBatchId,
-        account_slug: fixture.account_slug,
-        draft_text: "",
-        model_id: draftResult.model_id ?? draftResult.generation_error?.model_id ?? "unknown (generation failed)",
-        generation_error:draftResult.generation_error,
-        cost_usd:draftResult.cost_usd??draftResult.generation_error?.cost_usd,
-        filter_violations: skippedScore.filter_violation_categories,
-        rubric_results: skippedScore.results,
-        overall_status: skippedScore.overall_status,
-        triggered_by: args.triggeredBy ?? "harness_batch",
-        run_at: startedAt,
-        duration_ms: Date.now() - startedAt,
-      });
-    } else {
-      // generateDraft's own return is narrow (draft/confidence/flags/status);
-      // the fuller cached row (facts_claimed, intent, model_id) lives in
-      // renter_bot_drafts, keyed by the same thread_id — but note the
-      // fallback generation path never populates facts_claimed at all, so its
-      // absence here is expected, not itself a bug (see rubric's handling).
-      const draftRow = await ctx.runQuery(
-        internal.renter_bot_harness.getDraftByThread,
-        { thread_id: threadId },
-      );
-
-      const draftText = draftResult.draft ?? "";
-      const factsClaimed = (draftResult.facts_claimed ?? []).map((f) => ({
-        kind: f.kind,
-        value: f.value,
-        verified: f.verified,
-      }));
-
-      const pendingOwnerChecks=await ctx.runQuery(internal.renter_bot_harness.pendingOwnerChecksForDraft,{thread_id:threadId,draft_text:draftText});
-      const rubric = scoreDraft({
-        pendingOwnerChecks:pendingOwnerChecks??undefined,
-        accountSlug: fixture.account_slug,
-        draftText,
-        factsClaimed,
-        productionFlags: draftResult.flags,
-        priceEvidence:draftResult.evidence?.prices,
-        bookingRecord:draftResult.evidence?.booking_record,
-        priceRequest:draftResult.evidence?.stock_request,
-        lastRenterMessage:fixture.messages.filter(m=>m.role==="renter").at(-1)?.text,
-      });
-      overallStatus = rubric.overall_status;
-
-      runId = await ctx.runMutation(internal.renter_bot_harness.insertRun, {
-        fixture_id: args.fixtureId,
-        run_batch_id: args.runBatchId,
-        account_slug: fixture.account_slug,
-        draft_text: draftText,
-        draft_intent: draftResult.draft_intent,
-        draft_confidence: draftResult.confidence ?? draftRow?.draft_confidence,
-        facts_claimed: draftResult.facts_claimed,
-        draft_evidence: draftResult.evidence,
-        pending_owner_checks:pendingOwnerChecks??undefined,
-        model_id: draftResult.model_id ?? draftResult.generation_error?.model_id ?? "unknown",
-        filter_violations: rubric.filter_violation_categories,
-        rubric_results: rubric.results,
-        overall_status: rubric.overall_status,
-        triggered_by: args.triggeredBy ?? "harness_batch",
-        run_at: startedAt,
-        duration_ms: Date.now() - startedAt,
-        cost_usd: draftResult.cost_usd??draftResult.generation_error?.cost_usd,
-        generation_error:draftResult.generation_error,
-      });
+    const threadId = session.threadId;
+    const renterMessage = await ctx.runQuery(internal.renter_bot_lab_actions.getLatestRenterMessageForThread, { thread_id: threadId });
+    if (!renterMessage || renterMessage.account_slug !== fixture.account_slug) throw new Error("Fixture needs a final renter message");
+    const result = await ctx.runAction(api.renter_bot_lab_actions.runTestTurn, {
+      auth_marker: args.auth_marker,
+      threadId,
+      accountSlug: fixture.account_slug,
+      text: renterMessage.body_text,
+      turnId: crypto.randomUUID(),
+      requestMessageId: renterMessage.message_id,
+      fixtureId: args.fixtureId, runBatchId: args.runBatchId,
+      triggeredBy: args.triggeredBy ?? "harness_batch",
+      expectedEscalation: ["complaint", "damage_report", "cancellation", "blacklisted"].includes(fixture.scenario_type),
+    });
+    if (result.status === "running") {
+      throw new Error(`Fixture Lab turn is still running in ${threadId}; preserve it for recovery`);
     }
-
-    if (!args.skipCleanup) {
-      await ctx.runMutation(internal.renter_bot_probe.__service_cleanup, {});
-    }
-
-    return { runId, overall_status: overallStatus };
+    if (typeof result.runId !== "string") throw new Error("Fixture turn did not persist a run record");
+    return { threadId, runId: result.runId, overall_status: String(result.overall_status ?? "flag") };
   },
 });
 
 export const runBatch = action({
   args: {
+    auth_marker: v.string(),
     fixtureIds: v.optional(v.array(v.id("renter_bot_fixtures"))),
     runBatchId: v.optional(v.string()),
   },
@@ -235,8 +218,9 @@ export const runBatch = action({
     args,
   ): Promise<{
     runBatchId: string;
-    results: Array<{ fixtureId: string; overall_status: string }>;
+    results: Array<{ fixtureId: string; threadId: string; runId: string; overall_status: string }>;
   }> => {
+    assertLabApiAuthorization(args.auth_marker);
     const runBatchId = args.runBatchId ?? `batch-${Date.now()}`;
     const fixtureIds =
       args.fixtureIds ??
@@ -244,23 +228,23 @@ export const runBatch = action({
         await ctx.runQuery(internal.renter_bot_harness.listActiveFixtures, {})
       ).map((f) => f._id);
 
-    const results: Array<{ fixtureId: string; overall_status: string }> = [];
+    const results: Array<{ fixtureId: string; threadId: string; runId: string; overall_status: string }> = [];
     for (const fixtureId of fixtureIds) {
       const r = await ctx.runAction(internal.renter_bot_harness.__service_runFixture, {
+        auth_marker: args.auth_marker,
         fixtureId,
         runBatchId,
         triggeredBy: "harness_batch" as const,
-        skipCleanup: true, // one sweep at the end, not per-fixture
       });
-      results.push({ fixtureId, overall_status: r.overall_status });
+      results.push({ fixtureId, threadId: r.threadId, runId: r.runId, overall_status: r.overall_status });
     }
-    await ctx.runMutation(internal.renter_bot_probe.__service_cleanup, {});
     return { runBatchId, results };
   },
 });
 
 export const runToCleanStreak = action({
   args: {
+    auth_marker: v.string(),
     fixtureId: v.id("renter_bot_fixtures"),
     targetStreak: v.optional(v.number()),
     maxAttempts: v.optional(v.number()),
@@ -269,6 +253,7 @@ export const runToCleanStreak = action({
     ctx,
     args,
   ): Promise<{ streakAchieved: number; attempts: number; lastRunId?: string }> => {
+    assertLabApiAuthorization(args.auth_marker);
     const target = args.targetStreak ?? 5;
     // Generous ceiling, not a target — mirrors v1's 300-run loop being a cap.
     const maxAttempts = args.maxAttempts ?? target * 6;
@@ -279,15 +264,14 @@ export const runToCleanStreak = action({
     while (streak < target && attempts < maxAttempts) {
       attempts++;
       const r = await ctx.runAction(internal.renter_bot_harness.__service_runFixture, {
+        auth_marker: args.auth_marker,
         fixtureId: args.fixtureId,
         runBatchId,
         triggeredBy: "harness_batch" as const,
-        skipCleanup: true,
       });
       lastRunId = r.runId;
       streak = r.overall_status === "pass" ? streak + 1 : 0;
     }
-    await ctx.runMutation(internal.renter_bot_probe.__service_cleanup, {});
     return { streakAchieved: streak, attempts, lastRunId };
   },
 });
@@ -309,11 +293,8 @@ export const runToCleanStreak = action({
 // calling this once per scenario from outside (see scripts/renter-bot-scenarios).
 export const runMultiTurnScenario = action({
   args: {
+    auth_marker: v.string(),
     scenarioId: v.string(),
-    accountSlug: v.string(),
-    items: v.array(
-      v.object({ name: v.string(), product_id: v.optional(v.number()) }),
-    ),
     turns: v.array(v.string()),
     runBatchId: v.optional(v.string()),
   },
@@ -323,6 +304,8 @@ export const runMultiTurnScenario = action({
   ): Promise<{
     scenarioId: string;
     threadId: string;
+    order_before: unknown;
+    order_after: unknown;
     turnResults: Array<{
       turn: number;
       renter_message: string;
@@ -330,18 +313,30 @@ export const runMultiTurnScenario = action({
       overall_status: string;
       escalated: boolean;
       escalation_reason?: string;
+      turn_status: "ok" | "skipped" | "running";
+      failure_reason?: string;
+      candidate_text?: string;
+      generation_error?: unknown;
       rubric_results: unknown[];
       productionFlags: unknown[];
       runId?: string;
+      order_after: unknown;
     }>;
   }> => {
-    const threadId = `${PREFIX}mt-${args.scenarioId}-${Date.now()}`;
-    await ctx.runMutation(internal.renter_bot_probe.seed, {
-      thread_id: threadId,
-      account_slug: args.accountSlug,
-      items: args.items,
-      messages: [],
+    assertLabApiAuthorization(args.auth_marker);
+    const scenario = renterBotLabScenario(args.scenarioId);
+    if (!scenario) throw new Error("Unknown prepared Lab scenario");
+    const { startDate, endDate } = renterBotLabRentalDates(scenario);
+    const session = await ctx.runAction(internal.renter_bot_lab_actions.__service_startLiveSession, {
+      accountSlug: scenario.accountSlug,
+      scenarioId: scenario.id as RenterBotLabScenarioId,
+      items: [scenario.item.name_canonical],
+      lifecycle: scenario.startStage === "confirmed" ? "confirmed" : "awaiting_owner_approval",
+      startDate,
+      endDate,
+      dates: `${startDate} to ${endDate}`,
     });
+    const threadId = session.threadId;
 
     const turnResults: Array<{
       turn: number;
@@ -350,98 +345,72 @@ export const runMultiTurnScenario = action({
       overall_status: string;
       escalated: boolean;
       escalation_reason?: string;
+      turn_status: "ok" | "skipped" | "running";
+      failure_reason?: string;
+      candidate_text?: string;
+      generation_error?: unknown;
       rubric_results: unknown[];
       productionFlags: unknown[];
       runId?: string;
+      order_after: unknown;
     }> = [];
+    const orderBefore = await ctx.runQuery(internal.renter_bot_lab_order.__service_get, { thread_id: threadId });
+    if (!orderBefore) throw new Error("Prepared Lab session did not create its simulated order");
 
-    for (let i = 0; i < args.turns.length; i++) {
-      const text = args.turns[i];
-      await ctx.runMutation(internal.renter_bot_lab_actions.appendRenterMessage, {
-        thread_id: threadId,
-        account_slug: args.accountSlug,
-        text,
-      });
+      for (let i = 0; i < args.turns.length; i++) {
+        const text = args.turns[i];
+        const turnId = crypto.randomUUID();
+        const result = await ctx.runAction(api.renter_bot_lab_actions.runTestTurn, {
+          auth_marker: args.auth_marker,
+          threadId,
+          accountSlug: scenario.accountSlug,
+          text,
+          turnId,
+          runBatchId: args.runBatchId,
+          triggeredBy: "harness_batch",
+          expectedEscalation: false,
+        });
+        const orderAfter = await ctx.runQuery(internal.renter_bot_lab_order.__service_get, { thread_id: threadId });
 
-      const startedAt = Date.now();
-      const draftResult = await ctx.runAction(internal.replyInbox_actions.__service_generateDraft, {
-        thread_id: threadId,
-      });
+        if (result.status === "running") {
+          turnResults.push({
+            turn: i,
+            renter_message: text,
+            draft: "",
+            overall_status: "running",
+            escalated: false,
+            turn_status: "running",
+            rubric_results: [],
+            productionFlags: [],
+            order_after: orderAfter,
+          });
+          break;
+        }
 
-      if (draftResult.status === "skipped") {
+        const hasReply = result.status === "ok" && Boolean(result.draft);
         turnResults.push({
           turn: i,
           renter_message: text,
-          draft: "",
-          overall_status: "escalated",
-          escalated: true,
-          escalation_reason: draftResult.reason,
-          rubric_results: [],
-          productionFlags: [],
+          draft: result.draft ?? "",
+          overall_status: result.overall_status ?? "flag",
+          escalated: false,
+          turn_status: result.status === "ok" ? "ok" : "skipped",
+          ...(!hasReply ? { failure_reason: result.reason ?? "no_approved_reply" } : {}),
+          ...(result.candidate_text ? { candidate_text: result.candidate_text } : {}),
+          ...(result.generation_error ? { generation_error: result.generation_error } : {}),
+          rubric_results: result.rubric_results ?? [],
+          productionFlags: Array.isArray(result.productionGuardFlags) ? result.productionGuardFlags : [],
+          runId: result.runId,
+          order_after: orderAfter,
         });
-        continue;
+
+        // Do not make later renter turns appear to follow a bot reply that was
+        // never approved. Keep the incomplete thread intact for inspection.
+        if (!hasReply) break;
       }
 
-      const draftRow = await ctx.runQuery(internal.renter_bot_harness.getDraftByThread, {
-        thread_id: threadId,
-      });
-      const draftText = draftResult.draft ?? "";
-      const factsClaimed = (draftResult.facts_claimed ?? []).map((f) => ({
-        kind: f.kind,
-        value: f.value,
-        verified: f.verified,
-      }));
-
-      const pendingOwnerChecks=await ctx.runQuery(internal.renter_bot_harness.pendingOwnerChecksForDraft,{thread_id:threadId,draft_text:draftText});
-      const rubric = scoreDraft({
-        pendingOwnerChecks:pendingOwnerChecks??undefined,
-        accountSlug: args.accountSlug,
-        draftText,
-        factsClaimed,
-        productionFlags: draftResult.flags,
-        priceEvidence:draftResult.evidence?.prices,
-        bookingRecord:draftResult.evidence?.booking_record,
-        priceRequest:draftResult.evidence?.stock_request,
-        lastRenterMessage:text,
-      });
-
-      const runId = await ctx.runMutation(internal.renter_bot_harness.insertRun, {
-        session_thread_id: threadId,
-        run_batch_id: args.runBatchId,
-        account_slug: args.accountSlug,
-        draft_text: draftText,
-        draft_intent: draftResult.draft_intent,
-        draft_confidence: draftResult.confidence ?? draftRow?.draft_confidence,
-        facts_claimed: draftResult.facts_claimed,
-        draft_evidence: draftResult.evidence,
-        pending_owner_checks:pendingOwnerChecks??undefined,
-        model_id: draftResult.model_id ?? draftResult.generation_error?.model_id ?? "unknown",
-        filter_violations: rubric.filter_violation_categories,
-        rubric_results: rubric.results,
-        overall_status: rubric.overall_status,
-        triggered_by: "harness_batch",
-        run_at: startedAt,
-        duration_ms: Date.now() - startedAt,
-        cost_usd: draftResult.cost_usd??draftResult.generation_error?.cost_usd,
-        generation_error:draftResult.generation_error,
-      });
-
-      if (draftText) await ctx.runMutation(internal.renter_bot_lab_actions.appendAssistantMessage, { thread_id: threadId, account_slug: args.accountSlug, text: draftText, run_id: runId });
-
-      turnResults.push({
-        turn: i,
-        renter_message: text,
-        draft: draftText,
-        overall_status: rubric.overall_status,
-        escalated: false,
-        rubric_results: rubric.results,
-        productionFlags: draftResult.flags ?? [],
-        runId,
-      });
-    }
-
-    await ctx.runMutation(internal.renter_bot_probe.__service_cleanup, {});
-    return { scenarioId: args.scenarioId, threadId, turnResults };
+    const orderAfter = await ctx.runQuery(internal.renter_bot_lab_order.__service_get, { thread_id: threadId });
+    return { scenarioId: scenario.id, threadId, order_before: orderBefore, order_after: orderAfter, turnResults };
   },
 });
 

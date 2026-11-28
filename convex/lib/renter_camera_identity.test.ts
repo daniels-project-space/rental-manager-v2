@@ -56,6 +56,9 @@ describe("renter camera identity provenance", () => {
     expect(check("Which is your Sony body?",[])).toHaveLength(1);
     expect(check(saved+" Your Sony FX3 camera is ready.",[])).toHaveLength(1);
   });
+  it("does not treat an ordinal camera in a rental amendment as the renter's own setup", () => {
+    expect(check("Let me know if you'd like me to update your request with these dates and the second body.",[])).toEqual([]);
+  });
   it("accepts a stated camera followed by a support question", () => {
     expect(check("Which Sony body are you using?", ["I'm using a Sony FX3, how do I focus?"])).toEqual([]);
     expect(check("Which Sony body are you using?", ["Can I use a Sony FX3?"])).toHaveLength(1);

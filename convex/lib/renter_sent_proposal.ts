@@ -9,6 +9,7 @@ import { v, type Infer } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import type { PriceEvidence } from "./price_claims";
+import type { DraftEvidence } from "./renter_draft_evidence";
 import { currentDraftApproval, draftContextKey } from "./draft_review";
 import { getBotBooking, getLabOrder } from "./renter_booking";
 import { recentThreadMessages } from "./thread_messages";
@@ -19,7 +20,9 @@ export const sentAdditionProposalValidator = v.object({
   quoted_lines:v.optional(v.array(v.object({product_id:v.number(),name:v.string(),qty:v.number(),line_total_gbp:v.number()}))),
   items: v.array(v.object({ product_id: v.number(), qty: v.number() })),
   base_items: v.array(v.object({ name: v.string(), quantity: v.number() })),
-  added_items: v.array(v.object({ name: v.string(), quantity: v.number() })),
+  // Native price evidence includes approved listing aliases so later renters
+  // can refer to the same selected item using either its short name or title.
+  added_items: v.array(v.object({ name: v.string(), quantity: v.number(), aliases: v.optional(v.array(v.string())) })),
   start_date: v.string(), end_date: v.string(),
   total_gbp: v.number(), additional_cost_gbp: v.number(),
 });
@@ -51,23 +54,41 @@ export function additionProposalsFromEvidence(prices: PriceEvidence[], scope: {
   return [...proposals.values()];
 }
 
-/** Called when an owner message is recorded, before its draft is cleared. */
-export async function sentBookingProposals(ctx: QueryCtx, conversation: Doc<"conversations"> | null, text: string): Promise<{additions:SentAdditionProposal[];dates:SentDateProposal[];replacements:SentReplacementProposal[];inquiries:SentInquiryOffer[]}> {
-  const selection=inquiryOffersForText(conversation?.ai_draft_evidence,conversation?.ai_draft_text,text);
-  const exact=!!conversation?.ai_draft_text&&text.trim()===conversation.ai_draft_text.trim();
+/** Called for a real sent owner message or a simulated Lab owner turn, before draft state is cleared. */
+export async function sentBookingProposals(ctx: QueryCtx, conversation: Doc<"conversations"> | null, text: string,
+  options?:{labSimulation?:{draftText:string;evidence:DraftEvidence;requestMessageId:string}}): Promise<{additions:SentAdditionProposal[];dates:SentDateProposal[];replacements:SentReplacementProposal[];inquiries:SentInquiryOffer[]}> {
+  const simulation=options?.labSimulation;
+  const simulatedLabDraft=!!simulation&&conversation?.thread_id.startsWith("__probe__")&&
+    simulation.requestMessageId.trim().length>0&&simulation.draftText.trim()===text.trim();
+  const draftText=simulatedLabDraft?simulation!.draftText:conversation?.ai_draft_text;
+  const evidence=simulatedLabDraft?simulation!.evidence:conversation?.ai_draft_evidence;
+  const selection=inquiryOffersForText(evidence,draftText,text);
+  const exact=!!draftText&&text.trim()===draftText.trim();
   if(selection.supported&&!selection.ok)return {additions:[],dates:[],replacements:[],inquiries:[]};
-  const selectedOffers=selection.supported?selection.quotes:conversation?.ai_draft_evidence?.stock_quotes??[];
-  if (!conversation?.ai_draft_text || !exact && !(selection.supported&&selection.ok) ||
-    !conversation.ai_draft_evidence?.prices?.length && !selectedOffers.length) return {additions:[],dates:[],replacements:[],inquiries:[]};
+  const selectedOffers=selection.supported?selection.quotes:evidence?.stock_quotes??[];
+  if (!conversation || !draftText || !exact && !(selection.supported&&selection.ok) ||
+    !evidence?.prices?.length && !selectedOffers.length) return {additions:[],dates:[],replacements:[],inquiries:[]};
   const [latest] = await recentThreadMessages(ctx, conversation.thread_id, 1);
   if (latest?.sender !== "renter") return {additions:[],dates:[],replacements:[],inquiries:[]};
   const settings = await ctx.db.query("settings").first();
   const order = await getLabOrder(ctx, conversation.thread_id);
   const context_key = draftContextKey(await getBotBooking(ctx, conversation.thread_id), conversation.inquiry_items, order);
   const epoch = settings?.draft_epoch ?? 0;
-  const approval = currentDraftApproval(conversation, {message_id:latest.message_id, context_key, epoch});
-  if(!approval)return {additions:[],dates:[],replacements:[],inquiries:[]};
-  const inquiries=sentInquiryOffers({...conversation.ai_draft_evidence!,stock_quotes:selectedOffers},{context_key,epoch,message_id:approval.message_id});
+  const scope={message_id:latest.message_id,context_key,epoch};
+  const approval = currentDraftApproval(conversation, scope);
+  const simulatedCurrentLabTurn=simulatedLabDraft&&simulation!.requestMessageId===latest.message_id&&
+    !(conversation.ai_draft_review?.for_message_id===latest.message_id&&conversation.ai_draft_review.epoch===epoch);
+  const proposalMessageId=approval?.message_id??(simulatedCurrentLabTurn?latest.message_id:undefined);
+  if(!proposalMessageId)return {additions:[],dates:[],replacements:[],inquiries:[]};
+  // Generic proposed quotes on a saved order are not consent evidence. The
+  // dedicated complete-amendment tool marks its exact quote so the Lab can
+  // apply an accepted date+items change atomically without treating it as a
+  // new inquiry or confusing it with an addition proposal.
+  const hasCompleteLabAmendment=selectedOffers.some(quote=>quote.complete_basket_amendment===true);
+  const allowLabProposedBasket=conversation.thread_id.startsWith("__probe__")&&
+    ((order?.items.length??0)===0||hasCompleteLabAmendment);
+  const inquiries=sentInquiryOffers({...evidence!,stock_quotes:selectedOffers},{context_key,epoch,message_id:proposalMessageId},
+    {allowProposedBasket:allowLabProposedBasket});
   if(!order)return {additions:[],dates:[],replacements:[],inquiries};
   const members = (rows:Array<{name:string;quantity:number}>) => {
     const totals=new Map<string,number>();
@@ -75,7 +96,7 @@ export async function sentBookingProposals(ctx: QueryCtx, conversation: Doc<"con
     return JSON.stringify([...totals].sort((a,b)=>a[0].localeCompare(b[0])));
   };
   const currentMembers=members(order.items.map(i=>({name:i.name,quantity:i.qty})));
-  const amendmentPrices=exact?conversation.ai_draft_evidence!.prices??[]:[];
+  const amendmentPrices=exact?evidence!.prices??[]:[];
   const pendingPrices=amendmentPrices.filter(p=>p.proposal && members(p.proposal.base_items)===currentMembers);
   const total=summarise(order.items,order.start_date,order.end_date).total_gbp;
   const dates:SentDateProposal[]=[];
@@ -83,22 +104,22 @@ export async function sentBookingProposals(ctx: QueryCtx, conversation: Doc<"con
     if(!p||price.kind!=="basket"||price.source!=="native_lab_date_proposal"||p.before_context_key!==context_key
       ||p.from_start_date!==order.start_date||p.from_end_date!==order.end_date||total==null||Math.round(total*100)!==Math.round(p.base_total_gbp*100)
       ||!price.start_date||!price.end_date||!price.total_gbp||!Number.isFinite(price.total_gbp)||!price.items||members(price.items)!==currentMembers)continue;
-    const proposal:SentDateProposal={context_key,epoch,quoted_for_message_id:approval.message_id,from_start_date:p.from_start_date,from_end_date:p.from_end_date,
+    const proposal:SentDateProposal={context_key,epoch,quoted_for_message_id:proposalMessageId,from_start_date:p.from_start_date,from_end_date:p.from_end_date,
       ...(p.physical_identity_key?{physical_identity_key:p.physical_identity_key}:{}),
       start_date:price.start_date,end_date:price.end_date,total_gbp:price.total_gbp,base_total_gbp:p.base_total_gbp,items:price.items};
     if(!dates.some(d=>JSON.stringify(d)===JSON.stringify(proposal)))dates.push(proposal);
   }
-  const additions=additionProposalsFromEvidence(pendingPrices,{message_id:approval.message_id,context_key,epoch});
+  const additions=additionProposalsFromEvidence(pendingPrices,{message_id:proposalMessageId,context_key,epoch});
   const offers=selectedOffers;
   if(!order.items.length && !order.changes.length && offers.length===1 && text.includes(REFERRAL_RESTORE_OFFER)) {
     const offer=offers[0],priced=offer.listing_quote;
-    if(offer.referral_code && priced?.lines.length && priced.total_gbp>0)additions.push({context_key,epoch,quoted_for_message_id:approval.message_id,
-      referral_code:offer.referral_code,recommendation_requirements:conversation.ai_draft_evidence!.recommendation_quotes?.find(q=>q.quote_key===offer.quote_key)?.requirements??[],physical_identity_key:JSON.stringify(offer.items.map(l=>[l.item_id,l.name,l.quantity]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])))),
+    if(offer.referral_code && priced?.lines.length && priced.total_gbp>0)additions.push({context_key,epoch,quoted_for_message_id:proposalMessageId,
+      referral_code:offer.referral_code,recommendation_requirements:evidence!.recommendation_quotes?.find(q=>q.quote_key===offer.quote_key)?.requirements??[],physical_identity_key:JSON.stringify(offer.items.map(l=>[l.item_id,l.name,l.quantity]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])))),
       items:priced.lines.map(l=>({product_id:l.product_id,qty:l.quantity})),base_items:[],added_items:priced.lines.map(l=>({name:l.name,quantity:l.quantity})),
       quoted_lines:priced.lines.map(l=>({product_id:l.product_id,name:l.name,qty:l.quantity,line_total_gbp:l.total_gbp})),
       start_date:offer.start_date,end_date:offer.end_date,total_gbp:priced.total_gbp,additional_cost_gbp:priced.total_gbp});
   }
-  return {additions,dates,inquiries,replacements:replacementProposalsFromEvidence(pendingPrices,{message_id:approval.message_id,context_key,epoch})};
+  return {additions,dates,inquiries,replacements:replacementProposalsFromEvidence(pendingPrices,{message_id:proposalMessageId,context_key,epoch})};
 }
 
 export async function sentAdditionProposals(ctx:QueryCtx,conversation:Doc<"conversations">|null,text:string){return (await sentBookingProposals(ctx,conversation,text)).additions;}

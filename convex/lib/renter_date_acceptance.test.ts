@@ -9,8 +9,24 @@ describe("date change agreement",()=>{
   it(`refuses insufficient or conflicting consent: ${text}`,()=>expect(acceptsDateChange(text,terms())).toBe(false));
  for(const text of ["Yes please.","Please extend it.","Go ahead.","Yes, please update the dates."])
   it(`accepts the unchanged sent offer: ${text}`,()=>expect(acceptsDateChange(text,terms(),owner())).toBe(true));
+ it("accepts an explicit reference to the single quoted date period",()=>{
+  expect(acceptsDateChange("Yes, please update it to those dates at £170.",terms(),owner())).toBe(true);
+  expect(acceptsDateChange("Could you move it to those dates for £170?",terms(),owner())).toBe(true);
+  expect(acceptsDateChange("Those dates are fine at £170.",terms(),owner())).toBe(true);
+  expect(acceptsDateChange("Yes, please update it to those dates at £171.",terms(),owner())).toBe(false);
+  expect(acceptsDateChange("Would those dates work at £170?",terms(),owner())).toBe(false);
+ });
  it("does not require a second confirmation for an explicit no-cost increase instruction",()=>{
   expect(acceptsDateChange("Please extend the return to 22 October.",{...terms(),total_gbp:124})).toBe(true);
+ });
+ it("accepts a direct move to the unique quoted single day without requiring the renter to repeat its price",()=>{
+  const t={...terms(),from_start_date:"2026-10-20",from_end_date:"2026-10-20",start_date:"2026-10-21",end_date:"2026-10-21",total_gbp:45,base_total_gbp:45};
+  const o={body_text:"Moving the BMPCC rental to 21 October would keep your total at £45. Your current request remains unchanged until you approve.",quoted_dates:[{...t,epoch:86,quoted_for_message_id:"previous",items:[{name:"BMPCC 6K Full Frame",quantity:1}]}]};
+  expect(acceptsDateChange("Yes, please move the rental to 21 October.",t,o)).toBe(true);
+  expect(acceptsDateChange("Yes, please move the rental to 22 October.",t,o)).toBe(false);
+  expect(acceptsDateChange("If it is 21 October, please move the rental to 21 October.",t,o)).toBe(false);
+  expect(acceptsDateChange("Yes, please move the rental to 21 October for £46.",t,o)).toBe(false);
+  expect(acceptsDateChange("Yes, please move the rental to 21 October.",t)).toBe(true);
  });
  it("rejects changed Native context, dates, prices and multiple offers",()=>{
   for(const change of [{context_key:"stale"},{total_gbp:169.99},{from_end_date:"2026-10-19"},{end_date:"2026-10-23"}]){
@@ -33,6 +49,12 @@ it("accepts a sent date offer that correctly distinguishes extra cost and full t
  expect(acceptsDateChange("Yes please.",terms(),o)).toBe(true);
  expect(acceptsDateChange("Please move the dates to 20–22 October at £46 extra, bringing the total to £170.",terms())).toBe(true);
  for(const text of [o.body_text.replace("£170","£46"),o.body_text.replace("£46 extra","£170 extra"),o.body_text.replace("£46 extra","£46 total"),o.body_text.replace("£46 extra","£46 less"),o.body_text.replace("£170","£170.001"),o.body_text.replace("£170","£-170")])expect(acceptsDateChange("Yes please.",terms(),{...o,body_text:text})).toBe(false);
+});
+
+it("accepts the Lab date quote wording with a parenthesized total increase",()=>{
+ const t={...terms(),from_start_date:"2026-12-10",from_end_date:"2026-12-10",start_date:"2026-12-11",end_date:"2026-12-12",total_gbp:100,base_total_gbp:50,today:"2026-11-26"};
+ const o={body_text:"The BMPCC 6K Full Frame kit is available for 11-12 December. Moving the booking to those dates (2 days) would bring the total to £100 (a £50 increase). Let me know if you would like me to go ahead and update the dates for you.",quoted_dates:[{...t,epoch:0,quoted_for_message_id:"previous",items:[{name:"BMPCC 6K Full Frame",quantity:1}]}]};
+ expect(acceptsDateChange("Yes, please update it to those dates at £100.",t,o)).toBe(true);
 });
 
 it("recognises GBP notation and refuses an unverified different currency",()=>{

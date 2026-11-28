@@ -3,12 +3,13 @@ import { inclusiveRentalDays, rentalQuote, type PriceTier } from "../../convex/l
 import type { PriceEvidence } from "../../convex/lib/price_claims";
 import type { ToolReceipt } from "./renter-tool-evidence";
 import { reviewedLensNames } from "../../convex/lib/renter_item_names";
+import { LAB_THREAD_PREFIX } from "../../convex/lib/renter_booking";
 const number = (n: unknown) => typeof n === "number" && Number.isFinite(n) && n > 0 ? n : undefined;
 const string = (s: unknown) => typeof s === "string" && s.trim() ? s : undefined;
 /** Aliases from native owned listing context, never model arguments or title tokens. */
 export type PriceListingIdentity = {account_slug:string;product_id:number;names:string[]};
 /** Whitelisted actual tool results, excluding arguments, errors and arbitrary numeric keys. */
-export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceListingIdentity[] = [], threadId?: string): PriceEvidence[] {
+export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceListingIdentity[] = [], threadId?: string, accountSlug?: string): PriceEvidence[] {
   const out: PriceEvidence[] = [];
   const quote = (r: Record<string,unknown>, names: string[], call: string, base?: unknown, role?: PriceEvidence["quote_role"]) => {
     const days=number(r.days), quantity=number(r.quantity);
@@ -23,17 +24,69 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
   for (const receipt of receipts) {
     const {tool,call_id,result:r}=receipt;
     if(tool==="get_lab_order" && receipt!==latestOrder)continue;
+    // A duplicate-offer response is intentionally `ok:false`: it is not a
+    // selected-item quote and must never prove a basket total. Still, the
+    // server can prove each displayed per-day option when the exact account,
+    // Lab thread, dates, duration and requested quantity are carried through
+    // from the authoritative order read.
+    if (tool === "quote_booking_addition" && r.selection_required === true && r.reason === "multiple_verified_listings" && r.source === "verified_listing_choices") {
+      if (!call_id || !threadId?.startsWith(LAB_THREAD_PREFIX) || r.thread_id !== threadId ||
+        !accountSlug || r.account_slug !== accountSlug || !string(r.matched_canonical) ||
+        !Number.isInteger(r.days) || (r.days as number) < 1 || (r.days as number) > 366 ||
+        !Number.isInteger(r.quantity) || (r.quantity as number) < 1 || (r.quantity as number) > 20 ||
+        inclusiveRentalDays(string(r.start_date), string(r.end_date)) !== r.days ||
+        !Array.isArray(r.listing_options) || r.listing_options.length < 2 || r.listing_options.length > 20) continue;
+      const seenProducts = new Set<number>();
+      const options = r.listing_options as Array<Record<string, unknown>>;
+      if (options.some((option, index) => {
+        const rate = number(option.daily_rate_gbp);
+        const productId = option.product_id;
+        const invalid = !Number.isInteger(productId) || (productId as number) < 1 || seenProducts.has(productId as number) ||
+          option.option_label !== `Option ${index + 1}` || !rate || Math.round(rate * 100) / 100 !== rate ||
+          !["hygglo_tier", "hygglo_listing"].includes(String(option.source));
+        if (!invalid) seenProducts.add(productId as number);
+        return invalid;
+      })) continue;
+      for (const option of options) out.push({
+        names: [r.matched_canonical as string],
+        kind: "rental",
+        daily_rate_gbp: option.daily_rate_gbp as number,
+        days: r.days as number,
+        quantity: r.quantity as number,
+        start_date: r.start_date as string,
+        end_date: r.end_date as string,
+        call_id: `${call_id}:listing:${option.product_id}`,
+        source: option.source as string,
+      });
+      continue;
+    }
     if (!call_id || r.error || r.ok===false || r.found===false) continue;
+    if(tool==="quote_booking_amendment") {
+      const q=r.quote&&typeof r.quote==="object"?r.quote as Record<string,unknown>:null;
+      const source=Array.isArray(r.stock_receipts)?r.stock_receipts as Array<Record<string,unknown>>:[];
+      const lines=q&&Array.isArray(q.lines)?q.lines as Array<Record<string,unknown>>:[];
+      if(r.complete_basket!==true||r.source!=="native_lab_proposal"||!String(r.thread_id??"").startsWith(LAB_THREAD_PREFIX)||!q||!source.length||!lines.length)continue;
+      const synthetic={available:true,booking_use:"proposed",account_slug:r.account_slug,thread_id:r.thread_id,rental_stage:r.rental_stage,
+        preview_only:true,source:"shared_inventory_confirmed_rentals",physical_identity_key:r.physical_identity_key,start_date:q.start_date,end_date:q.end_date,
+        basket:{available:true,items:source.map(c=>({name:c.item_name,quantity:c.requested_units}))},
+        components:source,
+        offered_listings:lines.map(l=>({product_id:l.product_id,quantity:l.qty})),
+        quote:{...q,source:"native_inquiry_basket"}};
+      out.push(...renterPriceEvidence([{...receipt,tool:"check_basket_availability",result:synthetic}],listings,threadId));
+      continue;
+    }
     if(tool==="quote_booking_dates")out.push(...datePriceEvidence(receipt,threadId));
-    if(tool==="check_basket_availability" && r.available===true && (r.booking_use==="standalone" || r.booking_use==="separate"&&r.new_inquiry===true || r.rental_stage==="INQUIRY" && ["additional","replacement"].includes(String(r.booking_use))) && r.preview_only===true &&
+    const isolatedCompleteProposal=tool==="check_basket_availability" && r.booking_use==="proposed" && typeof r.thread_id==="string" && r.thread_id.startsWith(LAB_THREAD_PREFIX);
+    if(tool==="check_basket_availability" && r.available===true && (r.booking_use==="standalone" || r.booking_use==="separate"&&r.new_inquiry===true || r.rental_stage==="INQUIRY" && ["additional","replacement","current"].includes(String(r.booking_use)) || isolatedCompleteProposal) && r.preview_only===true &&
       r.source==="shared_inventory_confirmed_rentals" && !!threadId && r.thread_id===threadId && string(r.account_slug) && string(r.physical_identity_key) &&
       r.quote && typeof r.quote==="object" && Array.isArray(r.offered_listings)) {
       const q=r.quote as Record<string,unknown>;
       const lines=Array.isArray(q.lines) ? q.lines as Array<Record<string,unknown>> : [];
       const days=number(q.days);
+      const travelAdjustment=typeof q.travel_compensation_gbp==="number"&&Number.isFinite(q.travel_compensation_gbp)?q.travel_compensation_gbp:0;
       const selected=r.offered_listings as Array<Record<string,unknown>>;
       if(q.source!=="native_inquiry_basket" || !days || days>366 || inclusiveRentalDays(string(q.start_date),string(q.end_date))!==days ||
-        q.start_date!==r.start_date || q.end_date!==r.end_date || !number(q.total_gbp) || !lines.length || lines.length>8 || selected.length!==lines.length)continue;
+        travelAdjustment<0 || q.start_date!==r.start_date || q.end_date!==r.end_date || !number(q.total_gbp) || !lines.length || lines.length>8 || selected.length!==lines.length)continue;
       const remaining=[...selected];
       const valid=lines.every(l=>{
         const index=remaining.findIndex(s=>s.product_id===l.product_id && s.quantity===l.qty);
@@ -42,7 +95,7 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
         const calculated=rentalQuote(Array.isArray(l.price_tiers)?l.price_tiers as PriceTier[]:[],l.daily_price_gbp as number,days,l.qty as number);
         return calculated!=null && calculated.listed_total_gbp===l.line_total_gbp && calculated.daily_rate_gbp===l.effective_rate_gbp;
       });
-      if(!valid || Math.abs(lines.reduce((sum,l)=>sum+(l.line_total_gbp as number),0)-(q.total_gbp as number))>0.011)continue;
+      if(!valid || Math.abs(lines.reduce((sum,l)=>sum+(l.line_total_gbp as number),0)-travelAdjustment-(q.total_gbp as number))>0.011)continue;
       out.push({names:[],kind:"basket",quote_role:"inquiry",items:lines.map(l=>({name:l.name as string,quantity:l.qty as number})),
         total_gbp:q.total_gbp as number,days,start_date:q.start_date as string,end_date:q.end_date as string,call_id,source:"native_inquiry_basket"});
       for(const l of lines)quote({days,quantity:l.qty,daily_rate_gbp:l.effective_rate_gbp,listed_total_gbp:l.line_total_gbp,
@@ -88,7 +141,15 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
         if(inclusiveRentalDays(string(q.start_date),string(q.end_date))!==q.days ||
           expected.size!==actual.size || [...expected].some(([name,qty])=>actual.get(name)!==qty) ||
           Math.abs(q.lines.reduce((sum,l)=>sum+l.line_total_gbp,0)-(q.total_gbp as number))>0.011) continue;
-        const proposal: NonNullable<PriceEvidence["proposal"]> = {base_items:r.base_items,added_items:r.added_items,
+        const additionForAliases=r.addition_quote&&typeof r.addition_quote==="object"?r.addition_quote as Record<string,unknown>:undefined;
+        const verifiedAdditionLines=Array.isArray(additionForAliases?.lines)?additionForAliases.lines as Array<Record<string,unknown>>:[];
+        const addedItemsWithAliases=(r.added_items as Array<{name:string;quantity:number}>).map(item=>{
+          const line=verifiedAdditionLines.find(candidate=>candidate.name===item.name&&candidate.qty===item.quantity&&
+            typeof candidate.product_id==="number"&&Number.isInteger(candidate.product_id));
+          const aliases=Array.isArray(line?.verified_price_names)?line.verified_price_names.filter((name:unknown):name is string=>typeof name==="string"&&!!name.trim()):[];
+          return aliases.length?{...item,aliases:[...new Set(aliases)]}:item;
+        });
+        const proposal: NonNullable<PriceEvidence["proposal"]> = {base_items:r.base_items,added_items:addedItemsWithAliases,
           ...(replacement?{removed_items:r.removed_items as Array<{name:string;quantity:number}>}:{}),
           ...(string(r.physical_identity_key)?{physical_identity_key:r.physical_identity_key as string}:{})};
         out.push({names:[],kind:"basket",items:q.lines.map(l=>({name:l.name,quantity:l.qty})),proposal,total_gbp:number(q.total_gbp),days:number(q.days),start_date:string(q.start_date),end_date:string(q.end_date),call_id,source:"native_lab_proposal"});
@@ -99,7 +160,8 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
           if ((!string(l.item_id) && !number(l.product_id)) || !rate || !base ||
             Math.abs(rate*(q.days as number)*l.qty-l.line_total_gbp)>0.011) continue;
           const aliases=listings.filter(i=>i.account_slug===r.account_slug && i.product_id===l.product_id).flatMap(i=>i.names);
-          const names=[...new Set([l.name,...aliases])];
+          const verifiedNames=Array.isArray(l.verified_price_names)?l.verified_price_names.filter((name:unknown):name is string=>typeof name==="string"&&!!name.trim()):[];
+          const names=[...new Set([l.name,...aliases,...verifiedNames])];
           quote({days:q.days,quantity:l.qty,daily_rate_gbp:rate,listed_total_gbp:l.line_total_gbp,start_date:q.start_date,end_date:q.end_date,source:"native_lab_proposal"},names,`${call_id}:line:${l.item_id??l.product_id}`,base,
             r.added_items.some(i=>i.name.trim().toLowerCase()===l.name.trim().toLowerCase()&&i.quantity===l.qty) &&
             !r.base_items.some(i=>i.name.trim().toLowerCase()===l.name.trim().toLowerCase()) ? "addition" : "proposed_line");
@@ -148,8 +210,9 @@ export function renterPriceEvidence(receipts: ToolReceipt[], listings: PriceList
           for(const l of additionQuote!.lines as Array<Record<string,unknown>>) {
             const name=string(l.name); if (!name) continue;
             const aliases=listings.filter(i=>i.account_slug===r.account_slug && i.product_id===l.product_id).flatMap(i=>i.names);
+            const verifiedNames=Array.isArray(l.verified_price_names)?l.verified_price_names.filter((value):value is string=>typeof value==="string"&&!!value.trim()):[];
             quote({days:q.days,quantity:l.qty,daily_rate_gbp:l.effective_rate_gbp,listed_total_gbp:l.line_total_gbp,
-              start_date:q.start_date,end_date:q.end_date,source:"native_lab_proposal"},[...new Set([name,...aliases])],
+              start_date:q.start_date,end_date:q.end_date,source:"native_lab_proposal"},[...new Set([name,...aliases,...verifiedNames])],
               `${call_id}:addition:${l.item_id??l.product_id}`,l.daily_price_gbp,"addition");
           }
         }

@@ -2,7 +2,7 @@ import { recommendationRequirementsKey, type RecommendationRequirement } from ".
 import {sameRentalRequest,type RentalRequest} from "../../convex/lib/rental_request";
 import { AsyncLocalStorage } from "node:async_hooks";
 
-export type RenterScope = { threadId: string; accountSlug: string; requestMessageId?: string; rentalRequest?:RentalRequest; bookingWritesAllowed?: boolean; rentalStage?: string; requestStage?:string; minimumRentalThreshold?:number; queryRevision?:()=>number; queryReadRevision?:(value:unknown)=>number|undefined; recommendationRequirements?:RecommendationRequirement[] };
+export type RenterScope = { threadId: string; accountSlug: string; requestMessageId?: string; labTurnId?: string; labLeaseToken?: string; rentalRequest?:RentalRequest; bookingWritesAllowed?: boolean; rentalStage?: string; requestStage?:string; minimumRentalThreshold?:number; queryRevision?:()=>number; queryReadRevision?:(value:unknown)=>number|undefined; recommendationRequirements?:RecommendationRequirement[] };
 const storage = new AsyncLocalStorage<RenterScope>();
 export const withRenterToolScope = <T>(scope: RenterScope, run: () => T): T => storage.run(scope, run);
 export const currentRenterToolScope = () => storage.getStore();
@@ -21,7 +21,11 @@ export function bindRenterToolArgs(functionName: string, args: Record<string, un
   if ("account_slug" in args || functionName === "renter_bot_tools:lookup_pricing") bound.account_slug = scope.accountSlug;
   if ("hygglo_order_id" in args) bound.hygglo_order_id = scope.threadId;
   if ("thread_id" in args || ["renter_bot_tools:check_availability","renter_bot_tools:check_basket_availability","renter_bot_tools:find_owned_alternatives"].includes(functionName)) bound.thread_id = scope.threadId;
-  if (["renter_bot_lab_order:applyChange", "renter_bot_lab_order:applyAdditionBasket", "renter_bot_lab_order:applyReplacementBasket","renter_bot_lab_order:redeemReferral"].includes(functionName)) bound.request_message_id = scope.requestMessageId ?? "";
+  if (["renter_bot_lab_order:applyChange", "renter_bot_lab_order:applyAdditionBasket", "renter_bot_lab_order:applyReplacementBasket","renter_bot_lab_order:redeemReferral","renter_bot_lab_order:applyAcceptedTravelCompensation"].includes(functionName)) {
+    bound.request_message_id = scope.requestMessageId ?? "";
+    bound.lab_turn_id = scope.labTurnId ?? "";
+    bound.lab_lease_token = scope.labLeaseToken ?? "";
+  }
   if (["renter_bot_tools:get_negotiation_stance","renter_bot_tools:select_rental_request","renter_bot_tools:get_renter_context"].includes(functionName)) {
     delete bound.rental_request;
     if(scope.rentalRequest)bound.rental_request=scope.rentalRequest;

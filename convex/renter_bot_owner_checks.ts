@@ -92,7 +92,7 @@ export async function recommendedKitReviews(ctx:QueryCtx,account:string,productI
   const physical=await loadListingInventory(ctx,account,product_id,quantity,{items:inventory});
   if(physical.owned!==true||!physical.complete)continue;
   const item=listingKitItem(physical,inventory);
-  const kit=await listingKitContext(ctx,account,item,physical.components,inventory);
+  const kit=await listingKitContext(ctx,account,item,physical.components,inventory,undefined,product_id);
   if(kit.contents_review)reviews.push({product_id,name:item?.name_canonical??physical.listing_name!,contents_review:kit.contents_review});
  }
  return reviews;
@@ -122,7 +122,7 @@ export async function persistOwnerChecks(ctx:MutationCtx,a:{thread_id:string;mes
    if(booking?.account_slug&&booking.account_slug!==conv.account_slug||check.start_date!==request.start_date||check.end_date!==request.end_date||!request.lines.some(l=>l.product_id===check.product_id&&l.qty===check.quantity))continue;
    inventory??=await ctx.db.query("items").collect();
    const physical=await loadListingInventory(ctx,conv.account_slug,check.product_id,check.quantity,{items:inventory});
-   const kit=await listingKitContext(ctx,conv.account_slug,listingKitItem(physical,inventory),physical.components,inventory);
+   const kit=await listingKitContext(ctx,conv.account_slug,listingKitItem(physical,inventory),physical.components,inventory,undefined,check.product_id);
    if(!listingMappingOwnerCheck({...physical,contents_review_required:kit.contents_review_required},check))continue;
    names.push(physical.listing_name!);
   } else {
@@ -176,7 +176,8 @@ export const list=query({args:{account_slug:v.optional(v.string()),lab_only:v.op
   const conv=await ctx.db.query("conversations").withIndex("by_thread",q=>q.eq("thread_id",task.thread_id)).first();
   const recent=await recentThreadMessages(ctx,task.thread_id,12),latestRenter=recent.filter(m=>m.sender==="renter").at(-1);
   const physical=task.check.kind==="listing_mapping"&&inventory?await loadListingInventory(ctx,task.account_slug,task.check.product_id,task.check.quantity,{items:inventory}):null;
-  const kit=physical&&inventory?await listingKitContext(ctx,task.account_slug,listingKitItem(physical,inventory),physical.components,inventory):null;
+  const kit=physical&&inventory?await listingKitContext(ctx,task.account_slug,listingKitItem(physical,inventory),physical.components,inventory,undefined,
+   task.check.kind==="listing_mapping"?task.check.product_id:undefined):null;
   const recommended_kit_reviews=task.check.kind==="kit_recommendation"&&inventory?await recommendedKitReviews(ctx,task.account_slug,task.check.candidate_product_ids,task.check.quantity,inventory):null;
   return {...task,current_specification_reviews:await readReviews(task.check),recommended_kit_reviews,mapping_details:physical?{complete:physical.complete,contents_review:kit?.contents_review??null,missing:physical.coverage?.missing??[],unresolved:[...(physical.coverage?.unresolved??[]),...physical.unresolved_default_adapters]}:null,
    context_changed:!conv||draftContextKey(booking,conv.inquiry_items,order)!==task.source_context_key,newer_renter_message:latestRenter?.message_id!==ownerCheckRequestMessageId(task),is_lab:task.thread_id.startsWith("__probe__")};

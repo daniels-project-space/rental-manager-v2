@@ -47,6 +47,65 @@ function database() {
   return { ctx: { db }, rows };
 }
 const invoke = (fn: any, ctx: any, args: any) => fn._handler(ctx, args);
+function labTurnBinding(threadId: string, accountSlug: string, text: string) {
+  const requestMessageId = `${threadId}-renter-12345678`;
+  const turnId = "turn-12345678";
+  const leaseToken = "lease-12345678";
+  const turn = {
+    thread_id: threadId,
+    account_slug: accountSlug,
+    renter_message_id: requestMessageId,
+    renter_text: text,
+    lease_token: leaseToken,
+    status: "running",
+  };
+  const latest = {
+    thread_id: threadId,
+    account_slug: accountSlug,
+    message_id: requestMessageId,
+    sender: "renter",
+    body_text: text,
+  };
+  return {
+    requestMessageId,
+    turnId,
+    leaseToken,
+    turn,
+    latest,
+    generateArgs: {
+      thread_id: threadId,
+      request_message_id: requestMessageId,
+      lab_turn_id: turnId,
+      lab_lease_token: leaseToken,
+    },
+    sendArgs: {
+      threadId,
+      accountSlug,
+      text,
+      requestMessageId,
+      turnId,
+      leaseToken,
+    },
+    async seed(db: any) {
+      const now = Date.now();
+      await db.insert("hygglo_messages", {
+        thread_id: threadId, account_slug: accountSlug, message_id: requestMessageId,
+        sender: "renter", body_text: text, fetched_at: now, hygglo_sent_at: now,
+      });
+      await db.insert("renter_bot_lab_turns", {
+        turn_id: turnId, thread_id: threadId, account_slug: accountSlug,
+        renter_message_id: requestMessageId, renter_text: text, lease_token: leaseToken,
+        status: "running", lease_started_at: now, updated_at: now,
+      });
+    },
+    query(ref: unknown) {
+      const name = getFunctionName(ref as any);
+      if (name.endsWith("getTestTurn")) return turn;
+      if (name.endsWith("getLatestMessageForThread")) return latest;
+      return null;
+    },
+  };
+}
 describe("Quick Reply qualified replacement search limit", () => {
  it("continues beyond six unmapped candidates to verified account listings without writes", async () => {
   const f=database();
@@ -192,13 +251,19 @@ describe("Native independent hire budget qualification",()=>{
  it("basket replacement uses the freshly read order identities and omits all unavailable originals",async()=>{
   const f=await fixture();
   for(const row of f.rows.values())if(row.table==="items")await f.ctx.db.patch(row._id,{replacement_cost_gbp:row.name_canonical==="Sony FX3"?2500:1000});
-  const booking=await f.ctx.db.insert("reservations",{hygglo_order_id:"basket-thread",account_slug:"leo",status:"confirmed",start_date:"2026-10-20",end_date:"2026-10-21",hygglo_items:[{name:"Sony FX3",qty:1},{name:"Unavailable lens",qty:1}]});
-  const {max_rental_total_gbp,booking_use,camera_requirements,...args}=f.args;
+  // Keep this availability regression independent from the date on which the
+  // suite runs; its original October 2026 window expired and made every
+  // otherwise valid replacement look unavailable.
+  const futureArgs={...f.args,start_date:"2099-10-20",end_date:"2099-10-21"};
+  const booking=await f.ctx.db.insert("reservations",{hygglo_order_id:"basket-thread",account_slug:"leo",status:"confirmed",start_date:futureArgs.start_date,end_date:futureArgs.end_date,hygglo_items:[{name:"Sony FX3",qty:1},{name:"Unavailable lens",qty:1}]});
+  const renterMessageAt=Date.UTC(2099,9,19,12);
+  await f.ctx.db.insert("hygglo_messages",{thread_id:"basket-thread",message_id:"replace-request",account_slug:"leo",sender:"renter",body_text:"Please replace the Sony FX3 in my current booking with a comparable camera.",hygglo_sent_at:renterMessageAt,fetched_at:renterMessageAt});
+  const {max_rental_total_gbp,booking_use,camera_requirements,...args}=futureArgs;
   const query={...args,thread_id:"basket-thread",booking_use:"replacement",omit_product_ids:[10,99]};
   expect((await invoke(__service_basket_replacement_candidates,f.ctx,query)).alternatives).toEqual([]);
   const fresh={...query,basket_lines:[{name:"Sony FX3",qty:1,product_id:10},{name:"Unavailable lens",qty:1,product_id:99}]};
   const options=await invoke(__service_basket_replacement_candidates,f.ctx,fresh);
-  expect(options.alternatives.length).toBeGreaterThan(0);
+  expect(options.alternatives.length,JSON.stringify(options)).toBeGreaterThan(0);
   expect(options.alternatives.every((item:any)=>item.availability?.available===true)).toBe(true);
   await f.ctx.db.patch(booking,{status:"cancelled"});
   expect((await invoke(__service_basket_replacement_candidates,f.ctx,fresh)).alternatives).toEqual([]);
@@ -235,6 +300,96 @@ describe("Native independent hire budget qualification",()=>{
   for(const changed of [{start_date:undefined},{end_date:"2026-02-30"},{quantity:0},{max_rental_total_gbp:-1}])
    expect(await invoke(find_owned_alternatives,f.ctx,{...f.args,...changed})).toMatchObject({budget_outcome:"invalid_budget_scope",alternatives:[]});
  });
+});
+
+describe("open inquiry basket tool intent", () => {
+  it("rejects a standalone fallback when the renter explicitly asked to add gear", async () => {
+    const f = database();
+    const thread_id = "__probe__open-basket-add-lens";
+    await f.ctx.db.insert("renter_bot_lab_orders", {
+      thread_id,
+      account_slug: "dbcinema",
+      items: [{ name: "BMPCC 6K Full Frame", qty: 1, product_id: 1103089 }],
+      start_date: "2026-12-10",
+      end_date: "2026-12-10",
+      changes: [],
+      updated_at: 1,
+    });
+    await f.ctx.db.insert("hygglo_messages", {
+      thread_id,
+      message_id: "renter-add-lens",
+      sender: "renter",
+      body_text: "Please move this one-day rental to 11 December and add one lens that physically fits this camera.",
+      fetched_at: 1,
+      hygglo_sent_at: 1,
+    });
+
+    const result = await invoke(find_owned_alternatives, f.ctx, {
+      account_slug: "dbcinema",
+      thread_id,
+      booking_use: "standalone",
+      kind: "lens",
+      item_name: "a lens that fits the BMPCC 6K Full Frame",
+      lens_requirements: {},
+      start_date: "2026-12-11",
+      end_date: "2026-12-11",
+      quantity: 1,
+    });
+
+    expect(result).toMatchObject({
+      count: 0,
+      alternatives: [],
+      booking_context_required: true,
+      booking_use: "standalone",
+      message_booking_use: "additional",
+    });
+    expect(result.error).toContain("booking_use=additional");
+    expect(JSON.stringify(result)).not.toContain("Blazar Remus");
+  });
+
+  it("keeps an explicit addition attached to the existing basket even before confirmation", async () => {
+    const f = database();
+    const thread_id = "__probe__open-basket-add-confirmed-tool-intent";
+    await f.ctx.db.insert("renter_bot_lab_orders", {
+      thread_id,
+      account_slug: "dbcinema",
+      items: [{ name: "BMPCC 6K Full Frame", qty: 1, product_id: 1103089 }],
+      start_date: "2026-12-10",
+      end_date: "2026-12-10",
+      changes: [],
+      updated_at: 1,
+    });
+    await f.ctx.db.insert("hygglo_messages", {
+      thread_id,
+      message_id: "renter-add-lens",
+      sender: "renter",
+      body_text: "Please add one lens to this rental.",
+      fetched_at: 1,
+      hygglo_sent_at: 1,
+    });
+
+    const result = await invoke(find_owned_alternatives, f.ctx, {
+      account_slug: "dbcinema",
+      thread_id,
+      booking_use: "additional",
+      kind: "lens",
+      item_name: "lens",
+      lens_requirements: {},
+      start_date: "2026-12-11",
+      end_date: "2026-12-11",
+      quantity: 1,
+    });
+
+    expect(result).toMatchObject({
+      booking_context_required: true,
+      booking_use: "additional",
+      message_booking_use: "additional",
+      current_booking_listings: [
+        { name: "BMPCC 6K Full Frame", product_id: 1103089, qty: 1 },
+      ],
+    });
+    expect(JSON.stringify(result)).not.toContain("Blazar Remus");
+  });
 });
 
 describe("current Native budget information at copied-reply approval",()=>{
@@ -386,6 +541,12 @@ describe("copied bot replies use current Native stock before send",()=>{
   const f=await independentQuestion(),account=await f.ctx.db.insert("accounts",{slug:"leo"});
   await f.ctx.db.insert("account_profiles",{account_id:account,pickup_address:"123 Owner Lane"});
   expect(await recheck(f,"Collect the new rental from 123 Owner Lane.")).toEqual({ok:false,reason:"pickup_details_unverified"});
+ });
+ it("keeps a renter-provided delivery postcode out of the private-pickup check on copied drafts",async()=>{
+  const f=await stockDraft();
+  for(const row of f.rows.values())if(row.table==="hygglo_messages")await f.ctx.db.patch(row._id,{sender:"renter",body_text:"Can you deliver and collect from E1 6AN?"});
+  const result=await recheck(f,"We can arrange delivery and collection for E1 6AN.");
+  expect(result).not.toMatchObject({ok:false,reason:"pickup_details_unverified"});
  });
  it("revalidates supplied contents after inventory records change",async()=>{
   const f=await stockDraft();await f.ctx.db.patch(f.itemId,{kind:"camera",compatibility:{included_with_rental:["2 x NP-FZ100 batteries","1 x 128GB SD card"]}});
@@ -691,9 +852,16 @@ describe("durable review mutations and automatic queue", () => {
   it("returns the saved review on another generation call without invoking a model", async () => {
     const f = await setup(); const saved = await invoke(setDraftReview, f.ctx, f.args);
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("provider must not be called"));
-    const ctx = { runAction: vi.fn().mockResolvedValue({}), runQuery: vi.fn().mockResolvedValue({ draft_review: saved.review, draft_epoch: 2, draft_context_key: f.args.context_key, last_message_id: f.args.message_id }), runMutation: vi.fn().mockResolvedValue({ok:true}) };
+    const binding = labTurnBinding("__probe__review-test", "leo", "Check my camera kit");
+    const ctx = {
+      runAction: vi.fn().mockResolvedValue({}),
+      runQuery: vi.fn(async (ref: unknown) => binding.query(ref) ?? {
+        draft_review: saved.review, draft_epoch: 2, draft_context_key: f.args.context_key, last_message_id: f.args.message_id,
+      }),
+      runMutation: vi.fn().mockResolvedValue({ok:true}),
+    };
     try {
-      expect(await invoke(generateDraft, ctx, { thread_id: "__probe__review-test" })).toMatchObject({ status: "skipped", review: saved.review, flags: f.args.flags });
+      expect(await invoke(generateDraft, ctx, binding.generateArgs)).toMatchObject({ status: "skipped", review: saved.review, flags: f.args.flags });
       expect(fetchSpy).not.toHaveBeenCalled(); expect(ctx.runMutation).toHaveBeenCalledTimes(2);
     } finally { fetchSpy.mockRestore(); }
   });
@@ -718,14 +886,22 @@ describe("managed generation ownership", () => {
     expect(await invoke(claimDraftGeneration,f.ctx,{thread_id:f.args.thread_id,token:"third"})).toEqual({ok:true});
   });
   it("does not resolve context or call a model when another generation owns the thread", async () => {
-    const ctx={runMutation:vi.fn().mockResolvedValue({ok:false,reason:"generation_in_progress"}),runQuery:vi.fn(),runAction:vi.fn()};
-    expect(await invoke(generateDraft,ctx,{thread_id:"__probe__busy-thread"})).toMatchObject({status:"skipped",reason:"generation_in_progress"});
-    expect(ctx.runQuery).not.toHaveBeenCalled();expect(ctx.runAction).not.toHaveBeenCalled();expect(ctx.runMutation).toHaveBeenCalledTimes(1);
+    const binding = labTurnBinding("__probe__busy-thread", "leo", "Check my camera kit");
+    const ctx={runMutation:vi.fn().mockResolvedValue({ok:false,reason:"generation_in_progress"}),runQuery:vi.fn((ref: unknown)=>binding.query(ref)),runAction:vi.fn()};
+    expect(await invoke(generateDraft,ctx,binding.generateArgs)).toMatchObject({status:"skipped",reason:"generation_in_progress"});
+    expect(ctx.runQuery).toHaveBeenCalledTimes(2);
+    expect(ctx.runQuery.mock.calls.every(([ref]) => getFunctionName(ref as any).endsWith("getTestTurn") || getFunctionName(ref as any).endsWith("getLatestMessageForThread"))).toBe(true);
+    expect(ctx.runAction).not.toHaveBeenCalled();expect(ctx.runMutation).toHaveBeenCalledTimes(1);
   });
   it("releases its own claim after a context failure so a corrected retry can run", async () => {
     const failure=new Error("context unavailable");
-    const ctx={runMutation:vi.fn().mockResolvedValue({ok:true}),runQuery:vi.fn().mockRejectedValue(failure),runAction:vi.fn().mockResolvedValue({})};
-    await expect(invoke(generateDraft,ctx,{thread_id:"__probe__failure-thread"})).rejects.toThrow("context unavailable");
+    const binding = labTurnBinding("__probe__failure-thread", "leo", "Check my camera kit");
+    const ctx={
+      runMutation:vi.fn().mockResolvedValue({ok:true}),
+      runQuery:vi.fn(async (ref: unknown) => binding.query(ref) ?? Promise.reject(failure)),
+      runAction:vi.fn().mockResolvedValue({}),
+    };
+    await expect(invoke(generateDraft,ctx,binding.generateArgs)).rejects.toThrow("context unavailable");
     expect(ctx.runMutation).toHaveBeenCalledTimes(2);
     expect(ctx.runMutation.mock.calls[1][1]).toEqual(ctx.runMutation.mock.calls[0][1]);
   });
@@ -791,6 +967,137 @@ describe("kit owner checks persist through the real review mutation",()=>{
   return {...f,camera,lens,override,check};
  }
  const tasks=(f:Awaited<ReturnType<typeof kit>>)=>[...f.rows.values()].filter(r=>r.table==="renter_bot_owner_checks");
+ it("asks the renter to choose when one physical camera has multiple verified listings",async()=>{
+  const f=await kit();
+  const pro=await f.ctx.db.insert("items",{name_canonical:"BMPCC 6K Pro",kind:"camera",qty:2,status:"active",is_marketing_only:false});
+  const offers=[
+   {product_id:22,name:"BMPCC 6K Pro with 2TB SSD",daily_price:35},
+   {product_id:23,name:"BMPCC 6K Pro with 1TB SSD",daily_price:47},
+  ];
+  for(const offer of offers){
+   await f.ctx.db.insert("hygglo_product_index",{account_slug:"leo",product_id:offer.product_id,item_id:pro});
+   await f.ctx.db.insert("online_listings",{account_slug:"leo",product_id:offer.product_id,name:offer.name,description:"Included in this rental: • BMPCC 6K Pro",daily_price:offer.daily_price});
+   await f.ctx.db.insert("listing_resolution_override",{account_slug:"leo",product_id:offer.product_id,components:[{item_id:pro,qty:1}]});
+  }
+
+  const result=await invoke(lookup_pricing,f.ctx,{account_slug:"leo",item_name:"BMPCC 6K Pro",days:1});
+
+  expect(result).toMatchObject({
+   found:false,
+   selection_required:true,
+   reason:"multiple_verified_listings",
+   listing_options:[
+    {product_id:22,option_label:"Option 1",daily_rate_gbp:35},
+    {product_id:23,option_label:"Option 2",daily_rate_gbp:47},
+   ],
+  });
+  expect(result).not.toHaveProperty("total_gbp");
+
+  const availability=await performJointStockCheck(f.ctx as any,{
+   account_slug:"leo",start_date:"2027-01-10",end_date:"2027-01-10",booking_use:"standalone",
+   items:[{item_name:"BMPCC 6K Pro",quantity:1}],
+  });
+  expect(availability).toMatchObject({
+   available:null,
+   offer_status:"listing_selection_required",
+   listing_options:[
+    {product_id:22,option_label:"Option 1",daily_rate_gbp:35},
+    {product_id:23,option_label:"Option 2",daily_rate_gbp:47},
+   ],
+  });
+ });
+ it("checks and quotes one exact final inquiry basket for combined date and quantity changes",async()=>{
+  const f=await kit();
+  const listing=[...f.rows.values()].find(r=>r.table==="online_listings"&&r.product_id===10);
+  await f.ctx.db.patch(listing._id,{daily_price:40});
+  await f.ctx.db.patch(f.override,{components:[{item_id:f.camera,qty:1},{item_id:f.lens,qty:1}]});
+  const thread_id="__probe__complete-proposal";
+  await f.ctx.db.insert("hygglo_messages",{thread_id,message_id:"proposal-renter-1",sender:"renter",body_text:"Could you extend the dates and add a second Sony FX3 kit? Tell me the new total before I decide.",fetched_at:Date.now(),hygglo_sent_at:Date.now()});
+  await f.ctx.db.insert("renter_bot_lab_orders",{thread_id,account_slug:"leo",items:[{item_id:f.camera,product_id:10,name:"FX3 lens kit",qty:1,daily_price_gbp:40,pricing_basis:"listing",origin:"seed"}],start_date:"2027-01-10",end_date:"2027-01-10",changes:[],updated_at:Date.now()});
+  const result=await performJointStockCheck(f.ctx as any,{
+   account_slug:"leo",thread_id,start_date:"2027-01-10",end_date:"2027-01-12",booking_use:"proposed",
+   items:[{item_name:"FX3 lens kit",product_id:10,quantity:2}],
+  });
+  expect(result).toMatchObject({available:true,booking_use:"proposed",start_date:"2027-01-10",end_date:"2027-01-12",preview_only:true,offered_listings:[{product_id:10,quantity:2}]});
+  expect((result as any).quote).toMatchObject({total_gbp:expect.any(Number),source:"native_inquiry_basket"});
+  expect((result as any).basket.items).toHaveLength(2);
+  expect((result as any).basket.items.map((line:any)=>line.quantity)).toEqual([2,2]);
+ });
+ it("retains and reprices the current inquiry basket for an add-only request without model-supplied unchanged IDs",async()=>{
+  const f=await kit();
+  const currentListing=[...f.rows.values()].find(r=>r.table==="online_listings"&&r.product_id===10);
+  await f.ctx.db.patch(currentListing._id,{daily_price:40});
+  await f.ctx.db.patch(f.override,{components:[{item_id:f.camera,qty:1},{item_id:f.lens,qty:1}]});
+  const gimbal=await f.ctx.db.insert("items",{name_canonical:"DJI RS3 Pro gimbal",kind:"accessory",qty:2,status:"active"});
+  await f.ctx.db.insert("hygglo_product_index",{account_slug:"leo",product_id:11,item_id:gimbal});
+  await f.ctx.db.insert("hygglo_products",{accountSlug:"leo",productId:11,name:"DJI RS3 Pro gimbal",masterItemId:gimbal});
+  await f.ctx.db.insert("online_listings",{account_slug:"leo",product_id:11,description:"DJI RS3 Pro gimbal",daily_price:15});
+  await f.ctx.db.insert("listing_resolution_override",{account_slug:"leo",product_id:11,components:[{item_id:gimbal,qty:1}]});
+  const thread_id="__probe__addition-only";
+  const order_id=await f.ctx.db.insert("renter_bot_lab_orders",{thread_id,account_slug:"leo",items:[{item_id:f.camera,product_id:10,name:"FX3 lens kit",qty:1,daily_price_gbp:40,pricing_basis:"listing",origin:"seed"}],start_date:"2027-01-10",end_date:"2027-01-10",changes:[],updated_at:Date.now()});
+  await f.ctx.db.insert("hygglo_messages",{thread_id,message_id:"addition-only-renter",sender:"renter",body_text:"Could you add the DJI RS3 Pro gimbal as well and tell me the new total?",fetched_at:Date.now(),hygglo_sent_at:Date.now()});
+  const before=await f.ctx.db.get(order_id);
+  const result=await performJointStockCheck(f.ctx as any,{
+   account_slug:"leo",thread_id,start_date:"2027-01-10",end_date:"2027-01-10",booking_use:"additional",
+   items:[{item_name:"DJI RS3 Pro gimbal",quantity:1}],
+  });
+  expect(result).toMatchObject({available:true,booking_use:"additional",preview_only:true,quote:{total_gbp:55,source:"native_inquiry_basket"},offered_listings:[{product_id:10,quantity:1},{product_id:11,quantity:1}]});
+  expect((result as any).basket.items.map((line:any)=>line.name)).toEqual(expect.arrayContaining(["Sony FX3","Sony GM 24-70mm f2.8","DJI RS3 Pro gimbal"]));
+  expect(await f.ctx.db.get(order_id)).toEqual(before);
+ });
+ it("freshly quotes only the saved inquiry basket when an add-on cannot be included",async()=>{
+  const f=await kit();
+  const currentListing=[...f.rows.values()].find(r=>r.table==="online_listings"&&r.product_id===10);
+  await f.ctx.db.patch(currentListing._id,{daily_price:40});
+  await f.ctx.db.patch(f.override,{components:[{item_id:f.camera,qty:1},{item_id:f.lens,qty:1}]});
+  const thread_id="__probe__current-basket-quote";
+  const order_id=await f.ctx.db.insert("renter_bot_lab_orders",{thread_id,account_slug:"leo",items:[{item_id:f.camera,product_id:10,name:"FX3 lens kit",qty:1,daily_price_gbp:40,pricing_basis:"listing",origin:"seed"}],start_date:"2027-01-10",end_date:"2027-01-10",changes:[],updated_at:Date.now()});
+  await f.ctx.db.insert("hygglo_messages",{thread_id,message_id:"current-quote-renter",sender:"renter",body_text:"Could you add this too and tell me the new total?",fetched_at:Date.now(),hygglo_sent_at:Date.now()});
+  const before=await f.ctx.db.get(order_id);
+  const result=await performJointStockCheck(f.ctx as any,{account_slug:"leo",thread_id,start_date:"2027-01-10",end_date:"2027-01-10",booking_use:"current"});
+  expect(result).toMatchObject({available:true,booking_use:"current",preview_only:true,quote:{total_gbp:40,source:"native_inquiry_basket"},offered_listings:[{product_id:10,quantity:1}]});
+  expect((result as any).basket.items.map((line:any)=>line.name)).toEqual(expect.arrayContaining(["Sony FX3","Sony GM 24-70mm f2.8"]));
+  expect(await f.ctx.db.get(order_id)).toEqual(before);
+ });
+ it("does not claim dated availability for physical gear with no listing on the selected account",async()=>{
+  const f=await kit();
+  await f.ctx.db.insert("items",{name_canonical:"DJI RS3 Pro gimbal",kind:"accessory",qty:2,status:"active"});
+  const result=await performJointStockCheck(f.ctx as any,{
+   account_slug:"leo",start_date:"2027-01-10",end_date:"2027-01-10",booking_use:"standalone",
+   items:[{item_name:"DJI RS3 Pro gimbal",quantity:1}],
+  });
+  expect(result).toMatchObject({available:null,reason:"no_exact_account_listing",item_name:"DJI RS3 Pro gimbal"});
+ });
+ it("keeps a marketing-only account listing separate from dated stock availability",async()=>{
+  const f=await kit();
+  const gimbal=await f.ctx.db.insert("items",{name_canonical:"DJI RS3 Pro gimbal",kind:"accessory",qty:2,status:"active"});
+  await f.ctx.db.insert("hygglo_product_index",{account_slug:"leo",product_id:11,item_id:gimbal});
+  await f.ctx.db.insert("hygglo_products",{accountSlug:"leo",productId:11,name:"DJI RS3 Pro gimbal",masterItemId:gimbal,isMarketingOnly:true});
+  await f.ctx.db.insert("online_listings",{account_slug:"leo",product_id:11,name:"DJI RS3 Pro gimbal",description:"DJI RS3 Pro gimbal",daily_price:15});
+  await f.ctx.db.insert("listing_resolution_override",{account_slug:"leo",product_id:11,components:[{item_id:gimbal,qty:1}]});
+  const result=await performJointStockCheck(f.ctx as any,{
+   account_slug:"leo",start_date:"2027-01-10",end_date:"2027-01-10",booking_use:"standalone",
+   items:[{item_name:"DJI RS3 Pro gimbal",quantity:1}],
+  });
+  expect(result).toMatchObject({available:null,offer_status:"not_rentable",reason:"listing_not_rentable"});
+  expect(result.guidance).not.toContain("marketing");
+  expect(result.guidance).not.toMatch(/date conflict|unavailable for .*date/i);
+ });
+ it("does not price a gimbal from a battery compatibility mention, while preserving the battery listing",async()=>{
+  const f=await kit();
+  const battery=await f.ctx.db.insert("items",{name_canonical:"DJI gimbal battery",kind:"power",qty:3,status:"active",is_marketing_only:false,aliases:["DJI RS3 Pro Gimbal Batteries","DJI RS3 Pro batteries","DJI Ronin RS2 RS3 Pro Gimbal Battery"]});
+  await f.ctx.db.insert("hygglo_product_index",{account_slug:"leo",product_id:11,item_id:battery});
+  await f.ctx.db.insert("hygglo_products",{accountSlug:"leo",productId:11,name:"DJI RS2 gimbal battery",masterItemId:battery,prices:[{days:1,pricePerDay:5}]});
+  await f.ctx.db.insert("online_listings",{account_slug:"leo",product_id:11,name:"DJI RS2 gimbal battery",description:"Included in this kit: • 1x DJI gimbal battery",daily_price:5});
+  await f.ctx.db.insert("listing_resolution_override",{account_slug:"leo",product_id:11,components:[{item_id:battery,qty:1}]});
+
+  const gimbal=await invoke(lookup_pricing,f.ctx,{account_slug:"leo",item_name:"DJI RS 2",days:1});
+  expect(gimbal).toMatchObject({found:false,item_name:"DJI RS 2"});
+  expect(gimbal).not.toHaveProperty("product_id",11);
+
+  const spare=await invoke(lookup_pricing,f.ctx,{account_slug:"leo",item_name:"DJI RS2 battery",days:1});
+  expect(spare).toMatchObject({found:true,product_id:11,matched_canonical:"DJI gimbal battery"});
+ });
  it("turns an unqualified current basket into a durable lens review without denying stock",async()=>{
   const f=await kit();
   await f.ctx.db.patch(f.camera,{lens_mount:"E"});await f.ctx.db.patch(f.lens,{lens_mount:"E"});
@@ -813,10 +1120,16 @@ describe("kit owner checks persist through the real review mutation",()=>{
   const card=await f.ctx.db.insert("items",{name_canonical:"256GB card",kind:"accessory",qty:4,status:"active",track_independent_stock:true,unit_kind:"unit"});
   await f.ctx.db.patch(f.camera,{supplied_stock:[{item_id:card,qty:1,source:"owner-verified"}],compatibility:{included_with_rental:["CFexpress Type A card"]}});
   const listing=[...f.rows.values()].find(r=>r.table==="online_listings"&&r.product_id===10);
-  await f.ctx.db.patch(listing._id,{name:"Sony FX3",description:"Included in this kit: • 1x Sony FX3",daily_price:40});
+  const listingDescriptionUpdatedAt=Date.UTC(2026,10,26);
+  await f.ctx.db.patch(listing._id,{name:"Sony FX3",description:"Included in this kit: • 1x Sony FX3",daily_price:40,updated_at:listingDescriptionUpdatedAt});
   await f.ctx.db.insert("item_specs",{item_name_canonical:"Sony FX3",item_id:f.camera,source:"manufacturer-verified",source_url:"https://manufacturer.example/fx3",verified_model:"Sony FX3",verified_at:1,
    camera_capabilities:{role:"interchangeable_lens",sensor_format:"full_frame",native_mount:"E",internal_4k:true,verified_model:"Sony FX3",source_url:"https://manufacturer.example/fx3",verified_at:1}});
   const context=await invoke(get_listing_context,f.ctx,{thread_id:f.args.thread_id});
+  expect(context.items[0]).toMatchObject({
+   account_slug:"leo",product_id:10,listing_description:"Included in this kit: • 1x Sony FX3",
+   listing_description_source:"online_listings",
+  });
+  expect(context.items[0].listing_description_updated_at).toBe(listingDescriptionUpdatedAt);
   const price=await invoke(lookup_pricing,f.ctx,{account_slug:"leo",item_name:"Sony FX3",days:1});
   const alternatives=await invoke(find_owned_alternatives,f.ctx,{account_slug:"leo",kind:"camera"});
   expect(price).toMatchObject({found:true,storage_contents_verification_required:true});
@@ -1067,6 +1380,22 @@ describe("Native negotiation history",()=>{
   await f.ctx.db.insert("hygglo_messages",{thread_id:f.args.thread_id,message_id:"latest",sender:"renter",body_text:"Any discount?",hygglo_sent_at:f.now+60,fetched_at:f.now+60});
   expect(await invoke(get_negotiation_stance,f.ctx,{thread_id:f.args.thread_id})).toMatchObject({objectionCount:3,threadObjectionCount:3,stance:"SOFT_YIELD",competitorMentioned:true,lastPriceOfferedGbp:null,lastInquiryOptions:options});
  });
+ it("separates an authorized travel adjustment from ordinary price bargaining",async()=>{
+  const f=await setup();
+  const accountId="account-profile-dbcinema";
+  await f.ctx.db.patch(f.convId,{account_id:accountId,account_slug:"dbcinema",active_rental_request:{kind:"primary"}});
+  await f.ctx.db.insert("account_profiles",{account_id:accountId,pickup_area:"Northumberland Street area"});
+  const first=[...f.rows.values()].find(r=>r.table==="hygglo_messages");
+  await f.ctx.db.patch(first._id,{sender:"owner",body_text:"For this rental, pickup and return are arranged from the Northumberland Street area. Would that work for your dates?",hygglo_sent_at:f.now,fetched_at:f.now});
+  await f.ctx.db.insert("hygglo_messages",{thread_id:f.args.thread_id,message_id:"pickup-area-accepted",sender:"renter",body_text:"The Northumberland Street area works for me.",hygglo_sent_at:f.now+0.5,fetched_at:f.now+0.5});
+  const offer={context_key:"native-context",epoch:2,quoted_for_message_id:"renter-1",quote:{quote_key:"native-travel-50",start_date:"2026-10-02",end_date:"2026-10-02",items:[{item_id:"bmpcc",name:"BMPCC 6K Full Frame",quantity:1}],listing_quote:{total_gbp:50,lines:[]}}};
+  await f.ctx.db.insert("hygglo_messages",{thread_id:f.args.thread_id,message_id:"quoted",sender:"owner",body_text:"For 1 day the total is £50.",quoted_inquiries:[offer],hygglo_sent_at:f.now+1,fetched_at:f.now+1});
+  await f.ctx.db.insert("hygglo_messages",{thread_id:f.args.thread_id,message_id:"travel-objection",sender:"renter",body_text:"That is a long way from Shoreditch for me. Is there any help with the travel cost?",hygglo_sent_at:f.now+2,fetched_at:f.now+2});
+  expect(await invoke(get_negotiation_stance,f.ctx,{thread_id:f.args.thread_id})).toMatchObject({
+   stance:"NONE",discountAuthority:"none",lastPriceOfferedGbp:50,
+   travelCompensation:{eligible:true,pickupAreaDisclosed:true,renterObjected:true,alreadyOffered:false,maximumGbp:5},
+  });
+ });
  it("keeps older independent hire identity through long logistics and a genuine new request",async()=>{
   const f=await setup();const first=[...f.rows.values()].find(r=>r.table==="hygglo_messages");
   await f.ctx.db.patch(first._id,{sender:"renter",body_text:"Too expensive."});
@@ -1133,6 +1462,18 @@ describe("Native offered price provenance",()=>{
   expect(negotiationFromMessages([{sender:"owner",body_text:"Total: £50",quoted_inquiries:[offer]},text])).toMatchObject({lastPriceOfferedGbp:50,lastInquiryOffer:offer});
   expect(negotiationFromMessages([{...text,quoted_inquiries:[offer]}])).toMatchObject({lastPriceOfferedGbp:null,lastInquiryOffer:null});
   expect(negotiationFromMessages([{sender:"owner",body_text:"Total: £500"},text])).toMatchObject({lastPriceOfferedGbp:null,lastInquiryOffer:null});
+ });
+
+ it("uses the exact simulated Lab order price when no quote has been sent yet",()=>{
+  const messages=[
+   {sender:"owner",body_text:"For this rental, collection and return are arranged from the Northumberland Street area. Does that work for you?"},
+   {sender:"renter",body_text:"That area works for me, though it is still a long trip. Could you help with the travel costs?"},
+  ];
+  expect(negotiationFromMessages(messages,undefined,"Northumberland Street",50)).toMatchObject({
+   lastPriceOfferedGbp:null,
+   travelCompensation:{eligible:true,maximumGbp:5,pickupAreaDisclosed:true,renterObjected:true,alreadyOffered:false},
+  });
+  expect(negotiationFromMessages(messages,undefined,"Northumberland Street",null).travelCompensation).toMatchObject({eligible:false,maximumGbp:null});
  });
 });
 
@@ -1378,17 +1719,50 @@ describe("physical mapping writes invalidate actual draft approvals",()=>{
 it("persists and returns a failed Lab run's real diagnostics, cost and boundary flags",async()=>{
  const f=database(),error={http_status:502,error_code:"invalid_model_output",transient:false,model_id:"google/gemini-3.7-flash",cost_usd:0.0125,request_id:"native-output-failure",output_diagnostics:{object_type:"missing",text_status:"empty",text_length:0,object_issues:[{field:"$",code:"invalid_type"}],text_issues:[],finish_reason:"tool-calls",step_count:3,tool_call_count:4}};
  const flags=[{type:"INVALID_MODEL_OUTPUT",severity:"critical",action:"flagged",detail:"Model output invalid"}],mutations:string[]=[];
- const ctx={runQuery:async(ref:any)=>{const name=getFunctionName(ref);return name.endsWith("getConversationForThread")?{account_slug:"leo"}:name.endsWith("pendingOwnerChecksForDraft")?[]:null;},
+ const binding=labTurnBinding("__probe__failure-telemetry","leo","Check my camera kit");
+ await binding.seed(f.ctx.db);
+ const ctx={runQuery:async(ref:any)=>{const name=getFunctionName(ref);return name.endsWith("getConversationForThread")?{account_slug:"leo"}:name.endsWith("pendingOwnerChecksForDraft")?[]:binding.query(ref);},
   runAction:async()=>({status:"skipped",reason:"needs_human:invalid_model_output",generation_error:error,review:{flags}}),
   runMutation:async(ref:any,args:any)=>{const name=getFunctionName(ref);mutations.push(name);return name.endsWith("insertRun")?invoke(insertRun,f.ctx,args):null;}};
- const result=await invoke(sendTestMessage,ctx,{threadId:"__probe__failure-telemetry",accountSlug:"leo",text:"Check my camera kit"});
+ const result=await invoke(sendTestMessage,ctx,binding.sendArgs);
  expect(result).toMatchObject({draft:"",status:"skipped",generation_error:error,productionGuardFlags:flags});
  const row=[...f.rows.values()].find(r=>r.table==="renter_bot_harness_runs");expect(row).toMatchObject({model_id:error.model_id,cost_usd:error.cost_usd,generation_error:error,overall_status:"fail"});
  expect(mutations.some(n=>n.endsWith("appendAssistantMessage"))).toBe(false);
 });
 
+it("persists deterministic amendment recovery as completed with truthful model and cost evidence",async()=>{
+ const cases:Array<{name:string;result:Record<string,any>}>=[
+  {name:"no-model recovery",result:{status:"ok",draft:"Done — I've added the lens; the updated total is £70.",
+   model_id:"deterministic-lab-amendment-recovery-v1",cost_usd:0,token_usage:{prompt:0,completion:0,cached:0,cost:0},
+   tool_stats:{steps:0,total:1,byName:{applyAcceptedAdditionBasket:1},duplicates:0,errors:0,
+    calls:[{call_id:"lab-native-amendment:renter:addition",name:"applyAcceptedAdditionBasket",args:{request_message_id:"renter"},result:{ok:true,action_performed:true,order:{total_gbp:70}},error:false}]},
+   flags:[{type:"AMENDMENT_CONFIRMATION_RECOVERED",severity:"medium",action:"rewritten",detail:"Recovered the committed Lab amendment"}],facts_claimed:[],
+   evidence:{model_id:"deterministic-lab-amendment-recovery-v1",stage:"LAB_ORDER_UPDATED",cost_usd:0,stock:[],prices:[{kind:"basket",total_gbp:70,call_id:"native-recovery-price"}]}}},
+  {name:"recovery after provider failure",result:{status:"ok",draft:"Done — the committed basket update is confirmed at £70.",
+   model_id:"google/gemini-3.7-flash",cost_usd:0.0125,token_usage:{prompt:null,completion:null,cached:null,cost:0.0125},
+   generation_error:{http_status:502,error_code:"http_failure",transient:true,model_id:"google/gemini-3.7-flash",cost_usd:0.0125,request_id:"lab-provider-failure"},
+   flags:[{type:"AMENDMENT_CONFIRMATION_RECOVERED",severity:"medium",action:"rewritten",detail:"Recovered the committed Lab amendment"}],facts_claimed:[],
+   evidence:{model_id:"google/gemini-3.7-flash",stage:"LAB_ORDER_UPDATED",cost_usd:0.0125,stock:[],prices:[{kind:"basket",total_gbp:70,call_id:"native-recovery-price"}]}}},
+ ];
+ for(const scenario of cases){
+  const f=database(),binding=labTurnBinding(`__probe__recovery-${scenario.name.replaceAll(" ","-")}`,"leo","Yes, add the lens at £70.");
+  await binding.seed(f.ctx.db);
+  const ctx={runQuery:async(ref:any)=>{const name=getFunctionName(ref);return name.endsWith("getConversationForThread")?{account_slug:"leo"}:name.endsWith("pendingOwnerChecksForDraft")?[]:name.endsWith("getThreadContext")?{messages:[],rental_stage:{stage:"inquiry",booking_confirmed:false}}:binding.query(ref);},
+   runAction:async()=>scenario.result,
+   runMutation:async(ref:any,args:any)=>getFunctionName(ref).endsWith("insertRun")?invoke(insertRun,f.ctx,args):null};
+  await invoke(sendTestMessage,ctx,binding.sendArgs);
+  const row=[...f.rows.values()].find(r=>r.table==="renter_bot_harness_runs");
+  const persistedUsage=Object.fromEntries(Object.entries(scenario.result.token_usage??{}).filter(([,value])=>typeof value==="number"));
+  expect(row,scenario.name).toMatchObject({model_id:scenario.result.model_id,cost_usd:scenario.result.cost_usd,
+   token_usage:persistedUsage,tool_stats:scenario.result.tool_stats,source_receipts:{prices:scenario.result.evidence.prices},generation_status:"complete"});
+  expect(row?.generation_error).toEqual(scenario.result.generation_error);
+ }
+});
+
 it("shows a failed rubric candidate for diagnosis without feeding it into the next Lab turn",async()=>{
  const f=database(),mutations:string[]=[];
+ const binding=labTurnBinding("__probe__rubric-failure","leo","so not Shoreditch?");
+ await binding.seed(f.ctx.db);
  const candidate="That's right, collection is from the Northumberland Street area rather than Shoreditch. Would that work for you?";
  const context={
   pickup_area:"Northumberland Street area",
@@ -1396,10 +1770,10 @@ it("shows a failed rubric candidate for diagnosis without feeding it into the ne
   messages:[{role:"owner",content:"Collection is arranged from the Northumberland Street area."}],
   rental_stage:{stage:"inquiry",booking_confirmed:false},
  };
- const ctx={runQuery:async(ref:any)=>{const name=getFunctionName(ref);return name.endsWith("getConversationForThread")?{account_slug:"leo"}:name.endsWith("pendingOwnerChecksForDraft")?[]:name.endsWith("getThreadContext")?context:null;},
+ const ctx={runQuery:async(ref:any)=>{const name=getFunctionName(ref);return name.endsWith("getConversationForThread")?{account_slug:"leo"}:name.endsWith("pendingOwnerChecksForDraft")?[]:name.endsWith("getThreadContext")?context:binding.query(ref);},
   runAction:async()=>({status:"ok",draft:candidate,flags:[],facts_claimed:[],model_id:"test-model"}),
   runMutation:async(ref:any,args:any)=>{const name=getFunctionName(ref);mutations.push(name);return name.endsWith("insertRun")?invoke(insertRun,f.ctx,args):null;}};
- const result=await invoke(sendTestMessage,ctx,{threadId:"__probe__rubric-failure",accountSlug:"leo",text:"so not Shoreditch?"});
+ const result=await invoke(sendTestMessage,ctx,binding.sendArgs);
  expect(result).toMatchObject({draft:candidate,overall_status:"fail",assistantContextAdded:false});
  const row=[...f.rows.values()].find(r=>r.table==="renter_bot_harness_runs");expect(row).toMatchObject({draft_text:candidate,overall_status:"fail"});
  expect(mutations.some(n=>n.endsWith("appendAssistantMessage"))).toBe(false);
@@ -1407,17 +1781,19 @@ it("shows a failed rubric candidate for diagnosis without feeding it into the ne
 
 it("continues the Lab with a final guarded reply when only non-blocking review flags remain",async()=>{
  const f=database(),mutations:string[]=[];
- const draft="For this item, collection is only available from the Northumberland Street area. Would that work for you? I'll share the exact meeting point once the booking is confirmed.";
+ const binding=labTurnBinding("__probe__pickup-corrected","dbcinema","Hi, it says you are based in Shoreditch. Is that correct?");
+ await binding.seed(f.ctx.db);
+ const draft="For this rental, pickup and return are arranged from the Northumberland Street area because the kit is only available for collection and return there. I can't arrange a handoff from the location shown on the listing for this rental. Would collecting and returning in the Northumberland Street area work for your dates? I'll share the exact meeting point once the booking is confirmed.";
  const context={
   pickup_area:"Northumberland Street area",
   pickup_address:"10 Northumberland Street, London WC2N 5DB, outside the Sherlock Holmes pub.",
   messages:[],
   rental_stage:{stage:"inquiry",booking_confirmed:false},
  };
- const ctx={runQuery:async(ref:any)=>{const name=getFunctionName(ref);return name.endsWith("getConversationForThread")?{account_slug:"dbcinema"}:name.endsWith("pendingOwnerChecksForDraft")?[]:name.endsWith("getThreadContext")?context:null;},
+ const ctx={runQuery:async(ref:any)=>{const name=getFunctionName(ref);return name.endsWith("getConversationForThread")?{account_slug:"dbcinema"}:name.endsWith("pendingOwnerChecksForDraft")?[]:name.endsWith("getThreadContext")?context:binding.query(ref);},
   runAction:async()=>({status:"ok",draft,flags:[{type:"PICKUP_LOCATION_CORRECTED",severity:"high",action:"rewritten",detail:"Rewrote the area-only model answer with the grounded account pickup explanation"}],facts_claimed:[],model_id:"test-model"}),
   runMutation:async(ref:any,args:any)=>{const name=getFunctionName(ref);mutations.push(name);return name.endsWith("insertRun")?invoke(insertRun,f.ctx,args):null;}};
- const result=await invoke(sendTestMessage,ctx,{threadId:"__probe__pickup-corrected",accountSlug:"dbcinema",text:"Hi, it says you are based in Shoreditch. Is that correct?"});
+ const result=await invoke(sendTestMessage,ctx,binding.sendArgs);
  expect(result).toMatchObject({draft,overall_status:"flag",assistantContextAdded:true});
  expect(mutations.some(n=>n.endsWith("appendAssistantMessage"))).toBe(true);
 });

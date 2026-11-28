@@ -2011,7 +2011,7 @@ export const getThreadContext = internalQuery({
       currency: reservation?.currency ?? "GBP",
       messages: recent,
       renter_camera_messages: renterMsgs,
-      negotiation:negotiationFromMessages(negotiationMsgs,conv?.active_rental_request),
+      negotiation:negotiationFromMessages(negotiationMsgs,conv?.active_rental_request,profile?.pickup_area??null),
       last_message_id: latest?.message_id ?? null,
     };
   },
@@ -2508,7 +2508,8 @@ export const recheckCopiedDraftStock = internalQuery({
     if(newInquiry||!currentStage.can_share_pickup_address) {
       const accountId=booking?.account_id??conv?.account_id??(await ctx.db.query("accounts").withIndex("by_slug",q=>q.eq("slug",account_slug)).first())?._id;
       const profile=accountId?await ctx.db.query("account_profiles").withIndex("by_account",q=>q.eq("account_id",accountId)).first():null;
-      if(hasPickupDisclosure(text,pickupPrivacySources(profile)))return {ok:false,reason:"pickup_details_unverified"};
+      const renterDeliveryMessages=cameraMessages.filter(message=>message.sender==="renter").map(message=>message.body_text);
+      if(hasPickupDisclosure(text,pickupPrivacySources(profile),undefined,renterDeliveryMessages))return {ok:false,reason:"pickup_details_unverified"};
     }
     if(evidence?.booking_record) {
       const freshRecord=bookingRecord(thread_id,account_slug,currentStage.stage,booking,labOrder);

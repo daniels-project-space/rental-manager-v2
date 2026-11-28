@@ -8,6 +8,38 @@ export const scheduleRejection = /\b(?:not|no(?! problem)|can't|cannot|won't|how
 export const scheduleClockPattern = () => /\b(?:\d{1,2}(?:[:.]\d{2}\s*(?:[ap]\.?m\.?)?|\s*[ap]\.?m\.?)|noon|midday|midnight)\b/gi;
 const contexts = () => /\b(pick\s*up|collect(?:ion)?|return|drop\s*(?:off|of)|back)\b/gi;
 const sideOf = (text: string): Endpoint => /^(?:return|drop|back)/i.test(text) ? "return" : "pickup";
+/** Bind a clock to the endpoint in its local clause. A nearby endpoint after
+ * a sentence break must not steal a clock from the prior clause; a clock
+ * immediately before a label ("11:00 collection") belongs to that label. */
+export function scheduleContextForClock(
+  text: string,
+  matches: RegExpMatchArray[],
+  start: number,
+  end: number,
+): RegExpMatchArray | undefined {
+  const preceding = matches.filter((c) => c.index! <= start).at(-1);
+  const following = matches.find((c) => c.index! >= end);
+  const comma = text.lastIndexOf(",", start);
+  const afterComma = comma >= 0 ? text.slice(comma + 1, start).trim() : "";
+  const explanatoryComma = /^(?:as\b|because\b|since\b|while\b|but\b|although\b|though\b|whereas\b|so\b|which\b|and\s+(?:these|those|the|our|their|its|they)\b)/i.test(afterComma)
+    ? comma
+    : -1;
+  const clauseBreak = Math.max(
+    text.lastIndexOf(".", start),
+    text.lastIndexOf("!", start),
+    text.lastIndexOf("?", start),
+    text.lastIndexOf(";", start),
+    explanatoryComma,
+    text.lastIndexOf("\n", start),
+  );
+  const localPreceding = preceding && preceding.index! > clauseBreak ? preceding : undefined;
+  if (!localPreceding) return following;
+  if (following) {
+    const gap = text.slice(end, following.index!);
+    if (/^\s*(?:(?:for|as)\s+)?$/i.test(gap)) return following;
+  }
+  return localPreceding;
+}
 export const literalScheduleTime = (text: string) => /^(?:noon|midday)$/i.test(text) ? "12:00" : /^midnight$/i.test(text) ? "00:00" : sanitizeTime(text);
 const minutes = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3));
 
@@ -68,7 +100,7 @@ export function contextualScheduleMessages(messages: BookingTimeMessage[], endpo
       const at = match.index!;
       const tail = text.slice(at + match[0].length);
       if (/^\s*(?:[ap]\.?m|mins?\b|minutes?\b|hours?\b|days?\b|batteries\b|[-–/]|(?:st|nd|rd|th)\b)/i.test(tail)) continue;
-      const context = matches.filter(c => c.index! <= at).at(-1) ?? matches.find(c => c.index! > at);
+      const context = scheduleContextForClock(text, matches, at, at + match[0].length);
       if (!context) continue;
       const side = sideOf(context[0]);
       const end = matches.find(c => c.index! > Math.max(at, context.index!))?.index ?? text.length;
@@ -81,7 +113,7 @@ export function contextualScheduleMessages(messages: BookingTimeMessage[], endpo
     matches = [...text.matchAll(contexts())];
     const next: typeof proposals = [];
     for (const clock of text.matchAll(scheduleClockPattern())) {
-      const context = matches.filter(c => c.index! <= clock.index!).at(-1) ?? matches.find(c => c.index! > clock.index!);
+      const context = scheduleContextForClock(text, matches, clock.index!, clock.index! + clock[0].length);
       if (!context) continue;
       const clauseStart = Math.min(context.index!, clock.index!);
       const clauseEnd = matches.find(c => c.index! > Math.max(context.index!, clock.index!))?.index ?? text.length;

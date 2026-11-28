@@ -53,6 +53,9 @@ function scoreDiogoTone(_text: string): null {
 // NOT "daniel"/"leo"/"diogo" for the first one, it's "dbcinema_web".
 const SCORERS: Record<string, (text: string) => number | null> = {
   dbcinema_web: scoreDBCinemaTone,
+  // The isolated renter Lab and checkout use "dbcinema" for this same
+  // account; preserve the established DB Cinema tone evaluation there.
+  dbcinema: scoreDBCinemaTone,
   leo: scoreLeoAdamsTone,
   diogo: scoreDiogoTone,
 };

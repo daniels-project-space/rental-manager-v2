@@ -3,6 +3,7 @@ import {unsupportedLensFocusClaims,type LensFocusEvidence} from "./lens_focus_cl
 import {equipmentClaimProfiles,equipmentClaimsNeedProfiles} from "./equipment_claim_profiles";
 import {guardDraft} from "./draft_guard";
 import {verifiedCameraCapabilities} from "./camera_requirements";
+import {verifiedLensCapabilities} from "./lens_requirements";
 const lens:LensFocusEvidence={names:["TTArtisan 11mm f2.8 Fisheye (Sony E)"],capabilities:{model:"TTArtisan 11mm f/2.8",source_url:"https://ttartisan.com/11mm",focus_mode:"manual_focus"}};
 const sony:LensFocusEvidence={names:["Sony FE 16-35mm F2.8 GM"],capabilities:{model:"SEL1635GM",source_url:"https://sony.com/lens",focus_mode:"autofocus",manual_focus_available:true}};
 const check=(text:string,evidence=[lens,sony],initial=[lens.names[0]])=>unsupportedLensFocusClaims(text,evidence,initial,["Sony FX3","FX3"]);
@@ -125,5 +126,14 @@ describe("shortened references after a named camera/lens pairing",()=>{
   expect(check(manual+"The 11mm gives you autofocus.")).not.toEqual([]);
   expect(check(manual+"The 11mm gives you manual-focus only operation.")).toEqual([]);
   expect(check(offer+"The 16-35mm gives you manual-focus only operation.",[lens,sony,canon])).not.toEqual([]);
+ });
+});
+
+describe("owner-confirmed lens facts in renter claims",()=>{
+ it("accepts autofocus only for the exact physical lens with owner-reviewed proof",()=>{
+  const capabilities=verifiedLensCapabilities(undefined,"Sony 28-70mm");
+  const evidence:LensFocusEvidence[]=[{names:["Sony 28-70mm"],capabilities}];
+  expect(unsupportedLensFocusClaims("The Sony 28-70mm has autofocus.",evidence)).toEqual([]);
+  expect(unsupportedLensFocusClaims("The Sony FE 70-200mm has autofocus.",evidence)).not.toEqual([]);
  });
 });

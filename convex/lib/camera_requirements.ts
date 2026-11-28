@@ -72,7 +72,7 @@ export function hasCameraRequirements(requirements:CameraRequirements,nativeMoun
 }
 /** Positive mode reviews are not an exhaustive negative specification. A
  * missing mode therefore needs review; known body/mount mismatches exclude it. */
-export function assessCameraRequirements(capabilities:CameraCapabilities|null,requirements:CameraRequirements,nativeMount?:string|null) {
+export function assessCameraRequirements(capabilities:Partial<CameraCapabilities>|null,requirements:CameraRequirements,nativeMount?:string|null) {
   const unknown:string[]=[],mismatched:string[]=[];
   for(const key of ["role","sensor_format","internal_4k","built_in_nd"] as const) {
     if(requirements[key]===undefined)continue;
@@ -109,6 +109,6 @@ export function assessCameraRequirements(capabilities:CameraCapabilities|null,re
   return {status:mismatched.length?"mismatch" as const:unknown.length?"unknown" as const:"match" as const,unknown,mismatched};
 }
 /** Unknown does not satisfy a hard requirement. Stock is checked separately. */
-export function meetsCameraRequirements(capabilities: CameraCapabilities | null, requirements: CameraRequirements, nativeMount?: string) {
+export function meetsCameraRequirements(capabilities: Partial<CameraCapabilities> | null, requirements: CameraRequirements, nativeMount?: string) {
   return assessCameraRequirements(capabilities,requirements,nativeMount).status==="match";
 }

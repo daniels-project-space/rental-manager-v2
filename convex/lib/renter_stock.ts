@@ -376,7 +376,21 @@ export function stockForItem(sources: Awaited<ReturnType<typeof loadStockSources
   // but a request above it does not prove the remaining units do not exist.
   // Keep definite closures and unrentable items negative.
   const beyondKnownMinimum = item.quantity_basis?.basis === "owner_lower_bound" && result.reason === "insufficient_units";
-  return { ...result, ...(beyondKnownMinimum ? {available:null,reason:"stock_above_confirmed_minimum"} : {}), ...(item.quantity_basis ? { quantity_basis: item.quantity_basis } : {}), item_name: item.name_canonical, item_id: item._id, kind: item.kind, owned: item.status === "active" && !item.is_marketing_only && item.qty > 0, is_marketing_only: item.is_marketing_only === true, buffer_minutes: TURNAROUND_BUFFER_MINUTES, source: "shared_inventory_confirmed_rentals", checked_at: Date.now() };
+  const constrainedDays = !beyondKnownMinimum && result.reason === "insufficient_units"
+    ? result.per_day.filter((day) => day.free < result.requested_units)
+    : [];
+  const rentedDuringRequest = constrainedDays.some((day) => day.booked > 0);
+  const awayForRepair = constrainedDays.some((day) => day.repair > 0);
+  const renterSafeAvailabilityNote = rentedDuringRequest && awayForRepair
+    ? "Some units are already booked and others are away for repair during part of the requested period."
+    : rentedDuringRequest
+      ? "Some units are already booked during part of the requested period."
+      : awayForRepair
+        ? "Some units are away for repair during part of the requested period."
+        : undefined;
+  return { ...result, ...(beyondKnownMinimum ? {available:null,reason:"stock_above_confirmed_minimum"} : {}),
+    ...(renterSafeAvailabilityNote ? { renter_safe_availability_note: renterSafeAvailabilityNote } : {}),
+    ...(item.quantity_basis ? { quantity_basis: item.quantity_basis } : {}), item_name: item.name_canonical, item_id: item._id, kind: item.kind, owned: item.status === "active" && !item.is_marketing_only && item.qty > 0, is_marketing_only: item.is_marketing_only === true, buffer_minutes: TURNAROUND_BUFFER_MINUTES, source: "shared_inventory_confirmed_rentals", checked_at: Date.now() };
 }
 
 export async function checkRentalStock(ctx: QueryCtx, request: StockRequest) {
@@ -407,6 +421,8 @@ export function stockForRentalItem(sources:Awaited<ReturnType<typeof loadStockSo
     const date=c.per_day.find(d=>d.date===day.date);
     return date?Math.floor(date.free/c.units_per_item):0;
   }))}));
+  const renterNotes=[...new Set(components.flatMap(c=>c.renter_safe_availability_note?[`${c.item_name}: ${c.renter_safe_availability_note}`]:[]))];
   return {...primary,available,free_units:free,total_units:total,per_day,reason:negative?"supplied_component_unavailable":available===true?"available":defaults.unresolved.length?"unresolved_default_adapter":"supplied_component_stock_unknown",
+    ...(renterNotes.length?{renter_safe_availability_note:renterNotes.join(" ")}:{}),
     source:"item_with_supplied_adapters",components,unresolved_default_adapters:defaults.unresolved};
 }

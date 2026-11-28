@@ -30,11 +30,32 @@ function reconcileMedia(components:Array<{name:string|null;qty:number}>,accessor
 /** Known contents per listing. A stock mapping is not an exhaustive kit.
  * Accessory descriptions may overlap components or describe sets: do not add
  * them into individual-unit totals. */
-export function recordedKit(components: Array<{ name: string | null; qty: number }>, accessories: string[]) {
-  const mapped = components.filter(c => c.name && Number.isInteger(c.qty) && c.qty > 0)
+export function recordedKit(components: Array<{ name: string | null; qty: number }>, accessories: string[],ownerConfirmed=false) {
+  let exactComponents=components;
+  let exactAccessories=accessories;
+  if(ownerConfirmed) {
+    const consumed=new Set<string>();
+    exactComponents=components.map(component=>({...component}));
+    for(const text of accessories) {
+      const count=/^\s*(\d+)\s*[×x]\s*/i.exec(text);
+      const note=mediaIdentity(text);
+      if(!count||!note?.gb)continue;
+      const detail=text.slice(count[0].length);
+      const possible=exactComponents.flatMap((component,index)=>{
+        const mapped=component.name&&mediaIdentity(component.name);
+        return mapped&&mapped.kind===note.kind&&mapped.gb===null&&compatibleFormat(mapped.format,note.format)
+          ?[{index,qty:component.qty}]:[];
+      });
+      if(possible.length!==1||possible[0].qty!==Number(count[1]))continue;
+      exactComponents[possible[0].index]={...exactComponents[possible[0].index],name:detail};
+      consumed.add(text);
+    }
+    exactAccessories=accessories.filter(text=>!consumed.has(text));
+  }
+  const mapped = exactComponents.filter(c => c.name && Number.isInteger(c.qty) && c.qty > 0)
     .map(c => `${c.qty} × ${c.name}`);
   const physicalName = (name: string) => name.toLowerCase().replace(/batteries/g,"battery").replace(/cards/g,"card").replace(/cases/g,"case").replace(/chargers/g,"charger").replace(/[^a-z0-9]/g,"");
-  const reconciled=reconcileMedia(components,accessories);
+  const reconciled=reconcileMedia(exactComponents,exactAccessories);
   const recorded = reconciled.retained.filter(c => typeof c === "string" && c.trim()).map(c => c.trim()).filter(text=>{
     const explicit=/^(\d+)\s*[×x]\s*(.+)$/i.exec(text);
     // Only a matching physical name AND quantity can collapse. A pack, set,

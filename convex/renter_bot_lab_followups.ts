@@ -9,9 +9,11 @@ import { summarise } from "./lib/renter_order_quote";
 import { renterBotLabPickupPoint } from "./lib/renter_bot_lab_scenarios";
 import { distanceFollowupDraft, missingTimeDraft, type LabTurn } from "./lib/lab_followup_policy";
 import { confirmedLabTimes } from "./lib/lab_schedule";
+import type { Doc } from "./_generated/dataModel";
 
 const kindValidator=v.union(v.literal("missing_times"),v.literal("location"));
 type Kind="missing_times"|"location";
+type LabFollowupDraft = Pick<Doc<"renter_bot_lab_followup_drafts">, "kind" | "text" | "created_at">;
 function assertIsolated(thread:string) {
  if(!thread.startsWith(LAB_THREAD_PREFIX) || process.env.RENTER_BOT_LAB_SCENARIO_SEEDING!=="enabled")throw new Error("Only the isolated Lab can create follow-up drafts");
 }
@@ -54,7 +56,7 @@ export const createDraft=internalMutation({
 /** Suppress stale drafts if a time, price, booking or later message changes. */
 export const list=query({
  args:{thread_id:v.string()},
- handler:async(ctx,{thread_id})=>{
+ handler:async(ctx,{thread_id}):Promise<LabFollowupDraft[]>=>{
   assertIsolated(thread_id);
   const rows=await ctx.db.query("renter_bot_lab_followup_drafts").withIndex("by_thread",q=>q.eq("thread_id",thread_id)).collect();
   const evaluated=await Promise.all(rows.map(async row=>({row,text:await currentDraft(ctx,thread_id,row.kind,row.anchor,row.source_message_id)})));

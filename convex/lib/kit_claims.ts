@@ -1,13 +1,42 @@
 import { withoutVerificationQuestions } from "./renter_statement_scope";
 import { renterItemNames } from "./renter_item_names";
 
-export type KitEvidence = { names: string[]; contents: string[]; booked_camera?: boolean; booked_item?: boolean; requested_item?: boolean; kind?: string };
+export type KitEvidence = { names: string[]; contents: string[]; listing_contents?: string[]; listing_source?: "online_listings"; listing_account_slug?: string; listing_product_id?: number; listing_description_updated_at?: number; account_slug?: string; product_id?: number; booked_camera?: boolean; booked_item?: boolean; requested_item?: boolean; kind?: string; source?: string; recorded_at?: number };
 const categories = [
   ["charger", /\bchargers?\b/i], ["battery", /\bbatter(?:y|ies)\b/i], ["card", /\b(?:cards?|sd|cfast|cf\s*express)\b/i],
   ["cage", /\bcages?\b/i], ["tripod", /\btripods?\b/i], ["microphone", /\b(?:mics?|microphones?)\b/i],
   ["case", /\b(?:cases?|bags?)\b/i], ["filter", /\bfilters?\b/i], ["monitor", /\bmonitors?\b/i],
   ["gimbal", /\bgimbals?\b/i], ["adapter", /\badapters?\b/i], ["ssd", /\bssd\b/i],
 ] as const;
+
+/** Extract only bullets inside an explicit listing inclusion section. This
+ * deliberately excludes nearby marketing combos, pickup claims and general
+ * notes; the original description remains available as a separately traced
+ * source in the Lab. */
+export function explicitListingIncludedContents(description: string): string[] {
+  const lines = description.split(/\r?\n/);
+  const heading = (line: string) => line.replace(/^[^\p{L}\p{N}]+/u, "").trim();
+  const isInclusionHeading = (line: string) => {
+    const clean = heading(line);
+    return /^(?:what(?:'s| is) included|included in (?:this|the) (?:rental )?(?:set|kit|package)|included (?:items|contents)|(?:kit|set|package) contents)\b/i.test(clean)
+      // Some active Hygglo descriptions introduce their literal contents list
+      // with this sentence instead of an "Included" heading. Require the
+      // colon so ordinary marketing prose cannot open an inclusion section.
+      || /^in (?:this|the) (?:rental )?(?:set|kit|package),?\s+you(?:'ll| will) find\b[^.!?]{0,180}:\s*$/i.test(clean);
+  };
+  const start = lines.findIndex(isInclusionHeading);
+  if (start < 0) return [];
+  const contents: string[] = [];
+  for (const raw of lines.slice(start + 1)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const clean = heading(line);
+    if (/^(?:about us|popular combos|please(?: kindly)? note|pickup|collection|delivery|how it works|specifications|technical details)\b/i.test(clean)) break;
+    const bullet = /^\s*[•*\-]\s*(.+)$/.exec(line);
+    if (bullet?.[1] && bullet[1].length <= 240) contents.push(bullet[1].trim());
+  }
+  return [...new Set(contents)];
+}
 
 /** A compact, native answer for explicit inclusion questions, independent of
  * model wording. An incomplete manifest never proves an item is absent. */
@@ -22,6 +51,56 @@ export function requestedIncludedKitEntries(message: string, evidence: KitEviden
     content.length <= 120 && !/[\n.!?;]/.test(content) &&
     !/\b(?:no|not|without|excluding|optional|available separately|subject to)\b/i.test(content) &&
     requested.some(([, pattern]) => pattern.test(content))))];
+}
+
+/** Check only inclusion details that are explicitly recorded for one selected
+ * item. Other gear and specification questions remain outside this check. */
+export function assessIncludedKitAnswer(
+  message: string,
+  reply: string,
+  evidence: KitEvidence[],
+): { status: "pass" | "fail"; detail: string; evidence: string } | null {
+  const sourcedEvidence = evidence.filter((entry) => entry.source?.trim() &&
+    typeof entry.recorded_at === "number" && Number.isFinite(entry.recorded_at) && entry.recorded_at <= Date.now() + 5 * 60 * 1000);
+  const expected = requestedIncludedKitEntries(message, sourcedEvidence);
+  if (!expected.length) return null;
+  const requestedCategories = categories.filter(([, pattern]) => pattern.test(message));
+  if (!requestedCategories.length) return null;
+
+  const selected = sourcedEvidence.filter((entry) => entry.requested_item || entry.booked_camera || entry.booked_item);
+  if (selected.length !== 1) return null;
+
+  const fail = (detail: string) => ({ status: "fail" as const, detail, evidence: expected.join("; ") });
+  const positive = /\b(?:yes\b|includes?|included|comes? with|supplied with|provided with|contains?|has|have|got)\b/i.test(reply);
+  if (!positive) return fail("The renter asked about a recorded kit inclusion, but the reply does not clearly confirm it.");
+
+  for (const [category, pattern] of requestedCategories) {
+    const expectedForCategory = expected.filter((line) => pattern.test(line));
+    if (!expectedForCategory.length) continue;
+    if (!pattern.test(reply)) return fail(`The reply does not identify the recorded ${category} inclusion.`);
+
+    const expectedDetails = expectedForCategory.map((line) => details(line, category, pattern, true));
+    const answerDetails = details(reply, category, pattern);
+    const expectedTypes = [...new Set(expectedDetails.flatMap((value) => value.types))];
+    const expectedCapacities = [...new Set(expectedDetails.flatMap((value) => value.capacities))];
+    if (expectedTypes.length && expectedTypes.some((value) => !answerDetails.types.includes(value))) {
+      return fail(`The reply does not match the recorded ${category} type.`);
+    }
+    if (expectedCapacities.length && expectedCapacities.some((value) => !answerDetails.capacities.includes(value))) {
+      return fail(`The reply omits or contradicts the recorded ${category} capacity.`);
+    }
+    if (answerDetails.types.some((value) => expectedTypes.length && !expectedTypes.includes(value)) ||
+        answerDetails.capacities.some((value) => expectedCapacities.length && !expectedCapacities.includes(value))) {
+      return fail(`The reply includes a conflicting ${category} detail.`);
+    }
+    if (/\b(?:how many|what number|how much|quantity|count)\b/i.test(message) &&
+        expectedDetails.some((value) => value.quantity !== undefined) &&
+        answerDetails.quantity !== expectedDetails.find((value) => value.quantity !== undefined)?.quantity) {
+      return fail(`The reply omits or contradicts the recorded ${category} count.`);
+    }
+  }
+
+  return { status: "pass", detail: "The explicit kit-inclusion answer matches the selected item's source-backed contents.", evidence: expected.join("; ") };
 }
 /** Avoid catalogue reads for unrelated uses such as “the price includes VAT”. */
 export function kitClaimsNeedEvidence(text:string) {
@@ -73,6 +152,11 @@ function supports(claim: ComponentDetails, proof: ComponentDetails) {
   return claim.types.every(t => proof.types.includes(t) || t === "cfexpress" && proof.types.some(p => p.startsWith("cfexpresstype")))
     && claim.capacities.every(c => proof.capacities.includes(c))
     && (claim.quantity === undefined || claim.quantity === proof.quantity && claim.quantityUnit === proof.quantityUnit);
+}
+function conflicts(claim: ComponentDetails, proof: ComponentDetails) {
+  return claim.types.some(t => proof.types.length > 0 && !proof.types.includes(t) && !(t === "cfexpress" && proof.types.some(p => p.startsWith("cfexpresstype"))))
+    || claim.capacities.some(c => proof.capacities.length > 0 && !proof.capacities.includes(c))
+    || (claim.quantity !== undefined && proof.quantity !== undefined && (claim.quantity !== proof.quantity || claim.quantityUnit !== proof.quantityUnit));
 }
 const componentParts = (s: string) => s.split(/[,;()]|\balong\s+with\b|\bwith\b|\band\b|\bplus\b/gi);
 function ownersForReference(owner: string, evidence: KitEvidence[]) {
@@ -183,12 +267,24 @@ export function unsupportedKitClaims(text: string, evidence: KitEvidence[], init
       : named.length ? named : subject.length ? subject : evidence;
     if (!evidence.length) continue; // unknown-kit guard handles missing evidence separately
     for (const [content, pattern] of categories) {
-      const claims = componentParts(claimed.replace(/\b(?:built[ -]?in|internal)\s+(?:variable\s+)?ND\s+filters?\b/gi, "intrinsic camera ND")).filter(c => !/^\s*(?:not|no|without|rather than|instead of)\b/i.test(c) && pattern.test(c));
+      const claims = componentParts(claimed.replace(/\bbattery\s+chargers?\b/gi, "charger").replace(/\b(?:built[ -]?in|internal)\s+(?:variable\s+)?ND\s+filters?\b/gi, "intrinsic camera ND")).filter(c => !/^\s*(?:not|no|without|rather than|instead of)\b/i.test(c) && pattern.test(c));
       if (claims.some(raw => {
         const scope = /__kit_owner_(\d+)__/.exec(raw);
         const owners = scope ? scoped.scopes[Number(scope[1])] : candidates;
         const claim = details(raw.replace(/__kit_owner_\d+__/g, ""), content, pattern);
-        return !owners.length || !owners.every(e => e.contents.some(entry =>
+        const physicalSupport = owners.length > 0 && owners.every(e => e.contents.some(entry =>
+          componentParts(entry).some(part => pattern.test(part) && supports(claim, details(part, content, pattern, true)))));
+        if (physicalSupport) return false;
+        // An exact, successful get_listing_context receipt may support claims
+        // that are explicitly attributed to the listing. It cannot override
+        // an incompatible physical mapping (for example, a stale battery
+        // count), and descriptions never prove stock, pickup or price.
+        const attributedToListing = /\b(?:the\s+)?(?:listing|description)\s+(?:also\s+)?(?:says|states|specifies|describes|lists|shows|notes)\b|\baccording\s+to\s+(?:the\s+)?(?:listing|description)\b|\b(?:described|listed|specified|noted)\s+in\s+(?:the\s+)?(?:listing|description)\b|\bas\s+(?:listed|described)\b/i.test(originalSentence);
+        const listingOwners = owners.length ? owners : selected.length === 1 ? selected : [];
+        if (!attributedToListing || !listingOwners.length || !listingOwners.every(e => e.listing_source === "online_listings" && !!e.listing_contents?.length)) return true;
+        const physicalEntries = listingOwners.flatMap(e => e.contents.flatMap(entry => componentParts(entry).filter(part => pattern.test(part))));
+        if (physicalEntries.some(part => conflicts(claim, details(part, content, pattern, true)))) return true;
+        return !listingOwners.every(e => e.listing_contents!.some(entry =>
           componentParts(entry).some(part => pattern.test(part) && supports(claim, details(part, content, pattern, true)))));
       })) {
         failures.push({ sentence: originalSentence.trim(), content });

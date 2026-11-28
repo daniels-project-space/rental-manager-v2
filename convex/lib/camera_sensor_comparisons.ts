@@ -41,6 +41,17 @@ export function unsupportedSensorIdentityClaims(text: string, initialNames: stri
   return failures;
 }
 
-export function sensorComparisonInstruction() {
-  return `CAMERA COMPARISON SOURCE POLICY: advertising titles, price names and shared sensor format/resolution do not establish identical sensors or interchangeable cameras. Reviewed sensor relationships: ${JSON.stringify(verifiedSensorComparisons)}. Use only the exact reviewed pair for a same-sensor claim; this does not establish identical controls, cooling, firmware, recording modes or supplied accessories. Other comparisons require their own reviewed facts.`;
+export function relevantSensorComparisons(context: string) {
+  const mentioned = new Set(modelIds(context));
+  return verifiedSensorComparisons.filter((comparison) =>
+    comparison.models.flatMap(modelIds).every((model) => mentioned.has(model)),
+  );
+}
+
+export function sensorComparisonInstruction(context?: string) {
+  const comparisons = context === undefined
+    ? verifiedSensorComparisons
+    : relevantSensorComparisons(context);
+  if (!comparisons.length) return "";
+  return `CAMERA COMPARISON SOURCE POLICY: advertising titles, price names and shared sensor format/resolution do not establish identical sensors or interchangeable cameras. Reviewed sensor relationships relevant to this question: ${JSON.stringify(comparisons)}. Use only the exact reviewed pair for a same-sensor claim; this does not establish identical controls, cooling, firmware, recording modes or supplied accessories. Other comparisons require their own reviewed facts.`;
 }

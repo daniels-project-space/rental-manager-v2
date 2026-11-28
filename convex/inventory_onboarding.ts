@@ -10,6 +10,7 @@ import { mutation, query, requireOwner } from "./owner_functions";
 import { normalizeItemName } from "./lib/item_matcher";
 import { validIsoDate, loadStockSources } from "./lib/renter_stock";
 import { patchProduct } from "./lib/product_context";
+import { buildOwnerVerifiedPickupAvailability } from "./lib/renter_bot_listing_pickup";
 
 const formValidator = v.object({
   name: v.string(), exact_model: v.string(), kind: v.string(), quantity: v.string(),
@@ -399,6 +400,65 @@ export const registerListing = mutation({
     return { item_id: args.item_id, account_slug: account, product_id: args.product_id, registered: true, repeated: !!override, stock_units_added: 0 };
   },
 });
+export const setListingPickupAvailability = mutation({
+  args: {
+    account_slug: v.string(),
+    product_id: v.number(),
+    clear: v.optional(v.boolean()),
+    status: v.optional(v.union(
+      v.literal("account_area_only"),
+      v.literal("currently_on_rental"),
+      v.literal("in_repair"),
+      v.literal("assigned_to_set"),
+    )),
+    customer_explanation: v.optional(v.string()),
+    source: v.optional(v.string()),
+    source_url: v.optional(v.string()),
+    valid_until: v.optional(v.number()),
+    applies_start_date: v.optional(v.string()),
+    applies_end_date: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await requireOwner(ctx, true);
+    const account = required(args.account_slug, "Account", 80);
+    if (!Number.isSafeInteger(args.product_id) || args.product_id < 1)
+      throw Error("Exact positive marketplace product ID required");
+    const [accountRow, product, override] = await Promise.all([
+      ctx.db.query("accounts").withIndex("by_slug", q => q.eq("slug", account)).unique(),
+      ctx.db.query("hygglo_products").withIndex("by_account_product", q => q.eq("accountSlug", account).eq("productId", args.product_id)).unique(),
+      ctx.db.query("listing_resolution_override").withIndex("by_account_product", q => q.eq("account_slug", account).eq("product_id", args.product_id)).unique(),
+    ]);
+    if (!accountRow) throw Error("Account is not registered in Rental Manager");
+    if (!product) throw Error("The exact account listing is not in Rental Manager's synced catalogue");
+    if (!override?.stock_item_id || !override.public_url)
+      throw Error("Register the exact account and product listing against physical inventory first");
+
+    const now = Date.now();
+    if (args.clear) {
+      if (args.status || args.customer_explanation || args.source || args.source_url || args.valid_until || args.applies_start_date || args.applies_end_date)
+        throw Error("Clear an existing pickup status separately from saving a new one");
+      await ctx.db.patch(override._id, { pickup_availability: undefined, updated_at: now });
+      await ctx.db.insert("audit_log", {
+        table_name: "listing_resolution_override", actor: "walle-owner-listing-pickup", op: "clear", count: 1,
+        source_file: "convex/inventory_onboarding.ts:setListingPickupAvailability",
+        note: `account=${account}; product=${args.product_id}; pickup_status=cleared`, ts: now,
+      });
+      return { cleared: true, account_slug: account, product_id: args.product_id };
+    }
+
+    if (product.isPublished !== true || product.isMarketingOnly === true)
+      throw Error("Pickup reasons require the exact published, bookable account listing");
+    if (!args.status) throw Error("Choose a pickup status or clear the existing status");
+    const pickupAvailability = buildOwnerVerifiedPickupAvailability({ ...args, status: args.status }, now);
+    await ctx.db.patch(override._id, { pickup_availability: pickupAvailability, updated_at: now });
+    await ctx.db.insert("audit_log", {
+      table_name: "listing_resolution_override", actor: "walle-owner-listing-pickup", op: "update", count: 1,
+      source_file: "convex/inventory_onboarding.ts:setListingPickupAvailability",
+      note: `account=${account}; product=${args.product_id}; pickup_status=${pickupAvailability.status}`, ts: now,
+    });
+    return { status: pickupAvailability.status, verified_at: now, account_slug: account, product_id: args.product_id };
+  },
+})
 
 export const confirmAvailability = mutation({
   args: { item_id: v.id("items") },

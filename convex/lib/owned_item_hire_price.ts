@@ -1,6 +1,6 @@
 import type {QueryCtx} from "../_generated/server";
 import type {Doc} from "../_generated/dataModel";
-import {baseListingProductIds,chooseBaseListing} from "./base_listing_identity";
+import {baseListingProductIds,resolveBaseListingChoice} from "./base_listing_identity";
 import {resolveListingComponents} from "./listing_inventory";
 import {describeTiers,rentalQuote,tierRateForDays,type PriceTier} from "./hygglo_pricing";
 
@@ -17,8 +17,14 @@ export function ownedItemHirePriceReader(ctx:QueryCtx,accountSlug:string,listing
    candidateContents.set(listing.product_id,contents);
    return contents.complete&&contents.owned===true;
   });
-  const altListing=chooseBaseListing(verified,pids);
-  return {candidateContents,altListing,altPid:altListing?.product_id};
+  const choice=resolveBaseListingChoice(verified,pids);
+  const baseOffers=choice.status==="selection_required"?choice.listings:choice.status==="selected"?[choice.listing]:[];
+  const altListing=choice.status==="selected"?choice.listing:null;
+  return {
+   candidateContents,altListing,altPid:altListing?.product_id,
+   listing_selection_required:choice.status==="selection_required",
+   listing_options:baseOffers.map((listing,index)=>({product_id:listing.product_id,option_label:`Option ${index+1}`,daily_rate_gbp:Math.round((listing.daily_price??0)*100)/100})),
+  };
  };
  const listingsByItem=new Map<string,ReturnType<typeof readListing>>();
  const listing=(item:Doc<"items">)=>{

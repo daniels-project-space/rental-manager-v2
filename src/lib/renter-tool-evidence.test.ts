@@ -6,11 +6,55 @@ import pairedNative from "./fixtures/renter-sales-paired-native.json";
 import {unsupportedPriceClaims,type PriceEvidence} from "../../convex/lib/price_claims";
 import {renterPriceEvidence} from "./renter-price-evidence";
 import { describe, expect, it } from "vitest";
-import { availabilityComponentReceipts, recommendationKitEvidence, renterToolReceipts, stockReceipts, successfulGrounding } from "./renter-tool-evidence";
+import { availabilityComponentReceipts, currentTurnLabOrderReplay, mergeListingDescriptionKitEvidence, pickupOnlyDeliveryEvidence, recommendationKitEvidence, renterToolReceipts, stockReceipts, successfulGrounding } from "./renter-tool-evidence";
 import { normalizeClaimedFacts } from "../../convex/lib/renter_draft_evidence";
+import { unsupportedKitClaims } from "../../convex/lib/kit_claims";
 import { unsupportedStockClaims,type StockReceipt } from "../../convex/lib/stock_claims";
 import currentInquiry from "./fixtures/renter-current-inquiry-basket-stock.json";
 import mismatch from "./fixtures/renter-product-name-mismatch.json";
+
+it("recovers only an exact same-turn referral restore from the current Lab order read", () => {
+  const result = {
+    account_slug: "dbcinema", days: 1, start_date: "2026-12-12", end_date: "2026-12-12", total_gbp: 50,
+    lines: [{ product_id: 1103089, name: "BMPCC 6K Full Frame", qty: 1, daily_price_gbp: 50, effective_rate_gbp: 50, line_total_gbp: 50 }],
+    same_turn_replay: { source: "native_lab_amendment", action: "restore_referral_basket", thread_id: "__probe__friend", account_slug: "dbcinema",
+      request_message_id: "friend-inbound", start_date: "2026-12-12", end_date: "2026-12-12", items: [{ product_id: 1103089, qty: 1 }] },
+  };
+  const receipt = renterToolReceipts([{ toolName: "get_order_edit_state", toolCallId: "retry-state", result }]);
+  expect(currentTurnLabOrderReplay(receipt, { threadId: "__probe__friend", accountSlug: "dbcinema", requestMessageId: "friend-inbound" })).toEqual(result);
+  const savedOrderPrices = renterPriceEvidence([{ tool: "get_lab_order", call_id: "same-turn-replay:lab-order", result }]);
+  expect(savedOrderPrices).toContainEqual(expect.objectContaining({ kind: "basket", total_gbp: 50, source: "lab_order_quote" }));
+  expect(unsupportedPriceClaims("I added the BMPCC 6K Full Frame kit to your rental request. Total: £50.", savedOrderPrices,
+    { start_date: "2026-12-12", end_date: "2026-12-12", items: [{ name: "BMPCC 6K Full Frame", quantity: 1 }] })).toEqual([]);
+  for (const expected of [
+    { threadId: "__probe__other", accountSlug: "dbcinema", requestMessageId: "friend-inbound" },
+    { threadId: "__probe__friend", accountSlug: "leo", requestMessageId: "friend-inbound" },
+    { threadId: "__probe__friend", accountSlug: "dbcinema", requestMessageId: "another-message" },
+  ]) expect(currentTurnLabOrderReplay(receipt, expected)).toBeUndefined();
+  expect(currentTurnLabOrderReplay(renterToolReceipts([{ toolName: "get_order_edit_state", result: {
+    ...result, lines: [{ ...result.lines[0], product_id: 999 }],
+  } }]), { threadId: "__probe__friend", accountSlug: "dbcinema", requestMessageId: "friend-inbound" })).toBeUndefined();
+  expect(currentTurnLabOrderReplay(renterToolReceipts([{ toolName: "get_order_edit_state", result: {
+    ...result, same_turn_replay: { ...result.same_turn_replay, action: "unrelated_change" },
+  } }]), { threadId: "__probe__friend", accountSlug: "dbcinema", requestMessageId: "friend-inbound" })).toBeUndefined();
+});
+
+it("accepts pickup-only delivery evidence only for the latest exact account and thread check", () => {
+  const matching = renterToolReceipts([{ toolName: "check_location", toolCallId: "delivery-1", result: {
+    ok: false, delivery_status: "pickup_only", account_slug: "diogo", thread_id: "__probe__one",
+  } }])[0];
+  expect(pickupOnlyDeliveryEvidence([matching], "diogo", "__probe__one")).toEqual({
+    status: "pickup_only", account_slug: "diogo", thread_id: "__probe__one",
+  });
+  expect(pickupOnlyDeliveryEvidence([matching], "dbcinema", "__probe__one")).toBeUndefined();
+  expect(pickupOnlyDeliveryEvidence([matching], "diogo", "__probe__other")).toBeUndefined();
+  expect(pickupOnlyDeliveryEvidence([
+    matching,
+    { tool: "check_location", call_id: "delivery-2", result: {
+      ok: true, delivery_status: "checkout_verification_required", account_slug: "diogo", thread_id: "__probe__one",
+    } },
+  ], "diogo", "__probe__one")).toBeUndefined();
+});
 
 it("carries only verified per-listing kit contents from a successful Native swap quote",()=>{
  const result={ok:true,source:"native_lab_proposal",added_kit_evidence:[{name:"Sony A7 III",source:"physical_mapping_and_inventory",contents:["3x Sony NP-FZ100 batteries"]}]};
@@ -18,6 +62,64 @@ it("carries only verified per-listing kit contents from a successful Native swap
  expect(recommendationKitEvidence(receipt)).toEqual([expect.objectContaining({contents:["3x Sony NP-FZ100 batteries"]})]);
  expect(recommendationKitEvidence(renterToolReceipts([{toolName:"quote_booking_replacement",toolCallId:"swap",result:{...result,ok:false}}]))).toEqual([]);
  expect(recommendationKitEvidence(renterToolReceipts([{toolName:"quote_booking_replacement",toolCallId:"swap",result:{...result,added_kit_evidence:[{...result.added_kit_evidence[0],source:"listing_text"}]}}]))).toEqual([]);
+ const ownerResult={...result,added_kit_evidence:[{name:"BMPCC 6K Full Frame Kit",source:"physical_mapping_and_owner_confirmed_listing",contents:["5× NP-F570 batteries","1× Lexar Professional 1TB CFexpress Type B card"]}]};
+ expect(recommendationKitEvidence(renterToolReceipts([{toolName:"quote_booking_addition",toolCallId:"add",result:ownerResult}]))).toEqual([
+  expect.objectContaining({contents:["5× NP-F570 batteries","1× Lexar Professional 1TB CFexpress Type B card"]}),
+ ]);
+});
+
+it("attaches accessory claims only from the exact active listing's successful online description",()=>{
+ const description="Included in this rental set\n• 1× 1TB Lexar Professional CFexpress Type B card\n• 1× Battery charger\nAbout us\n• Pickup in Central London\nPopular Combos\n• DJI RS3 Pro";
+ const base=[{names:["BMPCC 6K Full Frame"],contents:["5× NP-F570 batteries"],account_slug:"dbcinema",product_id:1103089}];
+ const result={items:[{product_id:1103089,account_slug:"dbcinema",listing_description:description,listing_description_source:"online_listings",listing_description_updated_at:123}]};
+ const active=[{product_id:1103089,name:"BMPCC 6K Full Frame",listing_name:"BMPCC 6K FF listing",kind:"camera"}];
+ const merged=mergeListingDescriptionKitEvidence(base,renterToolReceipts([{toolName:"get_listing_context",toolCallId:"listing",result}]),"dbcinema",active);
+ expect(merged).toHaveLength(1);
+ expect(merged[0]).toMatchObject({listing_source:"online_listings",listing_account_slug:"dbcinema",listing_product_id:1103089,listing_description_updated_at:123});
+ expect(merged[0].listing_contents).toEqual(["1× 1TB Lexar Professional CFexpress Type B card","1× Battery charger"]);
+ expect(merged[0].listing_contents?.join(" ")).not.toMatch(/Pickup|DJI RS3/);
+ expect(mergeListingDescriptionKitEvidence(base,renterToolReceipts([{toolName:"get_listing_context",result}]),"leo",active)).toEqual(base);
+ expect(mergeListingDescriptionKitEvidence(base,renterToolReceipts([{toolName:"get_listing_context",result:{...result,items:[{...result.items[0],product_id:999}]}}]),"dbcinema",active)).toEqual(base);
+ expect(mergeListingDescriptionKitEvidence(base,renterToolReceipts([{toolName:"get_listing_context",result:{...result,items:[{...result.items[0],listing_description_source:"seller_text"}]}}]),"dbcinema",active)).toEqual(base);
+});
+
+it("joins an unscoped physical kit receipt to its unique exact listing before checking listing-attributed accessory claims",()=>{
+ const description="Included in this rental set\n• 1× Battery charger\nAbout us\n• Pickup in Central London";
+ const physical=[{names:["BMPCC 6K Full Frame"],contents:["5× NP-F570 batteries"],kind:"camera"}];
+ const result={items:[{product_id:1103089,account_slug:"dbcinema",listing_description:description,listing_description_source:"online_listings",listing_description_updated_at:123}]};
+ const active=[{product_id:1103089,name:"BMPCC 6K Full Frame",listing_name:"BMPCC 6K FF listing",kind:"camera"}];
+ const merged=mergeListingDescriptionKitEvidence(physical,renterToolReceipts([{toolName:"get_listing_context",toolCallId:"listing",result}]),"dbcinema",active);
+ expect(merged).toHaveLength(1);
+ expect(merged[0]).toMatchObject({account_slug:"dbcinema",product_id:1103089,listing_source:"online_listings",listing_product_id:1103089});
+ expect(unsupportedKitClaims("The listing also notes a battery charger as included.",merged,["BMPCC 6K Full Frame"])).toEqual([]);
+});
+
+it("grounds the Diogo FX3 cage and case reply in its exact online listing, not the physical manifest",()=>{
+ const description="In this kit, you'll find everything you need to start shooting:\n• Sony FX3 camera body\n• 320GB Lexar CFexpress Type A card\n• Camera cage\n• 3 Sony NP-FZ100 batteries\n• Protective carrying case\n\nChargers are included. Only proprietary charging cables are supplied; standard USB-C/USB 2.0 leads are not included.";
+ const physical=[{names:["Sony FX3"],contents:["3× Sony NP-FZ100 batteries","320GB Lexar CFexpress Type A card","Sony dual battery charger"],account_slug:"diogo",product_id:1173763}];
+ const listing={items:[{product_id:1173763,account_slug:"diogo",listing_description:description,listing_description_source:"online_listings",listing_description_updated_at:456}]};
+ const active=[{product_id:1173763,name:"Sony FX3",listing_name:"Sony FX3 Camera Kit",kind:"camera"}];
+ const receipts=renterToolReceipts([{toolName:"get_listing_context",toolCallId:"fx3-listing",result:listing}]);
+ const merged=mergeListingDescriptionKitEvidence(physical,receipts,"diogo",active);
+ expect(merged[0].listing_contents).toEqual([
+  "Sony FX3 camera body","320GB Lexar CFexpress Type A card","Camera cage",
+  "3 Sony NP-FZ100 batteries","Protective carrying case",
+ ]);
+ const candidate="Yes, as noted in the listing, the kit includes a camera cage and a protective carrying case. The charger is a Sony dual battery charger. For cables, I only supply proprietary charging cables, so if you need a standard USB-C cable, please bring your own.";
+ expect(unsupportedKitClaims(candidate,merged,["Sony FX3"])).toEqual([]);
+ expect(unsupportedKitClaims(candidate,mergeListingDescriptionKitEvidence(physical,receipts,"leo",active),["Sony FX3"])).not.toEqual([]);
+ const sellerText={items:[{...listing.items[0],listing_description_source:"seller_text"}]};
+ expect(unsupportedKitClaims(candidate,mergeListingDescriptionKitEvidence(physical,renterToolReceipts([{toolName:"get_listing_context",result:sellerText}]),"diogo",active),["Sony FX3"])).not.toEqual([]);
+});
+
+it("does not join listing text when same-name physical kit evidence is ambiguous",()=>{
+ const description="Included in this rental set\n• 1× Battery charger";
+ const physical=[{names:["BMPCC 6K Full Frame"],contents:["5× NP-F570 batteries"]},{names:["BMPCC 6K Full Frame"],contents:["3× NP-F570 batteries"]}];
+ const result={items:[{product_id:1103089,account_slug:"dbcinema",listing_description:description,listing_description_source:"online_listings"}]};
+ const active=[{product_id:1103089,name:"BMPCC 6K Full Frame",kind:"camera"}];
+ const merged=mergeListingDescriptionKitEvidence(physical,renterToolReceipts([{toolName:"get_listing_context",result}]),"dbcinema",active);
+ expect(merged).toHaveLength(3);
+ expect(unsupportedKitClaims("The listing also notes a battery charger as included.",merged,["BMPCC 6K Full Frame"])).not.toEqual([]);
 });
 
 describe("untrusted claimed-fact diagnostics", () => {
@@ -99,6 +201,16 @@ describe("successful tool receipts", () => {
   it("does not authorize positive claims from errors, unknowns or unowned stock", () => {
     for (const result of [{ ...stock, error: "timeout" }, { ...stock, available: null }, { ...stock, owned: false }, { ...stock, found: false }])
       expect(successfulGrounding(renterToolReceipts([{ payload: { toolName: "check_availability", result } }])).availability).toBe(false);
+  });
+  it("retains only the typed duplicate-listing price choice from a failed tool result", () => {
+    const choice = { ok: false, error: "Choose a listing", selection_required: true, reason: "multiple_verified_listings",
+      source: "verified_listing_choices", account_slug: "leo", thread_id: "__probe__choice", matched_canonical: "BMPCC 6K Pro",
+      listing_options: [{ product_id: 1, option_label: "Option 1", daily_rate_gbp: 35, source: "hygglo_tier" }, { product_id: 2, option_label: "Option 2", daily_rate_gbp: 47, source: "hygglo_listing" }] };
+    expect(renterToolReceipts([{ payload: { toolName: "quote_booking_addition", toolCallId: "choice", result: choice } }])).toEqual([
+      { tool: "quote_booking_addition", call_id: "choice", result: choice },
+    ]);
+    expect(renterToolReceipts([{ payload: { toolName: "quote_booking_addition", result: { ...choice, source: undefined } } }])).toEqual([]);
+    expect(renterToolReceipts([{ payload: { toolName: "lookup_pricing", result: { ...choice } } }])).toEqual([]);
   });
   it("a negative verdict never authorizes a positive verdict", () => {
     const grounded = successfulGrounding(renterToolReceipts([{ payload: { toolName: "check_availability", result: { ...stock, available: false } } }]));

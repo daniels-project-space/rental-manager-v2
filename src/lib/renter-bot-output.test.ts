@@ -32,8 +32,8 @@ it("preserves only the bounded output failure code across the API boundary",asyn
 
 it("diagnoses output shape and schema paths without copying private prose or provider payloads",()=>{
  const privateText="Private renter text and secret header";
- const d=renterBotOutputDiagnostics(undefined,privateText,{finishReason:"tool-calls",steps:[{toolCalls:[{args:{secret:privateText}}]}]});
- expect(d).toMatchObject({object_type:"missing",text_status:"no_json",finish_reason:"tool-calls",step_count:1,tool_call_count:1,text_length:privateText.length});
+ const d=renterBotOutputDiagnostics(undefined,privateText,{finishReason:"tool-calls",steps:[{toolCalls:[{payload:{toolCallId:"call-1",toolName:"get_listing_context",args:{secret:privateText}}},{payload:{toolCallId:"call-2",toolName:"check_basket_availability",args:{secret:privateText}}}],toolResults:[{payload:{toolCallId:"call-1",result:{ok:true}}},{payload:{toolCallId:"call-2",result:{error:"private result"}}}]}]});
+ expect(d).toMatchObject({object_type:"missing",text_status:"no_json",finish_reason:"tool-calls",step_count:1,tool_call_count:2,text_length:privateText.length,tool_trace:[{name:"get_listing_context",result:"ok"},{name:"check_basket_availability",result:"error"}]});
  expect(JSON.stringify(d)).not.toContain(privateText);expect(JSON.stringify(d)).not.toContain("secret");
  const invalid={...valid,intent:"SECRET INVALID VALUE"};
  const shape=renterBotOutputDiagnostics(invalid,JSON.stringify(invalid));expect(shape.text_status).toBe("schema_invalid");expect(shape.object_issues.some(i=>i.field==="intent")).toBe(true);expect(JSON.stringify(shape)).not.toContain("SECRET");

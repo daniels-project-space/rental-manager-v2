@@ -320,6 +320,7 @@
       "src/lib/rental-calendar-time.ts",
       "src/lib/renter-bot-output.ts",
       "src/lib/renter-date-price-evidence.ts",
+      "src/lib/renter-date-stock-evidence.ts",
       "src/lib/renter-model-policy.ts",
       "src/lib/renter-native-quote.ts",
       "src/lib/renter-owner-check-context.ts",
@@ -897,6 +898,7 @@
       "src/lib/r2-cold-storage.ts",
       "src/lib/reconcile-holds.ts",
       "src/lib/renter-date-price-evidence.ts",
+      "src/lib/renter-date-stock-evidence.ts",
       "src/lib/renter-price-evidence.ts",
       "src/mastra/lib/r2-client.ts"
     ],

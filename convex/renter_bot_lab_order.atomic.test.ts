@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { applyChange, applyAdditionBasket, quoteAdditionBasket, applyReplacementBasket } from "./renter_bot_lab_order";
+import { applyAcceptedTravelCompensation, applyChange, applyAdditionBasket, quoteAdditionBasket, applyReplacementBasket, applyAcceptedCompleteBasketOffer, __service_acceptedAdditionCandidate } from "./renter_bot_lab_order";
+import { clearlyAcceptsTravelCompensation } from "./lib/travel_compensation";
 import { amendedDraftContext, draftContextKey } from "./lib/draft_review";
 import { getBotBooking, getLabOrder } from "./lib/renter_booking";
 import { setDraft } from "./replyInbox";
 import { renterToolReceipts } from "../src/lib/renter-tool-evidence";
 import { renterPriceEvidence } from "../src/lib/renter-price-evidence";
+import { quoteCompleteBasketAmendment } from "./renter_bot_lab_order";
 
 function fixture() {
   const tables: Record<string, any[]> = {
@@ -18,10 +20,12 @@ function fixture() {
     normalizeId: (table:string,id:string) => Object.entries(tables).find(([,rows])=>rows.some(row=>row._id===id))?.[0]===table?id:null,
     query: (table: string) => {
       const filters: Array<[string, any]> = [];
+      let descending=false;
       const q = { eq: (key: string, value: any) => { filters.push([key, value]); return q; } };
       const result: any = { withIndex: (_name: string, select: any) => { select(q); return result; },
+        order: (direction:string) => { descending=direction==="desc"; return result; },
         collect: async () => (tables[table] ?? []).filter(row => filters.every(([key, value]) => row[key] === value)),
-        first: async () => (await result.collect())[0] ?? null, unique: async () => (await result.collect())[0] ?? null };
+        first: async () => { const rows=await result.collect(); return (descending?rows.at(-1):rows[0]) ?? null; }, unique: async () => (await result.collect())[0] ?? null };
       return result;
     },
     patch: async (id: string, value: any) => { const row = Object.values(tables).flat().find(r => r._id === id); Object.assign(row, value); },
@@ -148,6 +152,252 @@ describe("additions check the complete physical basket",()=>{
     const {tables,ctx}=setup();tables.listing_resolution_override=[];
     tables.hygglo_products=[{accountSlug:"leo",productId:1,masterItemId:"camera",name:"Unmapped kit"}];
     const before=structuredClone(tables);expect(await add(ctx,1)).toMatchObject({ok:false});expect(tables).toEqual(before);
+  });
+});
+
+describe("accepted addition quote dispatch",()=>{
+ it("revalidates the sent quote, carries the Lab lease, and applies one accepted addition exactly once",async()=>{
+  const {tables,ctx}=setupAtomicAddition();
+  const thread_id="__probe__atomic",order=tables.renter_bot_lab_orders[0];
+  const quote=await (quoteAdditionBasket as any)._handler(ctx,{thread_id,items:[{product_id:2,qty:1},{product_id:3,qty:1}]});
+  expect(quote).toMatchObject({ok:true,source:"native_lab_proposal",additional_cost_gbp:70,quote:{total_gbp:194}});
+  const context_key=draftContextKey(await getBotBooking(ctx as any,thread_id),undefined,order);
+  const proposal={context_key,epoch:0,quoted_for_message_id:"quote-request",physical_identity_key:quote.physical_identity_key,
+    items:[{product_id:2,qty:1},{product_id:3,qty:1}],base_items:quote.base_items,added_items:quote.added_items,
+    start_date:quote.quote.start_date,end_date:quote.quote.end_date,total_gbp:quote.quote.total_gbp,additional_cost_gbp:quote.additional_cost_gbp};
+  tables.hygglo_messages=[
+    {thread_id,message_id:"quote-request",sender:"renter",body_text:"Could you price adding the Sony 28-70mm?",fetched_at:1,_creationTime:1},
+    {thread_id,message_id:"owner-offer",sender:"owner",body_text:"Here is the updated basket:\n- 1 × BMPCC 6K Full Frame: £124\n- 1 × Blazar Remus 100mm: £50\n- 1 × PL to L mount: £20\nTotal: £194\nWould you like me to add both?",quoted_additions:[proposal],fetched_at:2,_creationTime:2},
+    {thread_id,message_id:"accept",sender:"renter",account_slug:"leo",body_text:"Yes, please add both.",fetched_at:3,_creationTime:3},
+  ];
+  tables.renter_bot_lab_turns=[{_id:"turn-row",thread_id,account_slug:"leo",turn_id:"turn",renter_message_id:"accept",lease_token:"lease",status:"running"}];
+  const priorSecret=process.env.RENTER_BOT_LAB_API_SECRET;
+  process.env.RENTER_BOT_LAB_API_SECRET="unit-test-lab-secret";
+  try{
+   const candidate=await (__service_acceptedAdditionCandidate as any)._handler(ctx,{thread_id,request_message_id:"accept",lab_turn_id:"turn",lab_lease_token:"lease"});
+   expect(candidate).toEqual({thread_id,request_message_id:"accept",lab_turn_id:"turn",lab_lease_token:"lease",items:[{product_id:2,qty:1},{product_id:3,qty:1}]});
+   const applied=await (applyAdditionBasket as any)._handler(ctx,candidate);
+   expect(applied).toMatchObject({ok:true,action_performed:true,applied:"added together: 1x Blazar Remus 100mm, 1x PL → L adapter",order:{total_gbp:194}});
+   expect(tables.renter_bot_lab_orders[0].items).toHaveLength(3);
+   expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
+   expect(await (applyAdditionBasket as any)._handler(ctx,candidate)).toMatchObject({ok:true,already_applied:true,action_performed:false});
+   expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
+  }finally{
+   if(priorSecret===undefined)delete process.env.RENTER_BOT_LAB_API_SECRET;
+   else process.env.RENTER_BOT_LAB_API_SECRET=priorSecret;
+  }
+ });
+
+ it("rejects an addition candidate when the active Lab turn lease changed",async()=>{
+  const {tables,ctx}=setupAtomicAddition();
+  const thread_id="__probe__atomic",quote=await (quoteAdditionBasket as any)._handler(ctx,{thread_id,items:[{product_id:2,qty:1},{product_id:3,qty:1}]});
+  const context_key=draftContextKey(await getBotBooking(ctx as any,thread_id),undefined,tables.renter_bot_lab_orders[0]);
+  const proposal={context_key,epoch:0,quoted_for_message_id:"quote-request",physical_identity_key:quote.physical_identity_key,
+    items:[{product_id:2,qty:1},{product_id:3,qty:1}],base_items:quote.base_items,added_items:quote.added_items,
+    start_date:quote.quote.start_date,end_date:quote.quote.end_date,total_gbp:quote.quote.total_gbp,additional_cost_gbp:quote.additional_cost_gbp};
+  tables.hygglo_messages=[
+   {thread_id,message_id:"quote-request",sender:"renter",body_text:"Price the Sony 28-70mm",fetched_at:1,_creationTime:1},
+   {thread_id,message_id:"owner-offer",sender:"owner",body_text:"The Blazar Remus 100mm and PL to L mount cost £70 extra, bringing the booking total to £194. Shall I add both?",quoted_additions:[proposal],fetched_at:2,_creationTime:2},
+   {thread_id,message_id:"accept",sender:"renter",account_slug:"leo",body_text:"Yes, please add both.",fetched_at:3,_creationTime:3},
+  ];
+  tables.renter_bot_lab_turns=[{_id:"turn-row",thread_id,account_slug:"leo",turn_id:"turn",renter_message_id:"accept",lease_token:"lease",status:"running"}];
+  const priorSecret=process.env.RENTER_BOT_LAB_API_SECRET;
+  process.env.RENTER_BOT_LAB_API_SECRET="unit-test-lab-secret";
+  try{
+   const candidate=await (__service_acceptedAdditionCandidate as any)._handler(ctx,{thread_id,request_message_id:"accept",lab_turn_id:"turn",lab_lease_token:"lease"});
+   tables.renter_bot_lab_turns[0].lease_token="replaced-lease";
+   const before=structuredClone(tables.renter_bot_lab_orders[0]);
+   expect(await (applyAdditionBasket as any)._handler(ctx,candidate)).toMatchObject({ok:false,error_code:"stale_lab_turn"});
+   expect(tables.renter_bot_lab_orders[0]).toEqual(before);
+  }finally{
+   if(priorSecret===undefined)delete process.env.RENTER_BOT_LAB_API_SECRET;
+   else process.env.RENTER_BOT_LAB_API_SECRET=priorSecret;
+  }
+ });
+});
+
+describe("accepted travel compensation is bound to the current renter turn", () => {
+  const eligibleOffer = () => {
+    const f = fixture();
+    const order = f.tables.renter_bot_lab_orders[0];
+    order.account_slug = "leo";
+    order.start_date = "2099-10-08";
+    order.end_date = "2099-10-09";
+    f.tables.renter_bot_lab_bookings[0].start_date = order.start_date;
+    f.tables.renter_bot_lab_bookings[0].end_date = order.end_date;
+    f.tables.hygglo_messages = [
+      { thread_id: "__probe__atomic", message_id: "location", sender: "owner", body_text: "Collection and return are in the Trafalgar Square area. Does that work?", fetched_at: 1, _creationTime: 1 },
+      { thread_id: "__probe__atomic", message_id: "objection", sender: "renter", body_text: "The Trafalgar Square area works for me, although that is a long way and means extra travel.", fetched_at: 2, _creationTime: 2 },
+      { thread_id: "__probe__atomic", message_id: "offer", sender: "owner", body_text: "I can offer a one-time £8 travel adjustment on this rental.", fetched_at: 3, _creationTime: 3 },
+      { thread_id: "__probe__atomic", message_id: "accept", sender: "renter", body_text: "Yes, please.", fetched_at: 4, _creationTime: 4 },
+    ];
+    return f;
+  };
+  const apply = (ctx: unknown, request_message_id: string) =>
+    (applyAcceptedTravelCompensation as unknown as {
+      _handler: (ctx: unknown, args: { thread_id: string; request_message_id: string }) => Promise<unknown>;
+    })._handler(ctx, { thread_id: "__probe__atomic", request_message_id });
+
+  it("applies the exact accepted £8 cap and updates the simulated total once", async () => {
+    const { tables, ctx } = eligibleOffer();
+    const result = await apply(ctx, "accept");
+    expect(result).toMatchObject({
+      ok: true,
+      action_performed: true,
+      applied: "£8.00 travel compensation",
+      order: { subtotal_gbp: 80, travel_compensation_gbp: 8, total_gbp: 72 },
+    });
+    expect(tables.renter_bot_lab_orders[0].travel_compensation_gbp).toBe(8);
+    expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
+  });
+
+  it("applies an eligible travel offer after an explicit objection without requiring pickup-area acceptance", async () => {
+    const { tables, ctx } = eligibleOffer();
+    tables.hygglo_messages[1].body_text = "That is a long way for me and means extra travel.";
+    expect(await apply(ctx, "accept")).toMatchObject({
+      ok: true,
+      action_performed: true,
+      applied: "£8.00 travel compensation",
+      order: { subtotal_gbp: 80, travel_compensation_gbp: 8, total_gbp: 72 },
+    });
+    expect(tables.renter_bot_lab_orders[0].travel_compensation_gbp).toBe(8);
+    expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
+  });
+
+  it("treats a later logistics message mentioning the discount as an idempotent no-op", async () => {
+    const { tables, ctx } = eligibleOffer();
+    await apply(ctx, "accept");
+    tables.hygglo_messages.push(
+      { thread_id: "__probe__atomic", message_id: "pickup-owner", sender: "owner", body_text: "I will confirm the exact pickup time shortly.", fetched_at: 5, _creationTime: 5 },
+      { thread_id: "__probe__atomic", message_id: "pickup-renter", sender: "renter", body_text: "Could you confirm 3pm pickup with the £8 travel adjustment still applied?", fetched_at: 6, _creationTime: 6 },
+    );
+
+    const result = await apply(ctx, "pickup-renter");
+    expect(result).toMatchObject({
+      ok: true,
+      action_performed: false,
+      already_applied: true,
+      order: { subtotal_gbp: 80, travel_compensation_gbp: 8, total_gbp: 72 },
+    });
+    expect(tables.renter_bot_lab_orders[0].travel_compensation_gbp).toBe(8);
+    expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
+  });
+
+  it("keeps the latest travel offer available after a failed draft leaves renter messages adjacent", async () => {
+    const { tables, ctx } = eligibleOffer();
+    tables.hygglo_messages.splice(3, 0, {
+      thread_id: "__probe__atomic", message_id: "retry", sender: "renter",
+      body_text: "Could you check that travel adjustment?", fetched_at: 3.5, _creationTime: 3.5,
+    });
+    const before = structuredClone(tables.renter_bot_lab_orders[0]);
+    const result = await apply(ctx, "accept");
+    expect(result).toMatchObject({ ok: true, action_performed: true, applied: "£8.00 travel compensation" });
+    expect(tables.renter_bot_lab_orders[0]).not.toEqual(before);
+  });
+
+  it("accepts the renter's amount-bearing confirmation of the preceding offer and applies £5 to a £50 order", async () => {
+    const { tables, ctx } = eligibleOffer();
+    const row = tables.renter_bot_lab_orders[0];
+    row.start_date = "2099-10-08";
+    row.end_date = "2099-10-08";
+    row.items[0].daily_price_gbp = 50;
+    tables.renter_bot_lab_bookings[0].start_date = row.start_date;
+    tables.renter_bot_lab_bookings[0].end_date = row.end_date;
+    tables.hygglo_messages[2].body_text = "I can offer a one-time £5 travel adjustment on this rental.";
+    tables.hygglo_messages[3].body_text = "That £5.00 travel adjustment works for me; please apply it to the rental total.";
+
+    expect(clearlyAcceptsTravelCompensation(tables.hygglo_messages[3].body_text)).toBe(true);
+    expect(clearlyAcceptsTravelCompensation(tables.hygglo_messages[3].body_text, 5, 50)).toBe(true);
+    const result = await apply(ctx, "accept");
+    expect(result).toMatchObject({
+      ok: true,
+      action_performed: true,
+      applied: "£5.00 travel compensation",
+      order: { subtotal_gbp: 50, travel_compensation_gbp: 5, total_gbp: 45 },
+    });
+    expect(row.changes).toHaveLength(1);
+  });
+
+  it("applies a plainly amount-matched 'please apply' acceptance to the isolated order", async () => {
+    const { tables, ctx } = eligibleOffer();
+    const row = tables.renter_bot_lab_orders[0];
+    row.start_date = "2099-10-08";
+    row.end_date = "2099-10-08";
+    row.items[0].daily_price_gbp = 51;
+    tables.renter_bot_lab_bookings[0].start_date = row.start_date;
+    tables.renter_bot_lab_bookings[0].end_date = row.end_date;
+    tables.hygglo_messages[2].body_text = "I can offer a one-time £5.10 travel adjustment on this rental.";
+    tables.hygglo_messages[3].body_text = "Yes, please apply the £5.10 adjustment to my rental.";
+
+    expect(clearlyAcceptsTravelCompensation(tables.hygglo_messages[3].body_text, 5.1, 51)).toBe(true);
+    const result = await apply(ctx, "accept");
+    expect(result).toMatchObject({
+      ok: true,
+      action_performed: true,
+      applied: "£5.10 travel compensation",
+      order: { subtotal_gbp: 51, travel_compensation_gbp: 5.1, total_gbp: 45.9 },
+    });
+    expect(row.changes).toHaveLength(1);
+    expect(await apply(ctx, "accept")).toMatchObject({ ok: true, already_applied: true, action_performed: false });
+    expect(row.changes).toHaveLength(1);
+  });
+
+  it("does not apply an amount-bearing counteroffer as consent to the different owner offer", async () => {
+    const { tables, ctx } = eligibleOffer();
+    const row = tables.renter_bot_lab_orders[0];
+    row.start_date = "2099-10-08";
+    row.end_date = "2099-10-08";
+    row.items[0].daily_price_gbp = 50;
+    tables.renter_bot_lab_bookings[0].start_date = row.start_date;
+    tables.renter_bot_lab_bookings[0].end_date = row.end_date;
+    tables.hygglo_messages[2].body_text = "I can offer a one-time £5 travel adjustment on this rental.";
+    tables.hygglo_messages[3].body_text = "That £10 travel adjustment works for me; please apply it.";
+    const before = structuredClone(row);
+
+    expect(clearlyAcceptsTravelCompensation(tables.hygglo_messages[3].body_text)).toBe(true);
+    expect(clearlyAcceptsTravelCompensation(tables.hygglo_messages[3].body_text, 5, 50)).toBe(false);
+    expect(await apply(ctx, "accept")).toMatchObject({
+      ok: false,
+      action_performed: false,
+      error_code: "travel_compensation_consent_unverified",
+    });
+    expect(row).toEqual(before);
+  });
+
+  it("does not treat a qualified or deferred response as acceptance", async () => {
+    expect(clearlyAcceptsTravelCompensation("Yes, but don't apply it yet.")).toBe(false);
+    expect(clearlyAcceptsTravelCompensation("Would you apply the £5.10 adjustment?", 5.1, 51)).toBe(false);
+    expect(clearlyAcceptsTravelCompensation("Yes, please apply the £5.20 adjustment.", 5.1, 51)).toBe(false);
+    expect(clearlyAcceptsTravelCompensation("Yes, please apply it later.", 5.1, 51)).toBe(false);
+    expect(clearlyAcceptsTravelCompensation("Could you remind me what adjustment you offered?")).toBe(false);
+    const { tables, ctx } = eligibleOffer();
+    tables.hygglo_messages[3].body_text = "Yes, but don't apply it yet.";
+    const before = structuredClone(tables.renter_bot_lab_orders[0]);
+    expect(await apply(ctx, "accept")).toMatchObject({
+      ok: false,
+      action_performed: false,
+      error_code: "travel_compensation_consent_unverified",
+    });
+    expect(tables.renter_bot_lab_orders[0]).toEqual(before);
+  });
+
+  it("rejects the old acceptance after a newer renter message arrives, with no order write", async () => {
+    const { tables, ctx } = eligibleOffer();
+    tables.hygglo_messages.push({
+      thread_id: "__probe__atomic", message_id: "newer", sender: "renter",
+      body_text: "Actually, keep the original price.", fetched_at: 5, _creationTime: 5,
+    });
+    const before = structuredClone(tables.renter_bot_lab_orders[0]);
+    expect(await apply(ctx, "accept")).toMatchObject({ ok: false, action_performed: false, error_code: "stale_inbound" });
+    expect(tables.renter_bot_lab_orders[0]).toEqual(before);
+  });
+
+  it("rejects an accepted offer above the current 10-percent-or-£10 cap", async () => {
+    const { tables, ctx } = eligibleOffer();
+    tables.hygglo_messages[2].body_text = "I can offer a one-time £10 travel adjustment on this rental.";
+    const before = structuredClone(tables.renter_bot_lab_orders[0]);
+    expect(await apply(ctx, "accept")).toMatchObject({ ok: false, action_performed: false, error_code: "travel_compensation_not_eligible" });
+    expect(tables.renter_bot_lab_orders[0]).toEqual(before);
   });
 });
 describe("item removals preserve exact identity and quantity", () => {
@@ -401,6 +651,47 @@ describe("complete setup acceptance is one transaction",()=>{
  });
 });
 
+describe("combined basket and date acceptance is one transaction",()=>{
+ async function offerFixture(){
+  const {tables,ctx}=setupAtomicAddition();
+  tables.hygglo_messages[0].message_id="renter-change";
+  tables.hygglo_messages[0].body_text="Could I extend to 10–12 December and add the Blazar Remus 100mm with its PL to L mount?";
+  const result=await (quoteCompleteBasketAmendment as any)._handler(ctx,{thread_id:"__probe__atomic",start_date:"2026-12-10",end_date:"2026-12-12",
+   items:[{product_id:1,qty:1},{product_id:2,qty:1},{product_id:3,qty:1}]});
+  expect(result).toMatchObject({ok:true,source:"native_lab_proposal",complete_basket:true,quote:{total_gbp:expect.any(Number)}});
+  const quote={quote_key:"complete-basket-test",proposed_basket:true as const,start_date:result.quote.start_date,end_date:result.quote.end_date,
+   items:result.stock_receipts.map((c:any)=>({item_id:c.item_id,name:c.item_name,quantity:c.requested_units})),
+   listing_quote:{total_gbp:result.quote.total_gbp,lines:result.quote.lines.map((l:any)=>({product_id:l.product_id,name:l.name,quantity:l.qty,total_gbp:l.line_total_gbp}))}};
+  const order=await getLabOrder(ctx as any,"__probe__atomic"),booking=await getBotBooking(ctx as any,"__probe__atomic");
+  const context=draftContextKey(booking,undefined,order);
+  tables.hygglo_messages.push({_id:"owner",thread_id:"__probe__atomic",message_id:"owner-offer",sender:"owner",body_text:"I can make that complete change for 10 to 12 December at the quoted total. Would you like me to update it?",fetched_at:2,hygglo_sent_at:2,_creationTime:2,
+   quoted_inquiries:[{context_key:context,epoch:0,quoted_for_message_id:"renter-change",quote}]});
+  tables.hygglo_messages.push({_id:"accept",thread_id:"__probe__atomic",message_id:"renter-accept",sender:"renter",body_text:"Yes, please update it to the BMPCC 6K Full Frame, Blazar Remus 100mm and PL to L mount for 10 to 12 December.",fetched_at:3,hygglo_sent_at:3,_creationTime:3});
+  return {tables,ctx,quote};
+ }
+ const accept=(ctx:any,request_message_id="renter-accept")=>(applyAcceptedCompleteBasketOffer as any)._handler(ctx,{thread_id:"__probe__atomic",request_message_id});
+ it("applies the complete Native basket and both dates together, then retries without a second edit",async()=>{
+  const {tables,ctx}=await offerFixture();
+  const result=await accept(ctx);
+  expect(result).toMatchObject({ok:true,action_performed:true,order:{start_date:"2026-12-10",end_date:"2026-12-12",total_gbp:291},context_transition:{before_revision:0,after_revision:1}});
+  expect(tables.renter_bot_lab_orders[0].items.map((i:any)=>i.product_id).sort()).toEqual([1,2,3]);
+  expect(tables.renter_bot_lab_orders[0]).toMatchObject({start_date:"2026-12-10",end_date:"2026-12-12"});
+  expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
+  expect(await accept(ctx)).toMatchObject({ok:true,already_applied:true,action_performed:false});
+  expect(tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
+ });
+ it.each([
+  "Yes, but only for 11 to 12 December.",
+  "Yes, please update it to the BMPCC 6K Full Frame for 10 to 12 December.",
+ ])("leaves the order unchanged for an altered or incomplete acceptance: %s",async text=>{
+  const {tables,ctx}=await offerFixture();tables.hygglo_messages.at(-1)!.body_text=text;const before=structuredClone(tables);
+  expect(await accept(ctx)).toMatchObject({ok:false,action_performed:false});expect(tables).toEqual(before);
+ });
+ it("refuses to apply a Lab offer to a real thread",async()=>{
+  const {ctx}=await offerFixture();await expect((applyAcceptedCompleteBasketOffer as any)._handler(ctx,{thread_id:"real-rental",request_message_id:"renter-accept"})).rejects.toThrow("refusing a real");
+ });
+});
+
 describe("Native target restrictions protect actual booking changes",()=>{
  it("refuses conflicting complete additions without changing the order",async()=>{
   const {tables,ctx}=setupAtomicAddition();tables.hygglo_messages[0].body_text="Please don't add the Blazar Remus 100mm or the PL to L mount adapter. Keep the existing camera booking.";const before=structuredClone(tables);
@@ -443,9 +734,11 @@ describe("additions reconcile real requests and sent quote terms",()=>{
  const offer=async(f:ReturnType<typeof setupAtomicAddition>)=>{
   const q=await (quoteAdditionBasket as any)._handler(f.ctx,{thread_id:"__probe__atomic",items:[{product_id:2,qty:1},{product_id:3,qty:1}]});
   const context=draftContextKey(await getBotBooking(f.ctx as any,"__probe__atomic"),undefined,await getLabOrder(f.ctx as any,"__probe__atomic"));
+  f.tables.settings=[{_id:"settings",draft_epoch:82}];
   const proposal={physical_identity_key:q.physical_identity_key,context_key:context,epoch:82,quoted_for_message_id:"earlier-renter",items:[{product_id:2,qty:1},{product_id:3,qty:1}],base_items:q.base_items,added_items:q.added_items,start_date:q.quote.start_date,end_date:q.quote.end_date,total_gbp:q.quote.total_gbp,additional_cost_gbp:q.additional_cost_gbp};
-  f.tables.hygglo_messages[0].fetched_at=2;f.tables.hygglo_messages[0]._creationTime=2;
-  f.tables.hygglo_messages.unshift({thread_id:"__probe__atomic",message_id:"owner-offer",sender:"owner",account_slug:"leo",body_text:"The Blazar Remus 100mm and PL to L mount cost £70 extra for 20–21 October, bringing the booking total to £194. Shall I add both?",quoted_additions:[proposal],fetched_at:1,_creationTime:1});
+  const source=f.tables.hygglo_messages[0];Object.assign(source,{message_id:"earlier-renter",body_text:"Could you price adding the Blazar Remus 100mm and PL to L mount?",fetched_at:1,_creationTime:1});
+  f.tables.hygglo_messages.push({thread_id:"__probe__atomic",message_id:"owner-offer",sender:"owner",account_slug:"leo",body_text:"The Blazar Remus 100mm and PL to L mount cost £70 extra for 20–21 October, bringing the booking total to £194. Shall I add both?",quoted_additions:[proposal],fetched_at:2,_creationTime:2});
+  f.tables.hygglo_messages.push({thread_id:"__probe__atomic",message_id:"renter-current",sender:"renter",account_slug:"leo",body_text:"Yes, please add both.",fetched_at:3,_creationTime:3});
  };
  for(const text of ["How heavy is the Blackmagic 6K Full Frame camera?","Please add the Sony FX3 for £70 extra.","Please add the Blazar Remus 100mm only for £70 extra.","Please add two Blazar Remus 100mm and the PL to L mount for £70 extra.","Please add the Blazar Remus 100mm and PL to L mount for £60 extra.","Please add the Blazar Remus 100mm and PL to L mount for 22 to 23 October at £70 extra."]){
   it(`does not change the order for conflicting selection: ${text}`,async()=>{
@@ -462,10 +755,15 @@ describe("additions reconcile real requests and sent quote terms",()=>{
   expect(await applyBasket(f.ctx)).toMatchObject({ok:true,action_performed:true,order:{total_gbp:194}});
   expect(await applyBasket(f.ctx)).toMatchObject({ok:true,already_applied:true,action_performed:false});expect(f.tables.renter_bot_lab_orders[0].changes).toHaveLength(1);
  });
+ it("applies a named accepted addition addressed to the renter's current request",async()=>{
+  const f=setupAtomicAddition();await offer(f);f.tables.hygglo_messages.at(-1)!.body_text="Yes, please add the Blazar Remus 100mm and PL to L mount to my Blackmagic request.";
+  expect(await applyBasket(f.ctx)).toMatchObject({ok:true,action_performed:true,order:{total_gbp:194}});
+  expect(f.tables.renter_bot_lab_orders[0].items).toHaveLength(3);
+ });
  for(const variant of ["different_pool_same_name","component_quantity","missing_identity"]){
   it(`does not authorize changed physical equipment from an old addition quote: ${variant}`,async()=>{
    const f=setupAtomicAddition();await offer(f);f.tables.hygglo_messages.at(-1)!.body_text="Yes, please add both.";
-   if(variant==="missing_identity")delete f.tables.hygglo_messages[0].quoted_additions[0].physical_identity_key;
+   if(variant==="missing_identity")delete f.tables.hygglo_messages[1].quoted_additions[0].physical_identity_key;
    else {
     const component=f.tables.listing_resolution_override.find(r=>r.product_id===2).components[0];
     const item=f.tables.items.find(i=>i._id===component.item_id);item.qty=10;
@@ -481,7 +779,7 @@ describe("additions reconcile real requests and sent quote terms",()=>{
   it(`does not reuse an offer after ${variant}`,async()=>{
    const f=setupAtomicAddition();await offer(f);f.tables.hygglo_messages.at(-1)!.body_text="Yes, please add both.";
    if(variant==="changed_price")f.tables.online_listings.find(i=>i.product_id===2).daily_price=30;
-   if(variant==="unused_quote")f.tables.hygglo_messages[0].body_text="The camera weighs about one kilogram.";
+   if(variant==="unused_quote")f.tables.hygglo_messages[1].quoted_additions[0].quoted_for_message_id="unmatched-renter";
    if(variant==="intervening_question")f.tables.hygglo_messages.splice(1,0,{thread_id:"__probe__atomic",message_id:"unrelated",sender:"renter",body_text:"How heavy is it?",fetched_at:1.5,_creationTime:1.5});
    const before=structuredClone(f.tables);expect(await applyBasket(f.ctx)).toMatchObject({ok:false,action_performed:false,error_code:"addition_consent_unverified"});expect(f.tables).toEqual(before);
   });
@@ -551,7 +849,8 @@ describe("date quotes and positive consent",()=>{
  it("accepts the exact saved offer and reruns stock before the write",async()=>{
   const f=fixture();const quote=await applyCurrentChange(f.ctx,{thread_id:"__probe__atomic",action:"set_dates",start_date:"2026-10-06",end_date:"2026-10-08",preview_only:true});
   f.tables.hygglo_messages.push({thread_id:"__probe__atomic",message_id:"owner",sender:"owner",body_text:"I can extend your booking to 6–8 October for £120 total.",fetched_at:2,quoted_dates:[{physical_identity_key:quote.physical_identity_key,context_key:quote.before_context_key,from_start_date:"2026-10-06",from_end_date:"2026-10-07",start_date:"2026-10-06",end_date:"2026-10-08",total_gbp:120,base_total_gbp:80,epoch:86,quoted_for_message_id:"fixture-current",items:[{name:"Sony FX3",quantity:1}]}]},
-   {thread_id:"__probe__atomic",message_id:"accepted",sender:"renter",body_text:"Yes please extend it.",fetched_at:3});
+   {thread_id:"__probe__atomic",message_id:"retry-question",sender:"renter",body_text:"Would those dates work at £120 total?",fetched_at:3},
+   {thread_id:"__probe__atomic",message_id:"accepted",sender:"renter",body_text:"Yes, please update it to those dates at £120.",fetched_at:4});
   f.tables.owner_unavailability=[{item_id:"camera",start_date:"2026-10-08",end_date:"2026-10-08"}];const blocked=structuredClone(f.tables);
   expect(await extend(f.ctx)).toMatchObject({ok:false});expect(f.tables).toEqual(blocked);
   f.tables.owner_unavailability=[];expect(await extend(f.ctx)).toMatchObject({ok:true,action_performed:true,order:{total_gbp:120}});

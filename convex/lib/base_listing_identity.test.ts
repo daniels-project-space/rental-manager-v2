@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { baseListingProductIds, chooseBaseListing } from "./base_listing_identity";
+import { baseListingCandidates, baseListingProductIds, resolveBaseListingChoice } from "./base_listing_identity";
 const items = [{ _id: "body", name_canonical: "Sony FX3", kind: "camera" }, { _id: "card", name_canonical: "CFexpress card", kind: "storage_card" }, { _id: "lens", name_canonical: "Sony 24-70mm", kind: "lens" }];
 const index = [{ account_slug: "leo", product_id: 1, item_id: "body" }];
 const ids = (components: Array<{ item_id: string; qty: number }>, target = "body") => baseListingProductIds("leo", target, index, [{ account_slug: "leo", product_id: 1, components }], items);
@@ -32,10 +32,21 @@ describe("base listing identity", () => {
     expect(baseListingProductIds("leo","adapter",[],mapping,inventory)).toEqual([]);
     expect(baseListingProductIds("leo","ff",[],[{...mapping[0],components:[{item_id:"ff",qty:1},{item_id:"adapter",qty:2}]}],inventory)).toEqual([]);
   });
-  it("breaks equal-price ties consistently when stored rows arrive in either order", () => {
+  it("requires a choice when multiple verified listings offer the same physical item", () => {
     const a = { product_id: 1172744, daily_price: 20, total_three_days: 60 };
     const b = { product_id: 1115113, daily_price: 20, total_three_days: 50 };
-    for (const rows of [[a, b], [b, a]]) expect(chooseBaseListing(rows, [a.product_id, b.product_id])?.total_three_days).toBe(50);
+    for (const rows of [[a, b], [b, a]]) {
+      expect(resolveBaseListingChoice(rows, [a.product_id, b.product_id])).toMatchObject({
+        status: "selection_required",
+        listings: [{ product_id: 1115113 }, { product_id: 1172744 }],
+      });
+    }
+  });
+  it("preserves every verified offering so callers can ask instead of silently selecting the cheapest", () => {
+    const oneTb = { product_id: 954030, name: "BMPCC 6K Pro with 1TB SSD", daily_price: 47 };
+    const twoTb = { product_id: 1048175, name: "BMPCC 6K Pro with 2TB SSD", daily_price: 35 };
+    expect(baseListingCandidates([oneTb, twoTb], [oneTb.product_id, twoTb.product_id])).toEqual([twoTb, oneTb]);
+    expect(resolveBaseListingChoice([oneTb, twoTb], [oneTb.product_id, twoTb.product_id]).status).toBe("selection_required");
   });
   it("includes standard bundled cards without losing the real camera rate", () => expect(ids([{ item_id: "body", qty: 1 }, { item_id: "card", qty: 1 }])).toEqual([1]));
   it("does not price a camera from a body/lens bundle", () => expect(ids([{ item_id: "body", qty: 1 }, { item_id: "lens", qty: 1 }])).toEqual([]));

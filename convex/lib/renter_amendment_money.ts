@@ -11,7 +11,7 @@ export function amendmentMoneyClaims(text:string){
   const index=m.index!,length=m[0].length;
   const before=text.slice(i?matches[i-1].index!+matches[i-1][0].length:0,index).split(/[;\n]|(?<=[.!?])\s+/).at(-1)!.slice(-100);
   const after=text.slice(index+length,matches[i+1]?.index??text.length).split(/[;\n]|(?<=[.!?])\s+/)[0].slice(0,80);
-  const suffix=/^\s*(?:in\s+)?(total|extra|additional|more|less|off|reduction|per day|a day|daily)\b/i.exec(after)?.[1].toLowerCase();
+  const suffix=/^\s*(?:in\s+)?(total|extra|additional|more|increase|less|off|reduction|per day|a day|daily)\b/i.exec(after)?.[1].toLowerCase();
   let role:AmendmentMoneyRole="unlabelled";
   if(/^\s*\/\s*day\b/i.test(after)||["per day","a day","daily"].includes(suffix??"")||/\bdaily\s+(?:rate|price)\s*(?:is|of|at|:)?\s*$/i.test(before))role="daily";
   else if(suffix==="total")role="total";
@@ -19,7 +19,7 @@ export function amendmentMoneyClaims(text:string){
     ||/\b(?:total|price|cost|amount)\b[^£.!?]*\bfrom\s*$/i.test(before))role="base";
   else if(/\b(?:total|booking|basket|order)\s*(?:(?:for|over)\s+(?:the|a|\d+)\s+days?\s+)?(?:is|of|to|at|comes to|would be|will be|would come to|will come to|:)?\s*$/i.test(before) ||
     /\b(?:bring|take|make)\s+(?:the|your)\s+(?:rental|hire)\s+to\s*$/i.test(before))role="total";
-  else if(["extra","additional","more"].includes(suffix??"")||/\b(?:extra|additional|more|addition|additions)\s*(?:cost|amount)?\s*(?:is|of|to|at|comes to|would be|will be|would come to|will come to|:)?\s*$/i.test(before))role="increase";
+  else if(["extra","additional","more","increase"].includes(suffix??"")||/\b(?:extra|additional|more|addition|additions)\s*(?:cost|amount)?\s*(?:is|of|to|at|comes to|would be|will be|would come to|will come to|:)?\s*$/i.test(before))role="increase";
   else if(["less","off","reduction"].includes(suffix??"")||/\b(?:less|reduction|saving|discount)\s*(?:of|by|is|at|:)?\s*$/i.test(before))role="reduction";
   if(/\b(?:deposit|refund|discount|courier|delivery|replacement|insured|security hold)\b/i.test(before)||/^\s*(?:deposit|refund|discount|courier|delivery|replacement|insured|security hold)\b/i.test(after))role="unsupported";
   return {amount:Number((m[1]??m[2]).replace(/,/g,"")),index,length,before,after,role};

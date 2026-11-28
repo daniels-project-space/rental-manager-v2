@@ -1,7 +1,28 @@
 import { renterItemNames } from "./renter_item_names";
 import { describe, expect, it } from "vitest";
-import { unsupportedKitClaims } from "./kit_claims";
+import { assessIncludedKitAnswer, explicitListingIncludedContents, unsupportedKitClaims } from "./kit_claims";
 const kit = { names: ["Sony A7 V"], contents: ["Sony A7 V", "NP-FZ100 batteries", "256GB card"] };
+describe("source-backed explicit kit inclusion answers", () => {
+ const evidence = [{ names: ["BMPCC 6K Pro"], contents: ["1× 2TB SSD", "5× NP-F570 batteries"], requested_item: true, source: "owner-confirmed kit contents", recorded_at: Date.now() }];
+ it("passes a complete answer grounded in the selected kit manifest", () => {
+  expect(assessIncludedKitAnswer("Does this kit include a 1TB or 2TB SSD?", "This kit includes one 2TB SSD.", evidence)?.status).toBe("pass");
+ });
+ it("fails a conflicting capacity or an answer that omits the requested capacity", () => {
+  expect(assessIncludedKitAnswer("Does this kit include a 1TB or 2TB SSD?", "It includes a 1TB SSD.", evidence)?.status).toBe("fail");
+  expect(assessIncludedKitAnswer("Does this kit include a 1TB or 2TB SSD?", "Yes, it includes an SSD.", evidence)?.status).toBe("fail");
+ });
+ it("does not assess unsupported or non-inclusion specification questions", () => {
+  expect(assessIncludedKitAnswer("Does the camera autofocus?", "Yes, it does.", evidence)).toBeNull();
+  expect(assessIncludedKitAnswer("Does this kit include an SSD?", "Yes, a 2TB SSD.", [{...evidence[0], source: undefined}])).toBeNull();
+ });
+});
+it("binds a demonstrative kit reference to the immediately named addition, not the existing booking",()=>{
+ const existing={names:["BMPCC 6K Full Frame"],contents:["1× 1TB CFexpress card","5× NP-F570 batteries"],booked_camera:true};
+ const addition={names:["BMPCC 6K Pro"],contents:["1x BMPCC 6K Pro","5× NP-F570 batteries","1× 2TB SSD","1× camera cage","1× hard carrying case"],kind:"camera"};
+ const answer="Adding the BMPCC 6K Pro (Option 1) for 12 December is available. This kit includes the BMPCC 6K Pro body, 5× NP-F570 batteries, a 2TB SSD, camera cage, and hard carry case.";
+ expect(unsupportedKitClaims(answer,[existing,addition],["BMPCC 6K Full Frame"])).toEqual([]);
+ expect(unsupportedKitClaims(answer.replace("2TB SSD","4TB SSD"),[existing,addition],["BMPCC 6K Full Frame"])).not.toEqual([]);
+});
 it("attributes a removed kit's components to the single selected item rather than the proposed replacement",()=>{
  const original={names:["BMPCC 6K Full Frame"],contents:["5× NP-F570 batteries","Tilta cage","1× EF-to-L mount adapter"],booked_camera:true};
  const alternative={names:["Sony A7 III"],contents:["3× Sony NP-FZ100 batteries"],kind:"camera"};
@@ -274,5 +295,30 @@ describe("replacement proposals retain the replacement kit as the subject", () =
  it("still rejects incorrect contents and unclear replacement choices",()=>{
   expect(unsupportedKitClaims(text.replace("3× NP-FZ100","5× NP-F570"),[oldKit,sony],oldKit.names)).not.toEqual([]);
   expect(unsupportedKitClaims(text.replace("A7 III body kit would", "A7 III or Sony FX3 would"),[oldKit,sony,fx3],oldKit.names)).not.toEqual([]);
+ });
+});
+
+describe("account-scoped listing inclusion evidence",()=>{
+ const description=`This set comes ready to shoot with a variable ND filter and protective cage.\n\n⭐️ Included in this rental set ⭐️\n\t•\t1× Tilta protective cage\n\t•\t1× Variable ND filter\n\t•\t1× 1TB Lexar Professional CFexpress Type B card (1700MB/s)\n\t•\t3× NP-F570 batteries\n\t•\t1× Battery charger\n\t•\t1× Lens mount cap\n\t•\t1× Carry case\n\nAbout us\n\t•\tPickup in Central London (Trafalgar Square area)\n\n⚡️ Popular Combos ⚡️\n\t•\tDJI Ronin RS3 Pro gimbal\n\nPlease kindly note:\n\t•\tWe always provide chargers with the equipment.`;
+ const included=explicitListingIncludedContents(description);
+ it("extracts only the exact explicit set list, not nearby pickup, combo, or general-note prose",()=>{
+  expect(included).toEqual([
+   "1× Tilta protective cage","1× Variable ND filter","1× 1TB Lexar Professional CFexpress Type B card (1700MB/s)",
+   "3× NP-F570 batteries","1× Battery charger","1× Lens mount cap","1× Carry case",
+  ]);
+ });
+ it("accepts an exact listing-attributed accessory while respecting physical kit evidence",()=>{
+  const kit={names:["BMPCC 6K Full Frame"],contents:["5× NP-F570 batteries","1× 1TB CFexpress Type B card"],listing_contents:included,listing_source:"online_listings" as const};
+  const reply="Yes, the kit includes the 1TB CFexpress Type B card (described in the listing as the Lexar Professional 1TB card), and the listing also notes a battery charger as included.";
+  expect(unsupportedKitClaims(reply,[kit],["BMPCC 6K Full Frame"])).toEqual([]);
+  expect(unsupportedKitClaims("A battery charger is included with the set.", [{...kit,contents:[]}], ["BMPCC 6K Full Frame"])).not.toEqual([]);
+ });
+ it("does not let a stale listing count override a different physical count",()=>{
+  const kit={names:["BMPCC 6K Full Frame"],contents:["5× NP-F570 batteries"],listing_contents:included,listing_source:"online_listings" as const};
+  expect(unsupportedKitClaims("The listing specifies three NP-F570 batteries as included.",[kit],["BMPCC 6K Full Frame"])).not.toEqual([]);
+ });
+ it("extracts a listing's direct kit-introduction heading without opening later prose",()=>{
+  const description="In this kit, you'll find everything you need to start shooting:\n• Camera cage\n• Protective carrying case\n\nAbout us\n• Collection in Central London";
+  expect(explicitListingIncludedContents(description)).toEqual(["Camera cage","Protective carrying case"]);
  });
 });

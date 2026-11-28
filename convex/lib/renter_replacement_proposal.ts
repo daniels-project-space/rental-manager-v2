@@ -2,7 +2,9 @@ import {v,type Infer} from "convex/values";
 import type {PriceEvidence} from "./price_claims";
 import {amendmentMoneyClaims} from "./renter_amendment_money";
 import {renterItemNames} from "./renter_item_names";
-const member=v.object({name:v.string(),quantity:v.number()});
+// Replacement identity is persisted just like an addition quote: keep the
+// catalogue aliases used to resolve the renter's selected listing on consent.
+const member=v.object({name:v.string(),quantity:v.number(),aliases:v.optional(v.array(v.string()))});
 const selection=v.object({product_id:v.number(),qty:v.number()});
 export const sentReplacementProposalValidator=v.object({
  context_key:v.string(),epoch:v.number(),quoted_for_message_id:v.string(),

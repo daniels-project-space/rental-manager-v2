@@ -15,9 +15,11 @@ export type PriceEvidence = {
   names: string[]; kind: "rental" | "basket" | "replacement";
   quote_role?: "base" | "proposed_line" | "addition" | "inquiry";
   daily_rate_gbp?: number; base_rate_gbp?: number; total_gbp?: number;
+  /** Transaction receipt for an already-applied Lab travel adjustment. */
+  travel_adjustment?: { base_total_gbp: number; amount_gbp: number; total_gbp: number };
   days?: number; quantity?: number; start_date?: string; end_date?: string;
   items?: Array<{name:string;quantity:number}>;
-  proposal?: {base_physical_identity_key?:string;base_total_gbp?:number;removed_listings?:Array<{product_id:number;quantity:number}>;removed_items?:Array<{name:string;quantity:number}>;base_items:Array<{name:string;quantity:number}>;added_items:Array<{name:string;quantity:number}>;added_listings?:Array<{product_id:number;quantity:number}>;additional_cost_gbp?:number;physical_identity_key?:string};
+  proposal?: {base_physical_identity_key?:string;base_total_gbp?:number;removed_listings?:Array<{product_id:number;quantity:number}>;removed_items?:Array<{name:string;quantity:number}>;base_items:Array<{name:string;quantity:number}>;added_items:Array<{name:string;quantity:number;aliases?:string[]}>;added_listings?:Array<{product_id:number;quantity:number}>;additional_cost_gbp?:number;physical_identity_key?:string};
   date_proposal?: import("./renter_date_proposal").DateProposalEvidence;
   call_id: string; source: string;
   required_accessory_names?: string[];
@@ -253,7 +255,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     // one-day reference as an undated base rate when it is explicitly a rate.
     const base = /\b(?:base|usual|normally|standard)\b/i.test(local) ||
       daily && /\b(?:one[ -]day|1[ -]day)\b/i.test(local);
-    const purpose = /\b(?:discount|refund)\b/i.test(local) ? "adjustment"
+    const purpose = /\b(?:discount|refund|travel\s+(?:adjustment|compensation)|compensation\s+for\s+travel)\b/i.test(local) ? "adjustment"
       : /\b(?:deposit|security\s+hold)\b/i.test(local) ? "deposit"
       : /\b(?:replacement\s+(?:cost|value)|insured\s+value)\b/i.test(local) ? "replacement"
       : /\b(?:delivery|courier|postage)\b/i.test(local) ? "delivery" : "rental";
@@ -287,16 +289,17 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     // change quote, even when a coincidental line price equals the difference.
     const replacementAdjustment = moneyRole === "reduction" || moneyRole === "increase" &&
       evidence.some(e => e.kind === "basket" && !!e.proposal?.removed_items?.length);
-    const explicitBookingTotal = /\b(?:(?:your|our|my)\s+(?:(?:new|updated|revised|complete|full)\s+)?(?:(?:booking|order|rental|hire)\s+)?(?:(?:new|updated|revised)\s+)?total|(?:this|current|the)\s+(?:(?:new|updated|revised|complete|full)\s+)?(?:booking|order|rental|hire)\s+(?:(?:new|updated|revised)\s+)?total)\b/i.test(segment);
+    const explicitBookingTotal = /\b(?:(?:your|our|my)\s+(?:(?:new|updated|revised|complete|full|combined)\s+)?(?:(?:booking|order|rental|hire)\s+)?(?:(?:new|updated|revised)\s+)?total|(?:this|current|the)\s+(?:(?:(?:new|updated|revised|complete|full|combined)\s+)?(?:booking|order|rental|hire)|(?:new|updated|revised|complete|full|combined))\s+(?:(?:new|updated|revised)\s+)?total)\b/i.test(segment);
     const conditionalTotal = /\b(?:would|could)\s+(?:bring|take|make|increase|raise)\b[^£.!?]{0,90}\btotal\b/i.test(segment);
     // A prior amount ends the local currency segment, but does not end its
     // conditional sentence: "Adding both would be £70, bringing your total
     // to £194" still describes a proposal. Never carry this across sentences.
     const sentenceBeforeAmount=text.slice(0,pos).split(/;|\n|(?<=[.!?])\s+/).at(-1) ?? "";
-    const continuedConditionalTotal=explicitBookingTotal &&
-      /^\s*(?:(?:extra|additional|more|less|off)\s*)?[,–—-]?\s*(?:which\s+)?(?:bringing|taking|making|increasing|raising)\b/i.test(segment) &&
-      /\b(?:would|could)\b/i.test(sentenceBeforeAmount) && /£/.test(sentenceBeforeAmount);
+    const explicitTotal=explicitBookingTotal || /\b(?:the|your|our|my)\s+(?:(?:new|updated|revised|complete|full)\s+)?total\b/i.test(segment);
     const baselineTotal = conditionalTotal && /\bfrom\s*$/i.test(segment);
+    const continuedConditionalTotal=!baselineTotal && explicitTotal &&
+      /\b(?:(?:and|which)\s+)?(?:(?:would|could)\s+)?(?:bring(?:ing)?|tak(?:e|ing)|mak(?:e|ing)|increas(?:e|ing)|rais(?:e|ing))\b[^£.!?]{0,80}\btotal\b/i.test(segment) &&
+      /\b(?:would|could)\b/i.test(sentenceBeforeAmount) && /£/.test(sentenceBeforeAmount);
     const proposalTotal = explicitBookingTotal && !baselineTotal && /\b(?:would|could)\b/i.test(segment) || conditionalTotal && !baselineTotal || continuedConditionalTotal || pendingProposalTotal && /^\s*(?:up\s+)?to\s*$/i.test(segment);
     pendingProposalTotal = baselineTotal;
     const componentAddition = pricedComponents.length > 1 && /^\s*(?:\/\s*day|per\s+day|a\s+day)?\s*\)?\s*[,–—-]?\s*(?:which\s+)?(?:bringing|taking|making)\s+(?:the\s+)?(?:addition|additions|additional cost)\s+(?:to|of)\s*$/i.test(segment);
@@ -324,12 +327,98 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
       !/\b(?:would|could|add|adding)\b/i.test(segment);
     const additionPrice = !bookingSubject && !currentBookedPrice && /\b(?:extra|additional|another|second|third|fourth|2nd|3rd|4th)\b/i.test(segment);
     const dateAdjustment = /\b(?:extend|extending|extension|date change|shorten|shortening)\b/i.test(segment) && /\b(?:extra|additional|less|reduction)\b/i.test(segment+text.slice(pos+m[0].length,pos+m[0].length+24));
-    const candidates = evidence.filter(e => (!additionPrice || basket ||
-      e.source !== "lab_order_quote" && e.quote_role !== "base" && e.quote_role !== "proposed_line") && !unresolvedPair && e.call_id && e.source && (dateAdjustment ? e.kind === "basket" && !!e.date_proposal : basket ? e.kind === "basket" && (!proposalTotal || !!e.proposal || !!e.date_proposal) && (groupAddition ? e.quote_role==="addition" : e.quote_role!=="addition") : e.kind !== "basket" && same(subject,e.names)));
+    // A date-quote comparison is not another equipment price. Accept its
+    // delta only when the same sentence names the exact proposed total/date,
+    // the Native date proposal matches that quote, and a saved current-order
+    // receipt proves the proposal's before-total and unchanged members.
+    const dateChangeComparisonTail=text.slice(pos+m[0].length).split(/[;\n]|(?<=[.!?])\s+/)[0]??"";
+    const labelledDateChangeDelta=/^\s*\(?\s*(?:an?\s+)?(increase|reduction|decrease)\s+of\s*$/i.exec(segment)?.[1]?.toLowerCase();
+    const differenceDateChangeDelta=/^\s*,?\s*which\s+is\s+(?:a\s+)?$/i.test(segment) &&
+      /^\s*difference\s+from\s+(?:(?:the|your)\s+)?current\s+(?:(?:one|1|two|2|three|3|four|4)\s*[- ]day\s+)?(?:£\s*\d+(?:,\d{3})*(?:\.\d{1,2})?\s+)?(?:total|booking|order|rental|request|hire)\b/i.test(dateChangeComparisonTail);
+    const differenceOfDateChangeDelta=/^\s*\(?\s*(?:a\s+)?difference\s+of\s*$/i.test(segment) &&
+      /^\s*from\s+(?:(?:the|your)\s+)?current\b/i.test(dateChangeComparisonTail);
+    const labelledCurrentBookingDelta=/^\s*from\s+(?:(?:the|your)\s+)?current\s+(?:(?:one|1|two|2|three|3|four|4)\s*[- ]day\s+)?(?:£\s*\d+(?:,\d{3})*(?:\.\d{1,2})?\s+)?(?:total|booking|order|rental|request|hire)\b/i.test(dateChangeComparisonTail);
+    const dateChangeComparisonRole=labelledDateChangeDelta??(differenceDateChangeDelta||differenceOfDateChangeDelta?"difference":undefined);
+    const dateChangeComparisonShape=!!dateChangeComparisonRole && (differenceDateChangeDelta || differenceOfDateChangeDelta ||
+      labelledCurrentBookingDelta || /^\s*from\s+(?:(?:the|your)\s+)?(?:current|existing|original)\s+(?:(?:one|1|two|2|three|3|four|4)\s*[- ]day\s+)?total\b/i.test(following));
+    const comparisonSentence=text.slice(0,pos).split(/;|\n|(?<=[.!?])\s+/).at(-1) ?? "";
+    const proposalComparisonText=comparisonSentence.replace(/\s*\(?\s*(?:an?\s+)?(?:increase|reduction|decrease)\s+of\s*$/i,"");
+    const comparisonDateScope=itemQuoteDateScope(proposalComparisonText,"",request.start_date);
+    const comparisonDays=claimedRentalDays(proposalComparisonText);
+    const exactMembers=(left:Array<{name:string;quantity:number}>|undefined,right:Array<{name:string;quantity:number}>|undefined)=>{
+      if(!left||!right||left.length!==right.length)return false;
+      const remaining=[...right];
+      return left.every(item=>{const index=remaining.findIndex(candidate=>same([item.name],[candidate.name])&&item.quantity===candidate.quantity);if(index<0)return false;remaining.splice(index,1);return true;});
+    };
+    const exactDateProposal=evidence.find(proposal=>{
+        const p=proposal.date_proposal;
+        if(proposal.kind!=="basket"||proposal.source!=="native_lab_date_proposal"||!p||!p.before_context_key.trim()||!p.physical_identity_key?.trim()||
+          proposal.total_gbp==null||!Number.isFinite(p.base_total_gbp)||!proposal.start_date||!proposal.end_date||proposal.days==null||
+          !comparisonDateScope.explicit||!comparisonDateScope.valid||comparisonDateScope.start_date!==proposal.start_date||comparisonDateScope.end_date!==proposal.end_date||
+          comparisonDays!==proposal.days||inclusiveRentalDays(proposal.start_date,proposal.end_date)!==proposal.days||
+          !exactMembers(proposal.items,request.items.map(item=>({name:item.name,quantity:item.quantity}))))return false;
+        const base=evidence.some(receipt=>receipt.kind==="basket"&&receipt.source==="lab_order_quote"&&receipt.total_gbp!=null&&
+          cents(receipt.total_gbp)===cents(p.base_total_gbp)&&receipt.start_date===p.from_start_date&&receipt.end_date===p.from_end_date&&
+          exactMembers(receipt.items,proposal.items));
+        if(!base)return false;
+        const quotedTotal=proposal.total_gbp;
+        if(quotedTotal==null)return false;
+        const mentionsProposedTotal=[...proposalComparisonText.matchAll(/£\s*(\d+(?:,\d{3})*(?:\.\d+)?)/g)].some(match=>
+          cents(Number(match[1].replace(/,/g,"")))===cents(quotedTotal)&&
+          /\b(?:total|booking|rental|hire)\b/i.test(proposalComparisonText.slice(0,match.index)));
+        if(!mentionsProposedTotal)return false;
+        return true;
+      });
+    const verifiedDateProposalDelta=!!exactDateProposal&&dateChangeComparisonShape&&dateChangeComparisonRole!==undefined&&(()=>{
+      const p=exactDateProposal.date_proposal!;
+      const currentDaysText=/\b(?:the\s+)?current\s+(one|1|two|2|three|3|four|4|\d+)\s*[- ]day\b/i.exec(dateChangeComparisonTail)?.[1]?.toLowerCase();
+      const currentDays=currentDaysText ? ({one:1,two:2,three:3,four:4} as Record<string,number>)[currentDaysText]??Number(currentDaysText) : null;
+      if(currentDays!==null && (!p.from_start_date||!p.from_end_date||currentDays!==inclusiveRentalDays(p.from_start_date,p.from_end_date)))return false;
+      const change=exactDateProposal.total_gbp!-p.base_total_gbp;
+      const delta=dateChangeComparisonRole==="increase"?change:dateChangeComparisonRole==="difference"?Math.abs(change):-change;
+      return delta>=0&&cents(delta)===cents(amount);
+    })();
+    const verifiedCurrentDateProposalTotal=!!exactDateProposal&&
+      /\b(?:the|your)\s+current\s*$/i.test(segment)&&/^\s*(?:total|booking|order|rental|request|hire)\b/i.test(following)&&
+      exactDateProposal.date_proposal!=null&&cents(amount)===cents(exactDateProposal.date_proposal.base_total_gbp);
+    if(verifiedDateProposalDelta||verifiedCurrentDateProposalTotal){consumed=end;continue;}
+    const retainedTravelAdjustment = purpose === "adjustment" &&
+      /\b(?:travel\s+(?:adjustment|compensation)|compensation\s+for\s+travel)\b/i.test(local) &&
+    /\b(?:your|existing|accepted|agreed|applied|already\s+(?:applied|accepted|agreed))\b/i.test(local);
+    const currentSingleItemTotal=basket&&!proposalTotal&&!groupAddition&&!replacementAdjustment&&request.items.length===1;
+    const candidates = evidence.filter(e => retainedTravelAdjustment
+      ? e.kind === "basket" && (!!e.date_proposal || e.source === "lab_order_transaction" && !!e.travel_adjustment)
+      : (!additionPrice || basket ||
+      e.source !== "lab_order_quote" && e.quote_role !== "base" && e.quote_role !== "proposed_line") && !unresolvedPair && e.call_id && e.source && (dateAdjustment ? e.kind === "basket" && !!e.date_proposal : basket ?
+        e.kind === "basket" && (!proposalTotal || !!e.proposal || !!e.date_proposal) && (groupAddition ? e.quote_role==="addition" : e.quote_role!=="addition") ||
+        currentSingleItemTotal && e.kind==="rental" && e.quote_role!=="base" && e.quote_role!=="proposed_line" && e.quote_role!=="addition" && same(subject,e.names)
+        : e.kind !== "basket" && same(subject,e.names)));
     const deliveryProven = purpose === "delivery" && !daily && !explicitBookingTotal && !/\b(?:one[ -]way|each way|per trip)\b/i.test(local) &&
       typeof verifiedDeliveryFeeGbp === "number" && Number.isFinite(verifiedDeliveryFeeGbp) &&
       Math.round(verifiedDeliveryFeeGbp * 100) === Math.round(amount * 100);
     const proven = deliveryProven || candidates.some(e => {
+      if(retainedTravelAdjustment){
+        const adjustment=e.travel_adjustment;
+        if(adjustment && e.source === "lab_order_transaction") {
+          if(e.total_gbp==null || !Number.isFinite(adjustment.base_total_gbp) || !Number.isFinite(adjustment.amount_gbp) ||
+            !Number.isFinite(adjustment.total_gbp) || cents(adjustment.total_gbp)!==cents(e.total_gbp) ||
+            cents(adjustment.base_total_gbp-adjustment.amount_gbp)!==cents(adjustment.total_gbp) ||
+            adjustment.amount_gbp<=0 || !e.items || !request.items.length)return false;
+          if(!request.items.every(i=>e.items!.some(q=>same([i.name,...(i.aliases??[])],[q.name])&&q.quantity===i.quantity))||e.items.length!==request.items.length)return false;
+          if(e.start_date!==request.start_date || e.end_date!==request.end_date || e.days!==duration)return false;
+          if(dateScope.explicit&&(!dateScope.valid||dateScope.start_date!==e.start_date||dateScope.end_date!==e.end_date))return false;
+          const claimedTotal=explicitBookingTotal || moneyRole==="total";
+          return cents(claimedTotal?adjustment.total_gbp:adjustment.amount_gbp)===cents(amount);
+        }
+        const p=e.date_proposal;
+        const retained=p?.travel_compensation_gbp;
+        if(!p||retained==null||p.base_travel_compensation_gbp==null||e.total_gbp==null||!e.items||!request.items.length)return false;
+        if(cents(retained)!==cents(amount)||cents(p.base_travel_compensation_gbp)!==cents(retained))return false;
+        if(p.from_start_date!==request.start_date||p.from_end_date!==request.end_date)return false;
+        if(!request.items.every(i=>e.items!.some(q=>same([i.name,...(i.aliases??[])],[q.name])&&q.quantity===i.quantity))||e.items.length!==request.items.length)return false;
+        if(dateScope.explicit&&(!dateScope.valid||dateScope.start_date!==e.start_date||dateScope.end_date!==e.end_date))return false;
+        return true;
+      }
       if(dateAdjustment){
         const p=e.date_proposal;
         if(purpose!=="rental")return false;
@@ -343,7 +432,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
         return delta>=0&&cents(delta)===cents(amount);
       }
       if (Number.isNaN(days) || !dateScope.valid || explicitDays !== null && scopedDuration != null && days !== scopedDuration) return false;
-      if (purpose === "deposit" || purpose === "delivery" || purpose === "adjustment") return false; // No verified fee/discount/refund source is held today.
+      if (purpose === "deposit" || purpose === "delivery" || purpose === "adjustment") return false; // Other fees and discounts have no verified source here.
       if (purpose === "replacement") return e.kind === "replacement" && e.total_gbp != null && cents(e.total_gbp) === cents(amount);
       if (e.kind === "replacement") return false;
       if (e.kind === "basket") {
@@ -379,8 +468,9 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
           } else {
             const added=e.proposal.added_items[0];
             if(!added)return false;
-            const directlyNamed=same(subject,[added.name]) && (declaredQuantity??subjectQuantity??1)===added.quantity;
-            const previouslyQuoted=pricedComponents.some(c=>same(c.names,[added.name]) && c.quantity===added.quantity);
+            const addedNames=[added.name,...(added.aliases??[])];
+            const directlyNamed=same(subject,addedNames) && (declaredQuantity??subjectQuantity??1)===added.quantity;
+            const previouslyQuoted=pricedComponents.some(c=>same(c.names,addedNames) && c.quantity===added.quantity);
             // A savings amount can follow the proposed total in the same
             // sentence. Its local money clause ("which is £32 less") has no
             // item name, so bind it to the explicitly named swap and its
@@ -389,7 +479,19 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
             const namesItem=(name:string)=>aliases([name]).some(alias=>alias && sentence.includes(` ${alias} `));
             const explicitSingleSwap=replacementAdjustment && added.quantity===1 && e.proposal.removed_items?.length===1 &&
               e.proposal.removed_items[0].quantity===1 && namesItem(added.name) && namesItem(e.proposal.removed_items[0].name);
-            if(e.proposal.removed_items?.length && (proposalTotal || replacementAdjustment) ? !directlyNamed && !previouslyQuoted && !explicitSingleSwap : !directlyNamed)return false;
+            if (proposalTotal && !e.proposal.removed_items?.length) {
+              // The exact Native proposal already proves the whole amended
+              // basket and its total. Requiring the total sentence's inherited
+              // item label to equal the added line incorrectly rejects normal
+              // phrasing like "adding the lens would bring your total to £69".
+              if (!e.proposal.added_items.length || !e.items?.length) return false;
+              const namesAddition=/\b(?:extra|additional|another|add(?:ing|ed)?|includ(?:e|ing))\b/i.test(sentenceBeforeAmount+segment);
+              if (namesAddition && !same(subject, addedNames)) return false;
+              // But when that inherited label explicitly names the addition,
+              // keep its quantity tied to the quoted change ("two extra" must
+              // not borrow a one-unit proposal total).
+              if (same(subject, addedNames) && (declaredQuantity ?? subjectQuantity ?? 1) !== added.quantity) return false;
+            } else if(e.proposal.removed_items?.length && (proposalTotal || replacementAdjustment) ? !directlyNamed && !previouslyQuoted && !explicitSingleSwap : !directlyNamed)return false;
           }
         }
         // A new inquiry quote proves its explicitly named alternative basket,

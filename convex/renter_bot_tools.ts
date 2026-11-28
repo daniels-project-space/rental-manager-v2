@@ -23,8 +23,10 @@ import {
 } from "./lib/owner_checks";
 import { ownerChecksForBot } from "./renter_bot_owner_checks";
 import { draftContextKey } from "./lib/draft_review";
+import { renterPickupContext } from "./lib/renter_pickup_context";
 import { inventorySpecMap } from "./lib/inventory_spec_grounding";
 import { equipmentClaimProfiles } from "./lib/equipment_claim_profiles";
+import { resolveInventoryMount } from "./lib/reviewed_inventory_mount";
 import {
   equipmentUsageContext,
   equipmentFactRequests,
@@ -43,6 +45,7 @@ import { availabilityBasket } from "./lib/availability_basket";
 import {
   explicitRecommendationUse,
   recommendationBasket,
+  proposedInquiryBasket,
   type RecommendationLine,
   type RecommendationUse,
 } from "./lib/recommendation_basket";
@@ -73,6 +76,7 @@ import {
 import { additionMountRequirements } from "./lib/booking_addition_mount";
 import { checkoutDeliveryQuote } from "./lib/checkout_delivery_quote";
 import { matchesPreparedListing } from "./lib/renter_bot_lab_listing_snapshot";
+import { currentPickupAvailability } from "./lib/renter_bot_listing_pickup";
 import {
   classifyOrderWeight,
   quoteDeliveryPrice,
@@ -97,7 +101,7 @@ import {
   internalQueryOf,
   internalQuery,
 } from "./owner_functions";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import {
@@ -108,7 +112,7 @@ import {
 } from "./lib/renter_stock";
 import {
   baseListingProductIds,
-  chooseBaseListing,
+  resolveBaseListingChoice,
 } from "./lib/base_listing_identity";
 import {
   requestRentalStage,
@@ -131,6 +135,8 @@ import {
   rankByName,
   substitutionScore,
   exactTitleMatch,
+  exactTitleMatches,
+  hasRoleConflictingCompatibilityAlias,
 } from "./lib/item_name_match";
 import {
   tierRateForDays,
@@ -297,12 +303,15 @@ export const get_listing_context = query({
             .collect();
           const spec = rows.length === 1 ? rows[0] : undefined,
             verified = verifiedItemSpec(spec, item.name_canonical);
+          const mount = resolveInventoryMount(item);
           return {
             requested_name,
             status: "owned" as const,
             name: item.name_canonical,
             rental_name: item.rental_facts?.name ?? item.name_canonical,
             kind: item.kind ?? null,
+            native_mount: mount.mount,
+            mount_evidence: mount.evidence,
             spec_text: verified?.text ?? null,
             spec_verification: verified
               ? { model: verified.model, source_url: verified.source_url }
@@ -324,6 +333,9 @@ export const get_listing_context = query({
       let daily_price_gbp: number | null = null;
       let listing_name: string | null = null;
       let public_url: string | null = null;
+      let listing_description: string | null = null;
+      let listing_description_source: string | null = null;
+      let listing_description_updated_at: number | null = null;
       // OWNERSHIP IS TRI-STATE (2026-08-21). Previously this was a bare
       // boolean defaulting to false, so "we could not determine ownership"
       // was indistinguishable from "we verified we do NOT own it".
@@ -349,7 +361,11 @@ export const get_listing_context = query({
       // ("body only, I can add the Canon EF 24-105 for £X") instead of
       // stalling with "let me check".
       let lens_mount: string | null = null;
+      let mount_evidence: ReturnType<typeof resolveInventoryMount>["evidence"] | null = null;
       let price_tiers: string | null = null;
+      let listing_synced_at: number | null = null;
+      let listing_description_synced_at: number | null = null;
+      let pickup_availability: ReturnType<typeof currentPickupAvailability> = null;
       /**
        * Detail we already hold per item and never showed the bot. Measured
        * 2026-08-23: card_type and battery_type on 67 of 81 rentable items,
@@ -392,6 +408,10 @@ export const get_listing_context = query({
           )
           .first();
         price_tiers = describeTiers((prod?.prices ?? []) as PriceTier[]);
+        listing_synced_at = typeof prod?.lastSyncedAt === "number" ? prod.lastSyncedAt : null;
+        listing_description_synced_at = typeof prod?.descriptionSyncedAt === "number"
+          ? prod.descriptionSyncedAt
+          : null;
         const mid = (prod as { masterItemId?: unknown } | null)?.masterItemId;
         if (mid) {
           const it = await ctx.db.get(mid as never);
@@ -528,8 +548,8 @@ export const get_listing_context = query({
           // inventing specs made the bot useless and escalate instead.
           ambiguous_with = [m.match, ...m.ambiguousWith].map((i) => ({
             name: i.name_canonical,
-            lens_mount:
-              (i as { lens_mount?: string | null }).lens_mount ?? null,
+            lens_mount: resolveInventoryMount(i).mount,
+            mount_evidence: resolveInventoryMount(i).evidence,
             kind: i.kind ?? null,
           }));
         }
@@ -547,7 +567,19 @@ export const get_listing_context = query({
           daily_price_gbp = listing.daily_price ?? null;
           listing_name = listing.name ?? null;
           public_url = listing.public_url ?? null;
+          if (typeof listing.description === "string" && listing.description.trim()) {
+            listing_description = listing.description;
+            listing_description_source = "online_listings";
+            listing_description_updated_at = typeof listing.updated_at === "number" ? listing.updated_at : null;
+          }
         }
+        const pickupOverride = await ctx.db
+          .query("listing_resolution_override")
+          .withIndex("by_account_product", (q) =>
+            q.eq("account_slug", account_slug).eq("product_id", l.product_id as number),
+          )
+          .unique();
+        pickup_availability = currentPickupAvailability(pickupOverride?.pickup_availability);
       }
       const listingInventory =
         account_slug && typeof l.product_id === "number"
@@ -575,7 +607,9 @@ export const get_listing_context = query({
         ? allItems.find((i) => i.name_canonical === inventory_name)
         : undefined;
       if (it) {
-        lens_mount = (it as { lens_mount?: string | null }).lens_mount ?? null;
+        const resolvedMount = resolveInventoryMount(it);
+        lens_mount = resolvedMount.mount;
+        mount_evidence = resolvedMount.evidence;
         const det = it as {
           card_type?: string | null;
           battery_type?: string | null;
@@ -642,12 +676,21 @@ export const get_listing_context = query({
               },
             ]
           : []);
+      const tracedInventoryComponents = inventoryComponents.map((component) => {
+        const sourceItem = allItems.find((candidate) => String(candidate._id) === String(component.item_id));
+        return {
+          ...component,
+          source_updated_at: typeof sourceItem?.updated_at === "number" ? sourceItem.updated_at : null,
+        };
+      });
       const kitContext = await listingKitContext(
         ctx,
         account_slug,
         it,
         inventoryComponents,
         allItems,
+        undefined,
+        l.product_id ?? undefined,
       );
       const kit = kitContext.kit,
         storageNeedsReview = kitContext.contents_review_required;
@@ -672,11 +715,17 @@ export const get_listing_context = query({
         kit_contents: kit.contents,
         kit_completeness: kit.completeness,
         kit_source: kit.source,
-        inventory_components: inventoryComponents,
+        inventory_components: tracedInventoryComponents,
         mapping_complete: listingInventory?.complete ?? !!it,
         name: l.name,
         qty: l.qty,
         product_id: l.product_id,
+        account_slug,
+        listing_source: "hygglo_products",
+        listing_synced_at,
+        listing_description_synced_at,
+        pickup_availability,
+        inventory_updated_at: typeof it?.updated_at === "number" ? it.updated_at : null,
         // true = verified owned; false = verified NOT rentable; null = UNKNOWN.
         // Consumers MUST treat null as "not verified" and never as "not owned".
         owned,
@@ -684,10 +733,13 @@ export const get_listing_context = query({
         inventory_name,
         kind,
         lens_mount,
+        mount_evidence,
         price_tiers,
         card_type,
         battery_type,
         included_with_rental,
+        included_with_rental_source: kitContext.included_with_rental_source,
+        included_with_rental_recorded_at: kitContext.included_with_rental_recorded_at,
         size_note,
         replacement_cost_gbp,
         spec_text,
@@ -696,6 +748,9 @@ export const get_listing_context = query({
         spec_verification,
         ambiguous_with,
         listing_name,
+        listing_description,
+        listing_description_source,
+        listing_description_updated_at,
         daily_price_gbp,
         whats_included: kit.included,
         public_url,
@@ -746,6 +801,27 @@ export const get_listing_context = query({
   },
 });
 
+/** Pickup location and opening windows are read only when the conversation
+ * needs them. The exact address follows the same booking-stage permission as
+ * the production reply guard. */
+export const get_pickup_context = query({
+  args:{thread_id:v.string()},
+  handler:async(ctx,{thread_id})=>{
+    const reservation=await getBotBooking(ctx,thread_id);
+    const conv=await ctx.db.query("conversations").withIndex("by_thread",q=>q.eq("thread_id",thread_id)).first();
+    const account_slug=reservation?.account_slug??conv?.account_slug;
+    if(!account_slug)return {ok:false as const,reason:"No rental account is selected."};
+    const account=await ctx.db.query("accounts").withIndex("by_slug",q=>q.eq("slug",account_slug)).first();
+    const [profile,settings]=await Promise.all([
+      account?ctx.db.query("account_profiles").withIndex("by_account",q=>q.eq("account_id",account._id)).first():Promise.resolve(null),
+      ctx.db.query("settings").first(),
+    ]);
+    const stage=rentalStage(reservation,londonToday());
+    return renterPickupContext({account_slug,profile,global_hours:settings?.pickup_hours,
+      stage:stage.stage,can_share_pickup_address:stage.can_share_pickup_address});
+  },
+});
+
 // ── Tool 3: lookup_pricing ───────────────────────────────────
 
 // Pricing supplies base amounts. A model-selected flag is not location evidence
@@ -756,6 +832,20 @@ const UNVERIFIED_DISTANCE_DISCOUNT = {
   distance_discount_guidance:
     "The quoted total is the base price; no travel compensation is included. Compensation is considered only after this account's pickup area has been disclosed and the renter then objects to the travel; it is capped at the lower of 10% of the verified rental charge or £10.",
 };
+
+function listingSelectionOptions(
+  listings: readonly { product_id: number; name?: string; daily_price?: number }[],
+) {
+  return listings.map((listing, index) => ({
+    product_id: listing.product_id,
+    option_label: `Option ${index + 1}`,
+    daily_rate_gbp: Math.round((listing.daily_price ?? 0) * 100) / 100,
+  }));
+}
+
+function listingSelectionGuidance() {
+  return "More than one verified listing offers this physical item. Show only the option labels and rates, and ask which listing or rate the renter means before quoting or checking dated availability. Do not infer kit contents from listing titles or select the cheapest by default. Keep product IDs internal; use the selected option's exact product ID for subsequent checks.";
+}
 
 export const lookup_pricing = query({
   args: {
@@ -831,6 +921,18 @@ export const lookup_pricing = query({
           .withIndex("by_account", (q) => q.eq("account_slug", account_slug))
           .collect()
       ).filter((l) => ownedPids.has(l.product_id));
+      const quoteListingOptions = async (candidates: typeof listings) => Promise.all(candidates.map(async (listing, index) => {
+        const hp = await ctx.db.query("hygglo_products")
+          .withIndex("by_account_product", (q) => q.eq("accountSlug", account_slug).eq("productId", listing.product_id))
+          .unique();
+        const quote = rentalQuote((hp?.prices ?? []) as PriceTier[], listing.daily_price, days, quantity);
+        return quote ? {
+          product_id: listing.product_id,
+          option_label: `Option ${index + 1}`,
+          daily_rate_gbp: quote.daily_rate_gbp,
+          source: quote.source,
+        } : null;
+      })).then(options => options.filter((option): option is NonNullable<typeof option> => option !== null));
       // DETERMINISTIC FIRST (2026-08-21): resolve the item by name against
       // master inventory, then find ITS listing via the audit-authoritative
       // product_id index. Identity, not string similarity.
@@ -847,6 +949,7 @@ export const lookup_pricing = query({
       let matchedCanonical: string | undefined;
       let resolvedCanonical: string | undefined;
       let ambiguousNames: string[] = [];
+      let roleConflict = false;
       if (product_id != null) {
         best = listings.find((l) => l.product_id === product_id) ?? null;
         if (!best)
@@ -859,6 +962,12 @@ export const lookup_pricing = query({
       }
       if (!best) {
         const allItems = await ctx.db.query("items").collect();
+        roleConflict = hasRoleConflictingCompatibilityAlias(
+          item_name,
+          allItems,
+          (i) => i.name_canonical,
+          (i) => (i.aliases ?? []) as string[],
+        );
         const im = bestMatch(
           item_name,
           allItems,
@@ -871,19 +980,36 @@ export const lookup_pricing = query({
             .query("hygglo_product_index")
             .withIndex("by_item_id", (q2) => q2.eq("item_id", im.match!._id))
             .collect();
-          const pids = new Set(
-            baseListingProductIds(
-              account_slug,
-              String(im.match._id),
-              idxRows,
-              ovrRows,
-              allItems,
-              listings,
-            ),
+          const productIds = baseListingProductIds(
+            account_slug,
+            String(im.match._id),
+            idxRows,
+            ovrRows,
+            allItems,
+            listings,
           );
-          // Among this item's own listings prefer the CHEAPEST — that's the
-          // base offering rather than an add-on bundle built around it.
-          best = chooseBaseListing(listings, [...pids]);
+          const choice = resolveBaseListingChoice(listings, productIds);
+          const baseOffers = choice.status === "selection_required"
+            ? choice.listings
+            : choice.status === "selected" ? [choice.listing] : [];
+          // A renter's exact listing title is an explicit choice. A canonical
+          // item name is not: two offers for the same body can carry different
+          // contents and prices, so never choose the cheaper offer silently.
+          best = exactTitleMatch(item_name, baseOffers, (listing) => listing.name ?? "");
+          if (!best && choice.status === "selection_required") {
+            return {
+              found: false as const,
+              selection_required: true as const,
+              reason: "multiple_verified_listings" as const,
+              item_name,
+              matched_canonical: resolvedCanonical,
+              days,
+              quantity,
+              listing_options: await quoteListingOptions(baseOffers),
+              message: listingSelectionGuidance(),
+            };
+          }
+          if (!best && choice.status === "selected") best = choice.listing;
           if (best) {
             bestScore = 1;
             matchedCanonical = im.match.name_canonical;
@@ -915,7 +1041,7 @@ export const lookup_pricing = query({
           listings.filter((l) => typeof l.daily_price === "number"),
           (l) => l.name,
         );
-        if (exact) {
+        if (exact && !roleConflict) {
           best = exact;
           bestScore = 1;
         }
@@ -923,14 +1049,25 @@ export const lookup_pricing = query({
       // Fallback: Jaccard over listing names (penalises the extra tokens a fat
       // bundle carries, unlike the old coverage score) with FULL query
       // coverage required, so every word the renter said must be present.
-      if (!best && !resolvedCanonical && !ambiguousNames.length) {
+      if (!best && !resolvedCanonical && !ambiguousNames.length && !roleConflict) {
         const ranked = rankByName(item_name, listings, (l) => l.name ?? "");
-        const top = ranked.find(
+        const exactCoverage = ranked.filter(
           (r) => r.coverage === 1 && typeof r.item.daily_price === "number",
         );
-        if (top) {
-          best = top.item;
-          bestScore = top.score;
+        if (exactCoverage.length > 1) {
+          const candidateOffers = exactCoverage.map((row) => row.item);
+          return {
+            found: false as const,
+            selection_required: true as const,
+            reason: "multiple_matching_listings" as const,
+            item_name,
+            listing_options: listingSelectionOptions(candidateOffers),
+            message: listingSelectionGuidance(),
+          };
+        }
+        if (exactCoverage.length === 1) {
+          best = exactCoverage[0].item;
+          bestScore = exactCoverage[0].score;
         }
         // Nearest NAMES for the miss path, so the agent can ask once more with
         // a real title instead of inventing variants. Names only — handing back
@@ -1063,7 +1200,7 @@ export const lookup_pricing = query({
               ].includes(item.kind ?? "")
             )
               continue;
-            const candidate = chooseBaseListing(
+            const componentChoice = resolveBaseListingChoice(
               listings,
               baseListingProductIds(
                 account_slug,
@@ -1074,6 +1211,9 @@ export const lookup_pricing = query({
                 listings,
               ),
             );
+            const candidate = componentChoice.status === "selected"
+              ? componentChoice.listing
+              : null;
             if (
               !candidate ||
               candidate.product_id === best.product_id ||
@@ -1116,6 +1256,7 @@ export const lookup_pricing = query({
               selectedContents.components,
               mediaInventory,
               { indexes: idxRows, overrides: ovrRows, peers: listings },
+              best.product_id,
             ),
           ),
         );
@@ -1227,8 +1368,8 @@ type JointStockArgs = {
   thread_id?: string;
   start_date: string;
   end_date: string;
-  items: Array<{ item_name: string; quantity: number; product_id?: number }>;
-  booking_use?: RecommendationUse;
+  items?: Array<{ item_name: string; quantity: number; product_id?: number }>;
+  booking_use?: RecommendationUse | "proposed" | "current";
   replace_product_id?: number;
   replace_quantity?: number;
   pickup_time?: string;
@@ -1241,7 +1382,9 @@ export async function performJointStockCheck(
   preloadedSources?: Awaited<ReturnType<typeof loadStockSources>>,
   recheck?: { standalone_offer: true; new_inquiry?: true },
 ) {
-  if (!a.items.length || a.items.length > 8)
+  const currentBasketQuote = a.booking_use === "current";
+  const requestedItems = a.items ?? [];
+  if ((!currentBasketQuote && !requestedItems.length) || requestedItems.length > 8)
     return {
       available: null,
       reason: "use_one_to_eight_exact_items",
@@ -1291,16 +1434,24 @@ export async function performJointStockCheck(
         }))
       : (booking?.items?.map((l) => ({ name: l.item_name, qty: l.qty ?? 1 })) ??
         []);
+  if (currentBasketQuote) {
+    const savedStart = labOrder?.start_date ?? booking?.start_date;
+    const savedEnd = labOrder?.end_date ?? booking?.end_date;
+    if (stage !== "INQUIRY" || !existing.length || existing.some((line) => line.product_id == null) ||
+        !savedStart || !savedEnd || a.start_date !== savedStart || a.end_date !== savedEnd) {
+      return { available: null, reason: "current_quote_requires_exact_saved_inquiry_basket", components: [] };
+    }
+  }
   const recent =
-    !separate && !recheck && a.thread_id && !closed && existing.length
+    !currentBasketQuote && !separate && !recheck && a.thread_id && !closed && existing.length
       ? await recentThreadMessages(ctx, a.thread_id, 12)
       : [];
-  const expected = explicitRecommendationUse(
+  const expected = currentBasketQuote ? undefined : explicitRecommendationUse(
     recent.filter((m) => m.sender !== "owner").at(-1)?.body_text ?? "",
   );
   const sources = preloadedSources ?? (await loadStockSources(ctx));
-  const candidates: RecommendationLine[] = [];
-  for (const line of a.items) {
+  const candidates: RecommendationLine[] = currentBasketQuote ? existing.map((line) => ({ ...line })) : [];
+  for (const line of currentBasketQuote ? [] : requestedItems) {
     const set =
       line.product_id == null
         ? resolveLensSet(line.item_name, sources.items)
@@ -1339,6 +1490,106 @@ export async function performJointStockCheck(
       reason: "use_one_to_eight_exact_items",
       components: [],
     };
+  // A physical item being on hand does not make it a rentable offer on this
+  // Hygglo account. Resolve every name-only line to an exact account listing
+  // (or its audited base listing) before reporting availability or a quote.
+  // This is the shared boundary used by the Lab and every renter-bot caller.
+  let accountListings: Doc<"online_listings">[] | undefined;
+  let accountIndexRows: Array<{ account_slug: string; product_id: number; item_id: Id<"items"> }> | undefined;
+  let accountOverrides: Doc<"listing_resolution_override">[] | undefined;
+  if (candidates.some((line) => line.product_id == null)) {
+    [accountListings, accountIndexRows, accountOverrides] = await Promise.all([
+      ctx.db.query("online_listings")
+        .withIndex("by_account", (q) => q.eq("account_slug", a.account_slug))
+        .collect(),
+      Promise.resolve([...sources.productIndex.entries()].flatMap(([key, item_id]) => {
+        const separator = key.lastIndexOf("#");
+        if (separator < 0 || key.slice(0, separator) !== a.account_slug) return [];
+        const product_id = Number(key.slice(separator + 1));
+        return Number.isSafeInteger(product_id)
+          ? [{ account_slug: a.account_slug, product_id, item_id: item_id as Id<"items"> }]
+          : [];
+      })),
+      Promise.resolve((sources.rawOverrides ?? []).filter((row) => row.account_slug === a.account_slug)),
+    ]);
+    const listingRows = accountListings ?? [];
+    const indexRows = accountIndexRows ?? [];
+    const overrideRows = accountOverrides ?? [];
+    const resolvedLines: RecommendationLine[] = [];
+    for (const line of candidates) {
+      if (line.product_id != null) {
+        resolvedLines.push(line);
+        continue;
+      }
+      const exactListings = exactTitleMatches(
+        line.name,
+        listingRows,
+        (listing) => listing.name ?? "",
+      );
+      if (exactListings.length > 1) {
+        return {
+          available: null,
+          offer_status: "listing_selection_required",
+          reason: "duplicate_exact_listing_titles",
+          item_name: line.name,
+          listing_options: listingSelectionOptions(exactListings),
+          components: [],
+          guidance: listingSelectionGuidance(),
+        };
+      }
+      let listing = exactListings[0] ?? null;
+      if (!listing && line.item_id) {
+        const productIds = baseListingProductIds(
+          a.account_slug,
+          line.item_id,
+          indexRows,
+          overrideRows,
+          sources.items,
+          listingRows,
+        );
+        const choice = resolveBaseListingChoice(listingRows, productIds);
+        if (choice.status === "selection_required") {
+          return {
+            available: null,
+            offer_status: "listing_selection_required",
+            reason: "multiple_verified_listings",
+            item_name: line.name,
+            listing_options: listingSelectionOptions(choice.listings),
+            components: [],
+            guidance: listingSelectionGuidance(),
+          };
+        }
+        if (choice.status === "selected") listing = choice.listing;
+      }
+      if (!listing) {
+        return {
+          available: null,
+          offer_status: "not_listed_on_selected_account",
+          reason: "no_exact_account_listing",
+          item_name: line.name,
+          components: [],
+          guidance: "This physical item has no verified rentable listing on the selected account. Use a neutral renter-facing explanation that you cannot add it to this request right now; do not claim a date conflict, mention internal listing/ownership status, invent a reason, or quote it. Offer only a verified alternative from this account.",
+        };
+      }
+      const contents = await loadListingInventory(ctx, a.account_slug, listing.product_id, line.qty, { items: sources.items });
+      if (!contents.complete || contents.owned !== true) {
+        return {
+          // This is an offer-identity result, not a dated stock result.
+          // `available:false` means the requested dates conflict with stock;
+          // using it for an unmapped/marketing listing made the model blame
+          // the dates even though no calendar check had been reached.
+          available: null,
+          offer_status: contents.owned === false ? "not_rentable" : "mapping_unverified",
+          reason: contents.owned === false ? "listing_not_rentable" : "listing_mapping_unverified",
+          item_name: line.name,
+          components: [],
+          guidance: "The matching listing is not verified as a renter offer. Use a neutral explanation that you cannot add this item to the request right now; do not blame the requested dates, mention internal listing/ownership status, or invent a reason. Offer only a verified alternative from this account.",
+        };
+      }
+      resolvedLines.push({ ...line, name: listing.name ?? line.name, product_id: listing.product_id });
+    }
+    candidates.splice(0, candidates.length, ...resolvedLines);
+  }
   if (
     candidates.some((c) => !Number.isInteger(c.qty) || c.qty < 1 || c.qty > 20)
   )
@@ -1395,20 +1646,31 @@ export async function performJointStockCheck(
         "At least one exact requested member is not rentable in the Native catalogue. This is not a calendar conflict and does not imply every member is missing. No booking or price changes were made.",
     };
   }
-  const plan = recommendationBasket(existing, candidates[0], {
-    requires_booking_context: requiresContext,
-    open_basket: !closed && existing.length > 0,
-    can_replace: !["IN_USE", "RETURN_OVERDUE"].includes(stage),
-    booking_use: separate ? "separate" : a.booking_use,
-    expected_use: separate ? undefined : expected,
-    replace_product_id: a.replace_product_id,
-    replace_quantity: a.replace_quantity,
-  });
+  const proposed = a.booking_use === "proposed";
+  if (proposed && !labOrder)
+    return { available: null, reason: "complete_proposal_requires_isolated_lab_order", components: [] };
+  const plan = currentBasketQuote
+    ? { ok: true as const, use: "standalone" as const, lines: existing.map((line) => ({ ...line })), removed: [] as RecommendationLine[] }
+    : proposed
+    ? proposedInquiryBasket(existing, candidates, {
+        open_basket: !closed && existing.length > 0,
+        expected_use: expected,
+      })
+    : recommendationBasket(existing, candidates[0], {
+        requires_booking_context: requiresContext,
+        open_basket: !closed && existing.length > 0,
+        can_replace: !["IN_USE", "RETURN_OVERDUE"].includes(stage),
+        booking_use: separate ? "separate" : a.booking_use === "proposed" || a.booking_use === "current" ? undefined : a.booking_use,
+        expected_use: expected,
+        replace_product_id: a.replace_product_id,
+        replace_quantity: a.replace_quantity,
+      });
   if (!plan.ok) return { available: null, reason: plan.reason, components: [] };
+  const plannedLines = proposed || currentBasketQuote ? plan.lines : [...plan.lines, ...candidates.slice(1)];
   const check = await checkOrderRentalStock(
     ctx,
     a.account_slug,
-    [...plan.lines, ...candidates.slice(1)],
+    plannedLines,
     a.start_date,
     a.end_date,
     stockThread,
@@ -1441,11 +1703,11 @@ export async function performJointStockCheck(
   }));
   const preview =
     check.available === true &&
-    (plan.use === "standalone" ||
+    (proposed || plan.use === "standalone" ||
       plan.use === "separate" ||
       stage === "INQUIRY") &&
     inclusiveRentalDays(a.start_date, a.end_date) != null &&
-    quotedLines?.length === [...plan.lines, ...candidates.slice(1)].length
+    quotedLines?.length === plannedLines.length
       ? summarise(quotedLines, a.start_date, a.end_date)
       : null;
   const paired =
@@ -1490,7 +1752,7 @@ export async function performJointStockCheck(
   return {
     available: check.available,
     reason: check.reason,
-    booking_use: separate ? "separate" : plan.use,
+    booking_use: currentBasketQuote ? "current" : separate ? "separate" : plan.use,
     ...(separate ? { new_inquiry: true as const } : {}),
     stock_scope: "proposed_basket",
     source: "shared_inventory_confirmed_rentals",
@@ -1507,7 +1769,7 @@ export async function performJointStockCheck(
       basket,
       ...(separate ? { new_inquiry: true as const } : {}),
     })),
-    replacement_removed_listings: plan.removed,
+    replacement_removed_listings: "removed" in plan ? plan.removed : [],
     quote,
     technical_qualification,
     owner_checks,
@@ -1515,8 +1777,9 @@ export async function performJointStockCheck(
       product_id: l.product_id,
       quantity: l.qty,
     })),
-    guidance:
-      "Read-only joint stock check. available:true proves dated capacity only. technical_qualification separately verifies the submitted requirements and camera/lens setup; a false or unknown setup verdict does not prove the items work together. Select a compatible verified set, or explain the missing proof. For a new inquiry, quote.total_gbp and its exact lines supply the combined price; use these instead of another pricing call or mental arithmetic. quote:null means the combined price is unverified; confirmed amendments use quote_booking_addition/replacement. Explain shared component failures; a failed proposal does not mean every item is independently unavailable. No booking or price changes were made.",
+    guidance: currentBasketQuote
+      ? "This is a fresh, read-only quote for the saved inquiry basket exactly as it stands. It excludes any requested addition and does not change the basket. Use its renter_quote only as the current total."
+      : "Read-only joint stock check. available:true proves dated capacity only. technical_qualification separately verifies the submitted requirements and camera/lens setup; a false or unknown setup verdict does not prove the items work together. Select a compatible verified set, or explain the missing proof. For a new inquiry, quote.total_gbp and its exact lines supply the combined price; use these instead of another pricing call or mental arithmetic. quote:null means the combined price is unverified; confirmed amendments use quote_booking_addition/replacement. Explain shared component failures; a failed proposal does not mean every item is independently unavailable. No booking or price changes were made.",
   };
 }
 
@@ -1836,19 +2099,21 @@ export const check_basket_availability = query({
     thread_id: v.optional(v.string()),
     start_date: v.string(),
     end_date: v.string(),
-    items: v.array(
+    items: v.optional(v.array(
       v.object({
         item_name: v.string(),
         quantity: v.number(),
         product_id: v.optional(v.number()),
       }),
-    ),
+    )),
     booking_use: v.optional(
       v.union(
         v.literal("standalone"),
         v.literal("additional"),
         v.literal("replacement"),
         v.literal("separate"),
+        v.literal("proposed"),
+        v.literal("current"),
       ),
     ),
     replace_product_id: v.optional(v.number()),
@@ -1864,6 +2129,23 @@ export const check_basket_availability = query({
 
 // ── Tool 6: get_negotiation_stance ───────────────────────────
 
+async function negotiationForRequest(
+  ctx: QueryCtx,
+  threadId: string,
+  messages: Parameters<typeof negotiationFromMessages>[0],
+  request: NonNullable<Parameters<typeof negotiationFromMessages>[1]>,
+  pickupArea?: string | null,
+) {
+  // The Lab order is the verified quote source for an isolated simulated
+  // rental, including before the renter has seen a price in chat. Production
+  // threads have no Lab order and continue to require a recorded Native quote.
+  const labOrder = request.kind === "primary" ? await getLabOrder(ctx, threadId) : null;
+  const labChargeGbp = labOrder
+    ? summarise(labOrder.items, labOrder.start_date, labOrder.end_date).total_gbp
+    : null;
+  return negotiationFromMessages(messages, request, pickupArea, labChargeGbp);
+}
+
 export const get_negotiation_stance = query({
   args: {
     thread_id: v.string(),
@@ -1877,6 +2159,12 @@ export const get_negotiation_stance = query({
       .query("conversations")
       .withIndex("by_thread", (q) => q.eq("thread_id", thread_id))
       .first();
+    const accountId = conversation?.account_id ?? (conversation?.account_slug
+      ? (await ctx.db.query("accounts").withIndex("by_slug", q => q.eq("slug", conversation.account_slug!)).first())?._id
+      : null);
+    const accountProfile = accountId
+      ? await ctx.db.query("account_profiles").withIndex("by_account", q => q.eq("account_id", accountId)).first()
+      : null;
     const request = await validateRentalRequest(
       ctx,
       thread_id,
@@ -1885,7 +2173,7 @@ export const get_negotiation_stance = query({
         PRIMARY_RENTAL_REQUEST,
       all.at(-1)?.sender === "renter" ? all.at(-1)?.message_id : undefined,
     );
-    return negotiationFromMessages(all, request);
+    return negotiationForRequest(ctx, thread_id, all, request, accountProfile?.pickup_area ?? null);
   },
 });
 
@@ -1943,7 +2231,7 @@ export const select_rental_request = query({
         londonToday(),
       ),
       request_context: rentalRequestContext(messages, request),
-      negotiation: negotiationFromMessages(messages, request),
+      negotiation: await negotiationForRequest(ctx, thread_id, messages, request),
       request_message_id: latest.message_id,
       context_only: true,
     };
@@ -2110,11 +2398,22 @@ export const check_location = action({
       const receipt = await checkoutDeliveryQuote({ account: account_slug, postcode: clean, ...deliverySpecs.checkout });
       if (receipt) return {
         ok: true, within_delivery_range: true, distance_km: receipt.km,
+        delivery_status: "verified_checkout",
         delivery_round_trip: true, delivery_fee_gbp: receipt.fee,
         delivery_vehicle: receipt.vehicle, delivery_pricing_status: "verified_checkout",
         quote_source: "db_cinema_weighted_checkout_v1", account_slug, thread_id,
         basket_updated_at: deliverySpecs.basket_updated_at, inventory_updated_at: deliverySpecs.inventory_updated_at,
         note: `The exact DB Cinema checkout quotes £${receipt.fee} for delivery and collection of this basket.`,
+      };
+      // A configured checkout route that failed verification is not proof that
+      // delivery is unavailable. In particular, do not fall through to a
+      // missing hub and misclassify DB Cinema as pickup-only.
+      return {
+        ok: false,
+        delivery_status: "checkout_verification_required",
+        account_slug,
+        thread_id,
+        reason: "The current checkout could not verify a delivery quote for this basket and postcode.",
       };
     }
 
@@ -2175,6 +2474,9 @@ export const check_location = action({
     if (!hub?.hub_postcode)
       return {
         ok: false,
+        delivery_status: "pickup_only",
+        account_slug,
+        thread_id,
         reason: "No delivery hub set for this account — pickup only.",
       };
     const hubGeo = await geocode(hub.hub_postcode);
@@ -2201,6 +2503,9 @@ export const check_location = action({
     const deliverable = km <= maxKm;
     if (!deliverable) return {
       ok: true,
+      delivery_status: "outside_delivery_range",
+      account_slug,
+      thread_id,
       distance_km: displayKm,
       hub_label: hub.hub_label ?? hub.hub_postcode,
       renter_area: renterGeo.label,
@@ -2219,6 +2524,9 @@ export const check_location = action({
     if (heavyRange.tooHeavy) {
       return {
         ok: true,
+        delivery_status: "outside_delivery_range",
+        account_slug,
+        thread_id,
         distance_km: displayKm,
         hub_label: hub.hub_label ?? hub.hub_postcode,
         renter_area: renterGeo.label,
@@ -2230,9 +2538,18 @@ export const check_location = action({
       };
     }
     const quote = quoteDeliveryPrice(deliverySpecs.items, km, maxKm, 10);
-    if (!quote.ok) return { ok: false, reason: "The current basket is outside the delivery pricing range." };
+    if (!quote.ok) return {
+      ok: false,
+      delivery_status: "checkout_verification_required",
+      account_slug,
+      thread_id,
+      reason: "The current basket's delivery charge could not be verified; don't quote a fee.",
+    };
     return {
       ok: true,
+      delivery_status: "checkout_verification_required",
+      account_slug,
+      thread_id,
       distance_km: quote.km,
       hub_label: hub.hub_label ?? hub.hub_postcode,
       renter_area: renterGeo.label,
@@ -2245,8 +2562,6 @@ export const check_location = action({
       // The website uses its own listing specs, configured margin/origin and
       // date groups. A similar local calculation is not a checkout receipt.
       delivery_pricing_status: "needs_checkout_verification",
-      account_slug,
-      thread_id,
       basket_updated_at: deliverySpecs.basket_updated_at,
       inventory_updated_at: deliverySpecs.inventory_updated_at,
       note: `~${quote.km}km from our ${hub.hub_label ?? "hub"}; this is within the configured range. The checkout delivery charge for this basket must be checked before quoting.`,
@@ -2564,7 +2879,13 @@ async function findOwnedAlternatives(
   const closed = ["COMPLETED", "CANCELLED", "VERIFICATION_FAILED"].includes(
     stage,
   );
-  const requiresBookingContext = [
+  const hasOpenBasket = !closed && (
+    (quickReply && (currentBasket?.length ?? 0) > 0) ||
+    (labOrder?.items?.length ?? 0) > 0 ||
+    (booking?.hygglo_items?.length ?? 0) > 0 ||
+    (booking?.items?.length ?? 0) > 0
+  );
+  const requiresBookingContext = hasOpenBasket || [
     "CONFIRMED_UPCOMING",
     "COLLECTION_DUE",
     "IN_USE",
@@ -2611,6 +2932,21 @@ async function findOwnedAlternatives(
   const expectedUse = requiresBookingContext
     ? explicitRecommendationUse(latestRenter)
     : undefined;
+  if (requiresBookingContext && booking_use !== expectedUse) {
+    return {
+      count: 0,
+      alternatives: [],
+      account_slug,
+      thread_id: thread_id ?? null,
+      rental_stage: stage,
+      booking_context_required: true,
+      booking_use: booking_use ?? null,
+      message_booking_use: expectedUse ?? null,
+      error: expectedUse
+        ? `This open rental request must be handled as booking_use=${expectedUse}; do not search it as a standalone hire.`
+        : "This renter already has an open rental request, but it is unclear whether they want to add, replace, or rent separately. Ask which before searching for alternatives.",
+    };
+  }
   const lensQuery =
     lens_requirements !== undefined ||
     normKind(kind) === "lens" ||
@@ -2819,7 +3155,13 @@ async function findOwnedAlternatives(
     // Tier table for the listing this alternative is priced from, so an
     // upsell quoted during a 5-day booking uses the 5-day rate rather than
     // the 1-day one.
-    const { candidateContents, altListing, altPid } = candidateListing(it);
+    const {
+      candidateContents,
+      altListing,
+      altPid,
+      listing_selection_required,
+      listing_options,
+    } = candidateListing(it);
     // An internal basket search removes every unresolved original while
     // enumerating a candidate. The final plan must still pass a joint check.
     if (
@@ -2910,6 +3252,7 @@ async function findOwnedAlternatives(
       physical?.components ?? [],
       allInventory,
       { indexes: idxAll, overrides: ovAll, peers: listings },
+      altPid ?? undefined,
     );
     const kit = kitContext.kit,
       storageNeedsReview = kitContext.contents_review_required;
@@ -2927,6 +3270,8 @@ async function findOwnedAlternatives(
       item_id: String(it._id),
       image_url: it.image_url ?? null,
       product_id: altPid ?? null,
+      listing_selection_required,
+      listing_options,
       quote: quote
         ? {
             ...quote,
@@ -3030,7 +3375,7 @@ async function findOwnedAlternatives(
     message_booking_use: expectedUse ?? null,
     rejected_stock_options: rejectedStockOptions,
     stock_guidance:
-      "Availability applies only to the returned booking_use. For a separate hire choose separate, which checks the new gear while keeping the existing reservation occupied. After selecting an option, use check_basket_availability with separate and its exact listing ID for a Native combined quote. For a confirmed-booking amendment, choose additional or replacement with the exact current replace_product_id. Replacement removes that entire listing's specified units, including its kit contents; explain what changes. In-use replacements require return confirmation. Unknown context or missing dates cannot prove availability. Prices are for each suggested offering, not a combined booking total. No booking was changed.",
+      "A current open inquiry basket is a booking context even before Hygglo confirms it. Additions or replacements must use the renter's explicit current-basket intent; never fall back to standalone after a no-match result. Availability applies only to the returned booking_use. For a separate hire choose separate, which checks the new gear while keeping the existing reservation occupied. After selecting an option, use check_basket_availability with separate and its exact listing ID for a Native combined quote. For an amendment, choose additional or replacement with the exact current replace_product_id. Replacement removes that entire listing's specified units, including its kit contents; explain what changes. In-use replacements require return confirmation. Unknown context or missing dates cannot prove availability. Prices are for each suggested offering, not a combined booking total. No booking was changed.",
     kind: kind ?? null,
     matched_by: matchedBy,
     kind_fell_back: kindFellBack,
@@ -3203,7 +3548,6 @@ export const get_mount_adapters = query({
       .withIndex("by_account", (q) => q.eq("account_slug", account_slug))
       .collect();
     const idxAll = await ctx.db.query("hygglo_product_index").collect();
-    const listingByPid = new Map(listings.map((l) => [l.product_id, l]));
     const catalog = await loadPricingRows(ctx);
     const catalogPrice = new Map<string, number>();
     for (const row of catalog) {
@@ -3212,9 +3556,9 @@ export const get_mount_adapters = query({
       if (cur === undefined || row.daily_price_min < cur)
         catalogPrice.set(k, row.daily_price_min);
     }
-    // Identity-first, cheapest own listing, then the curated catalog — the same
-    // order lookup_pricing and find_owned_alternatives use, so the three tools
-    // cannot quote different numbers for one item.
+    // Resolve the same identity-backed listing choices as lookup_pricing.
+    // If several packages exist, do not turn the lowest price into a choice the
+    // renter never made.
     // Override ∪ index, for the same reason as find_owned_alternatives above:
     // the index alone misses adapters that are only mapped by an override, and
     // the price silently degrades to null or a stale catalog row.
@@ -3228,24 +3572,16 @@ export const get_mount_adapters = query({
         inventory,
         listings,
       );
-    const priceFor = (itemId: string, name: string): number | null => {
-      let best: number | null = null;
-      for (const pid of pidsFor(itemId)) {
-        const l = listingByPid.get(pid) as { daily_price?: number } | undefined;
-        if (typeof l?.daily_price !== "number") continue;
-        if (best === null || l.daily_price < best) best = l.daily_price;
-      }
-      return best ?? catalogPrice.get(name.toLowerCase().trim()) ?? null;
-    };
-
     return {
       adapters: await Promise.all(
         items.map(async (i) => {
           const m = i.name_canonical.match(ADAPTER_RE);
-          const pid = chooseBaseListing(
-            listings,
-            pidsFor(String(i._id)),
-          )?.product_id;
+          const choice = resolveBaseListingChoice(listings, pidsFor(String(i._id)));
+          const offers = choice.status === "selection_required"
+            ? choice.listings
+            : choice.status === "selected" ? [choice.listing] : [];
+          const selected = choice.status === "selected" ? choice.listing : null;
+          const pid = selected?.product_id;
           const hp =
             pid == null
               ? null
@@ -3261,7 +3597,11 @@ export const get_mount_adapters = query({
             from_mount: (m?.[1] ?? "").trim(),
             to_mount: (m?.[2] ?? "").trim(),
             qty: i.qty ?? 0,
-            daily_price_gbp: priceFor(String(i._id), i.name_canonical),
+            daily_price_gbp: choice.status === "selection_required"
+              ? null
+              : selected?.daily_price ?? catalogPrice.get(i.name_canonical.toLowerCase().trim()) ?? null,
+            listing_selection_required: choice.status === "selection_required",
+            listing_options: listingSelectionOptions(offers),
           };
         }),
       ),

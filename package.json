@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "dev:convex": "convex dev",
+    "lab:local": "node scripts/renter-bot-lab-local.mjs",
     "build:next": "next build",
     "build": "node scripts/build-with-convex.mjs",
     "start": "next start",

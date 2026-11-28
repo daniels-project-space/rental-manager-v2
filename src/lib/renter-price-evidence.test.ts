@@ -63,6 +63,40 @@ describe("server price receipt adapters",()=>{
  });
 });
 
+describe("dated duplicate-listing price options",()=>{
+ const thread="__probe__duplicate-prices";
+ const account="leo";
+ const request={items:[{name:"Blackmagic 6K Full Frame",quantity:1}],start_date:"2026-12-12",end_date:"2026-12-12"};
+ const selection=()=>({ok:false,selection_required:true,reason:"multiple_verified_listings",source:"verified_listing_choices",
+  thread_id:thread,account_slug:account,matched_canonical:"BMPCC 6K Pro",days:1,quantity:1,
+  start_date:request.start_date,end_date:request.end_date,
+  listing_options:[
+   {product_id:1048175,option_label:"Option 1",daily_rate_gbp:35,source:"hygglo_tier"},
+   {product_id:954030,option_label:"Option 2",daily_rate_gbp:47,source:"hygglo_listing"},
+  ]});
+ it("proves only the server-returned option rates, never a selected or combined total",()=>{
+  const receiptText="We have several listing options for the BMPCC 6K Pro:\n• Option 1: £35/day\n• Option 2: £47/day\nWhich listing option did you have in mind?";
+  const proof=renterPriceEvidence([receipt("quote_booking_addition",selection())],[],thread,account);
+  expect(proof).toHaveLength(2);
+  expect(proof.every(item=>item.kind==="rental"&&item.total_gbp===undefined&&item.days===1&&item.start_date===request.start_date)).toBe(true);
+  expect(unsupportedPriceClaims(receiptText,proof,request)).toEqual([]);
+  expect(unsupportedPriceClaims(receiptText.replace("£35/day","£36/day"),proof,request)).not.toEqual([]);
+  expect(unsupportedPriceClaims(`${receiptText}\nAdding one would bring the complete booking to £85.`,proof,request)).not.toEqual([]);
+ });
+ it("rejects a choice from another account, thread, dates, malformed option, or unrelated ambiguity",()=>{
+  const native=selection();
+  for(const changed of [
+   {...native,account_slug:"diogo"},
+   {...native,thread_id:"__probe__other"},
+   {...native,end_date:"2026-12-13"},
+   {...native,reason:"multiple_matching_listings"},
+   {...native,listing_options:[...native.listing_options,{...native.listing_options[0],product_id:7}]},
+   {...native,listing_options:[{...native.listing_options[0],daily_rate_gbp:35.001},native.listing_options[1]]},
+  ]) expect(renterPriceEvidence([receipt("quote_booking_addition",changed)],[],thread,account)).toEqual([]);
+  expect(renterPriceEvidence([receipt("quote_booking_addition",native)],[],thread,"diogo")).toEqual([]);
+ });
+});
+
 it("binds a complete read-only proposal to its thread, base basket, addition, dates and conditional claim",()=>{
  const base=[{name:"Sony A7 II",quantity:1}], added=[{name:"Sony 28-70mm",quantity:1}];
  const quote={days:2,start_date:"2026-10-06",end_date:"2026-10-07",lines:[{name:"Sony A7 II",qty:1,line_total_gbp:56},{name:"Sony 28-70mm",qty:1,line_total_gbp:36}],total_gbp:92};
@@ -186,6 +220,21 @@ describe("same-item marginal proposal evidence",()=>{
  });
 });
 
+
+it("grounds a renter-facing exact listing name through the quote line's verified price identity",()=>{
+ const thread="__probe__sony-lens-addition";
+ const dated={days:1,start_date:"2026-12-11",end_date:"2026-12-11"};
+ const base={name:"Sony FX3",item_id:"fx3",product_id:1097510,qty:1,daily_price_gbp:51,effective_rate_gbp:51,line_total_gbp:51};
+ const lens={name:"Sony 28-70mm",item_id:"sony-lens",product_id:1172504,qty:1,daily_price_gbp:18,effective_rate_gbp:18,line_total_gbp:18,
+  verified_price_names:["Sony FE 28-70mm f/3.5-5.6 OSS","Sony Full Frame 28-70mm zoom Lens | Sony FE / 28 70mm / f3.5-5.6 lens"]};
+ const native={ok:true,preview_only:true,source:"native_lab_proposal",thread_id:thread,account_slug:"leo",base_items:[{name:"Sony FX3",quantity:1}],added_items:[{name:"Sony 28-70mm",quantity:1}],
+  quote:{...dated,lines:[base,lens],total_gbp:69},base_quote:{...dated,lines:[base],total_gbp:51},addition_quote:{...dated,lines:[lens],total_gbp:18},additional_cost_gbp:18};
+ const proof=renterPriceEvidence([receipt("quote_booking_addition",native)],[],thread);
+ expect(proof).toContainEqual(expect.objectContaining({quote_role:"addition",names:expect.arrayContaining(["Sony FE 28-70mm f/3.5-5.6 OSS"]),total_gbp:18}));
+ expect(proof.find(item=>item.kind==="basket")?.proposal?.added_items[0].aliases).toContain("Sony FE 28-70mm f/3.5-5.6 OSS");
+ expect(unsupportedPriceClaims("The Sony FE 28-70mm f/3.5-5.6 OSS would add £18 for the day and bring the total to £69.",proof,
+  {items:[{name:"Sony FX3",quantity:1}],start_date:dated.start_date,end_date:dated.end_date})).toEqual([]);
+});
 
 describe("complete multi-item Native addition quotes",()=>{
  const native=jointNativeQuote;

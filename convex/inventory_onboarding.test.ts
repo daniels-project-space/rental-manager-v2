@@ -8,7 +8,7 @@ vi.mock('./owner_functions', async () => {
 });
 
 import { requireOwner } from './owner_functions';
-import { create, saveDraft, recentDrafts, registerListing, confirmAvailability, retryPropagation, refreshConsumers, setPropagationResult } from './inventory_onboarding';
+import { create, saveDraft, recentDrafts, registerListing, setListingPickupAvailability, confirmAvailability, retryPropagation, refreshConsumers, setPropagationResult } from './inventory_onboarding';
 import { __service_catalogueForStorefront } from './hygglo_products';
 import { lookup } from './walle_inventory';
 import { loadStockSources, stockForItem } from './lib/renter_stock';
@@ -154,6 +154,40 @@ describe('Walle inventory onboarding', () => {
     expect(shared.reservationUnits?.get('booking-leo')).toEqual(new Map([[intake.item_id, 1], ['battery', 2]]));
     expect(shared.reservationUnits?.get('booking-dbc')).toEqual(new Map([[intake.item_id, 1], ['battery', 2]]));
     expect(stockForItem(shared, tables.items.find(x => x._id === intake.item_id), { item_name: 'Sony FX3', start_date: '2030-01-03', end_date: '2030-01-03', quantity: 1 } as any)).toMatchObject({ available: false, free_units: 0 });
+  });
+
+it("writes pickup status only for an exact owner-registered listing and clears it", async () => {
+    const seed: Record<string, any[]> = emptyTables();
+    seed.hygglo_products.push({ _id: "product-leo", accountSlug: "leo", productId: 101, isPublished: true, isMarketingOnly: false });
+    seed.listing_resolution_override.push({ _id: "override-leo", account_slug: "leo", product_id: 101,
+      stock_item_id: "camera", public_url: "https://hygglo.com/i/sony-fx3-leo", components: [], updated_at: 1 });
+    const { db, tables } = database(seed);
+    const ctx = { db };
+    const now = Date.now();
+    const appliesStart = new Date(now + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const appliesEnd = new Date(now + 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const status = { status: "assigned_to_set", customer_explanation: "This kit is assigned to a production set.",
+      source: "Production schedule row 42", valid_until: now + 24 * 60 * 60 * 1000,
+      applies_start_date: appliesStart, applies_end_date: appliesEnd };
+    vi.mocked(requireOwner).mockRejectedValueOnce(new Error("owner required"));
+    await expect(invoke(setListingPickupAvailability, ctx, { account_slug: "leo", product_id: 101, ...status })).rejects.toThrow("owner required");
+    expect(requireOwner).toHaveBeenCalledWith(ctx, true);
+    await expect(invoke(setListingPickupAvailability, ctx, { account_slug: "leo", product_id: 102, ...status }))
+      .rejects.toThrow("synced catalogue");
+    await expect(invoke(setListingPickupAvailability, ctx, { account_slug: "leo", product_id: 101,
+      ...status, valid_until: now + 15 * 24 * 60 * 60 * 1000 })).rejects.toThrow("expire within 14 days");
+    expect(tables.listing_resolution_override[0].pickup_availability).toBeUndefined();
+
+    const saved = await invoke(setListingPickupAvailability, ctx, { account_slug: "leo", product_id: 101, ...status });
+    expect(saved).toMatchObject({ status: "assigned_to_set", account_slug: "leo", product_id: 101 });
+    expect(tables.listing_resolution_override[0].pickup_availability).toMatchObject({
+      status: "assigned_to_set", source: "Production schedule row 42", applies_start_date: appliesStart, applies_end_date: appliesEnd,
+    });
+    expect(tables.audit_log.at(-1).note).toContain("pickup_status=assigned_to_set");
+    tables.hygglo_products[0].isPublished = false;
+    await invoke(setListingPickupAvailability, ctx, { account_slug: "leo", product_id: 101, clear: true });
+    expect(tables.listing_resolution_override[0].pickup_availability).toBeUndefined();
+    expect(tables.audit_log.at(-1).note).toContain("pickup_status=cleared");
   });
 
   it('shows the committed item to WallE, calendar stock reads and live availability checks', async () => {

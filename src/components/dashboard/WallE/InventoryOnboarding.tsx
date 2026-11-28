@@ -10,6 +10,7 @@ const saveDraftRef = makeFunctionReference<'mutation'>('inventory_onboarding:sav
 const draftRef = makeFunctionReference<'query'>('inventory_onboarding:recentDrafts');
 const accountsRef = makeFunctionReference<'query'>('inventory_onboarding:accounts');
 const registerRef = makeFunctionReference<'mutation'>('inventory_onboarding:registerListing');
+const pickupAvailabilityRef = makeFunctionReference<'mutation'>('inventory_onboarding:setListingPickupAvailability');
 const updateTargetsRef = makeFunctionReference<'mutation'>('inventory_onboarding:updateListingTargets');
 const availabilityRef = makeFunctionReference<'mutation'>('inventory_onboarding:confirmAvailability');
 const detailRef = makeFunctionReference<'query'>('inventory_onboarding:get');
@@ -20,6 +21,11 @@ const progressRef = makeFunctionReference<'mutation'>('inventory_onboarding:reco
 const retryRef = makeFunctionReference<'mutation'>('inventory_onboarding:retryPropagation');
 
 type Ownership = 'owned' | 'hired_in' | 'marketing_only';
+type PickupStatus = 'account_area_only' | 'currently_on_rental' | 'in_repair' | 'assigned_to_set';
+type ListingPickupAvailability = {
+  status: string; customer_explanation?: string; source?: string; source_url?: string;
+  verified_at?: number; valid_until?: number; applies_start_date?: string; applies_end_date?: string;
+};
 type Form = {
   name: string; exact_model: string; kind: string; quantity: string; ownership: Ownership;
   serials: string; missing_serial_reasons: string; specifications: string; compatibility_note: string;
@@ -72,6 +78,7 @@ export default function InventoryOnboarding({ onClose }: { onClose: () => void }
   const create = useMutation(createRef);
   const saveDraft = useMutation(saveDraftRef);
   const register = useMutation(registerRef);
+  const savePickupAvailability = useMutation(pickupAvailabilityRef);
   const updateTargets = useMutation(updateTargetsRef);
   const confirmAvailability = useMutation(availabilityRef);
   const update = useMutation(updateRef);
@@ -91,6 +98,14 @@ export default function InventoryOnboarding({ onClose }: { onClose: () => void }
   const [account, setAccount] = useState('');
   const [productId, setProductId] = useState('');
   const [publicUrl, setPublicUrl] = useState('');
+  const [pickupListingKey, setPickupListingKey] = useState('');
+  const [pickupStatus, setPickupStatus] = useState<PickupStatus>('account_area_only');
+  const [pickupExplanation, setPickupExplanation] = useState('');
+  const [pickupSource, setPickupSource] = useState('');
+  const [pickupSourceUrl, setPickupSourceUrl] = useState('');
+  const [pickupStartDate, setPickupStartDate] = useState('');
+  const [pickupEndDate, setPickupEndDate] = useState('');
+  const [pickupValidUntil, setPickupValidUntil] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [evidence, setEvidence] = useState('');
@@ -99,8 +114,9 @@ export default function InventoryOnboarding({ onClose }: { onClose: () => void }
   const detail = useQuery(detailRef, itemId ? { item_id: itemId } : 'skip') as {
     item: { qty: number; name_canonical: string; status: string } | null;
     intake: Intake | null;
-    listings: Array<{ account_slug: string; product_id: number; public_url?: string }>;
+    listings: Array<{ account_slug: string; product_id: number; public_url?: string; pickup_availability?: ListingPickupAvailability }>;
   } | undefined;
+  const selectedPickupListing = detail?.listings.find(l => `${l.account_slug}#${l.product_id}` === pickupListingKey);
   const serials = useMemo(() => lines(form.serials), [form.serials]);
   const serialExceptions = useMemo(() => lines(form.missing_serial_reasons), [form.missing_serial_reasons]);
   const quantity = form.ownership === 'marketing_only' ? 0 : Number(form.quantity);
@@ -162,6 +178,53 @@ export default function InventoryOnboarding({ onClose }: { onClose: () => void }
       setNotice(`Registered ${result.account_slug} listing ${result.product_id}. It references the same stock pool; added zero units.`);
       setProductId(''); setPublicUrl('');
     } catch (e) { setNotice(e instanceof Error ? e.message : 'Listing registration failed; check the mapping.'); }
+    finally { setBusy(false); }
+  };
+  const editPickupListing = (listing: NonNullable<typeof detail>['listings'][number]) => {
+    setPickupListingKey(`${listing.account_slug}#${listing.product_id}`);
+    const fact = listing.pickup_availability;
+    setPickupStatus(fact?.status === 'currently_on_rental' || fact?.status === 'in_repair' || fact?.status === 'assigned_to_set'
+      ? fact.status : 'account_area_only');
+    setPickupExplanation(fact?.customer_explanation ?? '');
+    setPickupSource(fact?.source ?? '');
+    setPickupSourceUrl(fact?.source_url ?? '');
+    setPickupStartDate(fact?.applies_start_date ?? '');
+    setPickupEndDate(fact?.applies_end_date ?? '');
+    setPickupValidUntil(fact?.valid_until
+      ? new Date(fact.valid_until - new Date(fact.valid_until).getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
+      : '');
+  };
+  const savePickupStatus = async () => {
+    if (!selectedPickupListing) return;
+    setBusy(true); setNotice('');
+    try {
+      const temporary = pickupStatus !== 'account_area_only';
+      const result = await savePickupAvailability({
+        account_slug: selectedPickupListing.account_slug,
+        product_id: selectedPickupListing.product_id,
+        status: pickupStatus,
+        source: pickupSource,
+        ...(pickupSourceUrl.trim() ? { source_url: pickupSourceUrl.trim() } : {}),
+        ...(temporary ? {
+          customer_explanation: pickupExplanation,
+          applies_start_date: pickupStartDate,
+          applies_end_date: pickupEndDate,
+          valid_until: new Date(pickupValidUntil).getTime(),
+        } : {}),
+      });
+      setNotice(`Pickup status saved for ${result.account_slug} #${result.product_id}; the renter bot will only use it for matching rental dates.`);
+    } catch (e) { setNotice(e instanceof Error ? e.message : 'Pickup status was not saved.'); }
+    finally { setBusy(false); }
+  };
+  const clearPickupStatus = async () => {
+    if (!selectedPickupListing) return;
+    setBusy(true); setNotice('');
+    try {
+      await savePickupAvailability({ account_slug: selectedPickupListing.account_slug, product_id: selectedPickupListing.product_id, clear: true });
+      setPickupStatus('account_area_only'); setPickupExplanation(''); setPickupSource(''); setPickupSourceUrl('');
+      setPickupStartDate(''); setPickupEndDate(''); setPickupValidUntil('');
+      setNotice('Recorded pickup status cleared. The bot will use the verified pickup-area explanation.');
+    } catch (e) { setNotice(e instanceof Error ? e.message : 'Pickup status was not cleared.'); }
     finally { setBusy(false); }
   };
   const saveInsuranceDetails = async () => {
@@ -253,8 +316,35 @@ export default function InventoryOnboarding({ onClose }: { onClose: () => void }
           <label className={labelClass}>Public listing URL<input className={inputClass} type="url" value={publicUrl} onChange={e => setPublicUrl(e.target.value)} /></label>
           {detail?.intake?.ownership === 'owned' && <div className="space-y-2 rounded border border-white/10 p-2"><p>Map separately tracked owned accessories that are included in this listing, with the exact quantity reserved per rental. Compatibility and free-text accessory notes do not automatically consume stock.</p>{listedComponents.map((component, index) => <div key={index} className="flex gap-2"><select className={inputClass} value={component.item_id} onChange={e => setListedComponents(rows => rows.map((row, i) => i === index ? { ...row, item_id: e.target.value } : row))}><option value="">Choose included stock item</option>{choices?.filter(c => c.id !== itemId).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><input className={`${inputClass} max-w-24`} aria-label="Included component quantity" type="number" min="1" value={component.qty} onChange={e => setListedComponents(rows => rows.map((row, i) => i === index ? { ...row, qty: e.target.value } : row))} /></div>)}<button type="button" className={buttonClass} onClick={() => setListedComponents(rows => [...rows, { item_id: '', qty: '1' }])}>Add included stock component</button></div>}
           <button className={buttonClass} disabled={busy || !account || !productId || !publicUrl || listedComponents.some(c => !c.item_id || !Number.isSafeInteger(Number(c.qty)) || Number(c.qty) < 1)} onClick={registerListing}>Register listing</button>
-          <ul>{detail?.listings.map(l => <li key={`${l.account_slug}#${l.product_id}`}>{l.account_slug} #{l.product_id} · {l.public_url ? <a href={l.public_url} target="_blank" rel="noreferrer" className="underline">public listing</a> : 'URL unavailable'}</li>)}</ul>
+          <ul>{detail?.listings.map(l => <li key={`${l.account_slug}#${l.product_id}`} className="flex flex-wrap items-center gap-2">
+            <span>{l.account_slug} #{l.product_id} · {l.public_url ? <a href={l.public_url} target="_blank" rel="noreferrer" className="underline">public listing</a> : 'URL unavailable'} · pickup: {l.pickup_availability?.status.replaceAll('_', ' ') ?? 'area-only fallback'}</span>
+            <button type="button" className={buttonClass} onClick={() => editPickupListing(l)}>Edit pickup reason</button>
+          </li>)}</ul>
           {!!detail?.intake?.target_account_slugs?.filter((slug: string) => !detail.listings.some(l => l.account_slug === slug)).length && <p className="text-amber-200">Each selected account needs its own external listing and exact registration before this step is complete.</p>}
+        </section>
+        <section className="space-y-2 rounded-lg border border-white/10 p-2">
+          <strong>Pickup explanation for one exact listing</strong>
+          <p>Only record a temporary reason supported by current evidence. Without one, the bot explains the pickup area truthfully. Temporary reasons apply only to the saved dates and expire within 14 days.</p>
+          <label className={labelClass}>Registered listing<select className={inputClass} value={pickupListingKey} onChange={e => {
+            const listing = detail?.listings.find(l => `${l.account_slug}#${l.product_id}` === e.target.value);
+            if (listing) editPickupListing(listing); else setPickupListingKey('');
+          }}><option value="">Choose account and product</option>{detail?.listings.map(l => <option key={`${l.account_slug}#${l.product_id}`} value={`${l.account_slug}#${l.product_id}`}>{l.account_slug} #{l.product_id}</option>)}</select></label>
+          <label className={labelClass}>Verified pickup status<select className={inputClass} value={pickupStatus} onChange={e => setPickupStatus(e.target.value as PickupStatus)}>
+            <option value="account_area_only">Area-only pickup explanation</option>
+            <option value="currently_on_rental">Already on another rental</option>
+            <option value="in_repair">In repair</option>
+            <option value="assigned_to_set">Assigned to a production set</option>
+          </select></label>
+          {pickupStatus !== 'account_area_only' && <>
+            <label className={labelClass}>Renter-facing explanation (80 characters maximum)<input className={inputClass} maxLength={80} value={pickupExplanation} onChange={e => setPickupExplanation(e.target.value)} placeholder="For example: This kit is assigned to a production set." /></label>
+            <div className="grid gap-2 sm:grid-cols-2"><label className={labelClass}>Applies from<input className={inputClass} type="date" value={pickupStartDate} onChange={e => setPickupStartDate(e.target.value)} /></label><label className={labelClass}>Applies through<input className={inputClass} type="date" value={pickupEndDate} onChange={e => setPickupEndDate(e.target.value)} /></label></div>
+            <label className={labelClass}>Reconfirm by<input className={inputClass} type="datetime-local" value={pickupValidUntil} onChange={e => setPickupValidUntil(e.target.value)} /></label>
+          </>}
+          <label className={labelClass}>Evidence source / record reference<input className={inputClass} value={pickupSource} onChange={e => setPickupSource(e.target.value)} placeholder="Owner schedule, repair record, production booking ID" /></label>
+          <label className={labelClass}>Evidence URL (optional)<input className={inputClass} type="url" value={pickupSourceUrl} onChange={e => setPickupSourceUrl(e.target.value)} placeholder="https://…" /></label>
+          {selectedPickupListing?.pickup_availability && <p>Current recorded status: {selectedPickupListing.pickup_availability.status.replaceAll('_', ' ')} · verified {selectedPickupListing.pickup_availability.verified_at ? new Date(selectedPickupListing.pickup_availability.verified_at).toLocaleString() : 'time unavailable'}.</p>}
+          <div className="flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={busy || !selectedPickupListing || !pickupSource.trim() || (pickupStatus !== 'account_area_only' && (!pickupExplanation.trim() || !pickupStartDate || !pickupEndDate || pickupStartDate > pickupEndDate || !pickupValidUntil || !Number.isFinite(new Date(pickupValidUntil).getTime())))} onClick={savePickupStatus}>Save owner-verified pickup status</button>
+            <button type="button" className={buttonClass} disabled={busy || !selectedPickupListing?.pickup_availability} onClick={clearPickupStatus}>Clear recorded status</button></div>
         </section>
         {detail?.intake?.ownership === 'owned' && <section className="space-y-2 rounded-lg border border-white/10 p-2"><strong>Equipment insurance · ARCL-00732</strong><p>Draft for Darren Vickery at Taylor Made Risk Solutions. The supplied policy material describes £35,000 UK All Risks equipment with JRP Underwriting Limited for Great Lakes Insurance UK Ltd; check the latest schedule before relying on any limit. The buildings capital-additions allowance is not rental-equipment cover. VAT treatment remains to be confirmed. Saving or sending a draft does not prove cover.</p>
           <label className={labelClass}>Reviewable email draft<textarea readOnly className={`${inputClass} h-56 font-mono text-[11px]`} value={insuranceDraft(detail.intake)} /></label>

@@ -19,14 +19,89 @@ export type StockReceipt = {
 export type StockRequest = {
   start_date?: string | null; end_date?: string | null;
   items: Array<{ name: string; quantity: number; aliases?: string[]; complete?: boolean; components?: Array<{ name: string; quantity: number }> }>;
+  /** User-facing priced lines, separate from the full physical kit components checked for stock. */
+  quoted_items?: Array<{ name: string; quantity: number; aliases?: string[] }>;
 };
 /** A rendered single Native offer is the subject of an otherwise empty inquiry.
  * Unselected tool results and multiple alternatives cannot define that subject.
  * This is display/guard scope, never a basket write or a booking promise. */
-export function stockRequestForInquiryQuote(request:StockRequest,quotes:Array<{start_date:string;end_date:string;new_inquiry?:true;items:Array<{name:string;quantity:number}>}>,_stage?:string) {
-  if(quotes.length!==1 || !quotes[0].items.length || request.items.length && !quotes[0].new_inquiry)return request;
+export function stockRequestForInquiryQuote(request:StockRequest,quotes:Array<{start_date:string;end_date:string;new_inquiry?:true;proposed_basket?:true;
+  date_change_proposal?:{before_context_key:string;physical_identity_key:string};items:Array<{item_id?:string;name:string;quantity:number}>;
+  listing_quote?:{lines:Array<{name:string;quantity:number}>}}>,_stage?:string) {
+  if(quotes.length!==1 || !quotes[0].items.length || request.items.length && !quotes[0].new_inquiry && !quotes[0].proposed_basket)return request;
   const quote=quotes[0];
+  if(quote.date_change_proposal){
+    const physical=[...quote.items].sort((a,b)=>(a.item_id??"").localeCompare(b.item_id??""));
+    const lines=quote.listing_quote?.lines;
+    if(!quote.date_change_proposal.before_context_key.trim()||!quote.date_change_proposal.physical_identity_key.trim()||
+      physical.some(i=>!i.item_id?.trim())||JSON.stringify(physical.map(i=>[i.item_id,i.name,i.quantity]))!==quote.date_change_proposal.physical_identity_key||
+      !lines?.length||lines.some(i=>!i.name.trim()||!Number.isInteger(i.quantity)||i.quantity<1))return request;
+    return {start_date:quote.start_date,end_date:quote.end_date,items:lines.map(line=>({name:line.name,quantity:line.quantity,complete:true,
+      // Date-only proposals retain the unchanged complete physical basket.
+      components:quote.items.map(item=>({name:item.name,quantity:item.quantity}))}))};
+  }
   return {start_date:quote.start_date,end_date:quote.end_date,items:quote.items.map(i=>({name:i.name,quantity:i.quantity}))};
+}
+/**
+ * Bind a plural customer-facing availability claim to the exact billable lines
+ * only when one current proposed quote and its complete physical basket have a
+ * matching positive Native stock check. The normal stock request continues to
+ * retain every battery, card, and other physical kit component.
+ */
+export function stockRequestWithVerifiedQuoteItems(request:StockRequest,quotes:Array<{
+  start_date:string;end_date:string;proposed_basket?:true;
+  date_change_proposal?:{before_context_key:string;physical_identity_key:string};
+  items:Array<{item_id?:string;name:string;quantity:number}>;
+  listing_quote?:{lines:Array<{name:string;quantity:number}>};
+}>,receipts:StockReceipt[]):StockRequest {
+  const {quoted_items:_unverifiedQuotedItems,...base}=request;
+  if(!request.start_date||!request.end_date)return base;
+  const matchingQuotes=quotes.filter(q=>q.proposed_basket===true&&q.start_date===request.start_date&&q.end_date===request.end_date);
+  if(matchingQuotes.length!==1)return base;
+  const quote=matchingQuotes[0],physicalItems=quote.items,lines=quote.listing_quote?.lines;
+  if(!Array.isArray(lines)||(!quote.date_change_proposal&&lines.length<2)||!Array.isArray(physicalItems)||!physicalItems.length||
+    [...physicalItems,...lines].some(i=>!i||typeof i.name!=="string"||!i.name.trim()||/[\r\n]/.test(i.name)||!Number.isInteger(i.quantity)||i.quantity<1)||
+    lines.some((item,index)=>lines.slice(0,index).some(previous=>sameItem(previous.name,item.name))))return base;
+  const basketMatches=(basket:StockReceipt["basket"])=>!!basket&&basket.available===true&&basket.items.length===physicalItems.length&&
+    physicalItems.every(item=>basket.items.filter(checked=>sameItem(checked.name,item.name)).length===1&&
+      basket.items.some(checked=>sameItem(checked.name,item.name)&&checked.quantity===item.quantity));
+  const scopedReceipts=receipts.filter(r=>r.start_date===quote.start_date&&r.end_date===quote.end_date&&basketMatches(r.basket));
+  if(!scopedReceipts.length||scopedReceipts.some(r=>r.available!==true))return base;
+  const receiptMatches=(r:StockReceipt,name:string)=>sameItem(r.item,name)||(r.identity_names??[]).some(alias=>sameItem(alias,name));
+  const hasPositiveReceipt=(item:{name:string;quantity:number})=>scopedReceipts.some(r=>r.available===true&&receiptMatches(r,item.name)&&
+    r.quantity>=item.quantity&&(r.free_units===null||r.free_units>=item.quantity));
+  if(quote.date_change_proposal){
+    const ordered=[...physicalItems].sort((a,b)=>(a.item_id??"").localeCompare(b.item_id??""));
+    const identity=JSON.stringify(ordered.map(i=>[i.item_id,i.name,i.quantity]));
+    if(!quote.date_change_proposal.before_context_key.trim()||ordered.some(i=>!i.item_id?.trim())||
+      identity!==quote.date_change_proposal.physical_identity_key||!physicalItems.every(hasPositiveReceipt))return base;
+    // stockRequestForInquiryQuote attached the checked physical basket to each
+    // unchanged listing line; the line names need no separate stock identity.
+    return base;
+  }
+  if(!physicalItems.every(hasPositiveReceipt)||!lines.every(hasPositiveReceipt))return base;
+  const quotedItems=lines.map(line=>{
+    const aliases=[...new Set(scopedReceipts.filter(r=>receiptMatches(r,line.name)).flatMap(r=>[r.item,...(r.identity_names??[])])
+      .filter(name=>!sameItem(name,line.name)))];
+    return {name:line.name,quantity:line.quantity,...(aliases.length?{aliases}:{})};
+  });
+  return {...base,quoted_items:quotedItems};
+}
+/** The price guard follows billable listing lines; stock checks retain every
+ * physical kit component. A proposed inquiry can therefore have different,
+ * both-authoritative item scopes for price and availability. */
+export function priceRequestForInquiryQuote(request:StockRequest,quotes:Array<{
+  start_date:string;end_date:string;new_inquiry?:true;proposed_basket?:true;
+  listing_quote?:{lines:Array<{name:string;quantity:number}>};
+}>) {
+  if(quotes.length!==1)return request;
+  const quote=quotes[0],lines=quote.listing_quote?.lines;
+  if((!quote.new_inquiry&&!quote.proposed_basket)||!Array.isArray(lines)||!lines.length)return request;
+  const dates=claimDateScope(`${quote.start_date} to ${quote.end_date}`);
+  if(!dates.valid||dates.start_date!==quote.start_date||dates.end_date!==quote.end_date)return request;
+  if(lines.some(line=>!line||typeof line.name!=="string"||!line.name.trim()||/[\r\n]/.test(line.name)||
+    !Number.isInteger(line.quantity)||line.quantity<1))return request;
+  return {start_date:quote.start_date,end_date:quote.end_date,items:lines.map(line=>({name:line.name,quantity:line.quantity}))};
 }
 /** Availability-only replies still need the independently checked hire's
  * scope. Multiple dated alternatives remain ambiguous until one is selected. */
@@ -71,9 +146,17 @@ export function rentalOfferAssertion(clause:string) {
 }
 function subjectOf(prefix: string) {
   let s = prefix.trim().replace(/^(?:and|but|however|whereas|while|so|therefore)(?:\s+|$)/i, "").replace(/^(?:sorry[, ]*|unfortunately[, ]*|yes[, ]*|yeah[, ]*)/i, "");
+  // Availability claims often lead with the renter's proposed action:
+  // “Adding the BMPCC is available”. The action is not part of the item
+  // identity; keep the exact following product name for Native receipt match.
+  s = s.replace(/^(?:adding|renting|hiring|booking)\s+/i, "");
+  // Option labels are presentation metadata on a verified listing choice,
+  // never part of its stock identity.
+  s = s.replace(/\s*\(option\s+\d+\)\s*$/i, "");
+  s = s.replace(/^option\s+\d+\s+for\s+/i, "");
   s = s.replace(/^(?:the|a|an|my|our|your|this|that)\s+/i, "");
   s = s.replace(/^(?:exact|specific|particular|requested|selected)\s+/i, "");
-  const ordinal = /^(second|third|fourth|2nd|3rd|4th)\s+/i.exec(s);
+  const ordinal = /^(second|third|fourth|2nd|3rd|4th)\s+(?:(?:unit|copy)\s+of\s+)?/i.exec(s);
   if (ordinal) return {name:s.slice(ordinal[0].length).trim(),quantity:({second:2,third:3,fourth:4,"2nd":2,"3rd":3,"4th":4} as Record<string,number>)[ordinal[1].toLowerCase()]};
   const count = /^(\d+|one|single|two|both|three|four)\s*(?:x|×)?\s+/i.exec(s);
   if (count) s = s.slice(count[0].length);
@@ -87,6 +170,19 @@ export function rentalRefusalSubject(clause:string) {
   if (!match || /^(?:(?:that|the|a|an|any|enough|your|verified|confirmed|accurate|current|complete)\s+)*(?:information|details|answer|price|pricing|rates?|quote|confirmation|address|refund|discount|support|advice|permission|access|time)\b/i.test(match[2])
     || /\b(?:if|once|when|after|unless|subject to)\b/i.test(match[2]))return null;
   return {verb:match[1].toLowerCase(),subject:match[2].replace(/\s+(?:to quote|to rent|for rental|in stock)\s*[.!]?$/i,"").replace(/[.!]$/,"")};
+}
+
+/** Pickup-area restrictions describe fulfilment, not whether the gear is in stock. */
+export function isPickupLocationAvailabilityBoundaryClaim(clause: string): boolean {
+  const normalized = clause.replace(/[’]/g, "'");
+  const availability = /\b(?:(?:isn't|aren't|is not|are not|not)\s+available|unavailable)\b/i.exec(normalized);
+  if (!availability) return false;
+  const tail = normalized.slice(availability.index + availability[0].length);
+  // A cause such as a current rental or repair remains an equipment-status
+  // claim and must still be supported by a matching negative stock receipt.
+  if (/\b(?:because|due to|since|booked|booking|rented|stock|repair|maintenance|broken)\b/i.test(tail)) return false;
+  return /\bfor\s+(?:pickup|pick[ -]?up|collection|handover|handoff)\b[^.!?;]{0,50}\b(?:in|at|from)\s+\S+/i.test(tail) ||
+    /\b(?:pickup|pick[ -]?up|collection|handover|handoff)\s+(?:in|at|from)\s+\S+/i.test(tail);
 }
 
 /** Server-supplied catalogue exclusions support a plain rental decline only.
@@ -115,6 +211,9 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
   let bulletSubjects: StockRequest["items"] = [];
   let invalidBullet = false;
   const knownSubjects:StockRequest["items"] = request.items.map(i=>({...i,aliases:[...(i.aliases??[])]}));
+  for(const item of request.quoted_items??[])
+    if(!knownSubjects.some(existing=>[existing.name,...(existing.aliases??[])].some(name=>sameItem(name,item.name))))
+      knownSubjects.push({...item,aliases:[...(item.aliases??[])]});
   const requestedCounts=[...new Set(request.items.map(i=>i.quantity))];
   for (const receipt of receipts)
     if (!knownSubjects.some(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(n, receipt.item))))
@@ -168,7 +267,9 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     // A source phrase qualifies where a named item came from, not its model.
     // Only an independently resolvable noun phrase may use this projection;
     // counts, included components and dates are still checked separately.
-    return resolve(reference) ?? resolve(reference.split(/\s+from\s+/i)[0]);
+    const sourceSubject=reference.split(/\s+from\s+/i)[0];
+    const sourceItem=sourceSubject.replace(/\s+(?:kit|set)\s*$/i,"").trim();
+    return resolve(reference) ?? resolve(sourceSubject) ?? resolve(sourceItem);
   };
   const withQuantity=(item:StockRequest["items"][number],quantity:number)=>({...item,quantity,
     components:item.components?.map(c=>({...c,quantity:c.quantity*quantity/item.quantity})),
@@ -276,12 +377,14 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     // If the requested item is named in the same clause, still scan it so an
     // equipment promise cannot hide behind concession wording.
     const monetaryConcession = /(?:£\s?\d+(?:\.\d{1,2})?|\b\d+(?:\.\d+)?\s?%)/i.test(clause) &&
-      /\b(?:discounts?|travel\s+adjustments?|adjustments?\s+for\s+(?:the\s+)?(?:travel|journey|distance)|compensation|credits?|off\s+(?:the\s+)?(?:rental|hire))\b/i.test(clause);
+      (/\b(?:discounts?|travel\s+adjustments?|adjustments?\s+for\s+(?:the\s+)?(?:travel|journey|distance)|compensation|credits?|off\s+(?:the\s+)?(?:rental|hire))\b/i.test(clause) ||
+        /\boff\b[^.!?]{0,80}\b(?:travel|journey|distance|trip|commute|rental|hire)\b/i.test(clause));
     const namesRequestedItem = knownSubjects.some(item => [item.name,...(item.aliases??[])].some(name =>
       identity(clause).includes(identity(name))));
     if (monetaryConcession && !namesRequestedItem) continue;
     const match = /(?:\b(?:(isn't|aren't|is not|are not|not)\s+(available|in stock|free)|(?:is|are|it's|that's|they're)\s+(available|in stock|free)|(?:unavailable|out of stock|booked out|fully booked|already booked|currently rented|all booked|booked|none (?:left|available)))\b|^\s*(?:available|in stock)(?=\s+(?:for|on|from|until|through|during|today|tomorrow|now)\b|[.!?:]|$)\b)/i.exec(availabilityClause);
     if (!match) continue;
+    if (isPickupLocationAvailabilityBoundaryClaim(availabilityClause)) continue;
     const prefix = availabilityClause.slice(0, match.index);
     if (/\b(?:once|when|after|if|until|as soon as)\b[^,;:]{0,100}$/i.test(prefix)) continue;
     // Recording capabilities and handoff slots aren't equipment-stock claims.
@@ -296,7 +399,34 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     // The descriptors do not establish specs or permit a different model to
     // inherit this stock check; technical claims are checked separately.
     const descriptiveIt = /^it(?:'s| is)\s+(?:an?\s+)?(?:(?:full[ -]frame|aps[ -]?c|mirrorless|cinema|4k|sony|e[ -]mount|rf[ -]mount|l[ -]mount|ef[ -]mount)\s+){0,8}(?:camera|body|lens)\s+and\s*$/i.test(prefix.trim());
-    const subject = subjectOf(descriptiveIt ? "it" : extensionSubject?.[1] ?? prefix.replace(/\s+(?:is|are)\s*$/i, ""));
+    const proposedDateScope = itemQuoteDateScope(clause, quoteHeader, request.start_date);
+    const dateChangePrefix = prefix.trim().replace(/^(?:yes|yeah)[, ]+/i, "");
+    const dateChangeItem = !negative && proposedDateScope.explicit && proposedDateScope.valid
+      ? /^\s*(?:moving|changing|rescheduling|extending)\s+(?:(?:your|the)\s+)?(.+?)\s+(?:rental|booking|request)\s+(?:to|for)\s+/i.exec(dateChangePrefix)?.[1]
+      : undefined;
+    // Renters often refer to their one active booking as “the rental” and
+    // leave the item name implicit. Bind that phrase only to a single current
+    // request; its exact proposed date quote and every physical component
+    // receipt still have to match below.
+    const genericDateChange = !negative && proposedDateScope.explicit && proposedDateScope.valid && request.items.length === 1 &&
+      /^\s*(?:moving|changing|rescheduling|extending)\s+(?:(?:your|the)\s+)?(?:rental|booking|request)\s+(?:to|for)\s+/i.test(dateChangePrefix);
+    const namedDateChangeMatches = dateChangeItem
+      ? request.items.filter(item => [item.name, ...(item.aliases ?? [])].some(name => sameItem(dateChangeItem, name)))
+      : [];
+    // The permissive named pattern can capture the article in “moving the
+    // rental” as if it were an item name. Prefer an exact requested item; if
+    // that pattern did not resolve, only the narrow generic single-rental
+    // form above may bind to the current request.
+    const dateChangeMatches = namedDateChangeMatches.length === 1
+      ? namedDateChangeMatches
+      : genericDateChange ? request.items : [];
+    const dateChangeBooking = dateChangeMatches.length === 1;
+    const subjectPrefix = dateScope.matched_text
+      ? prefix.replace(dateScope.matched_text, "").replace(/\s+(?:for|on|from|through|until|to|between)\s*$/i, "")
+      : prefix;
+    const subject = subjectOf(dateChangeBooking
+      ? dateChangeMatches[0].name
+      : descriptiveIt ? "it" : extensionSubject?.[1] ?? subjectPrefix.replace(/\s+(?:is|are)\s*$/i, ""));
     // Parenthetical kit components are still part of the exact claimed
     // physical basket, not part of the camera's model name.
     subject.name=subject.name.replace(/\s*\(including\s+([^()]+)\)/i," with $1");
@@ -313,11 +443,19 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     const bodyOnly = !modifiers.length && /(?:^|\s)body$/i.test(subject.name);
     if(bodyOnly)subject.name=subject.name.replace(/\s+(?:camera\s+)?body$/i, "");
     const sourceSubject=subject.name.split(/\s+from\s+/i)[0];
-    const generic = /^(?:one|body|it|it's|that|that's|this|they|they're|these|those|kit|camera|gear|which)?$/i.test(sourceSubject);
+    const pluralCameraReference=subject.quantity===2&&/^(?:cameras|bodies)$/i.test(sourceSubject);
+    // A bare “both” is a camera reference only when the adjacent clause names
+    // a single requested camera model. The later receipt check still proves
+    // the two units, dates and complete basket; this must not bind across a
+    // multi-camera request or an unrelated antecedent.
+    const bareBothCameraReference=precedingBullets.length===0&&/(?:^|,\s*|\b(?:and|but)\s+)both\s*$/i.test(
+      prefix.replace(/\s+(?:is|are)\s*$/i,"").trim(),
+    );
+    const generic = pluralCameraReference || /^(?:one|body|it|it's|that|that's|this|they|they're|these|those|kit|camera|gear|which)?$/i.test(sourceSubject);
     const countedUnitReference = subject.quantity !== undefined && /^(?:cop(?:y|ies)|units?)$/i.test(subject.name);
     const lensReference = /^(?:units?\s+of\s+)?(?:(?:that|this|(?:the )?same)\s+)?(?:(?:exact|specific|particular)\s+)?lens(?:es)?$/i.test(subject.name);
     const namedItem=namedSubject(subject.name);
-    let targets = reference ? [reference.item] : namedItem ? [namedItem] : request.items.filter(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(subject.name, n)));
+    let targets = dateChangeBooking ? request.items : reference ? [reference.item] : namedItem ? [namedItem] : request.items.filter(i => [i.name, ...(i.aliases ?? [])].some(n => sameItem(subject.name, n)));
     // Only the explicit latest requested members can define an abbreviated
     // set. Unrelated negative lens receipts cannot invent its contents.
     const statedSet=namedKit && !modifiers.length ? resolveLensSet(`${subject.name} set`,lenses) : null;
@@ -329,7 +467,19 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     if (requestedSet) targets=[{name:subject.name,quantity:setQuantity,complete:true,
       components:requestedSet.items.map(i=>({name:i.name_canonical,quantity:setQuantity}))}];
     if (subject.name.toLowerCase()==="which") targets=relativeSubjects.length===1 ? relativeSubjects : [];
-    else if (generic) targets = /^(?:kit|gear)$/i.test(sourceSubject) ? request.items : previousSubjects.length ? previousSubjects : request.items;
+    else if (generic || bareBothCameraReference) {
+      if(pluralCameraReference || bareBothCameraReference) {
+        // “Both cameras” may refer to one exact camera model in the
+        // immediately preceding clause. Bind it only when this checked
+        // basket contains one camera identity and the prior clause names
+        // that identity; the normal receipt check below still requires two
+        // free units for the exact dates.
+        const requestedCameras=request.items.filter(item=>receipts.some(r=>sameItem(r.item,item.name)&&
+          (r.kind===undefined||["camera","camera_body"].includes(r.kind))));
+        const antecedents=relativeSubjects.filter(item=>requestedCameras.some(requested=>sameItem(requested.name,item.name)));
+        targets=requestedCameras.length===1&&antecedents.length===1?[withQuantity(requestedCameras[0],2)]:[];
+      } else targets = /^(?:kit|gear)$/i.test(sourceSubject) ? request.items : previousSubjects.length ? previousSubjects : request.items;
+    }
     else if (countedUnitReference) targets = previousSubjects.length === 1 ? previousSubjects : [];
     else if (lensReference) {
       // A lens pronoun needs a preceding standalone lens identity, never a
@@ -344,11 +494,15 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
     }
     if(generic && /^(?:camera|body)$/i.test(sourceSubject))targets=targets.filter(t=>receipts.some(r=>sameItem(t.name,r.item)&&
       (r.kind===undefined || ["camera","camera_body"].includes(r.kind))));
-    const pluralGroup=/^(?:both|both of them|these two|those two|all|all of them|they|these|those)$/i.test(prefix.replace(/\s+(?:is|are)\s*$/i,"").trim())
+    const pluralReference=prefix.replace(/^(?:yes|yeah)[, ]+/i,"").replace(/\s+(?:is|are)\s*$/i,"").trim();
+    const quotedPairReference=request.quoted_items?.length===2&&/^(?:both(?:\s+(?:(?:of\s+(?:the\s+)?)?(?:quoted\s+)?(?:items?|products?|lines?)))?|(?:the two|these two|those two)(?:\s+of\s+(?:the\s+)?)?\s+(?:quoted\s+)?(?:items?|products?|lines?))$/i.test(pluralReference);
+    const pluralGroup=quotedPairReference||!bareBothCameraReference&&/^(?:both|both of them|these two|those two|all|all of them|they|these|those)$/i.test(pluralReference)
       || precedingBullets.length>0 && /^they\'re\s+/i.test(match[0]);
     const coordinatedPrefix=prefix.replace(/\s+(?:is|are)\s*$/i,"").trim();
     const singleKitWithContents=/^[^()]+\(including\s+[^()]+\)$/i.test(coordinatedPrefix);
-    const coordinated=requestedSet || singleKitWithContents ? [coordinatedPrefix] : coordinatedPrefix.replace(/^both\s+(?=.+\s+(?:and|plus|paired with)\s+)/i,"").split(/\s+(?:and|plus|paired with)\s+/i);
+    const coordinated=dateChangeBooking ? [subject.name]
+      : requestedSet || singleKitWithContents || bareBothCameraReference ? [coordinatedPrefix]
+      : coordinatedPrefix.replace(/^both\s+(?=.+\s+(?:and|plus|paired with)\s+)/i,"").split(/\s+(?:and|plus|paired with)\s+/i);
     // A setup is a basket reference, not an inventory model or a camera kit.
     // Resolve an introductory offer against the following explicit quote rows;
     // descriptions remain subject to the separate technical-claim guard.
@@ -377,13 +531,15 @@ export function unsupportedStockClaims(text: string, receipts: StockReceipt[], r
       if(unambiguous)modifiers.splice(0); // explicitly quoted members, not kit-inclusion modifiers
       dateScope=itemQuoteDateScope(clause,offeredGroup.header,request.start_date);
     }
-    const jointClaim=!!heading || !!offeredGroup || pluralGroup || coordinated.length>1 || !!requestedSet || generic && targets.length>1;
+    const jointClaim=!dateChangeBooking && (!!heading || !!offeredGroup || pluralGroup || bareBothCameraReference || coordinated.length>1 || !!requestedSet || generic && targets.length>1);
     if(heading) {
       targets=!invalidHeading && forwardTargets.length>=2 && forwardTargets.every((i,index)=>!forwardTargets.slice(0,index).some(previous=>sameItem(i.name,previous.name))) ? forwardTargets : [];
       subject.quantity=undefined;
     }
     if (pluralGroup) {
-      targets=!precedingInvalid && precedingBullets.length>=2 && (!/^both|^(?:these|those) two/i.test(prefix.trim()) || precedingBullets.length===2) && precedingBullets.every((i,index)=>!precedingBullets.slice(0,index).some(other=>sameItem(i.name,other.name))) ? precedingBullets : [];
+      targets=quotedPairReference
+        ? request.quoted_items!.map(item=>({...item,aliases:[...(item.aliases??[])]}))
+        : !precedingInvalid && precedingBullets.length>=2 && (!/^both|^(?:these|those) two/i.test(prefix.trim()) || precedingBullets.length===2) && precedingBullets.every((i,index)=>!precedingBullets.slice(0,index).some(other=>sameItem(i.name,other.name))) ? precedingBullets : [];
       subject.quantity=undefined;
     } else if(coordinated.length>1) {
       targets=coordinated.flatMap(part=>{

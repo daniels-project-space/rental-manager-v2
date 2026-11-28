@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hostedLabDraftApiAuthAllowed, renterBotDraftApiAuthMode } from "./renter-bot-api-auth";
+import { hostedLabDraftApiAuthAllowed, renterBotDraftApiAuthMode, renterBotDraftApiUsesLabAgent } from "./renter-bot-api-auth";
 
 describe("renter-bot draft API credentials", () => {
   const hosted = {
@@ -15,6 +15,8 @@ describe("renter-bot draft API credentials", () => {
     expect(hostedLabDraftApiAuthAllowed("hosted-lab", "__probe__session")).toBe(true);
     expect(hostedLabDraftApiAuthAllowed("hosted-lab", "real-renter-thread")).toBe(false);
     expect(hostedLabDraftApiAuthAllowed("service", "real-renter-thread")).toBe(true);
+    expect(renterBotDraftApiUsesLabAgent("hosted-lab")).toBe(true);
+    expect(renterBotDraftApiUsesLabAgent("service")).toBe(false);
   });
 
   it("rejects the Lab credential unless hosted mode is explicitly probe-only", () => {
@@ -29,5 +31,16 @@ describe("renter-bot draft API credentials", () => {
     expect(renterBotDraftApiAuthMode("Bearer same-secret", sharedSecret)).toBe("service");
     expect(renterBotDraftApiAuthMode("Bearer same-secret", sharedSecret, "true")).toBe("hosted-lab");
     expect(renterBotDraftApiAuthMode("Bearer service-secret", sharedSecret, "true")).toBeNull();
+  });
+
+  it("allows local Lab credentials only in development and only for marked probe requests", () => {
+    const local = { ...hosted, NODE_ENV: "development", RENTER_BOT_LAB_DEPLOYMENT: "local" };
+    expect(renterBotDraftApiAuthMode("Bearer lab-secret", local, "true")).toBe("local-lab");
+    expect(renterBotDraftApiAuthMode("Bearer lab-secret", local)).toBeNull();
+    expect(hostedLabDraftApiAuthAllowed("local-lab", "__probe__local-session")).toBe(true);
+    expect(hostedLabDraftApiAuthAllowed("local-lab", "real-renter-thread")).toBe(false);
+    expect(renterBotDraftApiUsesLabAgent("local-lab")).toBe(true);
+    expect(renterBotDraftApiAuthMode("Bearer lab-secret", { ...local, NODE_ENV: "production" }, "true")).toBeNull();
+    expect(renterBotDraftApiAuthMode("Bearer lab-secret", { ...local, RENTER_BOT_LAB_LIVE_CHAT_AUTHORIZED: "true" }, "true")).toBeNull();
   });
 });
