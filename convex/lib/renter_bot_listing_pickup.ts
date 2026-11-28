@@ -341,7 +341,17 @@ export function verifiedPickupReasonForSingleListing(
     const row = raw as Record<string, unknown>;
     if (row.account_slug !== accountSlug || row.product_id !== productId) continue;
     const fact = currentPickupAvailability(row, now);
-    if (!fact || fact.status === "account_area_only" || fact.status === "unknown" || !fact.customer_explanation) continue;
+    if (!fact || fact.status === "unknown") continue;
+    if (fact.status === "account_area_only") {
+      const pickupArea = boundedString(row.pickup_area, 120);
+      if (!pickupArea) continue;
+      // This standing owner-confirmed fact is itself the reason the listing
+      // cannot be handed off elsewhere. Describe that arrangement directly;
+      // do not invent a temporary rental, repair, or set conflict.
+      reasons.push(`This kit is only available for pickup and return from the ${pickupArea}.`);
+      continue;
+    }
+    if (!fact.customer_explanation) continue;
     reasons.push(fact.customer_explanation);
   }
   return reasons.length === 1 ? reasons[0] : undefined;

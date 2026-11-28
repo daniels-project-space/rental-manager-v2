@@ -1020,7 +1020,9 @@ const ASSERTS_AVAIL_RE =
       : "";
     const verifiedReason = opts.pickupReason?.trim();
     const pickupExplanation = verifiedReason
-      ? `${verifiedReason.replace(/[.!?]+$/, "")}. Pickup and return are from the ${area}.`
+      ? verifiedReason.toLowerCase().includes(area.toLowerCase())
+        ? verifiedReason
+        : `${verifiedReason.replace(/[.!?]+$/, "")}. Pickup and return are from the ${area}.`
       : asksAboutListedLocation && asksHours
         ? `For this rental, pickup and return are from ${area}.`
         : `For this rental, pickup and return are arranged from the ${area}.`;

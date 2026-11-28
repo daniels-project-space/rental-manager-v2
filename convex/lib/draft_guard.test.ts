@@ -2061,6 +2061,18 @@ it("uses a current owner-verified listing reason in the guarded location answer"
  expect(result.text).toMatch(/Northumberland Street area/i);
  expect(result.text).toMatch(/work for your dates/i);
 });
+it("explains an account-area-only listing with its verified handoff arrangement",()=>{
+ const result=guardDraft("Can I collect this from Shoreditch?",{
+  history:[],lastRenterMessage:"The listing says Shoreditch. Can I collect the BMPCC kit there?",
+  pickupArea:"Northumberland Street area",
+  pickupReason:"This kit is only available for pickup and return from the Northumberland Street area.",
+ });
+ expect(result.text).toMatch(/this kit is only available for pickup and return from the Northumberland Street area/i);
+ expect(result.text).toMatch(/Northumberland Street area/i);
+ expect(result.text).toMatch(/location shown on the listing/i);
+ expect(result.text).toMatch(/would that work for your dates/i);
+ expect(result.text).not.toMatch(/repair|out on (?:a )?rental|assigned to a set/i);
+});
 it("keeps a guarded listing-location correction under the logistics length cap",()=>{
  const result=guardDraft("No, not Shoreditch, but does that location normally exist?",{
   history:[],lastRenterMessage:"So not Shoreditch? Do you even have that as a location usually?",

@@ -171,4 +171,24 @@ describe("listing and pickup evidence receipts", () => {
     expect(verifiedPickupReasonForSingleListing([listing], [fact], "leo", now)).toBeUndefined();
     expect(verifiedPickupReasonForSingleListing([listing], [fact], "diogo", now + 60_000)).toBeUndefined();
   });
+
+  it("explains the exact listing's owner-confirmed account pickup point without inventing a temporary reason", () => {
+    const now = Date.UTC(2026, 10, 26);
+    const listing = { account_slug: "dbcinema", product_id: 1103089, listing_name: "BMPCC 6K Full Frame", checked_at: now };
+    const fact = {
+      account_slug: "dbcinema",
+      product_id: 1103089,
+      listing_name: "BMPCC 6K Full Frame",
+      status: "account_area_only",
+      pickup_area: "Northumberland Street area",
+      source: "owner-confirmed Lab account pickup point",
+      verified_at: now,
+      checked_at: now,
+    };
+
+    expect(verifiedPickupReasonForSingleListing([listing], [fact], "dbcinema", now)).toBe(
+      "This kit is only available for pickup and return from the Northumberland Street area.",
+    );
+    expect(verifiedPickupReasonForSingleListing([listing], [{ ...fact, pickup_area: undefined }], "dbcinema", now)).toBeUndefined();
+  });
 });
