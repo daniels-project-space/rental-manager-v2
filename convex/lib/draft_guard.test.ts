@@ -1816,6 +1816,79 @@ describe("travel-compensation availability phrasing", () => {
     content: "Collection for this rental is arranged in the Northumberland Street area. Would that work for you?",
   };
 
+  it("keeps a verified date-extension total after a natural pickup-area acceptance", () => {
+    const area = "Northumberland Street area";
+    const history = [
+      { role: "owner" as const, content: "For this rental, pickup and return are arranged from the Northumberland Street area. Would collecting and returning there work for your dates?" },
+      { role: "renter" as const, content: "Yes, that works for me." },
+      { role: "owner" as const, content: "I can offer a one-time £5.00 travel adjustment if that would make collecting and returning from Northumberland Street area workable for your dates." },
+      { role: "renter" as const, content: "Yes, that works for me." },
+    ];
+    const lastRenterMessage = "Could you extend the hire so I return it on 13 December instead? Please tell me the updated total including the £5 travel adjustment.";
+    const priceRequest = {
+      start_date: "2026-12-12",
+      end_date: "2026-12-13",
+      items: [{ name: "BMPCC 6K Full Frame", quantity: 1 }],
+    };
+    const candidate = "Extending the hire to 13 December (12–13 December, 2 days) would bring the total to £95.00, including the £5.00 travel adjustment. Let me know if you would like me to update the dates for you.";
+
+    expect(assessTravelCompensation({
+      history,
+      lastRenterMessage,
+      pickupArea: area,
+      rentalChargeGbp: 50,
+    })).toMatchObject({ pickupAreaAccepted: true, alreadyOffered: true });
+
+    const result = guardDraft(candidate, {
+      history,
+      lastRenterMessage,
+      pickupArea: area,
+      pickupConfirmed: false,
+      rentalChargeGbp: 50,
+      priceRequest,
+      priceEvidence: [
+        {
+          names: ["BMPCC 6K Full Frame"],
+          kind: "basket",
+          total_gbp: 45,
+          days: 1,
+          quantity: 1,
+          items: [{ name: "BMPCC 6K Full Frame", quantity: 1 }],
+          start_date: "2026-12-12",
+          end_date: "2026-12-12",
+          call_id: "native:current-booking-quote",
+          source: "lab_order_quote",
+        },
+        {
+          names: ["BMPCC 6K Full Frame"],
+          kind: "basket",
+          total_gbp: 95,
+          days: 2,
+          quantity: 1,
+          items: [{ name: "BMPCC 6K Full Frame", quantity: 1 }],
+          start_date: priceRequest.start_date,
+          end_date: priceRequest.end_date,
+          date_proposal: {
+            before_context_key: "current-context",
+            from_start_date: "2026-12-12",
+            from_end_date: "2026-12-12",
+            base_total_gbp: 45,
+            base_travel_compensation_gbp: 5,
+            travel_compensation_gbp: 5,
+            physical_identity_key: "same-rental-kit",
+          },
+          call_id: "native:date-extension-quote",
+          source: "native_lab_date_proposal",
+        },
+      ],
+    });
+
+    expect(result.text).toContain("the total to £95.00, including the £5.00 travel adjustment");
+    expect(result.text).toContain("Let me know if you would like me to update the dates");
+    expect(result.flags.some((flag) => flag.type === "TRAVEL_COMPENSATION_GATE" && flag.detail.includes("confirm this account's pickup area"))).toBe(false);
+    expect(result.flags.filter((flag) => flag.type === "PRICE_HALLUCINATION")).toEqual([]);
+  });
+
   it("recognizes an available travel adjustment and applies the verified one-time cap", () => {
     const priceRequest = {
       start_date: "2026-11-24",

@@ -137,7 +137,11 @@ export function clearlyAcceptsTravelCompensation(
 
   // Short affirmative replies are accepted only when the server also finds an
   // eligible offer immediately before this renter message.
-  if (/^(?:yes|yeah|yep|sure|okay|ok|please|perfect|great|deal|sounds good|that works|go ahead|i accept|i'll take it|that would help)(?: please| for me| thanks| thank you| do that)*$/.test(normalized)) return true;
+  const shortAcceptance = /^(?:yes|yeah|yep|sure|okay|ok|please|perfect|great|deal|sounds good|that works|go ahead|i accept|i'll take it|that would help)(?: please| for me| thanks| thank you| do that)*$/;
+  const affirmativePrefix = /^(?:yes|yeah|yep|sure|okay|ok)\s+/;
+  const contextualAcceptance = normalized.replace(affirmativePrefix, "");
+  if (shortAcceptance.test(normalized) ||
+      (contextualAcceptance !== normalized && shortAcceptance.test(contextualAcceptance))) return true;
 
   const acceptedPrefix = /^(?:yes|yeah|yep|sure|okay|ok|please|go ahead|i accept|that works)\b/i.test(normalized);
   const explicitAction = /\b(?:apply|add|deduct|take|accept|use)\b/i.test(normalized);
@@ -336,8 +340,15 @@ export function hasPickupAreaAcceptance(
       /\b(?:that|this|the)\s+(?:pickup\s+)?(?:area|location|place|meeting\s+point)\s+(?:works?|is\s+(?:fine|okay|ok|good)|suits?|is\s+acceptable)\b/i.test(turn.content) ||
       /\b(?:works?|is\s+(?:fine|okay|ok|good)|suits?)\s+for\s+me\b/i.test(turn.content) &&
         /\b(?:that|this|the)\s+(?:pickup\s+)?(?:area|location|place|meeting\s+point)\b/i.test(turn.content);
-    const bareAcceptance = /^\s*(?:yes|yep|yeah|okay|ok|sure|that works)[.!\s]*$/i.test(turn.content) &&
-      /\b(?:work|okay|ok|fine|suit)\b/i.test(turns[disclosure].content);
+    const disclosedAreaQuestion =
+      /\b(?:would|does|will|can)\b[^.!?]{0,120}\bwork(?:s|able)?\b/i.test(turns[disclosure].content) ||
+      /\bif\b[^.!?]{0,120}\b(?:work|workable|suit)\b[^.!?]{0,45}\bfor\s+(?:you|your dates)\b/i.test(turns[disclosure].content);
+    // Keep short yes/no replies bound to an owner message that explicitly
+    // asked whether this disclosed pickup area works. The compensation
+    // application path already accepts natural replies such as “Yes, that
+    // works for me”; pickup state must interpret the same contextual answer.
+    const bareAcceptance = /^\s*(?:(?:yes|yep|yeah|okay|ok|sure)[,\s]+)?(?:(?:that|this)\s+)?(?:works?(?:\s+for\s+me)?|is\s+(?:fine|okay|ok|good)(?:\s+for\s+me)?|suits?(?:\s+me)?|is\s+acceptable(?:\s+to\s+me)?)[.!?\s]*$/i.test(turn.content) &&
+      disclosedAreaQuestion;
     if (explicitAcceptance || referentialAcceptance || bareAcceptance) accepted = true;
   }
   return accepted;

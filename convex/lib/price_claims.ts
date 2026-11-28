@@ -384,7 +384,7 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
     if(verifiedDateProposalDelta||verifiedCurrentDateProposalTotal){consumed=end;continue;}
     const retainedTravelAdjustment = purpose === "adjustment" &&
       /\b(?:travel\s+(?:adjustment|compensation)|compensation\s+for\s+travel)\b/i.test(local) &&
-    /\b(?:your|existing|accepted|agreed|applied|already\s+(?:applied|accepted|agreed))\b/i.test(local);
+    /\b(?:your|existing|accepted|agreed|applied|already\s+(?:applied|accepted|agreed)|including)\b/i.test(local);
     const currentSingleItemTotal=basket&&!proposalTotal&&!groupAddition&&!replacementAdjustment&&request.items.length===1;
     const candidates = evidence.filter(e => retainedTravelAdjustment
       ? e.kind === "basket" && (!!e.date_proposal || e.source === "lab_order_transaction" && !!e.travel_adjustment)
@@ -414,8 +414,12 @@ export function unsupportedPriceClaims(text: string, evidence: PriceEvidence[], 
         const retained=p?.travel_compensation_gbp;
         if(!p||retained==null||p.base_travel_compensation_gbp==null||e.total_gbp==null||!e.items||!request.items.length)return false;
         if(cents(retained)!==cents(amount)||cents(p.base_travel_compensation_gbp)!==cents(retained))return false;
-        if(p.from_start_date!==request.start_date||p.from_end_date!==request.end_date)return false;
-        if(!request.items.every(i=>e.items!.some(q=>same([i.name,...(i.aliases??[])],[q.name])&&q.quantity===i.quantity))||e.items.length!==request.items.length)return false;
+        const carriedIntoDateProposal=e.source==="native_lab_date_proposal"&&
+          e.start_date===request.start_date&&e.end_date===request.end_date&&e.days===duration&&
+          !!p.before_context_key.trim()&&!!p.physical_identity_key?.trim();
+        const adjustmentMatchesCurrentDates=p.from_start_date===request.start_date&&p.from_end_date===request.end_date;
+        if(!carriedIntoDateProposal&&!adjustmentMatchesCurrentDates)return false;
+        if(!exactMembers(e.items,request.items.map(item=>({name:item.name,quantity:item.quantity}))))return false;
         if(dateScope.explicit&&(!dateScope.valid||dateScope.start_date!==e.start_date||dateScope.end_date!==e.end_date))return false;
         return true;
       }

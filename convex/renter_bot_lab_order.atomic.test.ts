@@ -318,6 +318,28 @@ describe("accepted travel compensation is bound to the current renter turn", () 
     expect(row.changes).toHaveLength(1);
   });
 
+  it("applies the exact latest offer after a natural contextual yes", async () => {
+    const { tables, ctx } = eligibleOffer();
+    const row = tables.renter_bot_lab_orders[0];
+    row.start_date = "2099-10-08";
+    row.end_date = "2099-10-08";
+    row.items[0].daily_price_gbp = 50;
+    tables.renter_bot_lab_bookings[0].start_date = row.start_date;
+    tables.renter_bot_lab_bookings[0].end_date = row.end_date;
+    tables.hygglo_messages[2].body_text = "I can offer a one-time £5.00 travel adjustment on this rental. Let me know if that works for you.";
+    tables.hygglo_messages[3].body_text = "Yes, that works for me.";
+
+    expect(clearlyAcceptsTravelCompensation(tables.hygglo_messages[3].body_text, 5, 50)).toBe(true);
+    const result = await apply(ctx, "accept");
+    expect(result).toMatchObject({
+      ok: true,
+      action_performed: true,
+      applied: "£5.00 travel compensation",
+      order: { subtotal_gbp: 50, travel_compensation_gbp: 5, total_gbp: 45 },
+    });
+    expect(row.changes).toHaveLength(1);
+  });
+
   it("applies a plainly amount-matched 'please apply' acceptance to the isolated order", async () => {
     const { tables, ctx } = eligibleOffer();
     const row = tables.renter_bot_lab_orders[0];
