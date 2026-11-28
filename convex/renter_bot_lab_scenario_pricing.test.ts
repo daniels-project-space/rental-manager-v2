@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getFunctionName } from "convex/server";
-import { mapPreparedComponentsToLabIds, matchesPreparedListing, preparedListingPrice, preparedOrderPrice } from "./lib/renter_bot_lab_listing_snapshot";
+import { mapPreparedComponentsToLabIds, matchesPreparedListing, preparedListingPrice, preparedOrderPrice, preparedScenarioSourceInventoryId } from "./lib/renter_bot_lab_listing_snapshot";
 import { summarise, seed } from "./renter_bot_lab_order";
 import { __service_runTestTurn, startLiveSession, startPreparedScenario } from "./renter_bot_lab_actions";
 import { verificationFailureReply } from "./lib/verification_failure";
@@ -37,6 +37,8 @@ describe("prepared Lab listing prices", () => {
   it("binds Diogo's kit listing to the shared Sony FX3 inventory identity", () => {
     expect(matchesPreparedListing("diogo", 1173763, "Sony FX3")).toBe(true);
     expect(matchesPreparedListing("diogo", 1173763, "Sony FX3 Full-Frame Camera Kit")).toBe(false);
+    expect(preparedScenarioSourceInventoryId("diogo-sony-fx3-kit", "diogo")).toBe("kn7bw2cr1ye5hqj3x770b332ks86atzw");
+    expect(preparedScenarioSourceInventoryId("diogo-sony-fx3-kit", "leo")).toBeNull();
   });
 
   it("loads the owner-confirmed FX3 battery, charger and memory card into the prepared kit", () => {
@@ -138,6 +140,8 @@ describe("prepared Lab listing prices", () => {
       listing_description: diogoFx3.description, public_url: diogoFx3.publicUrl, mapping_verified: true });
     expect(calls.find(call => call.name === "renter_bot_probe:seed")?.args.items)
       .toEqual([{ name: "Sony FX3", product_id: 1173763 }]);
+    expect(calls.find(call => call.name === "renter_bot_lab_actions:ensurePreparedScenarioItem")?.args)
+      .toEqual({ scenarioId: "diogo-sony-fx3-kit", sourceInventoryId: "kn7bw2cr1ye5hqj3x770b332ks86atzw" });
     const orderArgs = calls.find(call => call.name === "renter_bot_lab_order:seed")?.args;
     expect(orderArgs?.prepared_price).toMatchObject({ product_id: 1173763, daily_price_gbp: 45 });
     expect(orderArgs?.prepared_price).not.toHaveProperty("listing_description");

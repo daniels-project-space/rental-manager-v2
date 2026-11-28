@@ -13,7 +13,7 @@ import { renterBotLabScenario, renterBotLabPickupPoint, renterBotLabRentalDates 
 import { clearlyAcceptsTravelCompensation, mentionsPickupArea } from "./lib/travel_compensation";
 import { renterBotNeedsHumanReview } from "./lib/renter_bot_review_state";
 import { verifiedPickupReasonForSingleListing } from "./lib/renter_bot_listing_pickup";
-import { mapPreparedComponentsToLabIds, matchesPreparedListingSnapshot, preparedListingPrice, preparedOrderPrice, type PreparedListingPrice } from "./lib/renter_bot_lab_listing_snapshot";
+import { mapPreparedComponentsToLabIds, matchesPreparedListingSnapshot, preparedListingPrice, preparedOrderPrice, preparedScenarioSourceInventoryId, type PreparedListingPrice } from "./lib/renter_bot_lab_listing_snapshot";
 import { preparedLabItemPatch } from "./lib/renter_bot_lab_catalog_snapshot";
 import { preparedAlternativeSnapshot } from "./lib/renter_bot_lab_alternative_snapshot";
 /**
@@ -494,17 +494,26 @@ export const ensureLabPickupPoint = internalMutation({
 
 /** Upsert only the owner-confirmed items used by the prepared Lab examples. */
 export const ensurePreparedScenarioItem = internalMutation({
-  args: { scenarioId: v.string() },
-  handler: async (ctx, { scenarioId }) => {
+  args: { scenarioId: v.string(), sourceInventoryId: v.string() },
+  handler: async (ctx, { scenarioId, sourceInventoryId }) => {
     assertPreparedScenarioLab();
     const scenario = renterBotLabScenario(scenarioId);
     if (!scenario) throw new Error("Unknown prepared Lab example");
+    if (preparedScenarioSourceInventoryId(scenarioId, scenario.accountSlug) !== sourceInventoryId) {
+      throw new Error("Prepared Lab item source identity does not match its verified listing");
+    }
     await ensureLabUnavailableIdentities(ctx);
     const now = Date.now();
     const existing = await ctx.db
       .query("items")
       .withIndex("by_canonical_name", (q) => q.eq("name_canonical", scenario.item.name_canonical))
       .first();
+    const sourceOwner = await ctx.db.query("items")
+      .withIndex("by_lab_source_inventory_id", (q) => q.eq("lab_source_inventory_id", sourceInventoryId))
+      .unique();
+    if (sourceOwner && sourceOwner._id !== existing?._id) {
+      throw new Error("Prepared Lab source identity is already linked to a different inventory item");
+    }
     // The owner confirmed these shared physical pools. The Lab uses its own
     // stock rows and never copies or edits a real reservation.
     let suppliedStock = existing?.supplied_stock;
@@ -545,6 +554,11 @@ export const ensurePreparedScenarioItem = internalMutation({
     }
     const proposedItemFacts = {
       ...scenario.item,
+      // Hosted scenarios have no full-catalogue import. Bind an isolated row
+      // that has no source identity only to the exact current source ID that
+      // its prepared listing snapshot verified. Existing identities remain
+      // immutable in preparedLabItemPatch.
+      lab_source_inventory_id: sourceInventoryId,
       ...(scenario.item.compatibility ? { compatibility: {
         ...(scenario.item.compatibility.batteries ? { batteries: [...scenario.item.compatibility.batteries] } : {}),
         ...(scenario.item.compatibility.cards ? { cards: [...scenario.item.compatibility.cards] } : {}),
@@ -661,7 +675,10 @@ async function ensurePreparedScenarioListing(
   snapshot: PreparedListingPrice | null,
 ): Promise<{ itemName: string; snapshot: PreparedListingPrice }> {
   if (!snapshot) throw new Error("Prepared example listing data is missing, stale, or ambiguous; refresh the source and retry.");
-  const itemName = await ctx.runMutation(internal.renter_bot_lab_actions.ensurePreparedScenarioItem, { scenarioId });
+  const itemName = await ctx.runMutation(internal.renter_bot_lab_actions.ensurePreparedScenarioItem, {
+    scenarioId,
+    sourceInventoryId: snapshot.master_item_id,
+  });
   const seeded = await ctx.runMutation(internal.renter_bot_lab_actions.ensurePreparedListing, { scenarioId, snapshot });
   if (seeded !== true) throw new Error(`Prepared example listing could not be safely linked to its isolated Lab item (${seeded}).`);
   return { itemName, snapshot };

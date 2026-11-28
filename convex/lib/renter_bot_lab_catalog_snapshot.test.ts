@@ -103,7 +103,8 @@ describe("isolated Lab source catalog snapshot", () => {
       kind: "camera", unit_kind: "kit", status: "active", is_marketing_only: false,
       supplied_stock: [{ item_id: "existing-battery-pool", qty: 3, source: "owner source" }] };
     const patch = preparedLabItemPatch(existing, { name_canonical: "Sony FX3 Full-Frame Camera Kit", qty: 1,
-      kind: "camera", is_marketing_only: false }, [{ item_id: "scenario-battery-pool", qty: 3, source: "scenario" }], now);
+      kind: "camera", is_marketing_only: false, lab_source_inventory_id: "different-physical-item" },
+      [{ item_id: "scenario-battery-pool", qty: 3, source: "scenario" }], now);
     expect(patch).toEqual({ updated_at: now });
     expect(patch).not.toHaveProperty("name_canonical");
     expect(patch).not.toHaveProperty("qty");
@@ -112,6 +113,9 @@ describe("isolated Lab source catalog snapshot", () => {
       { name_canonical: "Sony FX3 Full-Frame Camera Kit", qty: 1 },
       [{ item_id: "confirmed-battery-pool", qty: 3, source: "owner-confirmed" }], now);
     expect(missingPool).toEqual({ supplied_stock: [{ item_id: "confirmed-battery-pool", qty: 3, source: "owner-confirmed" }], updated_at: now });
+    const missingIdentity = preparedLabItemPatch({ name_canonical: "Sony FX3", qty: 4 },
+      { name_canonical: "Sony FX3", qty: 4, lab_source_inventory_id: "verified-physical-fx3" }, undefined, now);
+    expect(missingIdentity).toMatchObject({ lab_source_inventory_id: "verified-physical-fx3", updated_at: now });
   });
 
   it("uses exact overrides for stock identity and the DB Cinema website for bookability", () => {

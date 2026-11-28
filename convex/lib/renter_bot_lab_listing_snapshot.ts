@@ -13,6 +13,12 @@ const SOURCES: Record<string, { account: string; productId: number; masterItemId
   "diogo-sony-fx3-kit": { account: "diogo", productId: 1173763, masterItemId: "kn7bw2cr1ye5hqj3x770b332ks86atzw", inventoryName: "Sony FX3", listingTitlePart: "Sony FX3" },
 };
 
+/** Physical source identity for a prepared example, scoped to its account. */
+export function preparedScenarioSourceInventoryId(scenarioId: string, account: string): string | null {
+  const source = SOURCES[scenarioId];
+  return source?.account === account ? source.masterItemId : null;
+}
+
 /** Prepared source IDs are usable only with the matching server-owned item. */
 export function matchesPreparedListing(account: string, productId: number, itemName: string): boolean {
   return Object.entries(SOURCES).some(([scenarioId, source]) => source.account === account &&
